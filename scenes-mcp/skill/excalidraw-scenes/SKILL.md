@@ -225,9 +225,7 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
     presenting, in PDFs and in `view_scene`. Filled copies are the slide's
     content (listed by `read_scene`).
 - Changing a template: your edits apply to all its slides right away
-  (filled placeholder text stays). When the user changes a template in the
-  app, they decide whether existing slides follow or only new ones; slides
-  that stay on an older version have `"rev"` in their `customData.slides`.
+  (filled placeholder text stays), the same as the user's edits in the app.
 - Text alignment: give a text `width` and it becomes a box from `x` to
   `x + width`: lines wrap at the width and `textAlign` (left, center, right)
   aligns them inside it (e.g. a caption centered under a shape, a paragraph).

@@ -293,9 +293,7 @@ pill) opens the deck:
   slide (headline, text): until you do, it shows faded and stays hidden
   when presenting and in PDFs; a typed headline names the slide.
 - **Changing a template:** selecting something on it opens the Style tab.
-  When you leave it, Kurviq asks: **Apply to all slides** (every slide
-  that uses it follows; typed text stays) or **Only new slides** (existing
-  slides keep the version they show). On slides, fixed copies are locked;
+  Every slide that uses it follows right away (typed text stays). On slides, fixed copies are locked;
   unlock one to change it on that slide only. **Reset to template** brings
   the template back for one slide, **Reset all slides** for the deck.
 - **Deck style:** font, title and text size, colors, sloppiness, stroke,

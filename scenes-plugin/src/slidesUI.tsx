@@ -772,25 +772,6 @@ const slidesTab = (() => {
   };
 })();
 
-/** "apply to all slides?" after editing a template: the template asked about, or null */
-const templateQuestion = (() => {
-  let value: { id: string; name: string; slides: number } | null = null;
-  const listeners = new Set<() => void>();
-  return {
-    get: () => value,
-    set: (next: typeof value) => {
-      value = next;
-      listeners.forEach((listener) => listener());
-    },
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  };
-})();
-
 /** the template something selected belongs to (the frame itself or an element on it), or null */
 const selectedTemplate = () => {
   const api = deck.getApi();
@@ -811,26 +792,9 @@ const selectedTemplate = () => {
   return null;
 };
 
-/** after leaving a template: its changes go to its slides once the user says so (none: nothing to ask) */
-const askAboutTemplates = () => {
-  const api = deck.getApi();
-  if (!api || templateQuestion.get()) {
-    return;
-  }
-  for (const template of deck.pendingTemplates()) {
-    const info = deck.getState().templates.find((t) => t.id === template.id);
-    if (!info?.slides) {
-      deck.applyTemplate(template.id, { all: true }); // no slide uses it yet: nothing to decide
-      continue;
-    }
-    templateQuestion.set(info);
-    return;
-  }
-};
-
 // editing a template (something on it selected): the Style tab opens. Leaving
 // it (a slide or nothing selected): the slide list returns, if it was opened
-// this way, and changes to the template ask whether they go to all its slides
+// this way
 {
   let inside: string | null = null;
   let openedForTemplate = false;
@@ -858,67 +822,27 @@ const askAboutTemplates = () => {
     if (!was) {
       return;
     }
-    // not while picking a tool or drawing (the selection empties then too)
-    leaveTimer = window.setTimeout(() => {
+    // not while picking a tool, drawing or typing (the selection empties then
+    // too): still on the template, checked again until really left
+    const leave = () => {
       const appState = deck.getApi()?.getAppState();
-      if (selectedTemplate() || !appState || appState.activeTool.type !== "selection" || appState.newElement || appState.editingTextElement) {
+      if (selectedTemplate() || !appState) {
         inside = selectedTemplate();
+        return;
+      }
+      if (appState.activeTool.type !== "selection" || appState.newElement || appState.editingTextElement) {
+        inside = was;
+        leaveTimer = window.setTimeout(leave, 350);
         return;
       }
       if (openedForTemplate && slidesTab.get() === "style") {
         openedForTemplate = false;
         slidesTab.set("slides");
       }
-      askAboutTemplates();
-    }, 350);
+    };
+    leaveTimer = window.setTimeout(leave, 350);
   });
 }
-
-/** the question after a template was changed: to all its slides, or only new ones */
-export const TemplateQuestion = () => {
-  const question = useSyncExternalStore(templateQuestion.subscribe, templateQuestion.get);
-  useEffect(() => {
-    if (!question) {
-      return;
-    }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        templateQuestion.set(null); // later: asked again when the template is left next time
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [question]);
-  if (!question) {
-    return null;
-  }
-  const answer = (all: boolean) => {
-    templateQuestion.set(null);
-    deck.applyTemplate(question.id, { all });
-    setTimeout(askAboutTemplates); // another changed template, if any
-  };
-  const count = `${question.slides} slide${question.slides === 1 ? "" : "s"}`;
-  return (
-    // data-radix-portal: a click here doesn't count as outside the sidebar (which would close it)
-    <div className="slides-question" role="dialog" aria-modal="true" aria-labelledby="slides-question-title" data-radix-portal="">
-      <div className="slides-question__box">
-        <h2 id="slides-question-title">Apply your changes to “{question.name}”?</h2>
-        <p>
-          {count} use{question.slides === 1 ? "s" : ""} this template. Text typed on the slides stays.
-        </p>
-        <div className="slides-question__actions">
-          <button type="button" className="slides-btn slides-btn--primary" onClick={() => answer(true)} autoFocus>
-            Apply to all {count}
-          </button>
-          <button type="button" className="slides-btn" onClick={() => answer(false)}>
-            Only new slides
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const icon = (children: ReactNode) => (
   <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

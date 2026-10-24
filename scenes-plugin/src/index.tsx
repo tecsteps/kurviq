@@ -25,7 +25,7 @@ import { QuickTip } from "./quickTip";
 import { loadFontLibrary } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
-import { SLIDES_SIDEBAR_NAME, SlidesSidebar, TemplateQuestion } from "./slidesUI";
+import { SLIDES_SIDEBAR_NAME, SlidesSidebar } from "./slidesUI";
 import { connection, otherSpacesScenes } from "./online/github";
 import type { SpaceScenes } from "./online/github";
 import {
@@ -1225,7 +1225,6 @@ export const ScenesSidebar = () => {
     <PresentationOverlay />
     <PublicSceneOverlay />
     <AddFontOverlay />
-    <TemplateQuestion />
     {IS_ONLINE && <RepoSetupDialog />}
     {IS_ONLINE && <ReadOnlyGuard />}
     {IS_ONLINE && <UpdateBanner />}

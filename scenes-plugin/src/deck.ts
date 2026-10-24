@@ -7,12 +7,10 @@ import { CaptureUpdateAction, hashString } from "@excalidraw/excalidraw";
 import { scenesController } from "./controller";
 import {
   DEFAULT_THEME,
-  applyTemplateChanges,
   getSlides,
   getTemplate,
   getTemplates,
   getTheme,
-  pendingTemplates,
   templateOf,
   renderSlide,
   slideData,
@@ -239,7 +237,8 @@ class Deck {
     if (!reset && key === this.lastTemplateKey) {
       return;
     }
-    const result = syncTemplate(elements, this.deckName(), { reset });
+    // changes to a template go to all its slides right away
+    const result = syncTemplate(elements, this.deckName(), { reset, applyPending: true });
     if (result) {
       api.updateScene({
         elements: result.elements,
@@ -319,24 +318,6 @@ class Deck {
     if (thumbs !== this.state.thumbs) {
       this.set({ thumbs });
     }
-  }
-
-  /** templates changed on the canvas whose changes the slides don't show yet */
-  pendingTemplates() {
-    return this.api ? pendingTemplates(this.api.getSceneElementsIncludingDeleted()) : [];
-  }
-
-  /** a template's changes: to all its slides, or only to new ones (undoable) */
-  applyTemplate(id: string, { all }: { all: boolean }) {
-    const api = this.api;
-    if (!api) {
-      return;
-    }
-    api.updateScene({
-      elements: applyTemplateChanges(api.getSceneElementsIncludingDeleted(), id, { all }),
-      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-    });
-    this.runTemplateSync();
   }
 
   /** the slide picture right now (presenter view: current / next slide) */
