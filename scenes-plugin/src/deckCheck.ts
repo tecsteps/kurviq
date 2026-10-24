@@ -13,7 +13,7 @@ import {
 import { Fonts } from "@excalidraw/excalidraw";
 
 import { withTemplate } from "./cowork";
-import { elementStep, forAudience, getSlides, getTemplate, getTheme, slideData, slideTitle } from "./slides";
+import { elementStep, getSlides, getTemplate, getTheme, slideData, slideTitle } from "./slides";
 
 import { LINK_COLOR } from "./richText/layout";
 import { richDocOf } from "./richText/model";
@@ -156,8 +156,7 @@ export const checkDeck = async (
   input: readonly ExcalidrawElement[],
   { deck, background = "#ffffff", files = {} }: { deck: string; background?: string; files?: BinaryFiles },
 ) => {
-  // as the audience sees it: placeholders nobody typed into are left out
-  const elements = forAudience(withTemplate([...input], deck).filter((el) => !el.isDeleted));
+  const elements = withTemplate([...input], deck).filter((el) => !el.isDeleted);
   await Fonts.loadElementsFonts(elements).catch(() => []);
   const map = new Map(elements.map((el) => [el.id, el])) as any;
   const slides = getSlides(elements);
@@ -230,8 +229,7 @@ export const checkDeck = async (
     const data = slideData(slide);
     const frameBox: Box = [slide.x, slide.y, slide.x + slide.width, slide.y + slide.height];
     const own = elements.filter((el) => el.frameId === slide.id);
-    // the slide's own elements, and the text typed into its placeholders
-    const content = own.filter((el) => !slideData(el).copyOf || slideData(el).ph);
+    const content = own.filter((el) => !slideData(el).copyOf);
     const add = (kind: string, message: string, id?: string) =>
       ignores(id ? map.get(id) : slide, kind) || issues.push({ slide: number, kind, message, ...(id ? { id } : {}) });
 

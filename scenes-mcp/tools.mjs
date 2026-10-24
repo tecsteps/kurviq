@@ -501,10 +501,8 @@ export const createScenesMcp = ({
         if (!frame) {
           throw new Error(`slide ${JSON.stringify(slide)}: no such slide (the deck has ${deckOrder(elements).length}; use a number from 1, a frame id or "template")`);
         }
-        // a slide's own elements, and its placeholder copies (their text is the slide's)
-        const own = (el) => !el.customData?.slides?.copyOf || el.customData.slides.ph;
-        const on = elements.filter((el) => el.frameId === frame.id && own(el));
-        const copies = elements.filter((el) => el.frameId === frame.id && !own(el)).length;
+        const on = elements.filter((el) => el.frameId === frame.id && !el.customData?.slides?.copyOf);
+        const copies = elements.filter((el) => el.frameId === frame.id && el.customData?.slides?.copyOf).length;
         const number = deckOrder(elements).findIndex((f) => f.id === frame.id) + 1;
         const picked = relative ? relativeToSlides(on, elements) : on;
         return {

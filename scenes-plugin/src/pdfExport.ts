@@ -7,7 +7,7 @@ import { Fonts, exportToSvg, getNonDeletedElements } from "@excalidraw/excalidra
 
 import { BASE_URL, IS_ONLINE } from "./api";
 import { withTemplate } from "./cowork";
-import { forAudience, getSlides, slideData } from "./slides";
+import { getSlides, slideData } from "./slides";
 
 import type { Frame } from "./slides";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
@@ -138,7 +138,7 @@ export const slidesHtml = async (
   if (!frames.length) {
     throw new Error("No slides to export");
   }
-  const elements = forAudience(getNonDeletedElements(withTemplate([...input], deck)));
+  const elements = getNonDeletedElements(withTemplate([...input], deck));
   const byId = new Map(elements.map((el) => [el.id, el]));
   const onSlides = (frame: Frame) =>
     elements.filter((el) => el.id === frame.id || el.frameId === frame.id);

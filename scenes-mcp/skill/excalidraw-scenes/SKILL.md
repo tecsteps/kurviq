@@ -186,46 +186,28 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
 - A slide: `{ "type": "frame", "id": "s1", "x": 100, "y": 100, "width": 1920,
   "height": 1080, "name": "Title", "children": [ids of its elements],
   "customData": { "slides": { "order": 0, "notes": "speaker notes" } } }`.
-  Elements added later to a slide get `"frameId": "s1"`. Keep everything
-  inside its frame. The app lays slides out in deck order, seven per row
-  with a gap of 240, whenever the user adds, moves or deletes one: place
-  new slides that way too.
+  Elements added later to a slide get `"frameId": "s1"`. Lay slides out in a
+  row with a gap (e.g. 240) and keep everything inside its frame.
 - Slide-relative placement: give an element `"slide": 3` (number in deck
   order, a frame id, or `"template"`) and its `x` / `y` count from that
   slide's top-left corner; it becomes part of the slide. Works in
   `save_scene` and in `edit_scene` (`add` and `update`).
 - In the slide frame's `customData.slides`: `"skip": true` hides a slide
-  while presenting; `"layout": "<template frame id>"` picks its template
-  (none: the first template); `"template": false` shows no template on it.
+  while presenting; `"template": false` turns the template off for that
+  slide (title slides).
 - Click-by-click reveals: `"customData": { "slides": { "step": 1 } }` on
   elements (1, 2, 3 …; a shape's label follows its shape).
-- Templates (like layouts in presentation software): frames with
-  `"customData": { "slides": { "role": "template" } }`, e.g. "Title",
-  "Section", "Content". The first one (lowest `order`, then top-left) is
-  the default and holds the deck theme: `"theme": { "fontFamily": 5,
-  "titleSize": 72, "bodySize": 36, "textColor": "#1e1e1e", "strokeColor":
-  "#1e1e1e", "roughness": 1, "strokeWidth": 2, "fillStyle": "solid",
-  "transition": "glide" }`. Put templates in a row above the slides. A
-  template's elements are copied onto every slide that uses it (ids
-  `<element>~<slide>`) when you save or edit the deck, and by the user's
-  app. `"slide": "template"` means the first template; use a template's
-  frame id for the others.
-- Two kinds of template elements:
-  - Fixed (default): header, footer, logo, background: the same on every
-    slide, locked there. Texts may use `{page}` (slide number), `{total}`
-    (number of slides), `{title}` (the slide frame's name), `{deck}` (the
-    scene name), `{date}` (today, in the viewer's locale). Never edit these
-    copies; change the template.
-  - Placeholders: a template text with `"customData": { "slides": {
-    "placeholder": "title" } }` (headline; its text also names the slide) or
-    `"placeholder": "text"` (body). Give it sample text (Lorem ipsum). Each
-    slide gets its own copy at the template's position and style; fill it
-    with `update: [{ "id": "<element>~<slide frame id>", "text": "…" }]`.
-    Until filled, a copy shows the sample faded and is hidden when
-    presenting, in PDFs and in `view_scene`. Filled copies are the slide's
-    content (listed by `read_scene`).
-- Changing a template: your edits apply to all its slides right away
-  (filled placeholder text stays), the same as the user's edits in the app.
+- Template: one frame with `"customData": { "slides": { "role": "template",
+  "theme": { "fontFamily": 5, "titleSize": 72, "bodySize": 36, "textColor":
+  "#1e1e1e", "strokeColor": "#1e1e1e", "roughness": 1, "strokeWidth": 2,
+  "fillStyle": "solid", "transition": "glide" } } }`. Its elements (header,
+  footer, logo, background) are copied onto every slide when you save or
+  edit the deck (and by the user's app). Template texts may use
+  placeholders: `{page}` (slide number), `{total}` (number of slides),
+  `{title}` (the slide frame's name), `{deck}` (the scene name), `{date}`
+  (today, in the viewer's locale). They are filled in only in template
+  elements. Never edit the copies (ids `<element>~<slide>`); change the
+  template instead.
 - Text alignment: give a text `width` and it becomes a box from `x` to
   `x + width`: lines wrap at the width and `textAlign` (left, center, right)
   aligns them inside it (e.g. a caption centered under a shape, a paragraph).

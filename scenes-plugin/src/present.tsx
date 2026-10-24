@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import clsx from "clsx";
 
 import { PRESENTING_KEY, deck } from "./deck";
-import { elementStep, getSlides, getTheme, isEmptyPlaceholder, slideData } from "./slides";
+import { elementStep, getSlides, getTheme, slideData } from "./slides";
 
 import type { Frame } from "./slides";
 import type { AppState } from "@excalidraw/excalidraw/types";
@@ -211,12 +211,6 @@ class Presenter {
     const items = elements.filter((el) => el.frameId === frame.id && stepOf(el) > 0);
     const build = (progress: number) => {
       const overrides = new Map<string, { opacity?: number; offset?: { x: number; y: number } }>();
-      // placeholders nobody typed into: never shown to the audience
-      for (const el of elements) {
-        if (isEmptyPlaceholder(el)) {
-          overrides.set(el.id, { opacity: 0 });
-        }
-      }
       for (const el of items) {
         const step = stepOf(el);
         if (step > this.state.step) {

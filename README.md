@@ -280,22 +280,16 @@ pill) opens the deck:
   follows every change in the list. A duplicate keeps the slide's content,
   click steps and notes and goes right after its original; everything can
   be undone with ⌘Z. Per slide: title, speaker notes, "skip when
-  presenting" (backup slides), template.
+  presenting" (backup slides), "show template".
 - **Click steps:** select elements on a slide and pick "Click 1", "Click 2" …
   under "Selection appears"; they fade in one click at a time.
-- **Templates** (Style tab), like layouts in presentation software: the
-  first one ("Content") comes with a sample headline and body text (Lorem
-  ipsum) and a footer; add more ("Title", "Section", …) from any template.
-  Each slide picks one (slide details → Template); a new slide takes the
-  template of the slide it follows. A template text is either the same on
-  every slide (header, footer; `{page}` `{total}` `{title}` `{deck}`
-  `{date}` fill in themselves) or a **placeholder** you type into on each
-  slide (headline, text): until you do, it shows faded and stays hidden
-  when presenting and in PDFs; a typed headline names the slide.
-- **Changing a template:** selecting something on it opens the Style tab.
-  Every slide that uses it follows right away (typed text stays). On slides, fixed copies are locked;
-  unlock one to change it on that slide only. **Reset to template** brings
-  the template back for one slide, **Reset all slides** for the deck.
+- **Template:** one "Template" frame holds what every slide shows: header,
+  footer, logo, background. Edit it once; every slide follows. Template
+  texts can use `{page}` `{total}` `{title}` `{deck}` `{date}`. On slides
+  the copies are locked; unlock one to change it on that slide only (it
+  then stays as you made it). **Reset to template** brings the template
+  version and the deck style back for one slide, **Reset all slides** for
+  the whole deck.
 - **Deck style:** font, title and text size, colors, sloppiness, stroke,
   fill and transition, stored with the template. New elements use it, and
   elements that still have the deck's values follow when you change it.
@@ -303,11 +297,9 @@ pill) opens the deck:
 - **PDF**: the whole deck, the selected slide or any slides ("1, 3-5"),
   one 16:9 page per slide, title slides and template included. Text stays
   real text (selectable, searchable) with the fonts embedded once, and
-  pictures used on many slides (like the logo) are stored once. "Smaller
-  file" stores pictures at twice their size on the slide (JPEG where they
-  have no transparency). The scenes server prints it with your Chrome; on
-  kurviq.com (or if it can't) the browser's print dialog opens ("Save as
-  PDF").
+  pictures used on many slides (like the logo) are stored once: a 12-slide
+  deck is about 300 KB. The scenes server prints it with your Chrome; if it
+  can't, the browser's print dialog opens instead ("Save as PDF").
 - Deleting a template element on one slide (unlock it, delete it) keeps it
   off that slide, on every device, until **Reset to template**.
 

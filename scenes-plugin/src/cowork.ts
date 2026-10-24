@@ -196,9 +196,8 @@ export const sceneSize = (json: string, elements: readonly ExcalidrawElement[]) 
 });
 
 /** a deck's slides get their template copies (header, footer, page numbers) */
-/** the slides' template copies up to date; `applyPending`: template changes go to all slides (an agent's edit) */
-export const withTemplate = (elements: ExcalidrawElement[], deck: string, { applyPending = false } = {}) =>
-  syncTemplate(elements, deck, { applyPending })?.elements ?? elements;
+export const withTemplate = (elements: ExcalidrawElement[], deck: string) =>
+  syncTemplate(elements, deck)?.elements ?? elements;
 
 /** fields an agent must not set directly */
 const PROTECTED = new Set(["id", "type", "version", "versionNonce", "isDeleted", "index"]);
@@ -649,7 +648,7 @@ export const editSceneOnGitHub = async (
       convert,
     );
     const files = { ...(data.files || {}), ...(command.files || {}) };
-    const images = repairImages(withTemplate(edit.elements, command.name, { applyPending: true }).filter((el) => !el.isDeleted), files);
+    const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
     const elements = images.elements;
     const json = withSceneName(
       withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements),
@@ -727,7 +726,7 @@ export const editLocalScene = async (
     convert,
   );
   const files = { ...(data.files || {}), ...(command.files || {}) };
-  const images = repairImages(withTemplate(edit.elements, command.name, { applyPending: true }).filter((el) => !el.isDeleted), files);
+  const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
   const json = withSceneName(withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements), command.name);
   await scenesController.writeLocalOnly(command.name, json);

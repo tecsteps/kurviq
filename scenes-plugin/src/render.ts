@@ -16,7 +16,7 @@ import {
 
 import { withTemplate } from "./cowork";
 import { pickSlides } from "./pdfExport";
-import { elementStep, forAudience, getSlides, slideTitle } from "./slides";
+import { elementStep, getSlides, slideTitle } from "./slides";
 
 import type {
   ExcalidrawElement,
@@ -194,9 +194,6 @@ export const renderScene = async (
   }
   let visible: readonly NonDeletedExcalidrawElement[] =
     getNonDeletedElements(elements);
-  if (command.deck !== undefined) {
-    visible = forAudience(visible); // slides as the audience sees them
-  }
   elements = visible;
   if (!elements.length) {
     throw new Error("The scene is empty");

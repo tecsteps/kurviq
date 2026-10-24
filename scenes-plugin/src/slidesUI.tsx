@@ -17,22 +17,16 @@ import { presenter } from "./present";
 import { setSlideParam } from "./router";
 import {
   addSlide,
-  addTemplate,
-  applyTemplateChanges,
   applyTheme,
   createTemplate,
-  deleteTemplate,
   deleteSlides,
   duplicateSlides,
   getSlides,
   getTemplate,
-  getTemplates,
   getTheme,
   moveSlides,
   patchSlideData,
-  setPlaceholder,
   setSlideOrder,
-  setSlideTemplate,
   slideData,
   withSlideData,
 } from "./slides";
@@ -87,12 +81,11 @@ const setTheme = (patch: Partial<DeckTheme>) => {
   }
   const from = getTheme(elements);
   const to = { ...from, ...patch };
-  let themed = (applyTheme(elements, from, to) ?? elements).map((el) => (el.id === template.id ? withSlideData(el, { theme: to }) : el));
-  // the deck's style is no template change to decide on: every slide follows it
-  for (const t of getTemplates(themed)) {
-    themed = applyTemplateChanges(themed, t.id, { all: true });
-  }
-  api().updateScene({ elements: themed, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+  const themed = applyTheme(elements, from, to) ?? elements;
+  api().updateScene({
+    elements: themed.map((el) => (el.id === template.id ? withSlideData(el, { theme: to }) : el)),
+    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+  });
 };
 
 /** a slide back to the template: template elements restored, deck style applied */
@@ -369,7 +362,7 @@ const SlideList = () => {
 };
 
 const SlideDetails = ({ id }: { id: string }) => {
-  const { slides, templates } = useDeck();
+  const { slides } = useDeck();
   const slide = slides.find((s) => s.id === id);
   const [title, setTitle] = useState(slide?.title ?? "");
   const [notes, setNotes] = useState(slide?.notes ?? "");
@@ -423,21 +416,13 @@ const SlideDetails = ({ id }: { id: string }) => {
         <input type="checkbox" checked={slide.skip} onChange={(event) => patchSlideData(api(), new Map([[id, { skip: event.target.checked || undefined }]]))} />
         Skip when presenting (backup slide)
       </label>
-<label className="slides-field">
-        <span>Template</span>
-        <select
-          className="slides-input"
-          value={slide.layout ?? "none"}
-          onChange={(event) => setSlideTemplate(api(), [id], event.target.value)}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-          <option value="none">None</option>
-        </select>
+      <label className="slides-check">
+        <input
+          type="checkbox"
+          checked={slide.template}
+          onChange={(event) => patchSlideData(api(), new Map([[id, { template: event.target.checked ? undefined : false }]]))}
+        />
+        Show template (header, footer, logo…)
       </label>
       <div className="slides-row">
         <button type="button" className="slides-btn" onClick={() => presenter.start(id)}>
@@ -492,133 +477,6 @@ const StepPicker = () => {
   );
 };
 
-/** the deck's templates: click one to edit it on the canvas */
-const TemplateList = () => {
-  const { templates, thumbs } = useDeck();
-  const rename = (id: string, name: string) => {
-    const next = window.prompt("Template name", name)?.trim();
-    if (next && next !== name) {
-      api().updateScene({
-        elements: api()
-          .getSceneElementsIncludingDeleted()
-          .map((el) => (el.id === id ? newElementWith(el as any, { name: next } as any) : el)),
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-      });
-    }
-  };
-  return (
-    <>
-      <ul className="slides-templates">
-        {templates.map((t) => (
-          <li key={t.id} className="slides-card">
-            <span className="slides-card__actions">
-              <QuickTip tip="Rename" label={false}>
-                <button type="button" aria-label={`Rename ${t.name}`} onClick={() => rename(t.id, t.name)}>
-                  ✎
-                </button>
-              </QuickTip>
-              <QuickTip tip="New template from this one" label={false}>
-                <button
-                  type="button"
-                  aria-label={`New template from ${t.name}`}
-                  onClick={() => {
-                    const name = window.prompt("Name of the new template", `${t.name} 2`)?.trim();
-                    const id = name ? addTemplate(api(), t.id, name) : null;
-                    if (id) {
-                      setTimeout(() => focusFrame(id, false), 50);
-                    }
-                  }}
-                >
-                  ⧉
-                </button>
-              </QuickTip>
-              {templates.length > 1 && (
-                <QuickTip tip="Delete (its slides use the first template then)" label={false}>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${t.name}`}
-                    onClick={() => window.confirm(`Delete the template “${t.name}”?`) && deleteTemplate(api(), t.id)}
-                  >
-                    ×
-                  </button>
-                </QuickTip>
-              )}
-            </span>
-            <button type="button" className="slides-card__open slides-card__open--template" onClick={() => focusFrame(t.id, false)}>
-              <span className="slides-card__thumb">{thumbs[t.id] ? <img src={thumbs[t.id]} alt="" /> : null}</span>
-              <span className="slides-card__meta">
-                <span className="slides-card__title">{t.name}</span>
-                <span className="slides-card__badges">
-                  <span>
-                    {t.slides} slide{t.slides === 1 ? "" : "s"}
-                  </span>
-                </span>
-              </span>
-            </button>
-          </li>
-        ))}
-        <li>
-          <button
-            type="button"
-            className="slides-add"
-            onClick={() => {
-              // a copy of the template being edited (or the first one), to change from there
-              const from = templates.find((t) => t.id === deck.getState().activeId) ?? templates[0];
-              const name = from && window.prompt("Name of the new template (e.g. Title, Section)", "Section")?.trim();
-              const id = name ? addTemplate(api(), from.id, name) : null;
-              if (id) {
-                setTimeout(() => focusFrame(id, false), 50);
-              }
-            }}
-          >
-            <span className="slides-add__plus" aria-hidden="true">
-              +
-            </span>
-            New template
-          </button>
-        </li>
-      </ul>
-      <p className="slides-hint">
-        Texts on a template: <code>{"{page}"}</code> <code>{"{total}"}</code> <code>{"{title}"}</code> <code>{"{deck}"}</code>{" "}
-        <code>{"{date}"}</code> fill in themselves.
-      </p>
-    </>
-  );
-};
-
-/** a text selected on a template: the same on every slide, or typed on each slide */
-const PlaceholderSwitch = () => {
-  const { selection, templates } = useDeck();
-  const ids = new Set(templates.map((t) => t.id));
-  const texts = api()
-    .getSceneElements()
-    .filter((el) => selection.includes(el.id) && el.type === "text" && el.frameId && ids.has(el.frameId) && !(el as any).containerId);
-  if (!texts.length) {
-    return null;
-  }
-  const kinds = new Set(texts.map((el) => slideData(el).placeholder ?? "fixed"));
-  const value = kinds.size === 1 ? [...kinds][0] : "";
-  return (
-    <label className="slides-field">
-      <span>Selected text on the slides</span>
-      <select
-        className="slides-input"
-        value={value}
-        onChange={(event) => {
-          const kind = event.target.value as "fixed" | "title" | "text";
-          setPlaceholder(api(), texts.map((el) => el.id), kind === "fixed" ? null : kind);
-        }}
-        onKeyDown={(event) => event.stopPropagation()}
-      >
-        {value === "" && <option value="">Mixed</option>}
-        <option value="fixed">The same on every slide</option>
-        <option value="title">Headline, typed on each slide (names the slide)</option>
-        <option value="text">Text, typed on each slide</option>
-      </select>
-    </label>
-  );
-};
-
 const ThemeForm = () => {
   const { theme, templateId } = useDeck();
   // fonts the user added are deck fonts too (a hook: before any early return)
@@ -663,11 +521,11 @@ const ThemeForm = () => {
   );
   return (
     <section className="slides-details">
-      <div className="slides-section__title">Templates</div>
-      <TemplateList />
-      <PlaceholderSwitch />
-      <div className="slides-section__title">Deck style</div>
+      <div className="slides-section__title">Template &amp; style</div>
       <div className="slides-row">
+        <button type="button" className="slides-btn" onClick={() => focusFrame(templateId, false)}>
+          Edit template
+        </button>
         <QuickTip tip="Deck fonts and colors on every slide, template elements restored everywhere" label={false}>
           <button
             type="button"
@@ -682,6 +540,10 @@ const ThemeForm = () => {
           </button>
         </QuickTip>
       </div>
+      <p className="slides-hint">
+        Placeholders: <code>{"{page}"}</code> <code>{"{total}"}</code> <code>{"{title}"}</code> <code>{"{deck}"}</code>{" "}
+        <code>{"{date}"}</code>
+      </p>
       <label className="slides-field">
         <span>Font</span>
         {select("fontFamily", [...FONTS, ...customFonts.list().map((font): [string, number] => [font.family, font.id])])}
@@ -772,75 +634,29 @@ const slidesTab = (() => {
   };
 })();
 
-/** the template something selected belongs to (the frame itself or an element on it), or null */
-const selectedTemplate = () => {
-  const api = deck.getApi();
-  const { templates } = deck.getState();
-  if (!api || !templates.length) {
-    return null;
-  }
-  const ids = new Set(templates.map((t) => t.id));
-  const selected = api.getAppState().selectedElementIds;
-  for (const el of api.getSceneElements()) {
-    if (selected[el.id]) {
-      const id = ids.has(el.id) ? el.id : el.frameId && ids.has(el.frameId) ? el.frameId : null;
-      if (id) {
-        return id;
-      }
-    }
-  }
-  return null;
-};
-
-// editing a template (something on it selected): the Style tab opens. Leaving
-// it (a slide or nothing selected): the slide list returns, if it was opened
-// this way
+// editing the template (something on it selected): the Style tab opens;
+// back on a slide, the slide list returns (if it was opened this way)
 {
-  let inside: string | null = null;
+  let lastActive: string | null = null;
   let openedForTemplate = false;
-  let leaveTimer = 0;
   deck.subscribe(() => {
-    if (deck.paused) {
+    const { activeId, templateId } = deck.getState();
+    if (activeId === lastActive || deck.paused) {
       return;
     }
-    const now = selectedTemplate();
-    if (now === inside) {
-      return;
-    }
-    const was = inside;
-    inside = now;
-    clearTimeout(leaveTimer);
-    if (now) {
+    const was = lastActive;
+    lastActive = activeId;
+    if (templateId && activeId === templateId) {
       openedForTemplate = slidesTab.get() !== "style";
       slidesTab.set("style");
       const api = deck.getApi();
       if (api && api.getAppState().openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
         api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
       }
-      return;
+    } else if (was && was === templateId && openedForTemplate && slidesTab.get() === "style") {
+      openedForTemplate = false;
+      slidesTab.set("slides");
     }
-    if (!was) {
-      return;
-    }
-    // not while picking a tool, drawing or typing (the selection empties then
-    // too): still on the template, checked again until really left
-    const leave = () => {
-      const appState = deck.getApi()?.getAppState();
-      if (selectedTemplate() || !appState) {
-        inside = selectedTemplate();
-        return;
-      }
-      if (appState.activeTool.type !== "selection" || appState.newElement || appState.editingTextElement) {
-        inside = was;
-        leaveTimer = window.setTimeout(leave, 350);
-        return;
-      }
-      if (openedForTemplate && slidesTab.get() === "style") {
-        openedForTemplate = false;
-        slidesTab.set("slides");
-      }
-    };
-    leaveTimer = window.setTimeout(leave, 350);
   });
 }
 

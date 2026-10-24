@@ -150,20 +150,6 @@
     line-height: 1;
   }
 
-  .slides-templates {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .slides-card__open.slides-card__open--template {
-    grid-template-columns: 6.5rem 1fr;
-    cursor: pointer;
-  }
-
   .slides-card__open {
     display: grid;
     grid-template-columns: 1.1rem 6.5rem 1fr;
@@ -810,10 +796,4 @@ body.slides-presenting {
   .slides-hint {
     max-width: 18rem;
   }
-}
-
-// the template a slide uses, behind its name on the canvas (deck.ts)
-.excalidraw .frame-name[data-template]::after {
-  content: " (" attr(data-template) ")";
-  opacity: 0.55;
 }

@@ -9,9 +9,7 @@ import {
   DEFAULT_THEME,
   getSlides,
   getTemplate,
-  getTemplates,
   getTheme,
-  templateOf,
   renderSlide,
   slideData,
   slideVersion,
@@ -34,16 +32,11 @@ export type SlideInfo = {
   steps: number;
   frame: Frame;
   version: number;
-  /** the template it uses (null: none) */
-  layout: string | null;
 };
-
-export type TemplateInfo = { id: string; name: string; slides: number };
 
 export type DeckState = {
   slides: SlideInfo[];
   templateId: string | null;
-  templates: TemplateInfo[];
   theme: DeckTheme;
   /** slide id -> picture (data URL) */
   thumbs: Record<string, string>;
@@ -70,7 +63,7 @@ class Deck {
   /** paused while presenting (nothing is edited then) */
   paused = false;
 
-  state: DeckState = { slides: [], templateId: null, templates: [], theme: DEFAULT_THEME, thumbs: {}, selection: [], activeId: null };
+  state: DeckState = { slides: [], templateId: null, theme: DEFAULT_THEME, thumbs: {}, selection: [], activeId: null };
   private lastSelection = "";
 
   subscribe = (listener: () => void) => {
@@ -103,9 +96,7 @@ class Deck {
     api.onChange((elements, appState) => {
       this.onChange(elements);
       this.onSelection(elements, appState.selectedElementIds);
-      this.scheduleFrameLabels();
     });
-    api.onScrollChange(() => this.scheduleFrameLabels());
     this.onChange(api.getSceneElementsIncludingDeleted());
   }
 
@@ -159,9 +150,7 @@ class Deck {
 
   private rebuild(elements: readonly ExcalidrawElement[]) {
     const slides = getSlides(elements);
-    const templates = getTemplates(elements);
-    const template = templates[0] ?? null;
-    const layouts = slides.map((slide) => templateOf(slide, templates)?.id ?? null);
+    const template = getTemplate(elements);
     const steps = new Map<string, number>();
     for (const el of elements) {
       const step = slideData(el).step;
@@ -183,15 +172,9 @@ class Deck {
           steps: steps.get(frame.id) ?? 0,
           frame,
           version: frame.version,
-          layout: layouts[index],
         };
       }),
       templateId: template?.id ?? null,
-      templates: templates.map((t, i) => ({
-        id: t.id,
-        name: t.name?.trim() || `Template ${i + 1}`,
-        slides: layouts.filter((id) => id === t.id).length,
-      })),
       theme,
     });
     // the deck's style is the default for new elements (once per scene + theme)
@@ -237,8 +220,7 @@ class Deck {
     if (!reset && key === this.lastTemplateKey) {
       return;
     }
-    // changes to a template go to all its slides right away
-    const result = syncTemplate(elements, this.deckName(), { reset, applyPending: true });
+    const result = syncTemplate(elements, this.deckName(), { reset });
     if (result) {
       api.updateScene({
         elements: result.elements,
@@ -247,39 +229,6 @@ class Deck {
       });
     }
     this.lastTemplateKey = templateKey(api.getSceneElementsIncludingDeleted(), this.deckName());
-  }
-
-  // ---------------------------------------------------------------------------
-  // the template's name behind each slide's name on the canvas: Excalidraw's
-  // frame name labels get it as data-template (shown by CSS), left out where
-  // the label would no longer fit (zoomed out)
-  // ---------------------------------------------------------------------------
-
-  private labelFrame = 0;
-
-  private scheduleFrameLabels() {
-    cancelAnimationFrame(this.labelFrame);
-    // after Excalidraw rendered the labels
-    this.labelFrame = requestAnimationFrame(() => this.labelFrames());
-  }
-
-  private labelFrames() {
-    const names = new Map(this.state.templates.map((t) => [t.id, t.name]));
-    for (const slide of this.state.slides) {
-      const label = document.querySelector<HTMLElement>(`.frame-name[id$="-frame-name-${CSS.escape(slide.id)}"]`);
-      if (!label) {
-        continue;
-      }
-      const name = slide.layout ? names.get(slide.layout) : undefined;
-      if (!name) {
-        delete label.dataset.template;
-        continue;
-      }
-      label.dataset.template = name;
-      if (label.scrollWidth > label.clientWidth + 1) {
-        delete label.dataset.template;
-      }
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -300,7 +249,10 @@ class Deck {
     const files = api.getFiles();
     const background = api.getAppState().viewBackgroundColor;
     const frames: Frame[] = [...this.state.slides.map((s) => s.frame)];
-    frames.push(...getTemplates(elements));
+    const template = getTemplate(elements);
+    if (template) {
+      frames.push(template);
+    }
     let thumbs = this.state.thumbs;
     for (const frame of frames) {
       const version = slideVersion(elements, frame);

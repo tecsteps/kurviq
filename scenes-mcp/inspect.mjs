@@ -92,10 +92,10 @@ export const deckOrder = (elements) => {
   });
 };
 
-/** the frame a slide reference means: number (deck order), frame id or "template" (the first template) */
+/** the frame a slide reference means: number (deck order), frame id or "template" */
 export const findSlide = (elements, slide) => {
   if (slide === "template") {
-    return elements.filter((el) => isFrame(el) && slideData(el).role === "template").sort((a, b) => (slideData(a).order ?? 0) - (slideData(b).order ?? 0) || a.y - b.y || a.x - b.x)[0] ?? null;
+    return elements.find((el) => isFrame(el) && slideData(el).role === "template") ?? null;
   }
   if (typeof slide === "number" || /^\d+$/.test(String(slide))) {
     return deckOrder(elements)[Number(slide) - 1] ?? null;
@@ -119,17 +119,14 @@ export const summarize = (elements, { textsOffset = 0, textsLimit = 100 } = {}) 
       name: el.name ?? null,
       ...(slideNumber.has(el.id) ? { slide: slideNumber.get(el.id) } : {}),
       ...(slideData(el).role === "template" ? { template: true } : {}),
-      ...(slideData(el).layout ? { usesTemplate: slideData(el).layout } : {}),
       ...toRect(elementBounds(el)),
     }))
     .sort((a, b) => (a.slide ?? 0) - (b.slide ?? 0));
-  // the template's copies on every slide (ids "<element>~<slide>") would repeat the same labels;
-  // text typed into a placeholder copy is the slide's own, though
-  const typed = (el) => slideData(el).ph && !slideData(el).empty;
-  const copies = elements.filter((el) => slideData(el).copyOf && !typed(el)).length;
+  // the template's copies on every slide (ids "<element>~<slide>") would repeat the same labels
+  const copies = elements.filter((el) => slideData(el).copyOf).length;
 
   const texts = elements
-    .filter((el) => el.type === "text" && el.text?.trim() && (!slideData(el).copyOf || typed(el)))
+    .filter((el) => el.type === "text" && el.text?.trim() && !slideData(el).copyOf)
     .map((el) => {
       const container = el.containerId && byId.get(el.containerId);
       const rect = toRect(elementBounds(container || el));
@@ -147,7 +144,7 @@ export const summarize = (elements, { textsOffset = 0, textsLimit = 100 } = {}) 
     sceneBounds: toRect(commonBounds(elements)),
     countsByType,
     ...(frames.length ? { frames } : {}),
-    ...(copies ? { templateCopies: `${copies} elements are copies of templates on the slides (ids "<element>~<slide>", not listed): change the template instead; placeholder copies (customData.slides.ph) are typed on each slide` } : {}),
+    ...(copies ? { templateCopies: `${copies} elements are copies of the template on the slides (ids "<element>~<slide>", not listed): change the template instead` } : {}),
     textCount: texts.length,
     texts: texts.slice(textsOffset, textsOffset + textsLimit),
     ...(texts.length > textsOffset + textsLimit
