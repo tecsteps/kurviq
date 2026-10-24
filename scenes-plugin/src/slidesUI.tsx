@@ -203,7 +203,7 @@ const PdfPanel = () => {
 // -----------------------------------------------------------------------------
 
 const SlideList = () => {
-  const { slides, thumbs, activeId } = useDeck();
+  const { slides, thumbs, activeId, templateId } = useDeck();
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   /** the slide moved with the keyboard: its card keeps the focus after the list re-orders */
@@ -260,7 +260,8 @@ const SlideList = () => {
           className="slides-add"
           onClick={() => {
             const id = addSlide(api(), activeId ?? undefined);
-            setTimeout(() => focusFrame(id), 50);
+            focusFrame(id);
+            refocus.current = id; // the new slide's card: focused and scrolled to
           }}
         >
           <span className="slides-add__plus" aria-hidden="true">
@@ -300,6 +301,22 @@ const SlideList = () => {
           })}
         >
           <span className="slides-card__actions">
+            {templateId && (
+              <QuickTip tip={slide.template ? "Template off for this slide" : "Template on for this slide (header, footer, logo…)"} label={false}>
+                <button
+                  type="button"
+                  aria-label={`Template on slide ${slide.index + 1}`}
+                  aria-pressed={slide.template}
+                  onClick={() => patchSlideData(api(), new Map([[slide.id, { template: slide.template ? false : undefined }]]))}
+                >
+                  <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                    <rect x="2.5" y="4" width="15" height="12" rx="1.5" />
+                    <path d="M5 13h10" />
+                    {!slide.template && <path d="M3 3l14 14" />}
+                  </svg>
+                </button>
+              </QuickTip>
+            )}
             <QuickTip tip="Duplicate" label={false}>
               <button
                 type="button"
@@ -349,7 +366,7 @@ const SlideList = () => {
               <span className="slides-card__title">{slide.title}</span>
               <span className="slides-card__badges">
                 {slide.skip && <span>skipped</span>}
-                {!slide.template && <span>no template</span>}
+                {templateId && !slide.template && <span className="slides-card__badge--off">no template</span>}
                 {slide.steps > 0 && <span>{slide.steps} step{slide.steps === 1 ? "" : "s"}</span>}
                 {slide.notes && <span>notes</span>}
               </span>

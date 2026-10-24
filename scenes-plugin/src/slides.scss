@@ -213,6 +213,11 @@
       color: var(--color-gray-60, inherit);
       font-size: 0.68rem;
     }
+
+    .slides-card__badge--off {
+      background: #fff3bf;
+      color: #8a6100;
+    }
   }
 
   .slides-details {
@@ -796,4 +801,9 @@ body.slides-presenting {
   .slides-hint {
     max-width: 18rem;
   }
+}
+
+.excalidraw.theme--dark .slides-card__badge--off {
+  background: #5c4400;
+  color: #ffe08a;
 }
