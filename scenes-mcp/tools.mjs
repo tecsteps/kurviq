@@ -1767,7 +1767,8 @@ ${EDIT_HELP}
     { instructions: INSTRUCTIONS },
   );
   /** read_me also explains what this app adds: images/icons, ER heads, slides */
-  const SKILL_EXTRAS = ["## Editing elements", "## Limits", "## Formatted text", "## Slides (presentations)"]
+  // (online: "Images from your machine" holds the upload address the tool descriptions point to)
+  const SKILL_EXTRAS = ["## Editing elements", "## Limits", "## Formatted text", "## Slides (presentations)", "## Images from your machine"]
     .map((heading) => {
       const start = INSTRUCTIONS.indexOf(heading);
       const end = INSTRUCTIONS.indexOf("\n## ", start + heading.length);
