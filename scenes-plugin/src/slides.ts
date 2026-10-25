@@ -1099,6 +1099,31 @@ const findTitles = (elements: readonly ExcalidrawElement[], slide: Frame) => {
  * copies (their words stay theirs; place and style follow the template,
  * which takes them from where most slides have their headline).
  */
+/**
+ * The template's headline / eyebrow measured again (fonts loaded): one
+ * measured before its font was there is too small and cut off. Null when
+ * all fit.
+ */
+export const remeasureTitleBlock = (elements: readonly ExcalidrawElement[]) => {
+  const template = getTemplate(elements);
+  if (!template) {
+    return null;
+  }
+  let changed = false;
+  const next = elements.map((el: any) => {
+    if (el.isDeleted || el.frameId !== template.id || el.type !== "text" || el.containerId || !isTitleRole(el)) {
+      return el;
+    }
+    const size = refreshTextDimensions(el, null, new Map() as any, el.originalText ?? el.text);
+    if (!size || (Math.abs(size.height - el.height) < 1 && (el.autoResize === false || Math.abs(size.width - el.width) < 1))) {
+      return el;
+    }
+    changed = true;
+    return newElementWith(el, { text: size.text, height: size.height, ...(el.autoResize === false ? {} : { width: size.width, x: size.x }) } as any);
+  });
+  return changed ? next : null;
+};
+
 /** a template that never had headline and eyebrow: they are added (once) when the deck opens */
 export const needsTitleBlock = (elements: readonly ExcalidrawElement[]) => {
   const template = getTemplate(elements);

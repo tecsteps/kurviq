@@ -8,6 +8,7 @@ import { scenesController } from "./controller";
 import {
   addTitleBlock,
   needsTitleBlock,
+  remeasureTitleBlock,
   DEFAULT_THEME,
   getSlides,
   getTemplate,
@@ -59,6 +60,8 @@ class Deck {
   private lastTemplateKey = 0;
   /** headline and eyebrow being added to an older template */
   private addingTitles = false;
+  /** the scene whose template headline / eyebrow were measured again (once per scene) */
+  private remeasuredFor: string | null = null;
   private syncTimer = 0;
   private thumbTimer = 0;
   private thumbVersions = new Map<string, number>();
@@ -235,6 +238,18 @@ class Deck {
     const key = templateKey(elements, this.deckName());
     if (!reset && key === this.lastTemplateKey) {
       return;
+    }
+    // a headline / eyebrow measured before its font was loaded (cut off): measured again, once the font is there
+    if (this.remeasuredFor !== this.deckName()) {
+      this.remeasuredFor = this.deckName();
+      Fonts.loadElementsFonts(elements.filter((el) => el.type === "text" && !el.isDeleted) as any)
+        .catch(() => [])
+        .then(() => {
+          const fixed = this.api === api ? remeasureTitleBlock(api.getSceneElementsIncludingDeleted()) : null;
+          if (fixed) {
+            api.updateScene({ elements: fixed, captureUpdate: CaptureUpdateAction.NEVER });
+          }
+        });
     }
     const result = syncTemplate(elements, this.deckName(), { reset });
     if (result) {
