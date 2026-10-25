@@ -22,6 +22,7 @@ import { deck } from "./deck";
 import { PresentationOverlay, presenter } from "./present";
 import { SlideNotesOverlay } from "./notes";
 import { TemplateChangesBar } from "./templateChanges";
+import { installTitleTips } from "./titleTips";
 import { ICON_PATHS } from "./icons";
 import { QuickTip } from "./quickTip";
 import { loadFontLibrary, registerSceneFonts } from "./fonts";
@@ -47,6 +48,8 @@ import type { Activity, SceneListItem, ScenesState, SyncStatus } from "./control
 import type { SceneVersion } from "./api";
 
 import "./scenes.scss";
+
+installTitleTips();
 
 
 const UNTITLED_LABEL = "Untitled";
