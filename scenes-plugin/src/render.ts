@@ -247,18 +247,15 @@ export const renderScene = async (
     focus = [x, y, x + width, y + height];
   }
 
-  const shown = slide
-    ? visible
-    : focus
-    ? withBoundText(
-        elementsOverlappingBBox({
-          elements: visible,
-          bounds: focus,
-          type: "overlap",
-        }),
-        visible,
-      )
-    : visible;
+  const overlapping = (bounds: Bounds) =>
+    withBoundText(elementsOverlappingBBox({ elements: visible, bounds, type: "overlap" }), visible);
+  let shown = slide ? visible : focus ? overlapping(focus) : visible;
+  if (focus && !slide && shown.length) {
+    // the picture covers everything overlapping the focus (a frame, a
+    // background: the whole slide), so everything in that area is drawn,
+    // not just what touches the focus (else a slide looks half empty)
+    shown = overlapping(getCommonBounds(shown) as Bounds);
+  }
   if (!shown.length) {
     throw new Error("Nothing is drawn in that region");
   }

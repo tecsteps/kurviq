@@ -348,11 +348,17 @@ const applyEdits = async (
       }
       if (label !== undefined && el.type !== "text") {
         // { label: { text, fontSize, … } } on a shape edits (or creates) its label
-        const spec = typeof label === "string" ? { text: label } : { ...label };
-        delete spec.id;
         const existing = labelOf(id);
+        // a plain label drops the old one's formatting, like a text update
+        const spec: Record<string, any> = typeof label === "string" ? applyMarkdownUpdate(existing ?? {}, { text: label }) : { ...label };
+        delete spec.id;
         if (existing) {
-          patches.set(existing.id, { ...(patches.get(existing.id) || {}), ...spec });
+          const before = patches.get(existing.id) || {};
+          patches.set(existing.id, {
+            ...before,
+            ...spec,
+            ...(spec.customData ? { customData: mergeCustomData((before.customData ?? existing.customData) as any, spec.customData) } : {}),
+          });
           if (typeof spec.text === "string") {
             patches.get(existing.id)!.originalText = spec.text;
           }
@@ -360,7 +366,8 @@ const applyEdits = async (
           textUpdated.add(existing.id);
           reshaped.add(id);
         } else if (typeof spec.text === "string") {
-          newLabels.push({ type: "text", id: `${id}-label`, containerId: id, ...spec });
+          const { rich, ...customData } = spec.customData || {};
+          newLabels.push({ type: "text", id: `${id}-label`, containerId: id, ...spec, customData: rich ? { ...customData, rich } : customData });
         }
       }
       if (el.type === "text" && typeof patch.text === "string") {
@@ -495,8 +502,14 @@ const applyEdits = async (
     const current = byId();
     const clash = toAdd.filter((el) => current.get(el?.id) && !current.get(el.id)!.isDeleted);
     if (clash.length && !command.upsert) {
+      // deleting a frame takes what is in it (frameId), not what only lies on it
+      const deletedFrames = new Set((command.delete || []).filter((id) => ["frame", "magicframe"].includes(input.find((el) => el.id === id)?.type as string)));
+      const leftOver = clash.filter((el) => deletedFrames.size && !current.get(el.id)!.frameId);
       throw new Error(
-        `Element ids already exist: ${clash.map((el) => el.id).join(", ")} — use update for existing elements, pick new ids, or pass upsert: true to replace them (nothing was changed)`,
+        `Element ids already exist: ${clash.map((el) => el.id).join(", ")} — use update for existing elements, pick new ids, or pass upsert: true to replace them (nothing was changed)` +
+          (leftOver.length
+            ? `. ${leftOver.map((el) => el.id).join(", ")} survived the frame you deleted: they had no frameId (not part of the frame, only on top of it); delete them too`
+            : ""),
       );
     }
     if (clash.length) {

@@ -40,12 +40,14 @@ export const applyMarkdown = (el: any) => {
  * `text` drops the formatting.
  */
 export const applyMarkdownUpdate = (el: any, patch: Record<string, any>) => {
+  // (an update's customData merges into the element's: `rich: null` removes the formatting)
   if (typeof patch.markdown === "string") {
     const { markdown, ...rest } = patch;
-    return { ...rest, ...fromMarkdown(markdown, (patch.customData as any) ?? el.customData) };
+    const { text, customData } = fromMarkdown(markdown, (patch.customData as any) ?? el?.customData);
+    return { ...rest, text, customData: { ...customData, rich: customData.rich ?? null } };
   }
-  if (typeof patch.text === "string" && el.customData?.rich && !patch.customData) {
-    return { ...patch, customData: withRich(el.customData, null) };
+  if (typeof patch.text === "string" && !patch.customData?.rich) {
+    return { ...patch, customData: { ...(patch.customData || {}), rich: null } };
   }
   return patch;
 };
