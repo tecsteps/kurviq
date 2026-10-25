@@ -173,7 +173,8 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
       const rect = (root.closest(".slides-notes-pop") ?? root).getBoundingClientRect();
       return [x ? rect.right : rect.left, y ? rect.bottom : rect.top];
     };
-    root = createRichEditable(document, element, app, corner) as any;
+    // (notes are markdown: no font of their own)
+    root = createRichEditable(document, element, app, corner, { fonts: false }) as any;
     root.classList.add("slides-notes-pop__editor");
     root.style.fontSize = `${NOTES_SIZE}px`;
     root.style.lineHeight = "1.45";

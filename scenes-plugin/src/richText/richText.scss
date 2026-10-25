@@ -244,3 +244,16 @@
     white-space: normal;
   }
 }
+
+// the font: its name in the toolbar (shortened), the list scrolls
+.rt-toolbar__button--font span {
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-toolbar__fonts {
+  max-height: 16rem;
+  overflow-y: auto;
+}

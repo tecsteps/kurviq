@@ -29,7 +29,7 @@ import {
   saveLocalScene,
   withTemplate,
 } from "./cowork";
-import { placeOnSlides } from "./slides";
+import { bodyStyle, placeOnSlides } from "./slides";
 import { checkDeck } from "./deckCheck";
 import { pickSlides, slidesHtml } from "./pdfExport";
 import { renderScene } from "./render";
@@ -237,9 +237,24 @@ const withFontIds = (el: any) => {
   return next;
 };
 
+const withBodyStyle = (el: any, body: NonNullable<ReturnType<typeof bodyStyle>>) => {
+  if (el.version !== undefined) {
+    return el;
+  }
+  if (el.type === "text" && !el.containerId) {
+    return { fontFamily: body.fontFamily, fontSize: body.fontSize, strokeColor: body.strokeColor, ...el };
+  }
+  if (el.label && typeof el.label === "object" && el.label.text !== undefined) {
+    return { ...el, label: { fontFamily: body.fontFamily, strokeColor: body.strokeColor, ...el.label } };
+  }
+  return el;
+};
+
 const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) => {
   const input = raw.map(withFontIds);
-  const elements = placeOnSlides(input.map(applyMarkdown), input);
+  // in a deck, new text without its own font / size / color takes the template's body text style (like the app's defaults)
+  const body = bodyStyle(input.filter((el) => el && el.version !== undefined));
+  const elements = placeOnSlides(input.map(applyMarkdown), input).map((el) => (el && body ? withBodyStyle(el, body) : el));
   // text is measured during conversion — the fonts (incl. the characters
   // used) must be loaded, otherwise widths are computed with a fallback font
   // and the text gets cut off in the user's browser

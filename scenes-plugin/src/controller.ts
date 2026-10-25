@@ -996,7 +996,11 @@ class ScenesController {
       const api = this.requireApi();
       const elements = api.getSceneElements();
       if (elements.length) {
-        api.setViewport({ target: elements, fit: "scale-down" });
+        // with room around it: clear of the toolbars, not touching the edges
+        const { width, height } = api.getAppState();
+        const vertical = Math.max(72, Math.round(height * 0.1));
+        const horizontal = Math.max(24, Math.round(width * 0.06));
+        api.setViewport({ target: elements, fit: "scale-down", offsets: { top: vertical, bottom: vertical, left: horizontal, right: horizontal } });
       }
       if (checkGitHub && name !== null) {
         this.checkOpenedScene(name);

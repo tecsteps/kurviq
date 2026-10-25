@@ -6,7 +6,10 @@ import { CaptureUpdateAction, Fonts } from "@excalidraw/excalidraw";
 
 import { scenesController } from "./controller";
 import {
+  addBodyText,
   addTitleBlock,
+  bodyStyle,
+  needsBodyText,
   needsTitleBlock,
   remeasureTitleBlock,
   DEFAULT_THEME,
@@ -58,6 +61,8 @@ class Deck {
   private listeners = new Set<() => void>();
   private lastKey = "";
   private lastTemplateKey = 0;
+  /** the body text style last made the editor's default */
+  private lastBodyKey = "";
   /** headline and eyebrow being added to an older template */
   private addingTitles = false;
   /** the scene whose template headline / eyebrow were measured again (once per scene) */
@@ -186,6 +191,19 @@ class Deck {
       templateId: template?.id ?? null,
       theme,
     });
+    // the template's body text sample: the style of new text (once per scene and style)
+    const body = bodyStyle(elements);
+    const bodyKey = body ? `${this.deckName()}:${JSON.stringify(body)}` : "";
+    if (bodyKey && bodyKey !== this.lastBodyKey && this.api) {
+      this.lastBodyKey = bodyKey;
+      const api = this.api;
+      setTimeout(() =>
+        api.updateScene({
+          appState: { currentItemFontFamily: body!.fontFamily as any, currentItemFontSize: body!.fontSize, currentItemStrokeColor: body!.strokeColor },
+          captureUpdate: CaptureUpdateAction.NEVER,
+        }),
+      );
+    }
 
   }
 
@@ -216,16 +234,20 @@ class Deck {
       return;
     }
     const elements = api.getSceneElementsIncludingDeleted();
-    // a template from before headline and eyebrow: they come once, measured with the deck's fonts
-    if (needsTitleBlock(elements)) {
+    // a template from before headline, eyebrow and body text: they come once, measured with the deck's fonts
+    if (needsTitleBlock(elements) || needsBodyText(elements)) {
       if (!this.addingTitles) {
         this.addingTitles = true;
         Fonts.loadElementsFonts(elements.filter((el) => el.type === "text" && !el.isDeleted) as any)
           .catch(() => [])
           .then(() => {
-            const result = this.api === api ? addTitleBlock(api.getSceneElementsIncludingDeleted()) : null;
-            if (result) {
-              api.updateScene({ elements: result.elements, captureUpdate: CaptureUpdateAction.NEVER });
+            if (this.api !== api) {
+              return;
+            }
+            const titled = addTitleBlock(api.getSceneElementsIncludingDeleted())?.elements ?? api.getSceneElementsIncludingDeleted();
+            const withBody = addBodyText(titled) ?? titled;
+            if (withBody !== api.getSceneElementsIncludingDeleted()) {
+              api.updateScene({ elements: withBody, captureUpdate: CaptureUpdateAction.NEVER });
             }
           })
           .finally(() => {

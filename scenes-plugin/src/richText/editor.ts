@@ -64,6 +64,8 @@ export type RichEditorApi = {
   toggleList: (kind: ParaKind) => void;
   stepSize: (direction: 1 | -1) => void;
   setLineHeight: (value: number) => void;
+  /** the text's font (one per element); null: no font choice here (speaker notes) */
+  font: { get: () => number; set: (fontFamily: number) => void } | null;
   saveSelection: () => void;
   /** a popover field takes the focus: the editor stays open meanwhile */
   suspendBlur: () => void;
@@ -78,6 +80,7 @@ export const createRichEditable = (
   element: any,
   app: any,
   getViewportCoords: (x: number, y: number) => [number, number],
+  { fonts = true }: { fonts?: boolean } = {},
 ) => {
   const ownerWindow = ownerDocument.defaultView ?? window;
   const root = ownerDocument.createElement("div") as HTMLDivElement & Record<string, any>;
@@ -840,6 +843,20 @@ export const createRichEditable = (
       root.style.lineHeight = String(value);
       emit();
     },
+    font: fonts
+      ? {
+          get: () => latest().fontFamily as number,
+          set: (fontFamily: number) => {
+            const el = app.scene.getElement(element.id);
+            if (!el || el.fontFamily === fontFamily) {
+              return;
+            }
+            // the whole text (Excalidraw keeps one font per element); measured again
+            app.scene.mutateElement(el, { fontFamily });
+            emit();
+          },
+        }
+      : null,
     saveSelection: () => {
       readSelection();
     },

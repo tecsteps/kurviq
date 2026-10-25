@@ -220,7 +220,10 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
   `markdown`), e.g. `{ "id": "<template headline id>~<frame id>", "text":
   "Our plan" }`; read_scene lists them. Every template has both (the app adds
   them once to an older template when it opens the deck; `addTitleBlock:
-  true` does it right away); a deleted one stays deleted.
+  true` does it right away); a deleted one stays deleted. A template text
+  with `"role": "body"` is the body text sample: not copied to slides, its
+  font / size / color are the style of new text (text you add without
+  `fontFamily` / `fontSize` / `strokeColor` takes them, as in the app).
 - Text alignment: give a text `width` and it becomes a box from `x` to
   `x + width`: lines wrap at the width and `textAlign` (left, center, right)
   aligns them inside it (e.g. a caption centered under a shape, a paragraph).

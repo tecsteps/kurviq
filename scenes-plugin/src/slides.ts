@@ -64,7 +64,7 @@ export const DEFAULT_THEME: DeckTheme = {
 
 export type SlideData = {
   /** the template frame; on its texts: the headline / eyebrow (each slide writes its own) */
-  role?: "template" | "headline" | "eyebrow";
+  role?: "template" | "headline" | "eyebrow" | "body";
   theme?: Partial<DeckTheme>;
   order?: number;
   notes?: string;
@@ -73,6 +73,8 @@ export type SlideData = {
   template?: boolean;
   /** the template: headline and eyebrow were added (once; deleted ones stay deleted) */
   titleBlock?: true;
+  /** the template: its body text sample was added (once) */
+  bodyText?: true;
   /** template copies: the template element it copies */
   copyOf?: string;
   /** template copies: the template's values at the last sync (what differs from them was changed by hand) */
@@ -486,7 +488,14 @@ export const syncTemplate = (
   const slides = getSlides(elements);
   // (a placeholder's sample text from the layouts version is not copied)
   const sources = template
-    ? elements.filter((el) => !el.isDeleted && el.frameId === template.id && !(slideData(el) as { placeholder?: string }).placeholder)
+    ? elements.filter(
+        (el) =>
+          !el.isDeleted &&
+          el.frameId === template.id &&
+          !(slideData(el) as { placeholder?: string }).placeholder &&
+          // the body text sample only sets the style of new text: not on the slides
+          slideData(el).role !== "body",
+      )
     : [];
   const templateIds = new Set(sources.map((el) => el.id));
   const byId = new Map(elements.map((el) => [el.id, el]));
@@ -963,6 +972,7 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
     role: "template",
     theme,
     titleBlock: true,
+    bodyText: true,
   });
   const text = (id: string, x: number, value: string, align: "left" | "right") =>
     ({
@@ -1004,6 +1014,17 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
   } as any;
   const footer = [
     ...titleBlock(frame, theme),
+    templateText(frame, {
+      id: `${frame.id}-body`,
+      x: frame.x + 120,
+      y: frame.y + 300,
+      text: "Body text: the style of new text on slides",
+      originalText: "Body text: the style of new text on slides",
+      fontSize: theme.bodySize,
+      fontFamily: theme.fontFamily,
+      strokeColor: theme.textColor,
+      customData: { slides: { role: "body" } },
+    }),
     line,
     text(`${frame.id}-deck`, frame.x + 60, "{deck}", "left"),
     text(`${frame.id}-page`, frame.x + width - 360, "{page} / {total}", "right"),
@@ -1111,7 +1132,7 @@ export const remeasureTitleBlock = (elements: readonly ExcalidrawElement[]) => {
   }
   let changed = false;
   const next = elements.map((el: any) => {
-    if (el.isDeleted || el.frameId !== template.id || el.type !== "text" || el.containerId || !isTitleRole(el)) {
+    if (el.isDeleted || el.frameId !== template.id || el.type !== "text" || el.containerId || !(isTitleRole(el) || slideData(el).role === "body")) {
       return el;
     }
     const size = refreshTextDimensions(el, null, new Map() as any, el.originalText ?? el.text);
@@ -1122,6 +1143,67 @@ export const remeasureTitleBlock = (elements: readonly ExcalidrawElement[]) => {
     return newElementWith(el, { text: size.text, height: size.height, ...(el.autoResize === false ? {} : { width: size.width, x: size.x }) } as any);
   });
   return changed ? next : null;
+};
+
+/** the template's body text sample: the style of new text on slides (null: none) */
+export const bodyStyle = (elements: readonly ExcalidrawElement[]) => {
+  const template = getTemplate(elements);
+  const body = template
+    ? (elements.find((el) => !el.isDeleted && el.frameId === template.id && slideData(el).role === "body" && el.type === "text") as any)
+    : null;
+  return body ? { fontFamily: body.fontFamily as number, fontSize: body.fontSize as number, strokeColor: body.strokeColor as string, textAlign: body.textAlign as string } : null;
+};
+
+/** a template without the body text sample (never had it): added (once) when the deck opens */
+export const needsBodyText = (elements: readonly ExcalidrawElement[]) => {
+  const template = getTemplate(elements);
+  return (
+    !!template &&
+    !slideData(template).bodyText &&
+    !elements.some((el) => !el.isDeleted && el.frameId === template.id && slideData(el).role === "body")
+  );
+};
+
+/**
+ * The body text sample on the template, styled like the slides' most
+ * common body text (else the defaults), below the headline
+ */
+export const addBodyText = (elements: readonly ExcalidrawElement[]) => {
+  const template = getTemplate(elements);
+  if (!template || !needsBodyText(elements)) {
+    return null;
+  }
+  const slides = getSlides(elements);
+  const slideIds = new Set(slides.map((slide) => slide.id));
+  const counts = new Map<string, { count: number; el: any }>();
+  for (const el of elements as any[]) {
+    if (el.isDeleted || el.type !== "text" || el.containerId || !slideIds.has(el.frameId) || slideData(el).copyOf || el.fontSize < 14 || el.fontSize > 48) {
+      continue;
+    }
+    const key = `${el.fontFamily}|${el.fontSize}|${el.strokeColor}`;
+    counts.set(key, { count: (counts.get(key)?.count ?? 0) + 1, el });
+  }
+  const common = [...counts.values()].sort((a, b) => b.count - a.count)[0]?.el;
+  const headline = elements.find((el) => !el.isDeleted && el.frameId === template.id && slideData(el).role === "headline") as any;
+  const theme = getTheme(elements);
+  const sample = templateText(template, {
+    id: `${template.id}-body`,
+    x: headline?.x ?? template.x + 120,
+    y: headline ? headline.y + headline.height + 60 : template.y + 300,
+    text: "Body text: the style of new text on slides",
+    originalText: "Body text: the style of new text on slides",
+    fontSize: common?.fontSize ?? theme.bodySize,
+    fontFamily: common?.fontFamily ?? theme.fontFamily,
+    strokeColor: common?.strokeColor ?? theme.textColor,
+    customData: { slides: { role: "body" } },
+  });
+  const [measured] = restoreElements([sample], null).map((el: any) => ({
+    ...el,
+    ...(refreshTextDimensions(el, null, new Map() as any, el.originalText ?? el.text) || {}),
+  }));
+  const next = [...elements.map((el) => (el.id === template.id ? withSlideData(el, { bodyText: true }) : el)), measured as ExcalidrawElement];
+  syncInvalidIndices(next as any);
+  return next;
 };
 
 /** a template that never had headline and eyebrow: they are added (once) when the deck opens */

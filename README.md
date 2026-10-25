@@ -313,7 +313,8 @@ pill) opens the deck:
   once, when it opens): slides' own headlines where the template's goes
   become theirs (words kept, place and style from the template), other
   slides (a title slide …) keep their layout. Don't want the eyebrow?
-  Delete it on the template.
+  Delete it on the template. The template's **Body text** sample isn't on
+  the slides: its font, size and color are the style of new text.
 - **Deck style** is the template: style its elements with Excalidraw's own
   tools (there is no separate theme). The Style tab
   has Edit template, Reset all slides and the

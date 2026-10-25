@@ -1,5 +1,8 @@
 // The formatting toolbar above the text being edited.
 
+// (from common, not the package index: this file is part of Excalidraw's own editor)
+import { FONT_FAMILY } from "@excalidraw/common";
+
 import type { RichEditorApi } from "./editor";
 import { safeLink } from "./model";
 
@@ -33,6 +36,21 @@ const TEXT_COLORS = ["#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00", "#9c
 const HIGHLIGHTS = ["#ffec99", "#ffc9c9", "#b2f2bb", "#a5d8ff", "#d0bfff", "#ffd8a8", "#e9ecef"];
 const LINE_HEIGHTS: Array<[string, number]> = [["Single", 1], ["1.15", 1.15], ["1.25 (default)", 1.25], ["1.5", 1.5], ["Double", 2]];
 const SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96];
+
+/** Excalidraw's fonts as its font picker lists them, then the fonts added in Kurviq (registered in FONT_FAMILY, see ../fonts.ts) */
+const BUILT_IN_FONTS = ["Excalifont", "Nunito", "Lilita One", "Comic Shanns", "Virgil", "Helvetica", "Cascadia"];
+const KNOWN = new Set([...BUILT_IN_FONTS, "Liberation Sans", "Assistant"]);
+const fontList = (): Array<[string, number]> => {
+  const table = FONT_FAMILY as Record<string, number>;
+  const added = Object.keys(table)
+    .filter((name) => !KNOWN.has(name) && table[name] > 100)
+    .sort((a, b) => a.localeCompare(b));
+  return [...BUILT_IN_FONTS, ...added].filter((name) => table[name] !== undefined).map((name): [string, number] => [name, table[name]]);
+};
+const fontName = (id: number) =>
+  fontList().find(([, value]) => value === id)?.[0] ??
+  Object.entries(FONT_FAMILY as Record<string, number>).find(([, value]) => value === id)?.[0] ??
+  "Font";
 
 export const createToolbar = (
   api: RichEditorApi,
@@ -219,6 +237,33 @@ export const createToolbar = (
     );
     size.classList.add("rt-toolbar__button--size");
 
+    // the font (of the whole text): its name, a list to pick another
+    const fontControl = api.font;
+    const font = fontControl
+      ? button("font", "Font (the whole text)", "", (anchor) =>
+          openPopover(anchor, (pop) => {
+            const current = fontControl.get();
+            const list = ownerDocument.createElement("div");
+            list.className = "rt-toolbar__sizes rt-toolbar__fonts";
+            for (const [name, id] of fontList()) {
+              const item = ownerDocument.createElement("button");
+              item.type = "button";
+              item.className = `rt-toolbar__size${id === current ? " rt-toolbar__size--active" : ""}`;
+              item.textContent = name;
+              item.style.fontFamily = `"${name}", sans-serif`;
+              item.addEventListener("click", () => {
+                fontControl.set(id);
+                closePopover();
+                update();
+              });
+              list.appendChild(item);
+            }
+            pop.appendChild(list);
+          }),
+        )
+      : null;
+    font?.classList.add("rt-toolbar__button--size", "rt-toolbar__button--font");
+
     const sep = () => {
       const s = ownerDocument.createElement("span");
       s.className = "rt-toolbar__sep";
@@ -226,6 +271,7 @@ export const createToolbar = (
     };
 
     el.append(
+      ...(font ? [font] : []),
       size,
       sep(),
       button("b", `Bold (${MOD}B)`, ICONS.b, () => api.toggleMark("b")),
@@ -337,6 +383,10 @@ export const createToolbar = (
     const size = buttons.get("size");
     if (size) {
       size.innerHTML = `<span>${px ?? "–"}</span>${ICONS.chevron}`;
+    }
+    const font = buttons.get("font");
+    if (font && api.font) {
+      font.innerHTML = `<span>${fontName(api.font.get())}</span>${ICONS.chevron}`;
     }
   };
 
