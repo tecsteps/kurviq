@@ -683,6 +683,23 @@ const slidesTab = (() => {
   });
 }
 
+/** the template's edit icon on the canvas (notes.tsx): the Style tab, or closed again */
+export const toggleTemplateStyle = () => {
+  const api = deck.getApi();
+  if (!api) {
+    return;
+  }
+  const open = api.getAppState().openSidebar?.name === SLIDES_SIDEBAR_NAME;
+  if (open && slidesTab.get() === "style") {
+    api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: false });
+    return;
+  }
+  slidesTab.set("style");
+  if (!open) {
+    api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
+  }
+};
+
 const icon = (children: ReactNode) => (
   <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     {children}

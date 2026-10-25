@@ -1,4 +1,5 @@
 // Speaker notes: an icon after each slide's name on the canvas, and a popover
+// (the template gets an edit icon instead: it opens the deck's style)
 // to see and edit a slide's notes with formatting (the same editor and
 // toolbar as text on the canvas). Notes are stored as markdown-like text in
 // the slide's `customData.slides.notes` (see richText/model.ts), so plain
@@ -11,6 +12,7 @@ import clsx from "clsx";
 import { deck } from "./deck";
 import { usePresenter } from "./present";
 import { patchSlideData } from "./slides";
+import { toggleTemplateStyle } from "./slidesUI";
 import { createRichEditable } from "./richText/editor";
 import { docFromMarkdown, docFromPlain, isPlainDoc, markdownOf, plainOf, richDocOf } from "./richText/model";
 import { docToHtml } from "./richText/layout";
@@ -58,7 +60,7 @@ const useOpenId = () =>
 type Spot = { x: number; y: number; h: number };
 
 const useNameSpots = (enabled: boolean) => {
-  const { slides } = useSyncExternalStore(deck.subscribe, deck.getState);
+  const { slides, templateId } = useSyncExternalStore(deck.subscribe, deck.getState);
   const [spots, setSpots] = useState<Record<string, Spot>>({});
   useEffect(() => {
     if (!enabled) {
@@ -69,14 +71,14 @@ const useNameSpots = (enabled: boolean) => {
     let last = "";
     const loop = () => {
       const next: Record<string, Spot> = {};
-      for (const slide of slides) {
-        const name = document.querySelector<HTMLElement>(`.excalidraw [id$="-frame-name-${CSS.escape(slide.id)}"]`);
+      for (const id of [...slides.map((slide) => slide.id), ...(templateId ? [templateId] : [])]) {
+        const name = document.querySelector<HTMLElement>(`.excalidraw [id$="-frame-name-${CSS.escape(id)}"]`);
         if (!name || name.querySelector("input")) {
           continue; // off screen, or being renamed
         }
         const rect = name.getBoundingClientRect();
         if (rect.width) {
-          next[slide.id] = { x: Math.round(rect.right), y: Math.round(rect.top), h: Math.round(rect.height) };
+          next[id] = { x: Math.round(rect.right), y: Math.round(rect.top), h: Math.round(rect.height) };
         }
       }
       const key = JSON.stringify(next);
@@ -88,7 +90,7 @@ const useNameSpots = (enabled: boolean) => {
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [enabled, slides]);
+  }, [enabled, slides, templateId]);
   return spots;
 };
 
@@ -184,12 +186,12 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
 // -----------------------------------------------------------------------------
 
 export const SlideNotesOverlay = () => {
-  const { slides } = useSyncExternalStore(deck.subscribe, deck.getState);
+  const { slides, templateId } = useSyncExternalStore(deck.subscribe, deck.getState);
   const presenting = usePresenter().active;
   const id = useOpenId();
   const api = deck.getApi();
   const appState = api?.getAppState();
-  const enabled = !!api && !presenting && !appState?.viewModeEnabled && slides.length > 0;
+  const enabled = !!api && !presenting && !appState?.viewModeEnabled && (slides.length > 0 || !!templateId);
   const spots = useNameSpots(enabled);
   const container = document.querySelector<HTMLElement>(".excalidraw");
   const dark = appState?.theme === "dark";
@@ -263,6 +265,22 @@ export const SlideNotesOverlay = () => {
           </button>
         );
       })}
+      {templateId && spots[templateId] && (
+        <button
+          type="button"
+          className="slides-notes-btn slides-notes-btn--has"
+          style={{ left: spots[templateId].x + 4, top: spots[templateId].y + spots[templateId].h / 2 }}
+          title="Edit the deck's style (fonts, colors, template)"
+          aria-label="Edit the deck's style"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={toggleTemplateStyle}
+        >
+          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M13.5 3.5l3 3L7 16H4v-3z" />
+            <path d="M11.5 5.5l3 3" />
+          </svg>
+        </button>
+      )}
       {slide && (
         <div
           className="slides-notes-pop"
