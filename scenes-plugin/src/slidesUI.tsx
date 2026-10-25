@@ -2,6 +2,18 @@
 // per-slide settings, reveal steps, and the deck's template + style.
 
 import { CaptureUpdateAction, FONT_FAMILY, Sidebar, newElementWith } from "@excalidraw/excalidraw";
+import {
+  FillCrossHatchIcon,
+  FillHachureIcon,
+  FillSolidIcon,
+  FillZigZagIcon,
+  SloppinessArchitectIcon,
+  SloppinessArtistIcon,
+  SloppinessCartoonistIcon,
+  StrokeWidthBaseIcon,
+  StrokeWidthBoldIcon,
+  StrokeWidthExtraBoldIcon,
+} from "@excalidraw/excalidraw/components/icons";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import clsx from "clsx";
@@ -65,6 +77,9 @@ const focusFrame = (id: string, select = true) => {
   const number = getSlides(api().getSceneElements()).findIndex((slide) => slide.id === id) + 1;
   setSlideParam(number || null);
 };
+
+/** Excalidraw's first swatches (its stroke colors) */
+const SWATCHES = ["#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00"];
 
 const FONTS: Array<[string, number]> = [
   ["Excalifont (hand-drawn)", FONT_FAMILY.Excalifont],
@@ -533,11 +548,44 @@ const ThemeForm = () => {
       ))}
     </select>
   );
+  /** a row of buttons, like Excalidraw's own properties (stroke width, sloppiness …) */
+  const choice = <K extends keyof DeckTheme>(key: K, label: string, options: Array<{ value: DeckTheme[K]; text: string; icon: ReactNode }>) => (
+    <fieldset>
+      <legend>{label}</legend>
+      <div className="buttonList">
+        {options.map((option) => (
+          <label key={String(option.value)} className={clsx({ active: theme[key] === option.value, "kq-choice--text": typeof option.icon === "string" })} title={option.text}>
+            <input type="radio" name={`deck-${key}`} checked={theme[key] === option.value} onChange={() => setTheme({ [key]: option.value } as Partial<DeckTheme>)} />
+            {option.icon}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+  /** Excalidraw's swatches: a few colors and the deck's own (a picker) */
   const color = (key: "textColor" | "strokeColor", label: string) => (
-    <label className="slides-field">
-      <span>{label}</span>
-      <input type="color" value={theme[key]} onChange={(event) => setTheme({ [key]: event.target.value })} />
-    </label>
+    <fieldset>
+      <legend>{label}</legend>
+      <div className="kq-swatches">
+        {SWATCHES.map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={clsx("color-picker__button", { active: theme[key].toLowerCase() === value })}
+            style={{ "--swatch-color": value } as React.CSSProperties}
+            title={value}
+            aria-label={`${label}: ${value}`}
+            onClick={() => setTheme({ [key]: value })}
+          >
+            <div className="color-picker__button-outline" />
+          </button>
+        ))}
+        <span className="kq-swatches__divider" />
+        <label className={clsx("color-picker__button color-picker__button--large kq-swatches__custom", { active: !SWATCHES.includes(theme[key].toLowerCase()) })} style={{ "--swatch-color": theme[key] } as React.CSSProperties} title="Another color">
+          <input type="color" value={theme[key]} onChange={(event) => setTheme({ [key]: event.target.value })} aria-label={`${label}: another color`} />
+        </label>
+      </div>
+    </fieldset>
   );
   return (
     <section className="slides-details">
@@ -574,37 +622,35 @@ const ThemeForm = () => {
         Placeholders: <code>{"{page}"}</code> <code>{"{total}"}</code> <code>{"{title}"}</code> <code>{"{deck}"}</code>{" "}
         <code>{"{date}"}</code>
       </p>
-      <label className="slides-field">
-        <span>Font</span>
-        {select("fontFamily", [...FONTS, ...customFonts.list().map((font): [string, number] => [font.family, font.id])])}
-      </label>
-      <div className="slides-grid">
-        <label className="slides-field">
-          <span>Title size</span>
-          {select("titleSize", [["48", 48], ["56", 56], ["64", 64], ["72", 72], ["96", 96], ["120", 120]])}
-        </label>
-        <label className="slides-field">
-          <span>Text size</span>
-          {select("bodySize", [["20", 20], ["24", 24], ["28", 28], ["32", 32], ["36", 36], ["44", 44]])}
-        </label>
+      <div className="selected-shape-actions kq-style">
+        <fieldset>
+          <legend>Font</legend>
+          {select("fontFamily", [...FONTS, ...customFonts.list().map((font): [string, number] => [font.family, font.id])])}
+        </fieldset>
+        {choice("titleSize", "Title size", [48, 56, 64, 72, 96, 120].map((value) => ({ value, text: `${value} px`, icon: String(value) })))}
+        {choice("bodySize", "Text size", [20, 24, 28, 32, 36, 44].map((value) => ({ value, text: `${value} px`, icon: String(value) })))}
         {color("textColor", "Text color")}
         {color("strokeColor", "Line color")}
-        <label className="slides-field">
-          <span>Sloppiness</span>
-          {select("roughness", [["Architect", 0], ["Artist", 1], ["Cartoonist", 2]])}
-        </label>
-        <label className="slides-field">
-          <span>Stroke</span>
-          {select("strokeWidth", [["Thin", 1], ["Bold", 2], ["Extra bold", 4]])}
-        </label>
-        <label className="slides-field">
-          <span>Fill</span>
-          {select("fillStyle", [["Solid", "solid"], ["Hachure", "hachure"], ["Cross-hatch", "cross-hatch"], ["Zigzag", "zigzag"]])}
-        </label>
-        <label className="slides-field">
-          <span>Transition</span>
-          {select("transition", [["Glide", "glide"], ["Cut", "cut"]])}
-        </label>
+        {choice("strokeWidth", "Stroke width", [
+          { value: 1, text: "Thin", icon: StrokeWidthBaseIcon },
+          { value: 2, text: "Bold", icon: StrokeWidthBoldIcon },
+          { value: 4, text: "Extra bold", icon: StrokeWidthExtraBoldIcon },
+        ])}
+        {choice("roughness", "Sloppiness", [
+          { value: 0, text: "Architect", icon: SloppinessArchitectIcon },
+          { value: 1, text: "Artist", icon: SloppinessArtistIcon },
+          { value: 2, text: "Cartoonist", icon: SloppinessCartoonistIcon },
+        ])}
+        {choice("fillStyle", "Fill", [
+          { value: "hachure", text: "Hachure", icon: FillHachureIcon },
+          { value: "cross-hatch", text: "Cross-hatch", icon: FillCrossHatchIcon },
+          { value: "solid", text: "Solid", icon: FillSolidIcon },
+          { value: "zigzag", text: "Zigzag", icon: FillZigZagIcon },
+        ])}
+        {choice("transition", "Transition", [
+          { value: "glide", text: "Glide: the camera flies to the next slide", icon: "Glide" },
+          { value: "cut", text: "Cut: the next slide right away", icon: "Cut" },
+        ])}
       </div>
     </section>
   );

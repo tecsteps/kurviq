@@ -913,3 +913,60 @@ body.slides-presenting {
 .excalidraw.kq-slide-frame-selected .selected-shape-actions-container {
   display: none;
 }
+
+// the deck style, in Excalidraw's own controls (its .selected-shape-actions,
+// .buttonList and color swatches style them; slidesUI.tsx ThemeForm)
+.excalidraw .kq-style {
+  // the buttons as in Excalidraw's island (its Island sets these)
+  --button-bg: var(--color-surface-mid);
+  --button-border: transparent;
+  padding: 0.25rem 0 0.5rem;
+
+  // sizes, transition: words in the same buttons
+  .buttonList label.kq-choice--text {
+    width: auto;
+    min-width: var(--default-button-size, 2rem);
+    padding: 0 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  select.slides-input {
+    height: var(--default-button-size, 2rem);
+    border: none;
+    border-radius: var(--border-radius-lg, 0.5rem);
+    background: var(--button-bg, var(--color-surface-mid));
+    color: var(--text-primary-color);
+    font-size: 0.8rem;
+
+    &:hover {
+      background: var(--button-hover-bg, var(--color-surface-high));
+    }
+  }
+}
+
+.excalidraw .kq-swatches {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+
+  &__divider {
+    width: 1px;
+    height: 1rem;
+    margin: 0 0.25rem;
+    background: var(--default-border-color);
+  }
+
+  // another color: a larger swatch holding the browser's color picker
+  &__custom {
+    --size: 1.875rem;
+    overflow: hidden;
+    cursor: pointer;
+
+    input[type="color"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+  }
+}

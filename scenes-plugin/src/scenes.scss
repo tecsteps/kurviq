@@ -1282,3 +1282,32 @@
     transform: translate(-50%, calc(-100% + 3px));
   }
 }
+
+// (loaded after slides.scss: these win in both)
+// Excalidraw's look for our panels' buttons and section titles (as in its
+// properties panel: filled light-gray buttons, small plain labels)
+.excalidraw .slides-btn:not(.slides-btn--primary),
+.excalidraw .scenes-btn:not(.scenes-btn--primary) {
+  border-color: transparent;
+  border-radius: var(--border-radius-lg, 0.5rem);
+  background: var(--color-surface-mid);
+
+  &:hover:not(:disabled, [aria-disabled="true"]) {
+    background: var(--button-hover-bg, var(--color-surface-high));
+  }
+}
+
+.excalidraw .slides-btn--primary,
+.excalidraw .scenes-btn--primary {
+  border-radius: var(--border-radius-lg, 0.5rem);
+}
+
+.excalidraw .slides-section__title,
+.excalidraw .scenes-current__label,
+.excalidraw .scenes-list-header {
+  color: var(--text-primary-color);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
