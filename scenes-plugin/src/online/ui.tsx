@@ -6,6 +6,7 @@ import { MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
 import { GithubIcon, ExternalLinkIcon } from "@excalidraw/excalidraw/components/icons";
 import clsx from "clsx";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 
 import { scenesController } from "../controller";
@@ -33,6 +34,7 @@ import {
 } from "./github";
 import { pairing } from "./pairing";
 
+import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "../../../scenes-mcp/feedback.mjs";
 import type { SceneListItem } from "../controller";
 import type { RepoChoice, Space } from "./github";
 
@@ -1144,8 +1146,123 @@ export const KurviqSocials = () => (
   </>
 );
 
+/** bug reports and change requests (kurviq.com: stored in the Worker's D1, see online/worker/feedback.ts) */
+const FeedbackDialog = ({ onClose }: { onClose: () => void }) => {
+  const [kind, setKind] = useState<"bug" | "change">("bug");
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [state, setState] = useState<{ sending?: boolean; error?: string; sent?: boolean }>({});
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const send = async () => {
+    const scene = scenesController.getState().current;
+    const checked = cleanFeedback({ kind, title, text, scene });
+    if (!checked.ok) {
+      setState({ error: checked.error });
+      return;
+    }
+    setState({ sending: true });
+    try {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(checked.value),
+      });
+      const body = await res.json().catch(() => ({}));
+      setState(res.ok ? { sent: true } : { error: body.error || `Could not send (${res.status})` });
+    } catch {
+      setState({ error: "Could not send: are you online?" });
+    }
+  };
+
+  return (
+    <div className="kq-overlay" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="kq-dialog kq-feedback" role="dialog" aria-modal="true" aria-labelledby="kq-feedback-title" onKeyDown={(event) => event.stopPropagation()}>
+        <div className="kq-dialog__head">
+          <h2 id="kq-feedback-title">Feedback</h2>
+          <button type="button" className="kq-close" aria-label="Close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        {state.sent ? (
+          <>
+            <p>Thanks! We read every report and decide together what to build.</p>
+            <div className="scenes-row">
+              <button type="button" className="scenes-btn scenes-btn--primary" onClick={onClose}>
+                Close
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="kq-feedback__kinds" role="radiogroup" aria-label="Kind">
+              {(
+                [
+                  ["bug", "Bug report"],
+                  ["change", "Change request"],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value} className={clsx("kq-feedback__kind", { "kq-feedback__kind--on": kind === value })}>
+                  <input type="radio" name="kq-feedback-kind" checked={kind === value} onChange={() => setKind(value)} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <input
+              className="scenes-input"
+              placeholder={kind === "bug" ? "What went wrong? (short)" : "What would you like? (short)"}
+              value={title}
+              maxLength={TITLE_MAX}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+            <textarea
+              className="scenes-input kq-feedback__text"
+              placeholder={kind === "bug" ? "What did you do, what happened, what did you expect?" : "What should change, and why?"}
+              value={text}
+              maxLength={TEXT_MAX}
+              rows={6}
+              onChange={(event) => setText(event.target.value)}
+            />
+            <div className="kq-muted kq-feedback__hint">
+              Plain text, up to {TEXT_MAX} characters ({TEXT_MAX - text.length} left). No personal data, please. The scene you
+              have open is sent along by name.
+            </div>
+            {state.error && <div className="scenes-error">{state.error}</div>}
+            <div className="scenes-row">
+              <button type="button" className="scenes-btn scenes-btn--primary" disabled={state.sending} onClick={send}>
+                {state.sending ? "Sending…" : "Send"}
+              </button>
+              <button type="button" className="scenes-btn" onClick={onClose}>
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const FeedbackLink = () => {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="kq-legal__feedback" onClick={() => setOpen(true)}>
+        Feedback
+      </button>
+      {open && createPortal(<FeedbackDialog onClose={() => setOpen(false)} />, document.querySelector(".excalidraw") ?? document.body)}
+    </>
+  );
+};
+
 export const KurviqLegalLinks = () => (
   <span className="kq-legal">
+    <FeedbackLink />
     <a href="/imprint" target="_blank" rel="noopener">
       Imprint
     </a>

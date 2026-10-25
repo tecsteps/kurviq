@@ -21,6 +21,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { convertInNode, needsConversion } from "./convert.mjs";
 import { markdownOfElement } from "./richText.mjs";
+import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "./feedback.mjs";
 import { byIds, commonBounds, deckOrder, diffElements, findSlide, inRegion, summarize, templateChangesOf, toRect } from "./inspect.mjs";
 import { readEditFile, resolveImages } from "./media.mjs";
 
@@ -69,6 +70,8 @@ export const createScenesMcp = ({
   localFiles = true,
   /** Kurviq online: where agents upload images and big edits (payloadId) */
   uploadUrl = null,
+  /** Kurviq online: store a bug report / change request ({ id } | { error }); absent: no send_feedback tool */
+  sendFeedback = null,
 }) => {
   const LOCAL_FILES = !!localFiles;
   const APP_HINT = appHint;
@@ -449,6 +452,34 @@ export const createScenesMcp = ({
   - Template copies ("<element>~<slide>") follow their template element property by property: what was changed on a slide (by the user or by you) stays there, everything else follows the template; read_scene lists those changes as changedOnSlide. Headline and eyebrow copies (customData.slides.role) are the slide's own words: update their text (or markdown) on the slide; their place and style come from the template. reset: [slides] / restyle: true bring the template's version back (as the app's buttons do); every template has headline and eyebrow (the app adds them once to older ones; addTitleBlock: true right away).`;
 
   const registerSceneTools = (server) => {
+    if (sendFeedback) {
+      server.registerTool(
+        "send_feedback",
+        {
+          title: "Report a bug or request a change",
+          description: `Send Kurviq's developers a bug report or a change request about Kurviq itself (the app, these tools, the docs): when something doesn't work as documented, a tool is missing or confusing, or the user asks you to report something. Not for the user's drawings. Plain text only (no code, markup or links with scripts): what you did, what happened, what you expected. Title up to ${TITLE_MAX} characters, description up to ${TEXT_MAX}. Nothing personal: no secrets, tokens or private content from scenes.`,
+          inputSchema: {
+            kind: z.enum(["bug", "change"]).describe('"bug": something doesn\'t work; "change": a feature or change request'),
+            title: z.string().describe(`A short summary (up to ${TITLE_MAX} characters)`),
+            text: z.string().describe(`What happened / what you'd like, and why (up to ${TEXT_MAX} characters, plain text)`),
+            scene: z.string().optional().describe("The scene it happened in, if any"),
+          },
+        },
+        tool(async ({ kind, title, text: description, scene }) => {
+          // checked here and again by the server
+          const checked = cleanFeedback({ kind, title, text: description, scene });
+          if (!checked.ok) {
+            throw new Error(`${checked.error} (nothing was sent)`);
+          }
+          const result = await sendFeedback(checked.value);
+          if (result?.error) {
+            throw new Error(result.error);
+          }
+          return text({ sent: true, id: result.id, note: "Thanks: Kurviq's developers will look at it. Tell the user it was sent." });
+        }),
+      );
+    }
+
     server.registerTool(
       "list_scenes",
       {

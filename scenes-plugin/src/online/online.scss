@@ -420,3 +420,62 @@
   font-size: 0.85rem;
   pointer-events: all;
 }
+
+// the footer's Feedback link (left of Imprint) and its dialog
+.excalidraw .kq-legal__feedback {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-gray-50);
+  font: inherit;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.excalidraw .kq-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+
+  .scenes-input {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  &__text {
+    min-height: 8rem;
+    resize: vertical;
+    font: inherit;
+  }
+
+  &__kinds {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  &__kind {
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--border-radius-lg, 0.5rem);
+    background: var(--color-surface-mid);
+    cursor: pointer;
+
+    input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    &--on {
+      background: var(--color-primary-light, var(--color-surface-high));
+      color: var(--color-primary);
+      font-weight: 600;
+    }
+  }
+
+  &__hint {
+    font-size: 0.75rem;
+  }
+}

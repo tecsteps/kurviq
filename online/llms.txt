@@ -28,6 +28,7 @@ The MCP server's instructions (sent on connect) explain everything in detail. In
 - Images and icons: `{ "type": "image", "src": "<http(s) or data URL>" }`, `"svg": "<svg…>"` or `"icon": "lucide:database"`.
 - `app_status`: which scene the user has open, whether GitHub is connected (`github`), each scene's sync status. `open_scene` switches what the user sees: only when they ask.
 - Don't push, write files or call HTTP APIs yourself: the tools and the user's app do all syncing and merging.
+- Something in Kurviq doesn't work, or a tool is missing? `send_feedback(kind: "bug" | "change", title, text)` reports it to Kurviq's developers (plain text, no personal data). Users report the same way with the Feedback link at the bottom right.
 
 ## GitHub (optional, per browser)
 
@@ -40,7 +41,7 @@ The MCP server's instructions (sent on connect) explain everything in detail. In
 
 ## Limits of the online version
 
-- Local file paths (image `src`, edit files) don't work: Kurviq's MCP server runs on kurviq.com, not on the agent's machine. Images from your machine: upload them with `curl -s --data-binary @image.png <upload address>` (the upload address is in the MCP server's instructions and tool descriptions, valid for a week; PNG, JPEG, GIF, WebP, SVG up to 10 MB), then add `{ "type": "image", "fileId": "<the answer's fileId>", "x": 0, "y": 0, "width": 800 }`. The image's bytes never pass through your context; it goes straight to the user's open Kurviq tab.
+- Local file paths (image `src`, edit files) don't work: Kurviq's MCP server runs on kurviq.com, not on the agent's machine. Images from your machine: upload them with `curl -s --data-binary @image.png <upload address>` (the upload address is in `read_me` and the MCP server's instructions, valid for a week; PNG, JPEG, GIF, WebP, SVG up to 10 MB), then add `{ "type": "image", "fileId": "<the answer's fileId>", "x": 0, "y": 0, "width": 800 }`. The image's bytes never pass through your context; it goes straight to the user's open Kurviq tab.
 - `export_pdf` is not available through MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).
 - Want everything on your own machine (local Excalidraw, git CLI, headless rendering without an open tab)? Use the local install: https://github.com/tecsteps/kurviq
 

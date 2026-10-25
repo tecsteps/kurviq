@@ -110,6 +110,11 @@ PDFs are made with the browser's print dialog. Kurviq is operated by
 Tecsteps GmbH: [imprint](https://kurviq.com/imprint),
 [privacy](https://kurviq.com/privacy) (no accounts, no tracking, no request
 logs; the pages are in `online/pages/`).
+- **Feedback:** the **Feedback** link (bottom right) sends a bug report or
+  change request; agents can send one with `send_feedback`. Plain text only,
+  limited length, at most 10 per hour; stored in a D1 database
+  (`kurviq-feedback`, `online/worker/feedback.ts`). Running it yourself:
+  `wrangler d1 create`, then put its id into `wrangler.jsonc`.
 
 ### Running Kurviq yourself (Cloudflare)
 

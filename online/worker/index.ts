@@ -17,6 +17,8 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
 import { registerTools } from "../../excalidraw-mcp/dist/server.js";
+import { handleFeedback, saveFeedback, senderHash } from "./feedback";
+import type { FeedbackEnv } from "./feedback";
 import { createScenesMcp } from "../../scenes-mcp/tools.mjs";
 
 import llmsTxt from "../llms.txt";
@@ -30,7 +32,7 @@ import type { AuthEnv } from "./auth";
 
 export { Pairing } from "./pairing";
 
-type Env = AuthEnv & {
+type Env = AuthEnv & FeedbackEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -259,6 +261,8 @@ const handleMcp = async (request: Request, env: Env, access: Access) => {
     unreachable,
     serverFetch: (pathname: string, init: RequestInit = {}) => stub.fetch(toPairing(access, pathname, init, app)),
     registerUpstream: (mcp: unknown, store: unknown) => registerTools(mcp as any, "/bundle", store as any),
+    // bug reports / change requests from the agent (counted per agent pairing)
+    sendFeedback: async (report: unknown) => saveFeedback(env, report, { source: "agent", sender: await senderHash(env, `pairing:${access.pairing}`) }),
     savePdf: async () => {
       throw new Error("PDF export is not available through the Kurviq MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).");
     },
@@ -349,6 +353,11 @@ export default {
       // its own upload token (like a signed-in agent's), not the link: the link key is full access
       const pairing = await pairingName(key);
       return handleMcp(request, env, { pairing, via: "link", uploadUrl: `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}` });
+    }
+
+    // bug reports and change requests from Kurviq's pages
+    if (url.pathname === "/api/feedback") {
+      return handleFeedback(request, env);
     }
 
     if (url.pathname === "/llms.txt") {
