@@ -18,6 +18,7 @@ import { slideNotes } from "./notes";
 import { setSlideParam } from "./router";
 import {
   addSlide,
+  addTitleBlock,
   applyTheme,
   createTemplate,
   deleteSlides,
@@ -25,8 +26,10 @@ import {
   getSlides,
   getTemplate,
   getTheme,
+  hasTitleBlock,
   moveSlides,
   patchSlideData,
+  resetToTemplate,
   setSlideOrder,
   slideData,
   withSlideData,
@@ -89,15 +92,20 @@ const setTheme = (patch: Partial<DeckTheme>) => {
   });
 };
 
-/** a slide back to the template: template elements restored, deck style applied */
+/** slides back to the template: its elements as in the template, the deck's fonts and colors (slides.ts) */
 const resetSlides = (ids: string[]) => {
-  const elements = api().getSceneElementsIncludingDeleted();
-  const theme = getTheme(elements);
-  const themed = applyTheme(elements, theme, theme, { force: new Set(ids) });
-  if (themed) {
-    api().updateScene({ elements: themed, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+  const next = resetToTemplate(api().getSceneElementsIncludingDeleted(), new Set(ids), scenesController.getState().current ?? "Untitled");
+  if (next) {
+    api().updateScene({ elements: next, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
   }
-  deck.runTemplateSync({ reset: new Set(ids) });
+};
+
+/** headline and eyebrow on the template; the slides' own become theirs (slides.ts) */
+const addHeadlineAndEyebrow = () => {
+  const result = addTitleBlock(api().getSceneElementsIncludingDeleted());
+  if (result) {
+    api().updateScene({ elements: result.elements, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+  }
 };
 
 type PdfChoice = "all" | "current" | "pick";
@@ -552,6 +560,16 @@ const ThemeForm = () => {
           </button>
         </QuickTip>
       </div>
+      {!hasTitleBlock(api().getSceneElements()) && (
+        <QuickTip
+          tip="A headline and an eyebrow on the template: placed and styled there for all slides, each slide writes its own words. Slides' own headlines where the template's go become theirs."
+          label={false}
+        >
+          <button type="button" className="slides-btn" onClick={addHeadlineAndEyebrow}>
+            Add headline &amp; eyebrow
+          </button>
+        </QuickTip>
+      )}
       <p className="slides-hint">
         Placeholders: <code>{"{page}"}</code> <code>{"{total}"}</code> <code>{"{title}"}</code> <code>{"{deck}"}</code>{" "}
         <code>{"{date}"}</code>

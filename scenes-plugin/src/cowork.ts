@@ -27,7 +27,7 @@ import { getFontString } from "@excalidraw/common";
 import { registerSceneFonts, withFonts } from "./fonts";
 import { scenesApi } from "./api";
 import { applyMarkdownUpdate } from "./richText/agent";
-import { applyTheme, getSlides, getTemplate, getTheme, placeOnSlides, slideTitle, syncTemplate } from "./slides";
+import { addTitleBlock, applyTheme, getSlides, getTemplate, getTheme, placeOnSlides, resetToTemplate, slideTitle, syncTemplate } from "./slides";
 import { scenesController, withSceneName } from "./controller";
 import { getAgentBaseline, getCheckpoint, setAgentBaseline, setCheckpoint } from "./storage";
 
@@ -68,8 +68,12 @@ export type SceneEditCommand = {
 export type EditOptions = {
   /** add with the id of an existing element replaces it */
   upsert?: boolean;
-  /** apply the deck theme to every slide element, also over values set by hand */
+  /** every slide back to the template ("Reset all slides" in the app) */
   restyle?: boolean;
+  /** these slides back to the template (frame ids or slide numbers; "all"): the slide card's icon in the app */
+  reset?: Array<string | number> | "all";
+  /** headline and eyebrow on the template ("Add headline & eyebrow" in the app) */
+  addTitleBlock?: boolean;
   /** the agent's id for this edit: sent again (e.g. after a timeout), it is not applied twice */
   requestId?: string;
 };
@@ -260,8 +264,10 @@ const withRoomForWords = (el: any) => {
  */
 const applyEdits = async (
   input: readonly ExcalidrawElement[],
-  command: Pick<EditCommand, "add" | "update" | "delete" | "upsert" | "restyle">,
+  command: Pick<EditCommand, "add" | "update" | "delete" | "upsert" | "restyle" | "reset" | "addTitleBlock">,
   convert: (elements: any[]) => Promise<any[]>,
+  /** the scene's name ({deck} in the template) */
+  deck: string,
 ) => {
   let elements: ExcalidrawElement[] = [...input];
   const byId = () => new Map(elements.map((el) => [el.id, el]));
@@ -397,18 +403,18 @@ const applyEdits = async (
     });
   }
 
-  // the deck theme changed (or `restyle`): slide elements follow, like when
-  // the user changes the deck style; `restyle` also overrides values set by hand
+  // the deck theme changed: slide elements that still had its values follow,
+  // like when the user changes the deck style
   let restyled = 0;
   const themeAfter = getTheme(elements);
-  if (getTemplate(elements) && (command.restyle || JSON.stringify(themeBefore) !== JSON.stringify(themeAfter))) {
+  if (getTemplate(elements) && JSON.stringify(themeBefore) !== JSON.stringify(themeAfter)) {
     const frames = new Set(getSlides(elements).map((slide) => slide.id));
     const template = getTemplate(elements);
     if (template) {
       frames.add(template.id);
     }
     await Fonts.loadElementsFonts([{ type: "text", fontFamily: themeAfter.fontFamily, text: "", originalText: "" } as any]).catch(() => []);
-    const themed = applyTheme(elements, themeBefore, themeAfter, { force: command.restyle ? frames : null });
+    const themed = applyTheme(elements, themeBefore, themeAfter);
     if (themed) {
       themed.forEach((el, i) => {
         if (el !== elements[i]) {
@@ -447,6 +453,37 @@ const applyEdits = async (
       }
       return next;
     });
+  }
+
+  // headline and eyebrow on the template, slides back to the template: what
+  // the app's buttons do ("Add headline & eyebrow", the card's icon, "Reset all slides")
+  let titleBlock: number | null = null;
+  if (command.addTitleBlock) {
+    const result = addTitleBlock(elements);
+    if (result) {
+      elements = result.elements as ExcalidrawElement[];
+      titleBlock = result.adopted;
+    }
+  }
+  const slidesNow = getSlides(elements);
+  const resetIds =
+    command.restyle || command.reset === "all"
+      ? slidesNow.map((slide) => slide.id)
+      : (Array.isArray(command.reset) ? command.reset : []).map((ref) =>
+          typeof ref === "number" ? slidesNow[ref - 1]?.id ?? String(ref) : ref,
+        );
+  let reset = 0;
+  if (resetIds.length) {
+    const unknown = resetIds.filter((id) => !slidesNow.some((slide) => slide.id === id));
+    if (unknown.length) {
+      throw new Error(`reset: no such slide: ${unknown.join(", ")} (frame ids or slide numbers; nothing was changed)`);
+    }
+    await Fonts.loadElementsFonts([{ type: "text", fontFamily: themeAfter.fontFamily, text: "", originalText: "" } as any]).catch(() => []);
+    const next = resetToTemplate(elements, new Set(resetIds), deck);
+    if (next) {
+      elements = next as ExcalidrawElement[];
+      reset = resetIds.length;
+    }
   }
 
   // additions: converted together with the existing elements, so arrows can
@@ -531,6 +568,8 @@ const applyEdits = async (
     ...(alsoDeleted > 0 ? { alsoDeleted: `${alsoDeleted} more elements went with them (labels, and everything on deleted slides)` } : {}),
     ...(replacedIds.length ? { replaced: replacedIds } : {}),
     ...(restyled ? { restyled: `${restyled} elements took the deck theme` } : {}),
+    ...(reset ? { reset: `${reset} slide${reset === 1 ? "" : "s"} back to the template` } : {}),
+    ...(titleBlock !== null ? { titleBlock: `headline and eyebrow on the template; ${titleBlock} slide texts became their copies` } : {}),
     ...(moved.problems.length ? { layerProblems: moved.problems } : {}),
     ...(slideTargets ? { slideNumbers: slideTargets } : {}),
     ...(missing.length ? { missingIds: missing } : {}),
@@ -661,6 +700,7 @@ export const editOpenScene = async (
     api.getSceneElementsIncludingDeleted(),
     command,
     convert,
+    scene ?? "Untitled",
   );
 
   const images = repairImages(elements, api.getFiles());
@@ -697,6 +737,7 @@ export const editSceneOnGitHub = async (
       restoreElements(data.elements || [], null, { repairBindings: true }),
       command,
       convert,
+      command.name,
     );
     const files = { ...(data.files || {}), ...(command.files || {}) };
     const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
@@ -775,6 +816,7 @@ export const editLocalScene = async (
     restoreElements(data.elements || [], null, { repairBindings: true }),
     command,
     convert,
+    command.name,
   );
   const files = { ...(data.files || {}), ...(command.files || {}) };
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);

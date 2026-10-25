@@ -285,6 +285,11 @@ export const createScenesMcp = ({
         }
         out[key] = typeof value === "number" ? Math.round(value * 100) / 100 : value;
       }
+      // a template copy's remembered template values (internal: what differs was changed on the slide)
+      if (out.customData?.slides?.base) {
+        const { base: _base, ...slides } = out.customData.slides;
+        out.customData = { ...out.customData, slides };
+      }
       if (el.type === "text") {
         // the text as written: `text` holds it wrapped to the box (line breaks
         // that aren't the author's; written back, they would become theirs)
@@ -420,7 +425,7 @@ export const createScenesMcp = ({
   Labels: label { text, strokeColor, fontSize, fontFamily, textAlign, verticalAlign } — the text is dark (#1e1e1e) unless you set strokeColor; the label's id is "<shape id>-label"; a shape grows so that no word of its label is broken.`;
 
   /** what an edit reports besides added / updated / deleted */
-  const EDIT_EXTRAS = ["alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile"];
+  const EDIT_EXTRAS = ["alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "reset", "titleBlock", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile"];
   const editExtras = (edited) =>
     Object.fromEntries(EDIT_EXTRAS.filter((key) => edited?.[key] !== undefined).map((key) => [key, edited[key]]));
 
@@ -432,7 +437,8 @@ export const createScenesMcp = ({
   - customData in an update MERGES into the element's (also one level down, e.g. customData.slides): { "customData": { "slides": { "skip": true } } } keeps the slide's notes and order; a key set to null is removed.
   - Texts are listed as written (without the line breaks of wrapping); "autoResize": false marks a box of a fixed width, which re-wraps inside it and widens to its longest word (words are never broken).
   - Changing fontFamily / fontSize of a text measures it again (a box with "autoResize": false keeps its width and re-wraps). A free text with "width" wraps at that width; textAlign aligns inside x … x + width.
-  - Deck theme: updating the template frame's customData.slides.theme re-applies it to slide elements that still had the old theme's values; restyle: true applies it to every slide element, also over fonts / colors set by hand (font sizes stay).`;
+  - Deck theme: updating the template frame's customData.slides.theme re-applies it to slide elements that still had the old theme's values (like changing the deck style in the app).
+  - Template copies ("<element>~<slide>") follow their template element property by property: what was changed on a slide (by the user or by you) stays there, everything else follows the template. Headline and eyebrow copies (customData.slides.role) are the slide's own words: update their text (or markdown) on the slide; their place and style come from the template. reset: [slides] / restyle: true bring the template's version back (as the app's buttons do); addTitleBlock: true adds headline and eyebrow to a template that has none.`;
 
   const registerSceneTools = (server) => {
     server.registerTool(
@@ -514,8 +520,10 @@ export const createScenesMcp = ({
         if (!frame) {
           throw new Error(`slide ${JSON.stringify(slide)}: no such slide (the deck has ${deckOrder(elements).length}; use a number from 1, a frame id or "template")`);
         }
-        const on = elements.filter((el) => el.frameId === frame.id && !el.customData?.slides?.copyOf);
-        const copies = elements.filter((el) => el.frameId === frame.id && el.customData?.slides?.copyOf).length;
+        // template copies aren't listed, except headline / eyebrow: the slide's own words
+        const isListed = (el) => !el.customData?.slides?.copyOf || ["headline", "eyebrow"].includes(el.customData.slides.role);
+        const on = elements.filter((el) => el.frameId === frame.id && isListed(el));
+        const copies = elements.filter((el) => el.frameId === frame.id && !isListed(el)).length;
         const number = deckOrder(elements).findIndex((f) => f.id === frame.id) + 1;
         const picked = relative ? relativeToSlides(on, elements) : on;
         return {
@@ -768,11 +776,19 @@ export const createScenesMcp = ({
               .describe("The scene you are co-working on (as returned by read_open_scene) — routes the edit to the tab showing it; nothing is applied if no tab shows it"),
             ...EDIT_SOURCE,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
-            restyle: z.boolean().optional().describe("Deck: apply the deck theme to every slide element, also over fonts / colors set by hand"),
+            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed by hand; the deck fonts / colors on everything; font sizes stay)'),
+            reset: z
+              .union([z.array(z.union([z.string(), z.number()])), z.literal("all")])
+              .optional()
+              .describe('Deck: these slides back to the template (frame ids or slide numbers, or "all"), like the slide card\'s "back to template" icon in the app'),
+            addTitleBlock: z
+              .boolean()
+              .optional()
+              .describe('Deck: a headline and an eyebrow on the template, like "Add headline & eyebrow" in the app: placed and styled there for all slides; slide texts where they go become the slides\' own words'),
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, upsert, restyle, view = true }) => {
+        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, upsert, restyle, reset, addTitleBlock, view = true }) => {
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
           // what did the user do since an agent last looked?
@@ -794,6 +810,8 @@ export const createScenesMcp = ({
             ...(Object.keys(edit.files).length ? { files: edit.files } : {}),
             ...(upsert ? { upsert } : {}),
             ...(restyle ? { restyle } : {}),
+            ...(reset ? { reset } : {}),
+            ...(addTitleBlock ? { addTitleBlock } : {}),
             storeBaseline: "edit",
             revision,
           });
@@ -1006,7 +1024,15 @@ ${EDIT_HELP}
             ...EDIT_SOURCE,
             basedOn: z.string().optional().describe("The revision your edit is based on (from read_scene / edit_scene)"),
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
-            restyle: z.boolean().optional().describe("Deck: apply the deck theme to every slide element, also over fonts / colors set by hand"),
+            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed by hand; the deck fonts / colors on everything; font sizes stay)'),
+            reset: z
+              .union([z.array(z.union([z.string(), z.number()])), z.literal("all")])
+              .optional()
+              .describe('Deck: these slides back to the template (frame ids or slide numbers, or "all"), like the slide card\'s "back to template" icon in the app'),
+            addTitleBlock: z
+              .boolean()
+              .optional()
+              .describe('Deck: a headline and an eyebrow on the template, like "Add headline & eyebrow" in the app: placed and styled there for all slides; slide texts where they go become the slides\' own words'),
             requestId: z
               .string()
               .regex(/^[A-Za-z0-9_.:-]{1,80}$/)
@@ -1015,7 +1041,7 @@ ${EDIT_HELP}
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, upsert, restyle, requestId: givenRequestId, view = true }) => {
+        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, upsert, restyle, reset, addTitleBlock, requestId: givenRequestId, view = true }) => {
           const requestId = givenRequestId || `edit-${newCheckpointId()}`;
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
@@ -1040,6 +1066,8 @@ ${EDIT_HELP}
             ...(Object.keys(edit.files).length ? { files: edit.files } : {}),
             ...(upsert ? { upsert } : {}),
             ...(restyle ? { restyle } : {}),
+            ...(reset ? { reset } : {}),
+            ...(addTitleBlock ? { addTitleBlock } : {}),
           };
           const send = () => (local ? appCommand : agentCommand)(command);
           let edited;

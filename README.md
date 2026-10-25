@@ -283,25 +283,33 @@ pill) opens the deck:
 - **Add slide** (at the end of the list) adds a 16:9 frame (1920 × 1080)
   after the selected one. Drag slides in the list (or press ↑ / ↓ on one)
   to reorder; the active slide's card has icons for template on / off,
-  speaker notes, duplicate and delete. On the
+  back to template, duplicate and delete. On the
   canvas the slides always lie in deck order, seven per row: the canvas
   follows every change in the list. A duplicate keeps the slide's content,
   click steps and notes and goes right after its original; everything can
   be undone with ⌘Z. Per slide: title, "skip when presenting" (backup
   slides), "show template".
-- **Speaker notes:** the icon after a slide's name on the canvas (filled
+- **On the canvas**, after each slide's name: a pen (shows the slide in the
+  list) and the notes icon. The template's pen opens the deck style.
+- **Speaker notes:** the notes icon after a slide's name (filled
   when there are notes) opens them in a popover, with formatting (bold,
   lists, colors, links … the same toolbar as text on the canvas). Saved as
   markdown in the slide; the presenter view shows them formatted.
 - **Click steps:** select elements on a slide and pick "Click 1", "Click 2" …
   under "Selection appears"; they fade in one click at a time.
 - **Template:** one "Template" frame holds what every slide shows: header,
-  footer, logo, background. Edit it once; every slide follows. Template
-  texts can use `{page}` `{total}` `{title}` `{deck}` `{date}`. On slides
-  the copies are locked; unlock one to change it on that slide only (it
-  then stays as you made it). **Reset to template** brings the template
-  version and the deck style back for one slide, **Reset all slides** for
-  the whole deck.
+  footer, logo, background, headline and eyebrow. Edit it once; every slide
+  follows. Template texts can use `{page}` `{total}` `{title}` `{deck}`
+  `{date}`. On slides the copies are locked (headline and eyebrow not: each
+  slide writes its own words). What you change on one slide stays there,
+  property by property: a headline colored by hand keeps its color and
+  still follows the template's position and font. The card's
+  **back to template** icon brings the template version and the deck style
+  back for one slide, **Reset all slides** for the whole deck.
+- **Headline & eyebrow:** **Add headline & eyebrow** (Style tab) puts both
+  on a template that has none; slides' own headlines where the template's
+  goes become theirs (words kept, place and style from the template),
+  other slides (a title slide …) keep their layout.
 - **Deck style:** font, title and text size, colors, sloppiness, stroke,
   fill and transition, stored with the template. New elements use it, and
   elements that still have the deck's values follow when you change it.
@@ -313,7 +321,7 @@ pill) opens the deck:
   deck is about 300 KB. The scenes server prints it with your Chrome; if it
   can't, the browser's print dialog opens instead ("Save as PDF").
 - Deleting a template element on one slide (unlock it, delete it) keeps it
-  off that slide, on every device, until **Reset to template**.
+  off that slide, on every device, until **back to template**.
 
 All of it is stored in the scene itself, so decks sync, merge and travel
 like any other scene, and agents can build them (see the skill). The scene

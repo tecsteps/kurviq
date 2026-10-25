@@ -815,27 +815,20 @@ body.slides-presenting {
   border: none;
   border-radius: 4px;
   background: none;
-  color: var(--color-gray-40, #adb5bd);
+  // gray like the slide's name; the accent color when pointed at (notes: the icon is filled)
+  color: var(--color-gray-50, #868e96);
   transform: translateY(-50%);
   cursor: pointer;
-  opacity: 0.7;
 
   &:hover,
   &:focus-visible,
   &--open {
-    opacity: 1;
     background: var(--color-surface-high);
-    color: var(--color-primary);
-  }
-
-  &--has {
-    opacity: 1;
     color: var(--color-primary);
   }
 
   // over the end of a shortened name: on the canvas color, so the name doesn't show through
   &--over {
-    opacity: 1;
     background: var(--island-bg-color);
   }
 }

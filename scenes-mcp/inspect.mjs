@@ -123,10 +123,12 @@ export const summarize = (elements, { textsOffset = 0, textsLimit = 100 } = {}) 
     }))
     .sort((a, b) => (a.slide ?? 0) - (b.slide ?? 0));
   // the template's copies on every slide (ids "<element>~<slide>") would repeat the same labels
-  const copies = elements.filter((el) => slideData(el).copyOf).length;
+  // (headline / eyebrow copies are the slide's own words: listed)
+  const isOwnWords = (el) => !!slideData(el).role && slideData(el).role !== "template";
+  const copies = elements.filter((el) => slideData(el).copyOf && !isOwnWords(el)).length;
 
   const texts = elements
-    .filter((el) => el.type === "text" && el.text?.trim() && !slideData(el).copyOf)
+    .filter((el) => el.type === "text" && el.text?.trim() && (!slideData(el).copyOf || isOwnWords(el)))
     .map((el) => {
       const container = el.containerId && byId.get(el.containerId);
       const rect = toRect(elementBounds(container || el));
@@ -144,7 +146,7 @@ export const summarize = (elements, { textsOffset = 0, textsLimit = 100 } = {}) 
     sceneBounds: toRect(commonBounds(elements)),
     countsByType,
     ...(frames.length ? { frames } : {}),
-    ...(copies ? { templateCopies: `${copies} elements are copies of the template on the slides (ids "<element>~<slide>", not listed): change the template instead` } : {}),
+    ...(copies ? { templateCopies: `${copies} elements are copies of the template on the slides (ids "<element>~<slide>", not listed): change the template instead (what is changed on a slide stays there; reset brings the template's version back)` } : {}),
     textCount: texts.length,
     texts: texts.slice(textsOffset, textsOffset + textsLimit),
     ...(texts.length > textsOffset + textsLimit

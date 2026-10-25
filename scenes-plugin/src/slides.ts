@@ -4,9 +4,13 @@
 //
 //  - slide frames: { order, notes, skip, template: false = no template }
 //  - one template frame ({ role: "template", theme }): its elements (header,
-//    footer, logo, background) are copied onto every slide, locked. A copy
-//    the user unlocks / changes / deletes on one slide is left alone there
-//    ("override"); "Reset" brings the template version back.
+//    footer, logo, background, headline, eyebrow) are copied onto every slide,
+//    locked (headline and eyebrow not: each slide writes its own). What the
+//    user changes on a copy stays there, property by property: a headline
+//    colored by hand keeps its color, and still follows the template's
+//    position, font … (each copy remembers the template's values in `base`).
+//    A copy deleted on a slide stays away. "Back to template" (a slide, or
+//    all slides) brings the template's version back.
 //  - the deck theme (fonts, colors, sizes, stroke style) is the default for
 //    new elements; elements that still have the theme's values follow when
 //    the theme changes, anything set by hand on a slide stays.
@@ -59,17 +63,20 @@ export const DEFAULT_THEME: DeckTheme = {
 };
 
 export type SlideData = {
-  role?: "template";
+  /** the template frame; on its texts: the headline / eyebrow (each slide writes its own) */
+  role?: "template" | "headline" | "eyebrow";
   theme?: Partial<DeckTheme>;
   order?: number;
   notes?: string;
   skip?: boolean;
   /** false: this slide shows no template elements */
   template?: boolean;
-  /** template copies: the template element it copies, and its signature */
+  /** template copies: the template element it copies */
   copyOf?: string;
+  /** template copies: the template's values at the last sync (what differs from them was changed by hand) */
+  base?: Record<string, unknown>;
+  /** older template copies: one signature over the whole element (see legacyOverridden) */
   sig?: number;
-  /** the signature has positions relative to the slide (older copies: absolute) */
   rel?: true;
   /** removed by the template sync (not by the user) — may come back */
   removedBy?: "sync";
@@ -200,11 +207,7 @@ const canon = (value: unknown): string => {
   return JSON.stringify(typeof value === "number" ? Math.round(value * 2) / 2 : value);
 };
 
-/**
- * What the user can change on a copy (geometry Excalidraw recomputes, such
- * as text widths after a font loads, is left out). The position is taken
- * relative to the slide, so moving or reordering slides is no change.
- */
+/** older copies' signature over everything the user can change (see legacyOverridden) */
 const signature = (el: ExcalidrawElement, slide?: { x: number; y: number }) => {
   const any = el as any;
   const isText = el.type === "text";
@@ -239,11 +242,11 @@ const signature = (el: ExcalidrawElement, slide?: { x: number; y: number }) => {
 };
 
 /**
- * the user changed this copy. Older copies have absolute signatures, which
- * reordering slides broke: one still locked where the template puts it
- * (`fresh`) was moved along with its slide, not changed.
+ * An older copy (one signature, no `base`) the user changed. Some have
+ * absolute signatures, which reordering slides broke: one still locked
+ * where the template puts it (`fresh`) was moved along with its slide.
  */
-const isOverridden = (el: ExcalidrawElement, slide: Frame, fresh?: ExcalidrawElement) => {
+const legacyOverridden = (el: ExcalidrawElement, slide: Frame, fresh?: ExcalidrawElement) => {
   const { sig, rel } = slideData(el);
   if (sig === undefined || signature(el, slide) === sig) {
     return false;
@@ -255,10 +258,134 @@ const isOverridden = (el: ExcalidrawElement, slide: Frame, fresh?: ExcalidrawEle
   return signature(el) !== sig && !inPlace;
 };
 
+/** what a copy takes from its template element, property by property */
+const TRACKED = [
+  "x",
+  "y",
+  "width",
+  "height",
+  "angle",
+  "strokeColor",
+  "backgroundColor",
+  "fillStyle",
+  "strokeWidth",
+  "strokeStyle",
+  "roughness",
+  "opacity",
+  "roundness",
+  "link",
+  "originalText",
+  "fontFamily",
+  "fontSize",
+  "textAlign",
+  "verticalAlign",
+  "lineHeight",
+  "autoResize",
+  "points",
+  "fileId",
+  "startArrowhead",
+  "endArrowhead",
+  "rich",
+] as const;
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+/** a free text's x where it is anchored (its right edge when right-aligned …): text of another width keeps it */
+const anchorX = (el: any) =>
+  el.type === "text" && !el.containerId
+    ? el.textAlign === "right"
+      ? el.x + el.width
+      : el.textAlign === "center"
+      ? el.x + el.width / 2
+      : el.x
+    : el.x;
+
+/**
+ * The tracked values of an element on a slide: positions relative to the
+ * slide (moving or reordering slides changes nothing), a text's size left
+ * out where Excalidraw measures it.
+ */
+const tracked = (el: any, slide: Frame) => {
+  const values: Record<string, unknown> = {};
+  for (const key of TRACKED) {
+    let value: unknown;
+    if (key === "x") {
+      value = el.containerId ? undefined : round2(anchorX(el) - slide.x);
+    } else if (key === "y") {
+      value = el.containerId ? undefined : round2(el.y - slide.y);
+    } else if (key === "width" || key === "height") {
+      value = el.type === "text" && (el.containerId || key === "height" || el.autoResize !== false) ? undefined : round2(el[key]);
+    } else if (key === "rich") {
+      value = el.customData?.rich;
+    } else {
+      value = el[key];
+    }
+    if (value !== undefined || key === "rich") {
+      values[key] = value ?? null;
+    }
+  }
+  return values;
+};
+
+/** the properties of a copy the user changed (they differ from the template's values it was made with) */
+const changedByHand = (el: ExcalidrawElement, slide: Frame, base: Record<string, unknown>) => {
+  const now = tracked(el, slide);
+  return new Set(Object.keys(base).filter((key) => key in now && canon(now[key]) !== canon(base[key])));
+};
+
+/** the template's values a copy was made with; older copies: derived once from their signature */
+const baseOf = (el: ExcalidrawElement, slide: Frame, fresh: ExcalidrawElement) => {
+  const data = slideData(el);
+  if (data.base) {
+    return data.base;
+  }
+  // unchanged: everything follows the template; changed: what differs from it now stays
+  return data.sig !== undefined && legacyOverridden(el, slide, fresh) ? tracked(fresh, slide) : tracked(el, slide);
+};
+
+/** a copy changed by hand at all (one whose template element is gone or switched off stays then) */
+const hasHandChanges = (el: ExcalidrawElement, slide: Frame) => {
+  const data = slideData(el);
+  return data.base ? changedByHand(el, slide, data.base).size > 0 : legacyOverridden(el, slide);
+};
+
+/** the fresh copy, with what the user changed on the existing one */
+const withHandChanges = (fresh: any, existing: any, keys: Set<string>) => {
+  if (!keys.size) {
+    return fresh;
+  }
+  let next: any = { ...fresh };
+  for (const key of keys) {
+    if (key === "x" || key === "y") {
+      continue; // below, after measuring
+    }
+    if (key === "rich") {
+      const { rich: _rich, ...rest } = next.customData || {};
+      next.customData = existing.customData?.rich ? { ...rest, rich: existing.customData.rich } : rest;
+    } else if (key === "originalText") {
+      next.originalText = existing.originalText;
+      next.text = existing.text;
+    } else {
+      next[key] = existing[key];
+    }
+  }
+  // its own words or font: measured again, at the template's anchor
+  next = measureTexts([next])[0];
+  if (keys.has("x")) {
+    next.x += anchorX(existing) - anchorX(next);
+  }
+  if (keys.has("y")) {
+    next.y = existing.y;
+  }
+  return next;
+};
+
 const fillPlaceholders = (text: string, vars: Record<string, string>) =>
   text.replace(/\{(page|total|title|deck|date)\}/g, (_, key) => vars[key] ?? "");
 
 const copyId = (id: string, slideId: string) => `${id}~${slideId}`;
+
+const isTitleRole = (el: ExcalidrawElement) => ["headline", "eyebrow"].includes(slideData(el).role as string);
 
 /** the copy of template element `src` on `slide` */
 const makeCopy = (
@@ -284,9 +411,10 @@ const makeCopy = (
       src.boundElements
         ?.filter((bound) => templateIds.has(bound.id))
         .map((bound) => ({ ...bound, id: copyId(bound.id, slide.id) })) ?? null,
-    locked: true,
+    // headline / eyebrow: each slide writes its own (the rest: change the template)
+    locked: !isTitleRole(src),
     index: null,
-    customData: { ...(src.customData || {}), slides: { copyOf: src.id } },
+    customData: { ...(src.customData || {}), slides: { copyOf: src.id, ...(isTitleRole(src) ? { role: slideData(src).role } : {}) } },
   };
   if (any.containerId !== undefined) {
     copy.containerId = map(any.containerId);
@@ -378,16 +506,16 @@ export const syncTemplate = (
     const wasHidden = slideData(slide).hidden || [];
     const hidden = new Set(reset.has(slide.id) ? [] : wasHidden);
     for (const copy of fresh) {
-      const sig = signature(copy as ExcalidrawElement, slide);
       const existing = byId.get(copy.id) as any;
       const srcId = slideData(copy).copyOf!;
-      const withSig = { ...copy, customData: { ...copy.customData, slides: { copyOf: srcId, sig, rel: true } } };
+      const base = tracked(copy, slide);
+      const stamp = (el: any) => ({ ...el, customData: { ...el.customData, slides: { ...slideData(copy), base } } });
       if (existing && !existing.isDeleted) {
         hidden.delete(srcId); // back on the slide (e.g. undo)
       }
       if (!existing) {
         if (!hidden.has(srcId)) {
-          added.push({ ...withSig, version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() });
+          added.push({ ...stamp(copy), version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() });
         }
         continue;
       }
@@ -396,17 +524,34 @@ export const syncTemplate = (
       if (hiddenByUser && !reset.has(slide.id)) {
         hidden.add(srcId); // remembered on the slide: deleted elements aren't saved
       }
-      const overridden = !existing.isDeleted && isOverridden(existing, slide, copy);
-      if ((hiddenByUser || overridden || (existing.isDeleted && hidden.has(srcId))) && !reset.has(slide.id)) {
-        continue; // the user changed it on this slide
+      if ((hiddenByUser || (existing.isDeleted && hidden.has(srcId))) && !reset.has(slide.id)) {
+        continue; // the user removed it from this slide
       }
-      const sameSize = copy.type !== "text" || Math.abs(existing.width - copy.width) < 1;
-      if (!existing.isDeleted && data.sig === sig && data.rel && sameSize && !reset.has(slide.id)) {
-        continue; // up to date
+      // what the user changed on this slide stays, the rest follows the template
+      const keep = reset.has(slide.id) || existing.isDeleted ? new Set<string>() : changedByHand(existing, slide, baseOf(existing, slide, copy));
+      const next = stamp(withHandChanges(copy, existing, keep));
+      const upToDate =
+        !existing.isDeleted &&
+        !reset.has(slide.id) &&
+        data.base &&
+        canon(data.base) === canon(base) &&
+        canon(tracked(existing, slide)) === canon(tracked(next, slide)) &&
+        existing.text === next.text &&
+        (next.type !== "text" || Math.abs(existing.width - next.width) < 1);
+      if (upToDate) {
+        continue;
       }
+      // (the template element's version / nonce are not the copy's: new ones come with the change)
+      const { version: _version, versionNonce: _nonce, updated: _updated, ...changes } = next;
       replaced.set(
         copy.id,
-        newElementWith(existing, { ...withSig, index: existing.index, isDeleted: false } as any),
+        newElementWith(existing, {
+          ...changes,
+          // unlocked by hand: stays so
+          locked: existing.isDeleted || reset.has(slide.id) ? next.locked : existing.locked,
+          index: existing.index,
+          isDeleted: false,
+        } as any),
       );
     }
     // copies whose template element is gone (or template off for this slide)
@@ -415,8 +560,7 @@ export const syncTemplate = (
       if (el.isDeleted || el.frameId !== slide.id || !data.copyOf || freshIds.has(el.id)) {
         continue;
       }
-      const overridden = isOverridden(el, slide);
-      if (!overridden || !templateIds.has(data.copyOf)) {
+      if (!hasHandChanges(el, slide) || !templateIds.has(data.copyOf)) {
         replaced.set(
           el.id,
           newElementWith(el, {
@@ -601,6 +745,18 @@ export const applyTheme = (
     const container = text.containerId ? map.get(text.containerId) ?? null : null;
     return { ...el, ...(refreshTextDimensions(text, container, map, text.originalText ?? text.text) || {}) } as ExcalidrawElement;
   });
+};
+
+/**
+ * Slides back to the template: its elements as in the template again (hand
+ * changes and deleted ones back), and the deck's fonts and colors on
+ * everything on them. The same for the slide card's icon, "Reset all
+ * slides" and an agent's reset / restyle.
+ */
+export const resetToTemplate = (elements: readonly ExcalidrawElement[], ids: Set<string>, deck: string) => {
+  const theme = getTheme(elements);
+  const themed = applyTheme(elements, theme, theme, { force: ids }) ?? elements;
+  return syncTemplate(themed, deck, { reset: ids })?.elements ?? (themed === elements ? null : [...themed]);
 };
 
 /** the editor's defaults for new elements, from the theme */
@@ -849,6 +1005,7 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
     endArrowhead: null,
   } as any;
   const footer = [
+    ...titleBlock(frame, theme),
     line,
     text(`${frame.id}-deck`, frame.x + 60, "{deck}", "left"),
     text(`${frame.id}-page`, frame.x + width - 360, "{page} / {total}", "right"),
@@ -862,6 +1019,178 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
   syncInvalidIndices(next as any);
   update(api, next);
   return frame.id as string;
+};
+
+/** a text element on the template */
+const templateText = (frame: Frame, props: Record<string, unknown>) =>
+  ({
+    ...newFrame({ x: frame.x, y: frame.y, width: 300, height: 30, name: "" }),
+    type: "text",
+    name: undefined,
+    frameId: frame.id,
+    containerId: null,
+    textAlign: "left",
+    verticalAlign: "top",
+    lineHeight: 1.25,
+    autoResize: true,
+    roughness: 0,
+    ...props,
+  }) as any;
+
+/** the template's headline and eyebrow (default place and style) */
+const titleBlock = (frame: Frame, theme: DeckTheme) => [
+  templateText(frame, {
+    id: `${frame.id}-eyebrow`,
+    x: frame.x + 120,
+    y: frame.y + 100,
+    text: "SECTION",
+    originalText: "SECTION",
+    fontSize: 24,
+    fontFamily: theme.fontFamily,
+    strokeColor: "#868e96",
+    customData: { slides: { role: "eyebrow" } },
+  }),
+  templateText(frame, {
+    id: `${frame.id}-headline`,
+    x: frame.x + 120,
+    y: frame.y + 140,
+    text: "{title}",
+    originalText: "{title}",
+    fontSize: theme.titleSize,
+    fontFamily: theme.fontFamily,
+    strokeColor: theme.textColor,
+    customData: { slides: { role: "headline" } },
+  }),
+];
+
+/** the template has a headline / eyebrow */
+export const hasTitleBlock = (elements: readonly ExcalidrawElement[]) => {
+  const template = getTemplate(elements);
+  return !!template && elements.some((el) => !el.isDeleted && el.frameId === template.id && isTitleRole(el));
+};
+
+/**
+ * A slide's own headline (its biggest text near the top) and the eyebrow
+ * above it (a smaller text right above, if any)
+ */
+const findTitles = (elements: readonly ExcalidrawElement[], slide: Frame) => {
+  const texts = elements.filter(
+    (el: any) => !el.isDeleted && el.type === "text" && el.frameId === slide.id && !el.containerId && !slideData(el).copyOf,
+  ) as any[];
+  const headline = texts
+    .filter((el) => el.y - slide.y < slide.height * 0.35 && el.fontSize >= 36)
+    .sort((a, b) => b.fontSize - a.fontSize || a.y - b.y)[0];
+  if (!headline) {
+    return null;
+  }
+  const eyebrow = texts
+    .filter(
+      (el) =>
+        el !== headline &&
+        el.fontSize < headline.fontSize &&
+        el.y + el.height <= headline.y + 8 &&
+        headline.y - (el.y + el.height) < 60 &&
+        Math.abs(el.x - headline.x) < 40,
+    )
+    .sort((a, b) => b.y - a.y)[0];
+  return { headline, eyebrow: eyebrow ?? null };
+};
+
+/**
+ * Headline and eyebrow on the template. The slides' own ones become their
+ * copies (their words stay theirs; place and style follow the template,
+ * which takes them from where most slides have their headline).
+ */
+export const addTitleBlock = (elements: readonly ExcalidrawElement[]) => {
+  const template = getTemplate(elements);
+  if (!template || hasTitleBlock(elements)) {
+    return null;
+  }
+  // slides without the template keep everything as it is
+  const slides = getSlides(elements).filter((slide) => slideData(slide).template !== false);
+  const found = new Map(slides.map((slide) => [slide.id, findTitles(elements, slide)]));
+  const [eyebrowSrc, headlineSrc] = titleBlock(template, getTheme(elements));
+  // place and style from where most slides have their headline (one with an eyebrow there, if any)
+  const spotOf = (slide: Frame) => {
+    const headline = found.get(slide.id)?.headline as any;
+    return headline && `${Math.round((headline.x - slide.x) / 24)},${Math.round((headline.y - slide.y) / 24)},${headline.fontSize}`;
+  };
+  const counts = new Map<string, number>();
+  for (const slide of slides) {
+    const spot = spotOf(slide);
+    if (spot) {
+      counts.set(spot, (counts.get(spot) ?? 0) + 1);
+    }
+  }
+  const common = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const atCommon = slides.filter((slide) => spotOf(slide) === common);
+  const model = atCommon.find((slide) => found.get(slide.id)?.eyebrow) ?? atCommon[0];
+  if (model) {
+    const { headline, eyebrow } = found.get(model.id)!;
+    const styleOf = (el: any) => ({
+      x: template.x + (el.x - model.x),
+      y: template.y + (el.y - model.y),
+      fontSize: el.fontSize,
+      fontFamily: el.fontFamily,
+      strokeColor: el.strokeColor,
+      textAlign: el.textAlign,
+      lineHeight: el.lineHeight,
+    });
+    Object.assign(headlineSrc, styleOf(headline));
+    if (eyebrow) {
+      Object.assign(eyebrowSrc, styleOf(eyebrow), { text: "SECTION", originalText: "SECTION" });
+    } else {
+      // right above the headline
+      Object.assign(eyebrowSrc, { x: headlineSrc.x, y: headlineSrc.y - 40, textAlign: headline.textAlign });
+    }
+  }
+  const sources = restoreElements([eyebrowSrc, headlineSrc], null, { refreshDimensions: true });
+  // only texts where the template's sit are taken over; elsewhere (a title
+  // slide …) the template's headline / eyebrow stay hidden: nothing moves
+  const inPlace = (own: any, src: any, slide: Frame) =>
+    !!own && Math.abs(own.x - slide.x - (src.x - template.x)) < 24 && Math.abs(own.y - slide.y - (src.y - template.y)) < 24;
+  const adopted = new Map<string, ExcalidrawElement>();
+  const hiddenOn = new Map<string, string[]>();
+  for (const slide of slides) {
+    const titles = found.get(slide.id);
+    for (const [own, src] of [
+      [titles?.headline, sources[1]],
+      [titles?.eyebrow, sources[0]],
+    ] as const) {
+      if (!model) {
+        continue; // nothing to go by: the template's show everywhere
+      }
+      if (!inPlace(own, src, slide)) {
+        hiddenOn.set(slide.id, [...(hiddenOn.get(slide.id) ?? slideData(slide).hidden ?? []), src.id]);
+        continue;
+      }
+      if (!own) {
+        continue;
+      }
+      // the slide's text, as the copy: its words stay (they differ from the template's), the rest follows
+      adopted.set(own.id, {
+        ...own,
+        id: copyId(src.id, slide.id),
+        locked: false,
+        customData: {
+          ...(own.customData || {}),
+          slides: { copyOf: src.id, role: slideData(src).role, base: { ...tracked(own, slide), originalText: "\u0000" } },
+        },
+      } as ExcalidrawElement);
+    }
+  }
+  const next = [
+    ...elements.flatMap((el) => {
+      const copy = adopted.get(el.id);
+      if (copy) {
+        return [newElementWith(el, { isDeleted: true }), { ...copy, index: null } as ExcalidrawElement];
+      }
+      return hiddenOn.has(el.id) ? [withSlideData(el, { hidden: hiddenOn.get(el.id) })] : [el];
+    }),
+    ...sources,
+  ];
+  syncInvalidIndices(next as any);
+  return { elements: next, adopted: adopted.size };
 };
 
 // -----------------------------------------------------------------------------

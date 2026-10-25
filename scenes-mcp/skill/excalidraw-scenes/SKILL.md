@@ -208,8 +208,20 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
   placeholders: `{page}` (slide number), `{total}` (number of slides),
   `{title}` (the slide frame's name), `{deck}` (the scene name), `{date}`
   (today, in the viewer's locale). They are filled in only in template
-  elements. Never edit the copies (ids `<element>~<slide>`); change the
-  template instead.
+  elements. The copies (ids `<element>~<slide>`) follow their template
+  element property by property: change the template for every slide; what
+  is changed on one slide (a color, a position …) stays there, everything
+  else keeps following. `reset: ["<frame id>"]` (or slide numbers) brings
+  the template's version back on those slides, `restyle: true` on all, like
+  the app's buttons.
+- Headline and eyebrow: template texts with `"customData": { "slides":
+  { "role": "headline" } }` / `"eyebrow"` place and style every slide's
+  headline / eyebrow (the template's text is the default, e.g. `{title}`).
+  Their copies are the slide's own words: update the copy's `text` (or
+  `markdown`), e.g. `{ "id": "<template headline id>~<frame id>", "text":
+  "Our plan" }`; read_scene lists them. `addTitleBlock: true` adds both to
+  a template that has none (the slides' own headlines where it puts them
+  become those copies, as the app's "Add headline & eyebrow" does).
 - Text alignment: give a text `width` and it becomes a box from `x` to
   `x + width`: lines wrap at the width and `textAlign` (left, center, right)
   aligns them inside it (e.g. a caption centered under a shape, a paragraph).
@@ -230,9 +242,10 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
   Use the theme's `titleSize` / `bodySize` for titles and body. Change the
   deck style by updating the template frame's `customData.slides.theme`:
   elements that still have the old theme's values follow; with
-  `restyle: true` on that edit (or any edit), every slide element takes the
-  theme's font, colors, roughness and stroke, also where they were set by
-  hand (font sizes stay).
+  `restyle: true` on that edit (or any edit), every slide goes back to the
+  template ("Reset all slides"): template elements as in the template, and
+  the theme's font, colors, roughness and stroke on everything, also where
+  set by hand (font sizes stay).
 - A neutral, modern look (instead of the hand-drawn default): theme
   `{ "fontFamily": "Inter", "textColor": "#111827", "strokeColor": "#334155",
   "roughness": 0, "strokeWidth": 2, "fillStyle": "solid", "titleSize": 72,
