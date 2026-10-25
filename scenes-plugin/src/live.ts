@@ -37,7 +37,7 @@ import { applyMarkdown } from "./richText/agent";
 import { layoutRich } from "./richText/layout";
 import { docFromMarkdown, plainOf } from "./richText/model";
 import { getCheckpoint, setCheckpoint } from "./storage";
-import { addFont, customFonts, fontFamilyValue, fontFromGoogle } from "./fonts";
+import { addFont, customFonts, fontFamilyValue, fontFromGoogle, registerSceneFonts } from "./fonts";
 import { fillFiles, leanScene } from "./leanFiles";
 import { editsRunning, getPayload, keepPayload, onceForRequest } from "./agentRequests";
 import { keepUpload, withUploads } from "./uploads";
@@ -59,7 +59,7 @@ type Command =
   | { type: "save"; name?: string }
   | { type: "local-only"; name: string; on: boolean }
   | { type: "convert"; elements: any[]; deck?: string }
-  | { type: "deck-check"; elements: any[]; files?: Record<string, any>; deck: string; background?: string }
+  | { type: "deck-check"; elements: any[]; files?: Record<string, any>; kurviqFonts?: unknown; deck: string; background?: string }
   | {
       type: "measure";
       items: Array<{ text: string; fontSize?: number; fontFamily?: number; lineHeight?: number; maxWidth?: number }>;
@@ -68,6 +68,7 @@ type Command =
       type: "slides-html";
       elements: any[];
       files?: any;
+      kurviqFonts?: unknown;
       deck: string;
       background?: string;
       slides?: "all" | string | Array<number | string>;
@@ -800,12 +801,15 @@ const runCommand = async (command: Command) => {
         convertMcpElements,
       );
     case "deck-check":
+      // the scene's own fonts first: text is measured with them
+      await registerSceneFonts(command);
       return checkDeck(restoreElements(command.elements, null, { repairBindings: true }), {
         ...command,
         // pictures, for the contrast of text on them (filled in from this tab: reads are lean)
         files: await fillFiles(command.files as any, scenesController.getApi()?.getFiles()),
       });
     case "slides-html": {
+      await registerSceneFonts(command);
       const elements = restoreElements(command.elements, null, { repairBindings: true });
       const frames = pickSlides(elements, command.slides ?? "all", { includeSkipped: command.includeSkipped });
       return {
@@ -823,7 +827,6 @@ const runCommand = async (command: Command) => {
 };
 
 let source: EventSource | null = null;
-let unsubscribe: (() => void) | null = null;
 let focusedAt = document.hasFocus() ? Date.now() : 0;
 
 const tabState = () => {
@@ -957,6 +960,19 @@ const onFocus = () => {
   report();
 };
 
+/** tell the server when the open scene or its unsaved state changes */
+const reportSceneChanges = () => {
+  let last = "";
+  scenesController.subscribe(() => {
+    const { current, dirty } = scenesController.getState();
+    const key = JSON.stringify([current, dirty]);
+    if (key !== last) {
+      last = key;
+      report();
+    }
+  });
+};
+
 export const connectLive = () => {
   if (IS_ONLINE) {
     if (socketWanted) {
@@ -968,15 +984,7 @@ export const connectLive = () => {
     followPairing();
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", report);
-    let lastKey = "";
-    unsubscribe = scenesController.subscribe(() => {
-      const { current, dirty } = scenesController.getState();
-      const key = JSON.stringify([current, dirty]);
-      if (key !== lastKey) {
-        lastKey = key;
-        report();
-      }
-    });
+    reportSceneChanges();
     return;
   }
   if (source) {
@@ -1003,23 +1011,5 @@ export const connectLive = () => {
       scenesController.syncNow();
     }
   };
-
-  let last = "";
-  unsubscribe = scenesController.subscribe(() => {
-    const { current, dirty } = scenesController.getState();
-    const key = JSON.stringify([current, dirty]);
-    if (key !== last) {
-      last = key;
-      report();
-    }
-  });
-};
-
-export const disconnectLive = () => {
-  source?.close();
-  source = null;
-  window.removeEventListener("focus", onFocus);
-  document.removeEventListener("visibilitychange", report);
-  unsubscribe?.();
-  unsubscribe = null;
+  reportSceneChanges();
 };

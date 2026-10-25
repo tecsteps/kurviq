@@ -27,9 +27,6 @@ export const notesDoc = (notes: string | undefined): RichDoc => docFromMarkdown(
 /** notes as HTML (presenter view) */
 export const notesHtml = (notes: string | undefined, dark = false) => docToHtml(notesDoc(notes), dark);
 
-/** notes without formatting (tooltips) */
-export const notesText = (notes: string | undefined) => plainOf(notesDoc(notes));
-
 // -----------------------------------------------------------------------------
 // which slide's notes are open
 

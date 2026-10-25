@@ -30,6 +30,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isSceneName } from "../scenes-mcp/sceneName.mjs";
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
 
@@ -189,10 +191,9 @@ const remoteBlobs = async () => {
 // scenes
 // -----------------------------------------------------------------------------
 
-const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _.()-]{0,99}$/u;
 
 const scenePath = (name) => {
-  if (typeof name !== "string" || !NAME_RE.test(name) || name.includes("..")) {
+  if (!isSceneName(name)) {
     throw httpError(400, `Invalid scene name: ${name}`);
   }
   return `${SCENES_SUBDIR}/${name}${EXTENSION}`;

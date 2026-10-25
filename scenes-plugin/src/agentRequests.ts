@@ -51,21 +51,24 @@ export const onceForRequest = async <T,>(
   if (inFlight) {
     return inFlight.then((result) => ({ ...result, alreadyApplied: "This request was already being applied; this is its result." }));
   }
-  const done = await get<{ at: number; result: any }>(requestId, results).catch(() => undefined);
-  if (done) {
-    return {
-      ...done.result,
-      elements: await reload().catch(() => []),
-      alreadyApplied: `This request (${requestId}) was applied at ${new Date(done.at).toISOString()}; nothing was applied again.`,
-    } as T;
-  }
-  const task = run();
-  running.set(requestId, task);
-  try {
-    const result = await task;
+  // claimed before the first await: a retry arriving meanwhile joins this one
+  const task = (async () => {
+    const done = await get<{ at: number; result: any }>(requestId, results).catch(() => undefined);
+    if (done) {
+      return {
+        ...done.result,
+        elements: await reload().catch(() => []),
+        alreadyApplied: `This request (${requestId}) was applied at ${new Date(done.at).toISOString()}; nothing was applied again.`,
+      } as T;
+    }
+    const result = await run();
     await set(requestId, { at: Date.now(), result: summary(result) }, results).catch(() => {});
     prune(results, MAX_RESULTS).catch(() => {});
     return result;
+  })();
+  running.set(requestId, task);
+  try {
+    return await task;
   } finally {
     running.delete(requestId);
   }

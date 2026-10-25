@@ -13,7 +13,7 @@
 //    all slides) brings the template's version back.
 //    The template's elements are the deck's style: styled with Excalidraw's
 //    own tools there, every slide follows. (Older decks' theme values other
-//    than the transition are no longer used.)
+//    than the transition only style a headline or body text added later.)
 //  - elements: { step: n } appear on the n-th click while presenting.
 //
 // Template text may use {page} {total} {title} {deck} {date}.
@@ -28,6 +28,8 @@ import {
 } from "@excalidraw/excalidraw";
 import { duplicateElements, getCommonBounds, refreshTextDimensions, syncInvalidIndices } from "@excalidraw/element";
 
+import { CHANGE_NAMES, anchorX, canon, changedByHand, deckOrder, isSlideFrame, slideData as sharedSlideData, tracked } from "../../scenes-mcp/slideRules.mjs";
+
 import type {
   ExcalidrawElement,
   ExcalidrawFrameElement,
@@ -35,37 +37,24 @@ import type {
 } from "@excalidraw/element/types";
 import type { BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
-export type DeckTheme = {
-  fontFamily: number;
-  textColor: string;
-  titleSize: number;
-  bodySize: number;
-  strokeColor: string;
-  backgroundColor: string;
-  fillStyle: "solid" | "hachure" | "cross-hatch" | "zigzag";
-  roughness: number;
-  strokeWidth: number;
-  /** camera between slides: fly across the canvas, or cut */
-  transition: "glide" | "cut";
-};
+/** camera between slides: fly across the canvas, or cut */
+export type Transition = "glide" | "cut";
 
-export const DEFAULT_THEME: DeckTheme = {
+/** the text style a new template's headline, eyebrow and body text start with */
+type TemplateStyle = { fontFamily: number; textColor: string; titleSize: number; bodySize: number };
+
+const TEMPLATE_STYLE: TemplateStyle = {
   fontFamily: FONT_FAMILY.Excalifont,
   textColor: "#1e1e1e",
   titleSize: 64,
   bodySize: 32,
-  strokeColor: "#1e1e1e",
-  backgroundColor: "transparent",
-  fillStyle: "solid",
-  roughness: 1,
-  strokeWidth: 2,
-  transition: "glide",
 };
 
 export type SlideData = {
   /** the template frame; on its texts: the headline / eyebrow (each slide writes its own) */
   role?: "template" | "headline" | "eyebrow" | "body";
-  theme?: Partial<DeckTheme>;
+  /** on the template: the transition (older decks also hold their text style here) */
+  theme?: { transition?: Transition } & Partial<TemplateStyle>;
   order?: number;
   notes?: string;
   skip?: boolean;
@@ -98,8 +87,7 @@ const SLIDE_GAP = 240;
 /** slides per row on the canvas */
 const SLIDE_COLUMNS = 7;
 
-export const slideData = (el: ExcalidrawElement | null | undefined): SlideData =>
-  ((el?.customData as any)?.slides as SlideData) || {};
+export const slideData = (el: ExcalidrawElement | null | undefined): SlideData => sharedSlideData(el);
 
 export const withSlideData = <T extends ExcalidrawElement>(el: T, patch: Partial<SlideData>): T => {
   const next = { ...slideData(el), ...patch };
@@ -111,38 +99,22 @@ export const withSlideData = <T extends ExcalidrawElement>(el: T, patch: Partial
   return newElementWith(el, { customData: { ...(el.customData || {}), slides: next } } as any);
 };
 
-const isFrame = (el: ExcalidrawElement): el is Frame => el.type === "frame" && !el.isDeleted;
+const isFrame = (el: ExcalidrawElement): el is Frame => isSlideFrame(el);
 
 export const getTemplate = (elements: readonly ExcalidrawElement[]) =>
   (elements.find((el) => isFrame(el) && slideData(el).role === "template") as Frame | undefined) ?? null;
 
-export const getTheme = (elements: readonly ExcalidrawElement[]): DeckTheme => ({
-  ...DEFAULT_THEME,
-  ...(slideData(getTemplate(elements)).theme || {}),
-});
+export const getTransition = (elements: readonly ExcalidrawElement[]): Transition =>
+  slideData(getTemplate(elements)).theme?.transition ?? "glide";
+
+/** the text style for headline / eyebrow / body text added to a template (an older deck's own still counts) */
+const templateStyle = (elements: readonly ExcalidrawElement[]): TemplateStyle => {
+  const { transition, ...style } = slideData(getTemplate(elements)).theme ?? {};
+  return { ...TEMPLATE_STYLE, ...style };
+};
 
 /** slide frames in deck order: explicit order first, then canvas order (rows, left to right) */
-export const getSlides = (elements: readonly ExcalidrawElement[]): Frame[] => {
-  const frames = elements.filter((el): el is Frame => isFrame(el) && slideData(el).role !== "template");
-  const canvasOrder = [...frames].sort((a, b) =>
-    Math.abs(a.y - b.y) > Math.min(a.height, b.height) / 2 ? a.y - b.y : a.x - b.x,
-  );
-  const rank = new Map(canvasOrder.map((frame, index) => [frame.id, index]));
-  return frames.sort((a, b) => {
-    const oa = slideData(a).order;
-    const ob = slideData(b).order;
-    if (oa !== undefined && ob !== undefined && oa !== ob) {
-      return oa - ob;
-    }
-    if (oa !== undefined && ob === undefined) {
-      return -1;
-    }
-    if (ob !== undefined && oa === undefined) {
-      return 1;
-    }
-    return rank.get(a.id)! - rank.get(b.id)!;
-  });
-};
+export const getSlides = (elements: readonly ExcalidrawElement[]): Frame[] => deckOrder(elements) as Frame[];
 
 /**
  * Agents place elements relative to a slide: `slide` = slide number (1-based,
@@ -189,27 +161,9 @@ export const elementStep = (el: ExcalidrawElement, byId: ReadonlyMap<string, Exc
   return containerId ? Math.max(own, slideData(byId.get(containerId)).step ?? 0) : own;
 };
 
-/** elements of a slide (its frame children), incl. template copies */
-export const slideElements = (elements: readonly ExcalidrawElement[], frame: Frame) =>
-  elements.filter((el) => !el.isDeleted && el.frameId === frame.id);
-
 // -----------------------------------------------------------------------------
 // template sync
 // -----------------------------------------------------------------------------
-
-/** stable JSON (sorted keys), so signatures survive save / load */
-const canon = (value: unknown): string => {
-  if (Array.isArray(value)) {
-    return `[${value.map(canon).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value as object)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canon((value as any)[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(typeof value === "number" ? Math.round(value * 2) / 2 : value);
-};
 
 /** older copies' signature over everything the user can change (see legacyOverridden) */
 const signature = (el: ExcalidrawElement, slide?: { x: number; y: number }) => {
@@ -260,81 +214,6 @@ const legacyOverridden = (el: ExcalidrawElement, slide: Frame, fresh?: Excalidra
   }
   const inPlace = !!fresh && el.locked && Math.abs(el.x - fresh.x) < 1 && Math.abs(el.y - fresh.y) < 1;
   return signature(el) !== sig && !inPlace;
-};
-
-/** what a copy takes from its template element, property by property */
-const TRACKED = [
-  "x",
-  "y",
-  "width",
-  "height",
-  "angle",
-  "strokeColor",
-  "backgroundColor",
-  "fillStyle",
-  "strokeWidth",
-  "strokeStyle",
-  "roughness",
-  "opacity",
-  "roundness",
-  "link",
-  "originalText",
-  "fontFamily",
-  "fontSize",
-  "textAlign",
-  "verticalAlign",
-  "lineHeight",
-  "autoResize",
-  "points",
-  "fileId",
-  "startArrowhead",
-  "endArrowhead",
-  "rich",
-] as const;
-
-const round2 = (value: number) => Math.round(value * 100) / 100;
-
-/** a free text's x where it is anchored (its right edge when right-aligned …): text of another width keeps it */
-const anchorX = (el: any) =>
-  el.type === "text" && !el.containerId
-    ? el.textAlign === "right"
-      ? el.x + el.width
-      : el.textAlign === "center"
-      ? el.x + el.width / 2
-      : el.x
-    : el.x;
-
-/**
- * The tracked values of an element on a slide: positions relative to the
- * slide (moving or reordering slides changes nothing), a text's size left
- * out where Excalidraw measures it.
- */
-const tracked = (el: any, slide: Frame) => {
-  const values: Record<string, unknown> = {};
-  for (const key of TRACKED) {
-    let value: unknown;
-    if (key === "x") {
-      value = el.containerId ? undefined : round2(anchorX(el) - slide.x);
-    } else if (key === "y") {
-      value = el.containerId ? undefined : round2(el.y - slide.y);
-    } else if (key === "width" || key === "height") {
-      value = el.type === "text" && (el.containerId || key === "height" || el.autoResize !== false) ? undefined : round2(el[key]);
-    } else if (key === "rich") {
-      value = el.customData?.rich;
-    } else {
-      value = el[key];
-    }
-    if (value !== undefined || key === "rich") {
-      values[key] = value ?? null;
-    }
-  }
-  return values;
-};
-
-/** the properties of a copy the user changed (they differ from the template's values it was made with) */
-const changedByHand = (el: ExcalidrawElement, slide: Frame, base: Record<string, unknown>) => {
-  const now = tracked(el, slide);
-  return new Set(Object.keys(base).filter((key) => key in now && canon(now[key]) !== canon(base[key])));
 };
 
 /** the template's values a copy was made with; older copies: derived once from their signature */
@@ -664,36 +543,6 @@ export const templateKey = (elements: readonly ExcalidrawElement[], deck: string
   return hashString(JSON.stringify(parts));
 };
 
-/** what a hand change on a copy is called (properties that go together share a name) */
-const CHANGE_NAMES: Record<string, string> = {
-  x: "position",
-  y: "position",
-  width: "size",
-  height: "size",
-  angle: "rotation",
-  strokeColor: "color",
-  backgroundColor: "background",
-  fillStyle: "fill",
-  strokeWidth: "stroke width",
-  strokeStyle: "stroke style",
-  roughness: "sloppiness",
-  opacity: "opacity",
-  roundness: "corners",
-  link: "link",
-  originalText: "text",
-  fontFamily: "font",
-  fontSize: "font size",
-  textAlign: "alignment",
-  verticalAlign: "vertical alignment",
-  lineHeight: "line height",
-  autoResize: "box width",
-  points: "shape",
-  fileId: "image",
-  startArrowhead: "arrowheads",
-  endArrowhead: "arrowheads",
-  rich: "formatting",
-};
-
 /**
  * The hand changes of template copies among `ids`: per change name (color,
  * text …) the copies that have it. Elements that aren't copies are left out.
@@ -958,7 +807,8 @@ export const addSlide = (api: ExcalidrawImperativeAPI, after?: string) => {
 };
 
 /** a template frame above the slides, with a footer to start from */
-export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = DEFAULT_THEME) => {
+export const createTemplate = (api: ExcalidrawImperativeAPI) => {
+  const style = TEMPLATE_STYLE;
   const elements = api.getSceneElementsIncludingDeleted();
   if (getTemplate(elements)) {
     return getTemplate(elements)!.id;
@@ -970,7 +820,6 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
   const minY = slides.length ? Math.min(...slides.map((s) => s.y)) : 0;
   const frame = withSlideData(newFrame({ x: minX, y: minY - height - SLIDE_GAP * 2, width, height, name: "Template" }), {
     role: "template",
-    theme,
     titleBlock: true,
     bodyText: true,
   });
@@ -985,7 +834,7 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
       text: value,
       originalText: value,
       fontSize: 22,
-      fontFamily: theme.fontFamily,
+      fontFamily: style.fontFamily,
       textAlign: align,
       verticalAlign: "top",
       containerId: null,
@@ -1013,16 +862,16 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
     endArrowhead: null,
   } as any;
   const footer = [
-    ...titleBlock(frame, theme),
+    ...titleBlock(frame, style),
     templateText(frame, {
       id: `${frame.id}-body`,
       x: frame.x + 120,
       y: frame.y + 300,
       text: "Body text: the style of new text on slides",
       originalText: "Body text: the style of new text on slides",
-      fontSize: theme.bodySize,
-      fontFamily: theme.fontFamily,
-      strokeColor: theme.textColor,
+      fontSize: style.bodySize,
+      fontFamily: style.fontFamily,
+      strokeColor: style.textColor,
       customData: { slides: { role: "body" } },
     }),
     line,
@@ -1057,7 +906,7 @@ const templateText = (frame: Frame, props: Record<string, unknown>) =>
   }) as any;
 
 /** the template's headline and eyebrow (default place and style) */
-const titleBlock = (frame: Frame, theme: DeckTheme) => [
+const titleBlock = (frame: Frame, style: TemplateStyle) => [
   templateText(frame, {
     id: `${frame.id}-eyebrow`,
     x: frame.x + 120,
@@ -1065,7 +914,7 @@ const titleBlock = (frame: Frame, theme: DeckTheme) => [
     text: "SECTION",
     originalText: "SECTION",
     fontSize: 24,
-    fontFamily: theme.fontFamily,
+    fontFamily: style.fontFamily,
     strokeColor: "#868e96",
     customData: { slides: { role: "eyebrow" } },
   }),
@@ -1075,9 +924,9 @@ const titleBlock = (frame: Frame, theme: DeckTheme) => [
     y: frame.y + 140,
     text: "{title}",
     originalText: "{title}",
-    fontSize: theme.titleSize,
-    fontFamily: theme.fontFamily,
-    strokeColor: theme.textColor,
+    fontSize: style.titleSize,
+    fontFamily: style.fontFamily,
+    strokeColor: style.textColor,
     customData: { slides: { role: "headline" } },
   }),
 ];
@@ -1185,16 +1034,16 @@ export const addBodyText = (elements: readonly ExcalidrawElement[]) => {
   }
   const common = [...counts.values()].sort((a, b) => b.count - a.count)[0]?.el;
   const headline = elements.find((el) => !el.isDeleted && el.frameId === template.id && slideData(el).role === "headline") as any;
-  const theme = getTheme(elements);
+  const style = templateStyle(elements);
   const sample = templateText(template, {
     id: `${template.id}-body`,
     x: headline?.x ?? template.x + 120,
     y: headline ? headline.y + headline.height + 60 : template.y + 300,
     text: "Body text: the style of new text on slides",
     originalText: "Body text: the style of new text on slides",
-    fontSize: common?.fontSize ?? theme.bodySize,
-    fontFamily: common?.fontFamily ?? theme.fontFamily,
-    strokeColor: common?.strokeColor ?? theme.textColor,
+    fontSize: common?.fontSize ?? style.bodySize,
+    fontFamily: common?.fontFamily ?? style.fontFamily,
+    strokeColor: common?.strokeColor ?? style.textColor,
     customData: { slides: { role: "body" } },
   });
   const [measured] = restoreElements([sample], null).map((el: any) => ({
@@ -1220,7 +1069,7 @@ export const addTitleBlock = (elements: readonly ExcalidrawElement[]) => {
   // slides without the template keep everything as it is
   const slides = getSlides(elements).filter((slide) => slideData(slide).template !== false);
   const found = new Map(slides.map((slide) => [slide.id, findTitles(elements, slide)]));
-  const [eyebrowSrc, headlineSrc] = titleBlock(template, getTheme(elements));
+  const [eyebrowSrc, headlineSrc] = titleBlock(template, templateStyle(elements));
   // place and style from where most slides have their headline (one with an eyebrow there, if any)
   const spotOf = (slide: Frame) => {
     const headline = found.get(slide.id)?.headline as any;

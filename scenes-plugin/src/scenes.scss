@@ -87,8 +87,7 @@
     }
   }
 
-  .scenes-switcher__clear,
-  .scenes-filter-chip button {
+  .scenes-switcher__clear {
     display: grid;
     place-items: center;
     width: 1.3rem;
@@ -113,25 +112,6 @@
     top: 50%;
     right: 0.45rem;
     transform: translateY(-50%);
-  }
-
-  .scenes-filter-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.1rem 0.15rem 0.1rem 0.5rem;
-    border-radius: 999px;
-    background: var(--color-surface-high, rgba(0, 0, 0, 0.06));
-    color: var(--color-gray-60, var(--text-primary-color));
-    font-size: 0.75rem;
-    text-transform: none;
-    letter-spacing: normal;
-
-    button {
-      width: 1.1rem;
-      height: 1.1rem;
-      font-size: 0.8rem;
-    }
   }
 
   .scenes-switcher__list {
@@ -504,14 +484,6 @@
     white-space: nowrap;
   }
 
-  .scenes-pill__dot {
-    flex: none;
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-    background: var(--color-warning-dark, #f08c00);
-  }
-
   .scenes-pill__status {
     color: var(--color-gray-50);
     font-size: 0.75rem;
@@ -523,18 +495,6 @@
     color: var(--text-primary-color);
   }
 
-  .scenes-sidebar__body {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 0 0.75rem 1rem;
-    overflow-y: auto;
-    color: var(--text-primary-color);
-    font-size: 0.875rem;
-  }
-
   .scenes-current {
     display: flex;
     flex-direction: column;
@@ -544,18 +504,11 @@
     background: var(--color-surface-low);
   }
 
-  .scenes-current__label,
   .scenes-list-header {
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--color-gray-50);
-  }
-
-  .scenes-current__name {
-    font-size: 1rem;
-    font-weight: 600;
-    word-break: break-word;
   }
 
   .scenes-current__status {
@@ -683,135 +636,7 @@
     gap: 2px;
   }
 
-  .scenes-list__row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-
-    > .scenes-form {
-      padding: 0.25rem 0.6rem 0.5rem;
-    }
-  }
-
-  .scenes-item {
-    position: relative;
-    display: flex;
-    align-items: center;
-    border-radius: var(--border-radius-md);
-    color: var(--text-primary-color);
-
-    &:hover {
-      background: var(--color-surface-high);
-    }
-
-    &--active {
-      background: var(--color-surface-primary-container);
-      font-weight: 600;
-
-      &:hover {
-        background: var(--color-surface-primary-container);
-      }
-    }
-  }
-
-  .scenes-item__open {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    min-height: 2.25rem;
-    padding: 0.4rem 0.25rem 0.4rem 0.6rem;
-    border: none;
-    background: none;
-    color: inherit;
-    font: inherit;
-    font-size: 0.875rem;
-    text-align: left;
-    cursor: pointer;
-
-    &:disabled {
-      cursor: default;
-    }
-  }
-
-  .scenes-item__more {
-    flex: none;
-    width: 1.75rem;
-    height: 1.75rem;
-    margin-right: 0.25rem;
-    border: none;
-    border-radius: var(--border-radius-md);
-    background: none;
-    color: var(--color-gray-50);
-    font-size: 1rem;
-    line-height: 1;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.1s;
-
-    &:hover:not(:disabled),
-    &--open {
-      background: var(--color-surface-lowest, rgba(0, 0, 0, 0.06));
-      color: var(--text-primary-color);
-    }
-
-    &:focus-visible,
-    &--open {
-      opacity: 1;
-    }
-
-    &:disabled {
-      cursor: default;
-    }
-  }
-
-  .scenes-item:hover .scenes-item__more,
-  .scenes-item--active .scenes-item__more {
-    opacity: 1;
-  }
-
   @media (hover: none) {
-    .scenes-item__more {
-      opacity: 1;
-    }
-  }
-
-  .scenes-menu {
-    position: absolute;
-    top: calc(100% + 2px);
-    right: 0.25rem;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    min-width: 9rem;
-    padding: 0.25rem;
-    border: 1px solid var(--default-border-color);
-    border-radius: var(--border-radius-lg, 8px);
-    background: var(--island-bg-color);
-    box-shadow: var(--shadow-island);
-
-    button {
-      padding: 0.45rem 0.6rem;
-      border: none;
-      border-radius: var(--border-radius-md);
-      background: none;
-      color: var(--text-primary-color);
-      font: inherit;
-      font-size: 0.85rem;
-      font-weight: 400;
-      text-align: left;
-      cursor: pointer;
-
-      &:hover {
-        background: var(--color-surface-high);
-      }
-    }
-
-    .scenes-menu__danger {
-      color: var(--color-danger-darkest, #c92a2a);
-    }
   }
 
   .scenes-current__manage {
@@ -822,27 +647,6 @@
 
   .scenes-link--danger {
     color: var(--color-danger-darkest, #c92a2a);
-  }
-
-  .scenes-item__name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .scenes-badge {
-    flex: none;
-    padding: 0.05rem 0.4rem;
-    border-radius: 999px;
-    background: var(--color-surface-high);
-    color: var(--color-gray-50);
-    font-size: 0.7rem;
-    font-weight: 400;
-
-    &--warn {
-      background: var(--color-warning, #fff3bf);
-      color: var(--color-warning-darkest, #5c3c00);
-    }
   }
 
   .scenes-repo {
@@ -1107,13 +911,6 @@
     outline-offset: 2px;
   }
 
-  .scenes-current__name {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
   .scenes-current__footer {
     display: flex;
     flex-direction: column;
@@ -1176,13 +973,6 @@
     color: var(--color-gray-50);
   }
 
-  .scenes-item__manual {
-    flex: none;
-    margin-left: auto;
-    font-size: 0.65rem;
-    color: var(--color-gray-50);
-  }
-
   .scenes-activity {
     ul {
       list-style: none;
@@ -1215,10 +1005,6 @@
     }
   }
 
-  .scenes-empty {
-    color: var(--color-gray-50);
-    font-size: 0.8rem;
-  }
 }
 
 // hide the "Try Excalidraw+" promo banner (top-right and mobile nav)
@@ -1303,7 +1089,6 @@
 }
 
 .excalidraw .slides-section__title,
-.excalidraw .scenes-current__label,
 .excalidraw .scenes-list-header {
   color: var(--text-primary-color);
   font-size: 0.75rem;

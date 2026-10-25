@@ -22,7 +22,6 @@ import {
   duplicateSlides,
   getSlides,
   getTemplate,
-  getTheme,
   moveSlides,
   patchSlideData,
   resetToTemplate,
@@ -31,7 +30,7 @@ import {
   withSlideData,
 } from "./slides";
 
-import type { DeckTheme } from "./slides";
+import type { Transition } from "./slides";
 
 import "./slides.scss";
 
@@ -63,14 +62,14 @@ const focusFrame = (id: string, select = true) => {
 };
 
 /** the slide transition (kept with the template) */
-const setTransition = (transition: DeckTheme["transition"]) => {
+const setTransition = (transition: Transition) => {
   const elements = api().getSceneElementsIncludingDeleted();
   const template = getTemplate(elements);
   if (!template) {
     return;
   }
   api().updateScene({
-    elements: elements.map((el) => (el.id === template.id ? withSlideData(el, { theme: { ...getTheme(elements), transition } }) : el)),
+    elements: elements.map((el) => (el.id === template.id ? withSlideData(el, { theme: { ...slideData(el).theme, transition } }) : el)),
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   });
 };
@@ -474,7 +473,7 @@ const StepPicker = () => {
 
 /** the template: edit it, headline & eyebrow, back to template for all, the slide transition */
 const TemplateSection = () => {
-  const { theme, templateId } = useDeck();
+  const { transition: current, templateId } = useDeck();
   if (!templateId) {
     return (
       <section className="slides-details" id="slides-template">
@@ -522,8 +521,8 @@ const TemplateSection = () => {
                 ["cut", "Cut", "The next slide right away"],
               ] as const
             ).map(([value, text, tip]) => (
-              <label key={value} className={clsx("kq-choice--text", { active: theme.transition === value })} title={tip}>
-                <input type="radio" name="deck-transition" checked={theme.transition === value} onChange={() => setTransition(value)} />
+              <label key={value} className={clsx("kq-choice--text", { active: current === value })} title={tip}>
+                <input type="radio" name="deck-transition" checked={current === value} onChange={() => setTransition(value)} />
                 {text}
               </label>
             ))}

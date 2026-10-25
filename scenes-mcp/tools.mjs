@@ -351,6 +351,14 @@ export const createScenesMcp = ({
     }
   };
 
+  /** what a picture needs of a scene file: elements, images, background and its own fonts */
+  const sceneOf = (file) => ({
+    elements: file.elements || [],
+    files: file.files || {},
+    appState: file.appState || {},
+    ...(file.kurviqFonts ? { kurviqFonts: file.kurviqFonts } : {}),
+  });
+
   const SCENE_NAME = z
     .string()
     .describe("Scene name: letters, numbers, spaces and _ . ( ) - (max 100 chars). Stored as scenes/<name>.excalidraw in the git repo.");
@@ -951,7 +959,7 @@ export const createScenesMcp = ({
       }
       try {
         const { image, meta } = await renderImage({
-          scene: { elements: file.elements || [], files: file.files || {}, appState: file.appState || {} },
+          scene: sceneOf(file),
           elementIds,
           maxSize: 1200,
         });
@@ -1021,7 +1029,7 @@ export const createScenesMcp = ({
             } else if (elements.length) {
               try {
                 const { image, meta } = await renderImage({
-                  scene: { elements: current.file.elements || [], files: current.file.files || {}, appState: current.file.appState || {} },
+                  scene: sceneOf(current.file),
                   ...(region ? { region } : {}),
                   ...(elementIds?.length ? { elementIds } : {}),
                 });
@@ -1232,7 +1240,7 @@ ${EDIT_HELP}
           if (!file) {
             throw notFound(name);
           }
-          scene = { elements: file.elements || [], files: file.files || {}, appState: file.appState || {} };
+          scene = sceneOf(file);
           source = `scene "${name}" (${local ? "local only, from the user's browser" : "repo"})`;
         } else {
           const state = await callJson("/api/app/state");
@@ -1277,6 +1285,7 @@ ${EDIT_HELP}
           elements: file.elements || [],
           // pictures (for text on them); lean online: the tab fills in the bytes
           files: file.files || {},
+          kurviqFonts: file.kurviqFonts,
           deck: name,
           background: file.appState?.viewBackgroundColor || "#ffffff",
         });
@@ -1339,6 +1348,7 @@ ${EDIT_HELP}
           type: "slides-html",
           elements: scene.elements || [],
           files: scene.files || {},
+          kurviqFonts: scene.kurviqFonts,
           deck: name,
           background: scene.appState?.viewBackgroundColor || "#ffffff",
           ...(slides !== undefined ? { slides } : {}),
@@ -1598,7 +1608,7 @@ ${EDIT_HELP}
       "add_font",
       {
         description:
-          'Add a font from Google Fonts (fonts.google.com) by its exact name, e.g. "Inter", "Geist", "JetBrains Mono", to the user\'s app, so texts can use it with "fontFamily": "Inter" (also in labels and the deck theme). The font then travels with every scene that uses it. Using a Google font name in fontFamily adds it automatically too; this tool is for adding it ahead (e.g. to measure text). Needs the app open.',
+          'Add a font from Google Fonts (fonts.google.com) by its exact name, e.g. "Inter", "Geist", "JetBrains Mono", to the user\'s app, so texts can use it with "fontFamily": "Inter" (also in labels). The font then travels with every scene that uses it. Using a Google font name in fontFamily adds it automatically too; this tool is for adding it ahead (e.g. to measure text). Needs the app open.',
         inputSchema: { name: z.string().describe('Font family name as on fonts.google.com, e.g. "Inter"') },
       },
       tool(async ({ name }) => text(await appCommand({ type: "add-font", name }))),

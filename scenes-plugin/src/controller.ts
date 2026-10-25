@@ -21,7 +21,8 @@ import {
 import { hashElementsVersion, hashString } from "@excalidraw/element";
 
 import { mergeFontLists, registerSceneFonts, withFonts } from "./fonts";
-import { scenesApi, SCENE_NAME_RE } from "./api";
+import { scenesApi } from "./api";
+import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
 import { changedFields, live, mergeElements, MERGE_VERSION, newestWins } from "./merge";
 import type { ClashChoice } from "./merge";
 import {
@@ -1110,7 +1111,7 @@ class ScenesController {
   }
 
   private validateName(name: string) {
-    if (!SCENE_NAME_RE.test(name) || name.includes("..")) {
+    if (!isSceneName(name)) {
       throw new Error("Invalid name. Use letters, numbers, spaces and _ . ( ) - (max 100 chars).");
     }
   }

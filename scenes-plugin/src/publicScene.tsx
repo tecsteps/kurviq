@@ -99,6 +99,8 @@ type Deck = {
   elements: any[];
   files: BinaryFiles;
   slides: ReturnType<typeof getSlides>;
+  /** each shown slide's number in the deck (as the editor counts, backup slides included): the URL's ?slide */
+  numbers: number[];
   public?: boolean;
   canEdit?: boolean;
 };
@@ -112,7 +114,7 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
   const [deck, setDeck] = useState<Deck | null>(null);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [index, setIndex] = useState(Math.max(0, (startSlide ?? 1) - 1));
+  const [index, setIndex] = useState(0);
   const [copying, setCopying] = useState(false);
   /** slides only (in the window, or fullscreen) */
   const [presenting, setPresenting] = useState(!!startPresenting);
@@ -131,12 +133,18 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
         await registerSceneFonts(data);
         const elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
         // backup slides ("skip when presenting") stay out of a shared deck
-        const slides = getSlides(elements).filter((frame: any) => !frame.customData?.slides?.skip);
+        const all = getSlides(elements);
+        const slides = all.filter((frame: any) => !frame.customData?.slides?.skip);
+        const numbers = slides.map((frame) => all.indexOf(frame) + 1);
+        // ?slide=N names the deck's N-th slide (or the next one shown, if that's a backup slide)
+        const start = numbers.findIndex((number) => number >= (startSlide ?? 1));
+        setIndex(Math.max(0, start));
         setDeck({
           json,
           elements,
           files: data.files || {},
           slides: slides.length || !elements.length ? slides : [{ id: WHOLE } as any],
+          numbers: slides.length ? numbers : [1],
           public: isPublic,
           canEdit,
         });
@@ -209,11 +217,12 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
   // the URL says where the deck is (a reload or a copied link starts there)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    index ? params.set("slide", String(index + 1)) : params.delete("slide");
+    const number = deck?.numbers[index] ?? startSlide ?? 1;
+    number > 1 ? params.set("slide", String(number)) : params.delete("slide");
     presenting ? params.set("present", "") : params.delete("present");
     const query = params.toString().replace(/present=(&|$)/, "present$1");
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-  }, [index, presenting]);
+  }, [index, presenting, deck, startSlide]);
 
   const count = deck?.slides.length ?? 0;
   const go = (to: number) => setIndex(Math.max(0, Math.min(count - 1, to)));

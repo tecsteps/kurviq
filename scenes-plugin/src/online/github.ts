@@ -13,6 +13,7 @@
 // the refresh token in an encrypted httpOnly cookie and hands out the
 // short-lived access token (8 h) on request (see online/worker/auth.ts).
 
+import { isSceneName } from "../../../scenes-mcp/sceneName.mjs";
 import { currentSpace, spaceSuffix } from "../storage";
 
 import type { ApiError, RemoteInfo, RemoteScene, SceneVersion } from "../api";
@@ -311,7 +312,6 @@ const blobSha = async (bytes: Uint8Array) => {
 // scenes in the space's repositories
 // -----------------------------------------------------------------------------
 
-const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _.()-]{0,99}$/u;
 
 /** the private scenes repository of every space */
 export const SCENES_REPO = "kurviq-scenes";
@@ -329,7 +329,7 @@ const repoPath = (repo: { owner: string; name: string }) =>
   `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
 
 const scenePath = (name: string) => {
-  if (!NAME_RE.test(name) || name.includes("..")) {
+  if (!isSceneName(name)) {
     throw httpError(400, `Invalid scene name: ${name}`);
   }
   return `${SCENES_DIR}/${name}${EXTENSION}`;
@@ -524,7 +524,7 @@ const fetchListing = async (repo: RepoChoice, force = false): Promise<Listing> =
       for (const entry of dir.data) {
         if (entry.type === "file" && entry.name.endsWith(EXTENSION)) {
           const name = entry.name.slice(0, -EXTENSION.length);
-          if (NAME_RE.test(name)) {
+          if (isSceneName(name)) {
             blobs.set(name, entry.sha);
           }
         }
@@ -987,7 +987,7 @@ export const otherSpacesScenes = (): Promise<SpaceScenes[]> => {
             ? dir.data
                 .filter((entry: any) => entry.type === "file" && entry.name.endsWith(EXTENSION))
                 .map((entry: any) => entry.name.slice(0, -EXTENSION.length) as string)
-                .filter((name: string) => NAME_RE.test(name))
+                .filter((name: string) => isSceneName(name))
             : [];
           return { ...space, scenes };
         } catch {

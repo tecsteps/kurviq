@@ -186,5 +186,3 @@ const onlineScenesApi: typeof localScenesApi = {
 };
 
 export const scenesApi = IS_ONLINE ? onlineScenesApi : localScenesApi;
-
-export const SCENE_NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _.()-]{0,99}$/u;

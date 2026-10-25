@@ -11,7 +11,7 @@ import clsx from "clsx";
 
 import { PRESENTING_KEY, deck } from "./deck";
 import { notesHtml } from "./notes";
-import { elementStep, getSlides, getTheme, slideData } from "./slides";
+import { elementStep, getSlides, getTransition, slideData } from "./slides";
 
 import type { Frame } from "./slides";
 import type { AppState } from "@excalidraw/excalidraw/types";
@@ -183,7 +183,7 @@ class Presenter {
     if (!frame) {
       return;
     }
-    const glide = animate && getTheme(api.getSceneElements()).transition === "glide";
+    const glide = animate && getTransition(api.getSceneElements()) === "glide";
     api.setViewport({
       target: frame,
       fit: "contain",

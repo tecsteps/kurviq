@@ -19,6 +19,8 @@ import { FONT_METADATA } from "@excalidraw/common";
 import { ExcalidrawFontFace } from "@excalidraw/excalidraw/fonts/ExcalidrawFontFace";
 import { createStore, entries, get, set } from "idb-keyval";
 
+import { FAMILY_RE, MAX_FONT_BYTES, googleFaces, toDataUrl } from "../../scenes-mcp/googleFonts.mjs";
+
 export type FontFaceData = {
   /** data URL of the font file (woff2 / woff / ttf / otf) */
   data: string;
@@ -36,9 +38,6 @@ export type CustomFont = {
 /** the numbers of custom fonts (Excalidraw's own are below 20, its fallbacks at 100 and 998–1000) */
 const ID_BASE = 2000;
 const ID_RANGE = 7000;
-/** a font file may be this big (fonts with many scripts are bigger; that is what Google's subsets are for) */
-export const MAX_FONT_BYTES = 2 * 1024 * 1024;
-const FAMILY_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,59}$/u;
 const DATA_RE = /^data:(font\/(woff2|woff|ttf|otf|sfnt)|application\/(font-woff2?|x-font-ttf|x-font-otf|vnd\.ms-opentype|octet-stream));base64,[A-Za-z0-9+/=]+$/;
 const RANGE_RE = /^[Uu]\+[0-9A-Fa-f?]+(-[0-9A-Fa-f]+)?(\s*,\s*[Uu]\+[0-9A-Fa-f?]+(-[0-9A-Fa-f]+)?)*$/;
 
@@ -248,15 +247,6 @@ export const fontFamilyValue = (value: unknown): unknown => {
 
 const MIME_BY_EXT: Record<string, string> = { woff2: "font/woff2", woff: "font/woff", ttf: "font/ttf", otf: "font/otf" };
 
-const toDataUrl = (bytes: ArrayBuffer, mime: string) => {
-  const view = new Uint8Array(bytes);
-  let binary = "";
-  for (let i = 0; i < view.length; i += 0x8000) {
-    binary += String.fromCharCode(...view.subarray(i, i + 0x8000));
-  }
-  return `data:${mime};base64,${btoa(binary)}`;
-};
-
 /** a font file the user picked */
 export const fontFromFile = async (file: File, family: string): Promise<CustomFont> => {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
@@ -298,47 +288,15 @@ export const fontFromGoogle = async (family: string, { online }: { online: boole
     }
     faces = body.faces;
   } else {
-    faces = await googleFaces(name);
+    const found = await googleFaces(name);
+    if (!found) {
+      throw new Error(`"${name}" is not on Google Fonts`);
+    }
+    faces = found;
   }
   const font: CustomFont = { family: name, id: fontIdFor(name), faces, source: "google" };
   if (!validFont(font)) {
     throw new Error(`"${name}" could not be loaded from Google Fonts`);
   }
   return font;
-};
-
-/** Google's CSS for a family → its Latin files as data URLs (the Worker has its own copy: online/worker/fonts.ts) */
-export const googleFaces = async (family: string, fetcher: typeof fetch = fetch): Promise<FontFaceData[]> => {
-  const css = await fetcher(`https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, "+")}`, {
-    headers: {
-      // a current browser: Google answers with woff2
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
-    },
-  });
-  if (!css.ok) {
-    throw new Error(`"${family}" is not on Google Fonts`);
-  }
-  const blocks = [...(await css.text()).matchAll(/\/\*\s*([\w-]+)\s*\*\/\s*@font-face\s*\{([^}]*)\}/g)];
-  const wanted = blocks.filter(([, subset]) => subset === "latin" || subset === "latin-ext");
-  const faces: FontFaceData[] = [];
-  for (const [, , body] of (wanted.length ? wanted : blocks).slice(0, 4)) {
-    const url = body.match(/src:\s*url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/)?.[1];
-    const range = body.match(/unicode-range:\s*([^;]+);/)?.[1]?.trim();
-    if (!url) {
-      continue;
-    }
-    const file = await fetcher(url);
-    if (!file.ok) {
-      throw new Error(`Google Fonts: ${file.status}`);
-    }
-    const bytes = await file.arrayBuffer();
-    if (bytes.byteLength > MAX_FONT_BYTES) {
-      throw new Error("The font is too large");
-    }
-    faces.push({ data: toDataUrl(bytes, "font/woff2"), ...(range ? { range } : {}) });
-  }
-  if (!faces.length) {
-    throw new Error(`"${family}" is not on Google Fonts`);
-  }
-  return faces;
 };

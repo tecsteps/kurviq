@@ -14,7 +14,8 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import clsx from "clsx";
 
-import { IS_ONLINE, SCENE_NAME_RE } from "./api";
+import { IS_ONLINE } from "./api";
+import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
 import { IDLE_PUSH_MS, scenesController } from "./controller";
 import { IS_RENDERER, connectLive } from "./live";
 import { connectRouter } from "./router";
@@ -414,7 +415,7 @@ const SceneSwitcher = ({
   // customer name shouldn't offer itself as a new scene every time)
   const canCreate =
     !!needle &&
-    SCENE_NAME_RE.test(query.trim()) &&
+    isSceneName(query.trim()) &&
     !items.some((entry) => (nameOf(entry) ?? UNTITLED_LABEL).toLowerCase().includes(needle));
   const count = items.length + (canCreate ? 1 : 0);
   // highlight the first real match (the open scene is always listed, even

@@ -791,6 +791,7 @@ const parseScene = (json: string) => {
     elements: (data.elements || []).filter((el: any) => !el.isDeleted),
     files: data.files || {},
     appState: data.appState || {},
+    ...(data.kurviqFonts ? { kurviqFonts: data.kurviqFonts } : {}),
   };
 };
 

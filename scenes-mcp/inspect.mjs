@@ -1,6 +1,9 @@
 // Cheap, text-only views of (possibly huge) scenes: bounds, overview, region /
 // element filters — so agents can find their way before rendering pixels.
 
+import { changedFields } from "./elementContent.mjs";
+import { CHANGE_NAMES, changedByHand, deckOrder, isSlideFrame, slideData } from "./slideRules.mjs";
+
 /** axis-aligned bounds of an element (rotation ignored) */
 export const elementBounds = (el) => {
   if (Array.isArray(el.points) && el.points.length) {
@@ -66,77 +69,24 @@ export const byIds = (elements, ids) => {
   );
 };
 
-const slideData = (el) => el?.customData?.slides || {};
-const isFrame = (el) => el && !el.isDeleted && (el.type === "frame" || el.type === "magicframe");
-
-/** a deck's slide frames in deck order (as the app counts them: explicit order first, then rows left to right) */
-// what a template copy has changed on its slide (the app's slides.ts
-// templateChanges, for reading scenes without the app)
-const CHANGE_NAMES = {
-  x: "position", y: "position", width: "size", height: "size", angle: "rotation", strokeColor: "color",
-  backgroundColor: "background", fillStyle: "fill", strokeWidth: "stroke width", strokeStyle: "stroke style",
-  roughness: "sloppiness", opacity: "opacity", roundness: "corners", link: "link", originalText: "text",
-  fontFamily: "font", fontSize: "font size", textAlign: "alignment", verticalAlign: "vertical alignment",
-  lineHeight: "line height", autoResize: "box width", points: "shape", fileId: "image",
-  startArrowhead: "arrowheads", endArrowhead: "arrowheads", rich: "formatting",
-};
-const canon = (value) => {
-  if (Array.isArray(value)) return `[${value.map(canon).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canon(value[k])}`).join(",")}}`;
-  return JSON.stringify(typeof value === "number" ? Math.round(value * 2) / 2 : value);
-};
-const anchorX = (el) =>
-  el.type === "text" && !el.containerId ? (el.textAlign === "right" ? el.x + el.width : el.textAlign === "center" ? el.x + el.width / 2 : el.x) : el.x;
-const round2 = (value) => Math.round(value * 100) / 100;
-const currentValue = (el, key, slide) => {
-  if (key === "x") return el.containerId ? undefined : round2(anchorX(el) - slide.x);
-  if (key === "y") return el.containerId ? undefined : round2(el.y - slide.y);
-  if (key === "width" || key === "height") return el.type === "text" && (el.containerId || key === "height" || el.autoResize !== false) ? undefined : round2(el[key]);
-  if (key === "rich") return el.customData?.rich ?? null;
-  return el[key] ?? null;
-};
+/** what a template copy has changed on its slide (as the app's "Changed here" names it) */
 export const templateChangesOf = (el, slide) => {
   const base = slideData(el).base;
   if (!base || !slide) return [];
-  const names = new Set();
-  for (const key of Object.keys(base)) {
-    const now = currentValue(el, key, slide);
-    if (now !== undefined && canon(now) !== canon(base[key])) names.add(CHANGE_NAMES[key] ?? key);
-  }
-  return [...names];
+  return [...new Set([...changedByHand(el, slide, base)].map((key) => CHANGE_NAMES[key] ?? key))];
 };
 
-export const deckOrder = (elements) => {
-  const frames = elements.filter((el) => isFrame(el) && el.type === "frame" && slideData(el).role !== "template");
-  const canvasOrder = [...frames].sort((a, b) =>
-    Math.abs(a.y - b.y) > Math.min(a.height, b.height) / 2 ? a.y - b.y : a.x - b.x,
-  );
-  const rank = new Map(canvasOrder.map((frame, index) => [frame.id, index]));
-  return frames.sort((a, b) => {
-    const oa = slideData(a).order;
-    const ob = slideData(b).order;
-    if (oa !== undefined && ob !== undefined && oa !== ob) {
-      return oa - ob;
-    }
-    if (oa !== undefined && ob === undefined) {
-      return -1;
-    }
-    if (ob !== undefined && oa === undefined) {
-      return 1;
-    }
-    return rank.get(a.id) - rank.get(b.id);
-  });
-};
+export { deckOrder };
 
 /** the frame a slide reference means: number (deck order), frame id or "template" */
 export const findSlide = (elements, slide) => {
   if (slide === "template") {
-    return elements.find((el) => isFrame(el) && slideData(el).role === "template") ?? null;
+    return elements.find((el) => isSlideFrame(el) && slideData(el).role === "template") ?? null;
   }
   if (typeof slide === "number" || /^\d+$/.test(String(slide))) {
     return deckOrder(elements)[Number(slide) - 1] ?? null;
   }
-  return elements.find((el) => isFrame(el) && el.id === slide) ?? null;
+  return elements.find((el) => isSlideFrame(el) && el.id === slide) ?? null;
 };
 
 /** overview of a scene: where things are, without dumping every element.
@@ -191,14 +141,6 @@ export const summarize = (elements, { textsOffset = 0, textsLimit = 100 } = {}) 
   };
 };
 
-const VOLATILE = new Set(["version", "versionNonce", "updated", "seed", "index"]);
-
-/** null, missing and [] mean the same (the app and agents differ in which they write) */
-const comparable = (value) =>
-  value === null || value === undefined || (Array.isArray(value) && !value.length)
-    ? null
-    : JSON.stringify(value);
-
 /**
  * What changed between two snapshots of a scene (non-deleted elements):
  * added / modified (with the changed fields) / deleted ids.
@@ -214,14 +156,9 @@ export const diffElements = (before, after) => {
       added.push(el);
       continue;
     }
-    if (old.version === el.version && old.versionNonce === el.versionNonce) {
-      continue;
-    }
-    const changedFields = Object.keys({ ...old, ...el }).filter(
-      (key) => !VOLATILE.has(key) && comparable(old[key]) !== comparable(el[key]),
-    );
-    if (changedFields.length) {
-      modified.push({ element: el, changedFields });
+    const fields = changedFields(old, el);
+    if (fields.length) {
+      modified.push({ element: el, changedFields: fields });
     }
   }
   const deleted = before.filter((el) => !next.has(el.id)).map((el) => ({

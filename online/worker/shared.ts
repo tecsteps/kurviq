@@ -10,8 +10,9 @@
 // Private scenes are never fetched here: the visitor's browser reads them
 // from GitHub with the visitor's own access.
 
+import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
+
 const OWNER_RE = /^[A-Za-z0-9-]{1,39}$/;
-const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _.()-]{0,99}$/u;
 const PUBLIC_REPO = "kurviq-public";
 
 const parse = (owner: string, encoded: string) => {
@@ -21,7 +22,7 @@ const parse = (owner: string, encoded: string) => {
   } catch {
     return null;
   }
-  return OWNER_RE.test(owner) && NAME_RE.test(name) && !name.includes("..") ? { owner, name } : null;
+  return OWNER_RE.test(owner) && isSceneName(name) ? { owner, name } : null;
 };
 
 const apiPath = (owner: string, name: string) => `/api/public/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;

@@ -1,6 +1,6 @@
 // Runtime of the slides feature in the user's tab: keeps template copies in
-// sync, sets the deck theme as the editor's defaults, and offers the deck
-// (slides, template, theme, thumbnails) as a store for the UI.
+// sync, sets the template's body text style as the editor's defaults, and offers
+// the deck (slides, template, transition, thumbnails) as a store for the UI.
 
 import { CaptureUpdateAction, Fonts } from "@excalidraw/excalidraw";
 
@@ -12,10 +12,9 @@ import {
   needsBodyText,
   needsTitleBlock,
   remeasureTitleBlock,
-  DEFAULT_THEME,
   getSlides,
   getTemplate,
-  getTheme,
+  getTransition,
   renderSlide,
   slideData,
   slideVersion,
@@ -23,7 +22,7 @@ import {
   templateKey,
 } from "./slides";
 
-import type { DeckTheme, Frame } from "./slides";
+import type { Frame, Transition } from "./slides";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
@@ -42,7 +41,7 @@ export type SlideInfo = {
 export type DeckState = {
   slides: SlideInfo[];
   templateId: string | null;
-  theme: DeckTheme;
+  transition: Transition;
   /** slide id -> picture (data URL) */
   thumbs: Record<string, string>;
   /** selected element ids (non-frames) and the slide they are on */
@@ -81,7 +80,7 @@ class Deck {
   /** paused while presenting (nothing is edited then) */
   paused = false;
 
-  state: DeckState = { slides: [], templateId: null, theme: DEFAULT_THEME, thumbs: {}, selection: [], activeId: null };
+  state: DeckState = { slides: [], templateId: null, transition: "glide", thumbs: {}, selection: [], activeId: null };
   private lastSelection = "";
 
   subscribe = (listener: () => void) => {
@@ -180,7 +179,6 @@ class Deck {
         steps.set(el.frameId, Math.max(steps.get(el.frameId) ?? 0, step));
       }
     }
-    const theme = getTheme(elements);
     this.set({
       slides: slides.map((frame, index) => {
         const data = slideData(frame);
@@ -197,7 +195,7 @@ class Deck {
         };
       }),
       templateId: template?.id ?? null,
-      theme,
+      transition: getTransition(elements),
     });
     // the template's body text sample: the style of new text (once per scene and style)
     const body = bodyStyle(elements);
@@ -331,11 +329,6 @@ class Deck {
     if (thumbs !== this.state.thumbs) {
       this.set({ thumbs });
     }
-  }
-
-  /** the slide picture right now (presenter view: current / next slide) */
-  thumb(id: string) {
-    return this.state.thumbs[id] ?? null;
   }
 }
 

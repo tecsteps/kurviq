@@ -46,10 +46,6 @@
       color: var(--color-primary-darkest, var(--color-primary));
     }
 
-    &--danger:not(:disabled) {
-      color: var(--color-danger, #e03131);
-    }
-
     &--primary {
       border-color: var(--color-primary);
       background: var(--color-primary);
@@ -361,32 +357,6 @@
     }
   }
 
-  .slides-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
-  }
-
-  .slides-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    min-width: 0;
-
-    > span {
-      color: var(--color-gray-60, inherit);
-      font-size: 0.72rem;
-    }
-
-    input[type="color"] {
-      width: 100%;
-      height: 2rem;
-      padding: 0.15rem;
-      border: 1px solid var(--default-border-color);
-      border-radius: var(--border-radius-md);
-      background: none;
-    }
-  }
 }
 
 // -----------------------------------------------------------------------------
@@ -566,10 +536,6 @@ body.slides-presenting {
     color: #8a6100 !important;
   }
 
-  // the slide has speaker notes
-  .slides-card__action--on {
-    color: var(--color-primary) !important;
-  }
 }
 
 // public scenes (kurviq.com/features): a read-only slide viewer above the editor
@@ -940,33 +906,6 @@ body.slides-presenting {
 
     &:hover {
       background: var(--button-hover-bg, var(--color-surface-high));
-    }
-  }
-}
-
-.excalidraw .kq-swatches {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-
-  &__divider {
-    width: 1px;
-    height: 1rem;
-    margin: 0 0.25rem;
-    background: var(--default-border-color);
-  }
-
-  // another color: a larger swatch holding the browser's color picker
-  &__custom {
-    --size: 1.875rem;
-    overflow: hidden;
-    cursor: pointer;
-
-    input[type="color"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
     }
   }
 }

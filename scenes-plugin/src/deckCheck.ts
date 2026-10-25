@@ -13,7 +13,7 @@ import {
 import { Fonts } from "@excalidraw/excalidraw";
 
 import { withTemplate } from "./cowork";
-import { elementStep, getSlides, getTemplate, getTheme, slideData, slideTitle } from "./slides";
+import { elementStep, getSlides, getTemplate, getTransition, slideData, slideTitle } from "./slides";
 
 import { LINK_COLOR } from "./richText/layout";
 import { richDocOf } from "./richText/model";
@@ -161,7 +161,6 @@ export const checkDeck = async (
   const map = new Map(elements.map((el) => [el.id, el])) as any;
   const slides = getSlides(elements);
   const template = getTemplate(elements);
-  const theme = getTheme(elements);
   const issues: Issue[] = [];
   const frames = elements.filter((el) => el.type === "frame");
 
@@ -452,7 +451,7 @@ export const checkDeck = async (
     issues.push({ slide: null, kind: "no-slides", message: "no slides: every frame is a slide (except the template frame)" });
   }
   if (!template) {
-    issues.push({ slide: null, kind: "no-template", message: "no template frame (customData.slides.role = \"template\"): no shared header/footer/theme" });
+    issues.push({ slide: null, kind: "no-template", message: "no template frame (customData.slides.role = \"template\"): no shared header/footer/style" });
   }
 
   const counts: Record<string, number> = {};
@@ -462,7 +461,7 @@ export const checkDeck = async (
   return {
     deck,
     slides: report,
-    ...(template ? { template: { id: template.id, theme } } : {}),
+    ...(template ? { template: { id: template.id, transition: getTransition(elements) } } : {}),
     issues,
     summary: issues.length
       ? `${issues.length} findings: ${Object.entries(counts).map(([kind, n]) => `${n} ${kind}`).join(", ")}`
