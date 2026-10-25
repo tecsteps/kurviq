@@ -1130,10 +1130,17 @@ ${EDIT_HELP}
           if (view) {
             result.content.push(...(await imageOf(after, [...edited.addedIds, ...edited.updated], "the edited area")));
             if (changes.count) {
-              const userIds = changes.changedIds.filter((id) => edited.elements.some((el) => el.id === id));
+              // as the user left it, before this edit (which may have replaced their changes); what they deleted can't be drawn
+              const shown = (before.file.elements || []).filter((el) => !el.isDeleted);
+              const userIds = changes.changedIds.filter((id) => shown.some((el) => el.id === id));
+              const deleted = changes.changedIds.filter((id) => !shown.some((el) => el.id === id));
               if (userIds.length) {
-                result.content.push({ type: "text", text: "Next image: what the USER changed." });
-                result.content.push(...(await imageOf(after, userIds, "the user's changes")));
+                result.content.push({ type: "text", text: "Next image: what the USER changed, as they left it before your edit." });
+                result.content.push(
+                  ...(await imageOf(before.file, userIds, `the user's changes${deleted.length ? ` (not drawn: deleted by them: ${deleted.join(", ")})` : ""}`)),
+                );
+              } else if (deleted.length) {
+                result.content.push({ type: "text", text: `The user deleted: ${deleted.join(", ")} (see userChanges).` });
               }
             }
           }
