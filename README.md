@@ -309,13 +309,14 @@ pill) opens the deck:
   back to the template on its own, also for several selected elements. The
   card's **back to template** icon does it for a whole slide, **Reset all
   slides** (Style tab) for the deck.
-- **Headline & eyebrow:** **Add headline & eyebrow** (Style tab) puts both
-  on a template that has none; slides' own headlines where the template's
-  goes become theirs (words kept, place and style from the template),
-  other slides (a title slide …) keep their layout.
+- **Headline & eyebrow:** every template has both (an older deck gets them
+  once, when it opens): slides' own headlines where the template's goes
+  become theirs (words kept, place and style from the template), other
+  slides (a title slide …) keep their layout. Don't want the eyebrow?
+  Delete it on the template.
 - **Deck style** is the template: style its elements with Excalidraw's own
   tools (there is no separate theme). The Style tab
-  has Edit template, Reset all slides, Add headline & eyebrow and the
+  has Edit template, Reset all slides and the
   transition between slides (glide or cut).
 - **PDF**: the whole deck, the selected slide or any slides ("1, 3-5"),
   one 16:9 page per slide, title slides and template included. Text stays

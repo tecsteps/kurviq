@@ -71,6 +71,8 @@ export type SlideData = {
   skip?: boolean;
   /** false: this slide shows no template elements */
   template?: boolean;
+  /** the template: headline and eyebrow were added (once; deleted ones stay deleted) */
+  titleBlock?: true;
   /** template copies: the template element it copies */
   copyOf?: string;
   /** template copies: the template's values at the last sync (what differs from them was changed by hand) */
@@ -960,6 +962,7 @@ export const createTemplate = (api: ExcalidrawImperativeAPI, theme: DeckTheme = 
   const frame = withSlideData(newFrame({ x: minX, y: minY - height - SLIDE_GAP * 2, width, height, name: "Template" }), {
     role: "template",
     theme,
+    titleBlock: true,
   });
   const text = (id: string, x: number, value: string, align: "left" | "right") =>
     ({
@@ -1096,6 +1099,12 @@ const findTitles = (elements: readonly ExcalidrawElement[], slide: Frame) => {
  * copies (their words stay theirs; place and style follow the template,
  * which takes them from where most slides have their headline).
  */
+/** a template that never had headline and eyebrow: they are added (once) when the deck opens */
+export const needsTitleBlock = (elements: readonly ExcalidrawElement[]) => {
+  const template = getTemplate(elements);
+  return !!template && !slideData(template).titleBlock && !hasTitleBlock(elements);
+};
+
 export const addTitleBlock = (elements: readonly ExcalidrawElement[]) => {
   const template = getTemplate(elements);
   if (!template || hasTitleBlock(elements)) {
@@ -1139,7 +1148,11 @@ export const addTitleBlock = (elements: readonly ExcalidrawElement[]) => {
       Object.assign(eyebrowSrc, { x: headlineSrc.x, y: headlineSrc.y - 40, textAlign: headline.textAlign });
     }
   }
-  const sources = restoreElements([eyebrowSrc, headlineSrc], null, { refreshDimensions: true });
+  // measured like the copies (the deck's fonts are loaded by the caller: see addHeadlineAndEyebrow)
+  const sources = restoreElements([eyebrowSrc, headlineSrc], null).map((el: any) => ({
+    ...el,
+    ...(refreshTextDimensions(el, null, new Map() as any, el.originalText ?? el.text) || {}),
+  })) as ExcalidrawElement[];
   // only texts where the template's sit are taken over; elsewhere (a title
   // slide …) the template's headline / eyebrow stay hidden: nothing moves
   const inPlace = (own: any, src: any, slide: Frame) =>
@@ -1179,6 +1192,9 @@ export const addTitleBlock = (elements: readonly ExcalidrawElement[]) => {
       const copy = adopted.get(el.id);
       if (copy) {
         return [newElementWith(el, { isDeleted: true }), { ...copy, index: null } as ExcalidrawElement];
+      }
+      if (el.id === template.id) {
+        return [withSlideData(el, { titleBlock: true })];
       }
       return hiddenOn.has(el.id) ? [withSlideData(el, { hidden: hiddenOn.get(el.id) })] : [el];
     }),

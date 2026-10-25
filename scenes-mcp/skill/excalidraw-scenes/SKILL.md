@@ -218,9 +218,9 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
   headline / eyebrow (the template's text is the default, e.g. `{title}`).
   Their copies are the slide's own words: update the copy's `text` (or
   `markdown`), e.g. `{ "id": "<template headline id>~<frame id>", "text":
-  "Our plan" }`; read_scene lists them. `addTitleBlock: true` adds both to
-  a template that has none (the slides' own headlines where it puts them
-  become those copies, as the app's "Add headline & eyebrow" does).
+  "Our plan" }`; read_scene lists them. Every template has both (the app adds
+  them once to an older template when it opens the deck; `addTitleBlock:
+  true` does it right away); a deleted one stays deleted.
 - Text alignment: give a text `width` and it becomes a box from `x` to
   `x + width`: lines wrap at the width and `textAlign` (left, center, right)
   aligns them inside it (e.g. a caption centered under a shape, a paragraph).

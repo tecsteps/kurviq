@@ -446,7 +446,7 @@ export const createScenesMcp = ({
   - Texts are listed as written (without the line breaks of wrapping); "autoResize": false marks a box of a fixed width, which re-wraps inside it and widens to its longest word (words are never broken).
   - Changing fontFamily / fontSize of a text measures it again (a box with "autoResize": false keeps its width and re-wraps). A free text with "width" wraps at that width; textAlign aligns inside x … x + width.
   - Deck style = the template's elements: style them (font, color, size … as on any element) and every slide follows; there is no separate theme (customData.slides.theme only holds the slide transition: "glide" | "cut").
-  - Template copies ("<element>~<slide>") follow their template element property by property: what was changed on a slide (by the user or by you) stays there, everything else follows the template; read_scene lists those changes as changedOnSlide. Headline and eyebrow copies (customData.slides.role) are the slide's own words: update their text (or markdown) on the slide; their place and style come from the template. reset: [slides] / restyle: true bring the template's version back (as the app's buttons do); addTitleBlock: true adds headline and eyebrow to a template that has none.`;
+  - Template copies ("<element>~<slide>") follow their template element property by property: what was changed on a slide (by the user or by you) stays there, everything else follows the template; read_scene lists those changes as changedOnSlide. Headline and eyebrow copies (customData.slides.role) are the slide's own words: update their text (or markdown) on the slide; their place and style come from the template. reset: [slides] / restyle: true bring the template's version back (as the app's buttons do); every template has headline and eyebrow (the app adds them once to older ones; addTitleBlock: true right away).`;
 
   const registerSceneTools = (server) => {
     server.registerTool(
@@ -792,7 +792,7 @@ export const createScenesMcp = ({
             addTitleBlock: z
               .boolean()
               .optional()
-              .describe('Deck: a headline and an eyebrow on the template, like "Add headline & eyebrow" in the app: placed and styled there for all slides; slide texts where they go become the slides\' own words'),
+              .describe("Deck: a headline and an eyebrow on a template that never had them (the app adds them by itself when it opens such a deck): placed and styled there for all slides; slide texts where they go become the slides' own words"),
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
@@ -1040,7 +1040,7 @@ ${EDIT_HELP}
             addTitleBlock: z
               .boolean()
               .optional()
-              .describe('Deck: a headline and an eyebrow on the template, like "Add headline & eyebrow" in the app: placed and styled there for all slides; slide texts where they go become the slides\' own words'),
+              .describe("Deck: a headline and an eyebrow on a template that never had them (the app adds them by itself when it opens such a deck): placed and styled there for all slides; slide texts where they go become the slides' own words"),
             requestId: z
               .string()
               .regex(/^[A-Za-z0-9_.:-]{1,80}$/)

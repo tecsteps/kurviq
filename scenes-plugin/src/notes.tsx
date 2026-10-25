@@ -73,7 +73,9 @@ const useNameSpots = (enabled: boolean) => {
     let last = "";
     const loop = () => {
       const next: Record<string, Spot> = {};
-      for (const id of [...slides.map((slide) => slide.id), ...(templateId ? [templateId] : [])]) {
+      const api = deck.getApi();
+      const hidden = !api || api.getAppState().viewModeEnabled;
+      for (const id of hidden ? [] :  [...slides.map((slide) => slide.id), ...(templateId ? [templateId] : [])]) {
         const name = document.querySelector<HTMLElement>(`.excalidraw [id$="-frame-name-${CSS.escape(id)}"]`);
         if (!name || name.querySelector("input")) {
           continue; // off screen, or being renamed
@@ -230,7 +232,8 @@ export const SlideNotesOverlay = () => {
   const appState = api?.getAppState();
   // only in presentations: a template, several slides or speaker notes (a single frame, e.g. an infographic, isn't one)
   const isDeck = !!templateId || slides.length > 1 || slides.some((slide) => slide.notes.trim());
-  const enabled = !!api && !presenting && !appState?.viewModeEnabled && isDeck;
+  // (view mode, e.g. read-only while GitHub is checked, is looked at in the loop: it ends without a re-render here)
+  const enabled = !presenting && isDeck;
   const spots = useNameSpots(enabled);
   const container = document.querySelector<HTMLElement>(".excalidraw");
   const dark = appState?.theme === "dark";

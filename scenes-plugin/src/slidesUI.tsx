@@ -17,14 +17,12 @@ import { slideNotes } from "./notes";
 import { setSlideParam } from "./router";
 import {
   addSlide,
-  addTitleBlock,
   createTemplate,
   deleteSlides,
   duplicateSlides,
   getSlides,
   getTemplate,
   getTheme,
-  hasTitleBlock,
   moveSlides,
   patchSlideData,
   resetToTemplate,
@@ -82,14 +80,6 @@ const resetSlides = (ids: string[]) => {
   const next = resetToTemplate(api().getSceneElementsIncludingDeleted(), new Set(ids), scenesController.getState().current ?? "Untitled");
   if (next) {
     api().updateScene({ elements: next, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
-  }
-};
-
-/** headline and eyebrow on the template; the slides' own become theirs (slides.ts) */
-const addHeadlineAndEyebrow = () => {
-  const result = addTitleBlock(api().getSceneElementsIncludingDeleted());
-  if (result) {
-    api().updateScene({ elements: result.elements, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
   }
 };
 
@@ -518,16 +508,6 @@ const TemplateSection = () => {
           </button>
         </QuickTip>
       </div>
-      {!hasTitleBlock(api().getSceneElements()) && (
-        <QuickTip
-          tip="A headline and an eyebrow on the template: placed and styled there for all slides, each slide writes its own words. Slides' own headlines where the template's go become theirs."
-          label={false}
-        >
-          <button type="button" className="slides-btn" onClick={addHeadlineAndEyebrow}>
-            Add headline &amp; eyebrow
-          </button>
-        </QuickTip>
-      )}
       <p className="slides-hint">
         Placeholders: <code>{"{page}"}</code> <code>{"{total}"}</code> <code>{"{title}"}</code> <code>{"{deck}"}</code>{" "}
         <code>{"{date}"}</code>

@@ -2,10 +2,12 @@
 // sync, sets the deck theme as the editor's defaults, and offers the deck
 // (slides, template, theme, thumbnails) as a store for the UI.
 
-import { CaptureUpdateAction } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Fonts } from "@excalidraw/excalidraw";
 
 import { scenesController } from "./controller";
 import {
+  addTitleBlock,
+  needsTitleBlock,
   DEFAULT_THEME,
   getSlides,
   getTemplate,
@@ -55,6 +57,8 @@ class Deck {
   private listeners = new Set<() => void>();
   private lastKey = "";
   private lastTemplateKey = 0;
+  /** headline and eyebrow being added to an older template */
+  private addingTitles = false;
   private syncTimer = 0;
   private thumbTimer = 0;
   private thumbVersions = new Map<string, number>();
@@ -209,6 +213,25 @@ class Deck {
       return;
     }
     const elements = api.getSceneElementsIncludingDeleted();
+    // a template from before headline and eyebrow: they come once, measured with the deck's fonts
+    if (needsTitleBlock(elements)) {
+      if (!this.addingTitles) {
+        this.addingTitles = true;
+        Fonts.loadElementsFonts(elements.filter((el) => el.type === "text" && !el.isDeleted) as any)
+          .catch(() => [])
+          .then(() => {
+            const result = this.api === api ? addTitleBlock(api.getSceneElementsIncludingDeleted()) : null;
+            if (result) {
+              api.updateScene({ elements: result.elements, captureUpdate: CaptureUpdateAction.NEVER });
+            }
+          })
+          .finally(() => {
+            this.addingTitles = false;
+            this.scheduleTemplateSync();
+          });
+      }
+      return;
+    }
     const key = templateKey(elements, this.deckName());
     if (!reset && key === this.lastTemplateKey) {
       return;
