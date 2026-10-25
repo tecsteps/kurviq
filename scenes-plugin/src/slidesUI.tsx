@@ -325,6 +325,7 @@ const SlideList = () => {
               <span className="slides-card__title">{slide.title}</span>
             </span>
           </button>
+          {slide.id === activeId && (
           <span className="slides-card__actions">
             {templateId && (
               <QuickTip tip={slide.template ? "Template is on: header, footer, logo… (click: off for this slide)" : "Template is off for this slide (click: on)"} label={false}>
@@ -393,6 +394,7 @@ const SlideList = () => {
               </button>
             </QuickTip>
           </span>
+          )}
         </li>
       ))}
     </ol>
