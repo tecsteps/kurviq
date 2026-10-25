@@ -69,6 +69,8 @@ export type SlideData = {
   /** template copies: the template element it copies, and its signature */
   copyOf?: string;
   sig?: number;
+  /** the signature has positions relative to the slide (older copies: absolute) */
+  rel?: true;
   /** removed by the template sync (not by the user) — may come back */
   removedBy?: "sync";
   /** appears on the n-th click while presenting */
@@ -200,16 +202,17 @@ const canon = (value: unknown): string => {
 
 /**
  * What the user can change on a copy (geometry Excalidraw recomputes, such
- * as text widths after a font loads, is left out)
+ * as text widths after a font loads, is left out). The position is taken
+ * relative to the slide, so moving or reordering slides is no change.
  */
-const signature = (el: ExcalidrawElement) => {
+const signature = (el: ExcalidrawElement, slide?: { x: number; y: number }) => {
   const any = el as any;
   const isText = el.type === "text";
   return hashString(
     canon({
       type: el.type,
-      x: any.containerId ? 0 : el.x,
-      y: any.containerId ? 0 : el.y,
+      x: any.containerId ? 0 : el.x - (slide?.x ?? 0),
+      y: any.containerId ? 0 : el.y - (slide?.y ?? 0),
       width: isText ? 0 : el.width,
       height: isText ? 0 : el.height,
       angle: el.angle,
@@ -233,6 +236,23 @@ const signature = (el: ExcalidrawElement) => {
       endArrowhead: any.endArrowhead ?? null,
     }),
   );
+};
+
+/**
+ * the user changed this copy. Older copies have absolute signatures, which
+ * reordering slides broke: one still locked where the template puts it
+ * (`fresh`) was moved along with its slide, not changed.
+ */
+const isOverridden = (el: ExcalidrawElement, slide: Frame, fresh?: ExcalidrawElement) => {
+  const { sig, rel } = slideData(el);
+  if (sig === undefined || signature(el, slide) === sig) {
+    return false;
+  }
+  if (rel) {
+    return true;
+  }
+  const inPlace = !!fresh && el.locked && Math.abs(el.x - fresh.x) < 1 && Math.abs(el.y - fresh.y) < 1;
+  return signature(el) !== sig && !inPlace;
 };
 
 const fillPlaceholders = (text: string, vars: Record<string, string>) =>
@@ -358,10 +378,10 @@ export const syncTemplate = (
     const wasHidden = slideData(slide).hidden || [];
     const hidden = new Set(reset.has(slide.id) ? [] : wasHidden);
     for (const copy of fresh) {
-      const sig = signature(copy as ExcalidrawElement);
+      const sig = signature(copy as ExcalidrawElement, slide);
       const existing = byId.get(copy.id) as any;
       const srcId = slideData(copy).copyOf!;
-      const withSig = { ...copy, customData: { ...copy.customData, slides: { copyOf: srcId, sig } } };
+      const withSig = { ...copy, customData: { ...copy.customData, slides: { copyOf: srcId, sig, rel: true } } };
       if (existing && !existing.isDeleted) {
         hidden.delete(srcId); // back on the slide (e.g. undo)
       }
@@ -376,12 +396,12 @@ export const syncTemplate = (
       if (hiddenByUser && !reset.has(slide.id)) {
         hidden.add(srcId); // remembered on the slide: deleted elements aren't saved
       }
-      const overridden = !existing.isDeleted && data.sig !== undefined && signature(existing) !== data.sig;
+      const overridden = !existing.isDeleted && isOverridden(existing, slide, copy);
       if ((hiddenByUser || overridden || (existing.isDeleted && hidden.has(srcId))) && !reset.has(slide.id)) {
         continue; // the user changed it on this slide
       }
       const sameSize = copy.type !== "text" || Math.abs(existing.width - copy.width) < 1;
-      if (!existing.isDeleted && data.sig === sig && sameSize && !reset.has(slide.id)) {
+      if (!existing.isDeleted && data.sig === sig && data.rel && sameSize && !reset.has(slide.id)) {
         continue; // up to date
       }
       replaced.set(
@@ -395,7 +415,7 @@ export const syncTemplate = (
       if (el.isDeleted || el.frameId !== slide.id || !data.copyOf || freshIds.has(el.id)) {
         continue;
       }
-      const overridden = data.sig !== undefined && signature(el) !== data.sig;
+      const overridden = isOverridden(el, slide);
       if (!overridden || !templateIds.has(data.copyOf)) {
         replaced.set(
           el.id,
