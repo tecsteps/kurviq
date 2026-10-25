@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import clsx from "clsx";
 
 import { PRESENTING_KEY, deck } from "./deck";
+import { notesHtml } from "./notes";
 import { elementStep, getSlides, getTheme, slideData } from "./slides";
 
 import type { Frame } from "./slides";
@@ -534,9 +535,14 @@ const PresenterView = ({ win }: { win: Window }) => {
         </div>
         <div className="pv__notes-wrap">
           <div className="pv__label">Notes</div>
-          <div className="pv__notes" ref={notesRef}>
-            {current?.notes || <em>No notes for this slide.</em>}
-          </div>
+          {current?.notes.trim() ? (
+            // formatted like in the notes editor (notes.tsx)
+            <div className="pv__notes rt-editor" ref={notesRef} dangerouslySetInnerHTML={{ __html: notesHtml(current.notes, true) }} />
+          ) : (
+            <div className="pv__notes" ref={notesRef}>
+              <em>No notes for this slide.</em>
+            </div>
+          )}
         </div>
         <div className="pv__buttons">
           <button type="button" onClick={presenter.prev}>‹ Back</button>
@@ -565,6 +571,11 @@ const PRESENTER_CSS = `
   .pv__notes-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
   .pv__notes { flex: 1; overflow: auto; font-size: 20px; line-height: 1.45; white-space: pre-wrap; }
   .pv__notes em { color: #9a9ab0; font-size: 15px; }
+  .pv__notes.rt-editor { white-space: normal; }
+  .rt-p { position: relative; white-space: pre-wrap; }
+  .rt-p[data-m]::before { content: attr(data-m); position: absolute; left: 0; width: calc(var(--rt-indent) - 0.35em); text-align: right; white-space: pre; }
+  .rt-p[data-k="todo"]::before { content: ""; left: calc(var(--rt-indent) - 1.07em); width: 0.72em; height: 0.72em; top: calc(0.5lh - 0.36em); box-sizing: border-box; border: max(1px, 0.07em) solid currentColor; border-radius: 0.13em; }
+  .rt-p[data-k="todo"][data-x]::after { content: ""; position: absolute; left: calc(var(--rt-indent) - 0.82em); top: calc(0.5lh - 0.26em); width: 0.2em; height: 0.38em; box-sizing: border-box; border: solid currentColor; border-width: 0 0.09em 0.09em 0; transform: rotate(45deg); }
   .pv__buttons { display: flex; gap: 8px; }
   .pv__buttons button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #3a3a46; background: #222229; color: inherit; font: inherit; cursor: pointer; }
   .pv__buttons button:hover { background: #2d2d36; }

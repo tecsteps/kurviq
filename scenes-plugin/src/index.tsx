@@ -20,6 +20,7 @@ import { IS_RENDERER, connectLive } from "./live";
 import { connectRouter } from "./router";
 import { deck } from "./deck";
 import { PresentationOverlay, presenter } from "./present";
+import { SlideNotesOverlay } from "./notes";
 import { ICON_PATHS } from "./icons";
 import { QuickTip } from "./quickTip";
 import { loadFontLibrary } from "./fonts";
@@ -1223,6 +1224,7 @@ export const ScenesSidebar = () => {
     </Sidebar>
     <SlidesSidebar />
     <PresentationOverlay />
+    <SlideNotesOverlay />
     <PublicSceneOverlay />
     <AddFontOverlay />
     {IS_ONLINE && <RepoSetupDialog />}

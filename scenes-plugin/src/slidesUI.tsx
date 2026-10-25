@@ -14,6 +14,7 @@ import { IS_ONLINE } from "./api";
 import { SlidesShare } from "./online/ui";
 import { QuickTip } from "./quickTip";
 import { presenter } from "./present";
+import { notesText, slideNotes } from "./notes";
 import { setSlideParam } from "./router";
 import {
   addSlide,
@@ -344,19 +345,14 @@ const SlideList = () => {
                 </button>
               </QuickTip>
             )}
-            <QuickTip tip={slide.notes ? `Speaker notes: ${slide.notes.length > 80 ? `${slide.notes.slice(0, 80)}…` : slide.notes}` : "Add speaker notes"} label={false}>
+            <QuickTip tip={slide.notes ? `Speaker notes: ${notesText(slide.notes).slice(0, 80)}` : "Add speaker notes"} label={false}>
               <button
                 type="button"
                 className={clsx({ "slides-card__action--on": !!slide.notes })}
                 aria-label={`Speaker notes of slide ${slide.index + 1}`}
                 onClick={() => {
                   focusFrame(slide.id);
-                  // the notes field below the list (shown for the active slide)
-                  setTimeout(() => {
-                    const field = document.querySelector<HTMLTextAreaElement>(".slides-notes");
-                    field?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-                    field?.focus();
-                  }, 80);
+                  slideNotes.toggle(slide.id);
                 }}
               >
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
@@ -405,11 +401,9 @@ const SlideDetails = ({ id }: { id: string }) => {
   const { slides } = useDeck();
   const slide = slides.find((s) => s.id === id);
   const [title, setTitle] = useState(slide?.title ?? "");
-  const [notes, setNotes] = useState(slide?.notes ?? "");
   useEffect(() => {
     setTitle(slide?.title ?? "");
-    setNotes(slide?.notes ?? "");
-  }, [id, slide?.title, slide?.notes]);
+  }, [id, slide?.title]);
   if (!slide) {
     return null;
   }
@@ -420,11 +414,6 @@ const SlideDetails = ({ id }: { id: string }) => {
         elements: elements.map((el) => (el.id === id ? newElementWith(el as any, { name: title.trim() } as any) : el)),
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
-    }
-  };
-  const saveNotes = () => {
-    if (notes !== slide.notes) {
-      patchSlideData(api(), new Map([[id, { notes: notes || undefined }]]));
     }
   };
   return (
@@ -443,15 +432,9 @@ const SlideDetails = ({ id }: { id: string }) => {
           }
         }}
       />
-      <textarea
-        className="slides-input slides-notes"
-        placeholder="Speaker notes (presenter view)"
-        value={notes}
-        rows={3}
-        onChange={(event) => setNotes(event.target.value)}
-        onBlur={saveNotes}
-        onKeyDown={(event) => event.stopPropagation()}
-      />
+      <button type="button" className="slides-btn" onClick={() => slideNotes.open(id)}>
+        {slide.notes.trim() ? "Speaker notes…" : "Add speaker notes…"}
+      </button>
       <label className="slides-check">
         <input type="checkbox" checked={slide.skip} onChange={(event) => patchSlideData(api(), new Map([[id, { skip: event.target.checked || undefined }]]))} />
         Skip when presenting (backup slide)

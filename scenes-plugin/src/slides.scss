@@ -801,3 +801,111 @@ body.slides-presenting {
   background: #5c4400;
   color: #ffe08a !important;
 }
+
+// speaker notes (notes.tsx): an icon after each slide's name on the canvas …
+.excalidraw .slides-notes-btn {
+  position: fixed;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--color-gray-40, #adb5bd);
+  transform: translateY(-50%);
+  cursor: pointer;
+  opacity: 0.7;
+
+  &:hover,
+  &:focus-visible,
+  &--open {
+    opacity: 1;
+    background: var(--color-surface-high);
+    color: var(--color-primary);
+  }
+
+  &--has {
+    opacity: 1;
+    color: var(--color-primary);
+  }
+}
+
+// … and the popover to see / edit them
+.excalidraw .slides-notes-pop {
+  position: fixed;
+  // above the shape properties panel; the formatting toolbar (same level, added later) above it
+  z-index: calc(var(--zIndex-wysiwyg, 3) + 2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: var(--border-radius-lg, 12px);
+  background: var(--island-bg-color);
+  box-shadow: var(--shadow-island);
+  color: var(--text-primary-color);
+  font-family: var(--ui-font);
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  &__title {
+    flex: 1;
+    overflow: hidden;
+    color: var(--color-gray-60, inherit);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__close {
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: inherit;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--color-surface-high);
+    }
+  }
+
+  &__host {
+    max-height: min(50vh, 420px);
+    overflow: auto;
+    border: 1px solid var(--default-border-color);
+    border-radius: var(--border-radius-md, 8px);
+  }
+
+  &__editor {
+    position: relative;
+    min-height: 7rem;
+    padding: 0.6rem 0.75rem;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+
+    &--empty::before {
+      content: attr(data-placeholder);
+      position: absolute;
+      color: var(--color-gray-50, #868e96);
+      pointer-events: none;
+    }
+  }
+
+  &__hint {
+    color: var(--color-gray-50, #868e96);
+    font-size: 0.72rem;
+  }
+}

@@ -275,12 +275,17 @@ pill) opens the deck:
   second window with the current and next slide, speaker notes and a timer.
 - **Add slide** (at the end of the list) adds a 16:9 frame (1920 × 1080)
   after the selected one. Drag slides in the list (or press ↑ / ↓ on one)
-  to reorder; hover a slide to duplicate (⧉) or delete (×) it. On the
+  to reorder; the active slide's card has icons for template on / off,
+  speaker notes, duplicate and delete. On the
   canvas the slides always lie in deck order, seven per row: the canvas
   follows every change in the list. A duplicate keeps the slide's content,
   click steps and notes and goes right after its original; everything can
-  be undone with ⌘Z. Per slide: title, speaker notes, "skip when
-  presenting" (backup slides), "show template".
+  be undone with ⌘Z. Per slide: title, "skip when presenting" (backup
+  slides), "show template".
+- **Speaker notes:** the icon after a slide's name on the canvas (filled
+  when there are notes) opens them in a popover, with formatting (bold,
+  lists, colors, links … the same toolbar as text on the canvas). Saved as
+  markdown in the slide; the presenter view shows them formatted.
 - **Click steps:** select elements on a slide and pick "Click 1", "Click 2" …
   under "Selection appears"; they fade in one click at a time.
 - **Template:** one "Template" frame holds what every slide shows: header,

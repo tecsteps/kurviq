@@ -186,6 +186,8 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
 - A slide: `{ "type": "frame", "id": "s1", "x": 100, "y": 100, "width": 1920,
   "height": 1080, "name": "Title", "children": [ids of its elements],
   "customData": { "slides": { "order": 0, "notes": "speaker notes" } } }`.
+  Speaker notes may use the same markdown as text (`**bold**`, `- ` bullets,
+  `1. ` lists …); the presenter view shows them formatted.
   Elements added later to a slide get `"frameId": "s1"`. Lay slides out in a
   row with a gap (e.g. 240) and keep everything inside its frame.
 - Slide-relative placement: give an element `"slide": 3` (number in deck
