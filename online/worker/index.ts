@@ -330,6 +330,11 @@ export default {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: CORS });
       }
+      // no server-sent event stream (stateless: it would end at once, and clients
+      // reconnect every second, forever); 405 tells them not to ask again
+      if (request.method === "GET") {
+        return withCors(new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST, DELETE, OPTIONS" } }));
+      }
       if (!mcp[1]) {
         // signed in (OAuth); without a token: where to sign in
         const pairing = await bearerPairing(request, env);
