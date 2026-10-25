@@ -304,7 +304,7 @@ export const SlideNotesOverlay = () => {
               <ListIcon />
             </button>
           </QuickTip>,
-          <QuickTip key={s.id} tip={has ? `Speaker notes: ${notesText(s.notes).slice(0, 80)}` : "Speaker notes"} label={false}>
+          <QuickTip key={s.id} tip="Speaker notes" label={false}>
           <button
             type="button"
             className={clsx("slides-notes-btn", { "slides-notes-btn--has": has, "slides-notes-btn--open": s.id === id, "slides-notes-btn--over": at.over })}
