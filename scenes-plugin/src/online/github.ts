@@ -15,7 +15,7 @@
 
 import { currentSpace, spaceSuffix } from "../storage";
 
-import type { ApiError, RemoteInfo, RemoteScene } from "../api";
+import type { ApiError, RemoteInfo, RemoteScene, SceneVersion } from "../api";
 
 const API = "https://api.github.com";
 const SCENES_DIR = "scenes";
@@ -876,6 +876,39 @@ export const githubScenes = {
       fail(removed, `"${name}" was copied, but the old copy could not be removed`);
     }
     return { sha: from.sha };
+  },
+
+  /** the versions of a scene, newest first (load one with loadAt) */
+  history: async (name: string): Promise<SceneVersion[]> => {
+    const path = scenePath(name);
+    const { repo } = await locate(name, false);
+    const res = await gh(
+      `${repoPath(repo)}/commits?sha=${encodeURIComponent(repo.branch)}&path=${encodeURIComponent(path)}&per_page=40`,
+    );
+    if (res.status !== 200 || !Array.isArray(res.data)) {
+      fail(res, `The history of "${name}" could not be read`);
+    }
+    return res.data.map((entry: any) => {
+      const message = String(entry.commit?.message || "");
+      return {
+        commit: entry.sha as string,
+        at: entry.commit?.committer?.date ?? entry.commit?.author?.date ?? null,
+        author: entry.author?.login ?? entry.commit?.author?.name ?? null,
+        message: message.split("\n")[0],
+        agent: message.split("\n").some((line) => line.trim() === AGENT_TRAILER),
+      };
+    });
+  },
+
+  /** the scene as it was in a commit */
+  loadAt: async (name: string, commit: string): Promise<{ json: string; sha: string }> => {
+    const path = scenePath(name);
+    const { repo } = await locate(name, false);
+    const file = await gh(`${repoPath(repo)}/contents/${encodePath(path)}?ref=${encodeURIComponent(commit)}`);
+    if (file.status !== 200 || !file.data?.sha) {
+      fail(file, `This version of "${name}" could not be read`);
+    }
+    return { json: await readBlob(repo, name, file.data.sha), sha: file.data.sha as string };
   },
 
   /** the version of a scene an agent committed last, from the git history */

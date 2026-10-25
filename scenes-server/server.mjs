@@ -280,6 +280,33 @@ const lastAgentVersion = async (name) => {
 };
 
 /**
+ * The versions of a scene, newest first: commit, date, author, message,
+ * whether an agent made it, and the scene's blob sha in it (to load it).
+ */
+const sceneHistory = async (name, limit = 40) => {
+  const file = scenePath(name);
+  if (!(await hasRemoteBranch())) {
+    return [];
+  }
+  const log = await git(
+    ["log", "-n", String(limit), "--follow", "--name-only", "--format=%x01%H%x00%cI%x00%an%x00%s%x00%(trailers:key=Scenes-Source,valueonly)", REMOTE_REF, "--", file],
+    { allowFail: true },
+  );
+  const versions = [];
+  for (const entry of log.stdout.split("\x01").filter(Boolean)) {
+    const [head, ...rest] = entry.split("\n");
+    const [commit, at, author, message, source] = head.split("\0");
+    const names = [source, ...rest].join("\n").split("\n").map((line) => line.trim()).filter(Boolean);
+    const oldFile = names.find((n) => n.startsWith(`${SCENES_SUBDIR}/`)) || file;
+    const blob = await git(["rev-parse", `${commit}:${oldFile}`], { allowFail: true });
+    if (blob.ok) {
+      versions.push({ commit, at, author, message, agent: (source || "").trim() === "agent", sha: blob.stdout.trim() });
+    }
+  }
+  return versions;
+};
+
+/**
  * One commit on top of the latest remote state, pushed right away. The local
  * clone is only a transport: it is reset to GitHub's state before every
  * commit and after every failed push, so it never holds anything GitHub
@@ -939,6 +966,15 @@ const server = http.createServer(async (req, res) => {
     if (agentMatch && req.method === "GET") {
       const name = decodeURIComponent(agentMatch[1]);
       return send(res, 200, { name, version: await serialized(() => lastAgentVersion(name)) });
+    }
+    const historyMatch = url.pathname.match(/^\/api\/scenes\/(.+)\/history$/);
+    if (historyMatch && req.method === "GET") {
+      const name = decodeURIComponent(historyMatch[1]);
+      const versions = await serialized(async () => {
+        await maybeFetch();
+        return sceneHistory(name);
+      });
+      return send(res, 200, { name, versions });
     }
     const match = url.pathname.match(/^\/api\/scenes\/(.+)$/);
     if (match) {

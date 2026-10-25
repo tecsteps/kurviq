@@ -36,7 +36,7 @@ import {
   setSnapshot,
 } from "./storage";
 
-import type { ApiError, RemoteScene } from "./api";
+import type { ApiError, RemoteScene, SceneVersion } from "./api";
 import type { SceneMeta, ScenesMeta } from "./storage";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type {
@@ -2100,6 +2100,49 @@ class ScenesController {
   }
 
   /** what clashes: per element the base, my and GitHub's version */
+  // ---------------------------------------------------------------------------
+  // history: the scene's versions in git, and putting an older one back
+  // ---------------------------------------------------------------------------
+
+  history = (name: string) => scenesApi.history(name);
+
+  loadVersion = async (name: string, version: SceneVersion) => (await scenesApi.loadVersion(name, version)).json;
+
+  /**
+   * An older version of the open scene back on the canvas, as a normal edit:
+   * undoable with ⌘Z, and synced (or saved) like any other change. Elements
+   * added since are deleted, the others get the old version's content.
+   */
+  restoreVersion = (json: string) => {
+    const api = this.requireApi();
+    const data = JSON.parse(json);
+    registerSceneFonts(data);
+    const old = restoreElements(data.elements, null, { repairBindings: true });
+    const current = api.getSceneElementsIncludingDeleted();
+    const byId = new Map(current.map((el) => [el.id, el]));
+    const oldIds = new Set(old.map((el) => el.id));
+    const now = Date.now();
+    const bump = <T extends ExcalidrawElement>(el: T, base: ExcalidrawElement | undefined): T => ({
+      ...el,
+      version: Math.max(el.version, base?.version ?? 0) + 1,
+      versionNonce: Math.floor(Math.random() * 2 ** 31),
+      updated: now,
+    });
+    const elements = [
+      ...old.map((el) => bump(el, byId.get(el.id))),
+      ...current.filter((el) => !el.isDeleted && !oldIds.has(el.id)).map((el) => bump({ ...el, isDeleted: true }, el)),
+    ];
+    const files = Object.values(data.files || {}) as BinaryFileData[];
+    if (files.length) {
+      api.addFiles(files);
+    }
+    api.updateScene({
+      elements,
+      appState: { viewBackgroundColor: restoreAppState(data.appState, null).viewBackgroundColor },
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+  };
+
   conflictInfo = async (name: string) => {
     const { meta, mine, theirs, base } = await this.conflictVersions(name);
     const merged = mergeElements(base?.elements, mine.elements || [], theirs.elements || []);

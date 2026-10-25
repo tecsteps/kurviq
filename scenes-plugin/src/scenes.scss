@@ -217,6 +217,229 @@
     }
   }
 
+  // a row of the dropdown: the scene, and the pen on the open one
+  .scenes-switcher__row {
+    display: flex;
+    align-items: center;
+
+    .scenes-switcher__item {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  .scenes-switcher__pen-tip {
+    display: inline-flex;
+  }
+
+  .scenes-switcher__pen {
+    display: grid;
+    place-items: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    padding: 0;
+    border: none;
+    border-radius: var(--border-radius-md, 6px);
+    background: none;
+    color: var(--color-gray-60, var(--text-primary-color));
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      background: var(--button-hover-bg, var(--color-surface-high));
+      color: var(--color-primary);
+    }
+  }
+
+  .scenes-switcher__manage {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .scenes-switcher__manage-icon {
+    display: inline-flex;
+    width: 0.95rem;
+    height: 0.95rem;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  // panels under the pill: the open scene (pen) and GitHub
+  .scenes-flyover {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    left: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    width: 23rem;
+    max-width: calc(100vw - 2rem);
+    max-height: calc(100vh - 6rem);
+    border: 1px solid var(--default-border-color);
+    border-radius: var(--border-radius-lg, 8px);
+    background: var(--island-bg-color);
+    box-shadow: var(--shadow-island);
+    color: var(--text-primary-color);
+    font-size: 0.875rem;
+  }
+
+  .scenes-flyover__head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.6rem 0.4rem 0.9rem;
+  }
+
+  .scenes-flyover__title {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 1rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .scenes-flyover__close {
+    flex: none;
+    width: 1.7rem;
+    height: 1.7rem;
+    padding: 0;
+    border: none;
+    border-radius: var(--border-radius-md, 6px);
+    background: none;
+    color: var(--color-gray-60, var(--text-primary-color));
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--button-hover-bg, var(--color-surface-high));
+    }
+  }
+
+  .scenes-flyover__body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    min-height: 0;
+    padding: 0 0.75rem 0.9rem;
+    overflow-y: auto;
+  }
+
+  // the open scene's versions
+  .scenes-history-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .scenes-history {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .scenes-history__item {
+    border-radius: var(--border-radius-md, 6px);
+
+    &--open {
+      background: var(--color-surface-low);
+    }
+  }
+
+  .scenes-history__row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    border: none;
+    border-radius: var(--border-radius-md, 6px);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--button-hover-bg, var(--color-surface-high));
+    }
+  }
+
+  .scenes-history__label {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .scenes-history__meta {
+    flex: none;
+    max-width: 55%;
+    overflow: hidden;
+    color: var(--color-gray-50, #868e96);
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .scenes-history__tag {
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    background: var(--color-surface-high, rgba(0, 0, 0, 0.06));
+    color: var(--color-gray-60, inherit);
+    font-size: 0.68rem;
+
+    &--agent {
+      background: var(--color-primary-light, rgba(105, 101, 219, 0.12));
+      color: var(--color-primary);
+    }
+  }
+
+  .scenes-history__preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0 0.5rem 0.6rem;
+
+    img {
+      display: block;
+      width: 100%;
+      max-height: 14rem;
+      object-fit: contain;
+      border: 1px solid var(--default-border-color);
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .scenes-btn {
+      align-self: flex-start;
+    }
+  }
+
+  .scenes-history__note {
+    color: var(--color-gray-50, #868e96);
+    font-size: 0.8rem;
+  }
+
+  .scenes-history__restored {
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--border-radius-md, 6px);
+    background: var(--color-success-lighter, #ebfbee);
+    color: var(--color-success-text, #2b8a3e);
+    font-size: 0.8rem;
+  }
+
   .scenes-pill {
     display: flex;
     align-items: center;

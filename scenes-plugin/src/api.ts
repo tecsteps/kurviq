@@ -12,6 +12,18 @@ export type RemoteScene = {
   public?: boolean;
 };
 
+/** a version of a scene in the git history (newest first in lists) */
+export type SceneVersion = {
+  commit: string;
+  at: string | null;
+  author: string | null;
+  message: string;
+  /** made by an agent (commit trailer) */
+  agent: boolean;
+  /** local: the scene's blob sha in that commit (online: looked up when loaded) */
+  sha?: string;
+};
+
 export type RemoteInfo = {
   /** GitHub reachable at the last attempt (null = not tried yet) */
   online: boolean | null;
@@ -132,6 +144,11 @@ const localScenesApi = {
         body: JSON.stringify({ to }),
       })
     ).json(),
+  /** the scene's versions, newest first */
+  history: async (name: string): Promise<SceneVersion[]> =>
+    (await (await request(`${scenePath(name)}/history`)).json()).versions,
+  /** the scene as it was in one of those versions */
+  loadVersion: (name: string, version: SceneVersion) => localScenesApi.load(name, version.sha),
   reportState: (state: {
     current: string | null;
     dirty: boolean;
@@ -162,6 +179,8 @@ const onlineScenesApi: typeof localScenesApi = {
   remove: githubScenes.remove,
   rename: githubScenes.rename,
   setPublic: githubScenes.setPublic,
+  history: githubScenes.history,
+  loadVersion: (name, version) => githubScenes.loadAt(name, version.commit),
   reportState: async () => {},
   sendResult: async () => {},
 };

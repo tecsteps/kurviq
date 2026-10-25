@@ -33,10 +33,10 @@ The MCP server's instructions (sent on connect) explain everything in detail. In
 
 - Without GitHub every scene is local-only: it exists only in that browser. Agents read and edit local-only scenes the same way.
 - With GitHub (Connect GitHub → allow the Kurviq GitHub App), scenes are stored as `scenes/<name>.excalidraw` in the user's private repository `<account>/kurviq-scenes` (Kurviq creates it). Edits are pushed about 10 s after the user stops drawing; other people's changes arrive within a minute and are merged element by element. Agent edits are commits by the user's GitHub account, marked with a `Scenes-Source: agent` trailer.
-- Teams: a space is a GitHub account or organization with its `<owner>/kurviq-scenes`; the user switches spaces in the Scenes sidebar, and the tools work on the open space. Permissions are GitHub's: with read access only, `app_status` reports `github: read only …` and edits are refused.
+- Teams: a space is a GitHub account or organization with its `<owner>/kurviq-scenes`; the user switches spaces under "GitHub…" in the scene list, and the tools work on the open space. Permissions are GitHub's: with read access only, `app_status` reports `github: read only …` and edits are refused.
 - Fonts: besides Excalidraw's own, any Google font works by its exact name, e.g. `"fontFamily": "Inter"` (fetched on first use, then carried by the scene); `add_font("Inter")` adds one ahead. `app_status` lists added fonts as `customFonts`. Font files are added by the user (font picker → "Add font…").
 - Sharing: scenes have links `https://kurviq.com/@<owner>/<scene>`. Public scenes (in `<owner>/kurviq-public`) open for everyone; private ones for people who can read the repository on GitHub. The raw JSON of a public scene: `https://kurviq.com/api/public/<owner>/<scene>`. Add `?present` (and `&slide=3`) to a scene link to open it presenting.
-- The connection stays for months: Kurviq keeps a refresh token in an encrypted, httpOnly cookie of the browser (nothing is stored on Kurviq's server). Disconnect any time in the Scenes sidebar.
+- The connection stays for months: Kurviq keeps a refresh token in an encrypted, httpOnly cookie of the browser (nothing is stored on Kurviq's server). Disconnect any time under "GitHub…" in the scene list.
 
 ## Limits of the online version
 

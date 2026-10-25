@@ -28,7 +28,7 @@ const TROUBLESHOOTING = (app: string) => `## Troubleshooting
 
 - "Kurviq is not open in the user's browser": ask the user to open ${app}
   in the browser where they allowed this agent.
-- "GitHub is not connected": the user can connect it in the Scenes sidebar;
+- "GitHub is not connected": the user can connect it under "GitHub…" in the scene list;
   until then, work with local-only scenes.
 - Local file paths (edit files, image src) and PDF export are not available
   through the Kurviq MCP: upload images and big edits (see "Images from your

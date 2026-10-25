@@ -840,7 +840,7 @@ export const createScenesMcp = ({
         return "The user's app is not open: you see the GitHub version.";
       }
       if (results.some((r) => r.status === "conflict")) {
-        return "The user's app has a merge CONFLICT on this scene: their newest edits are not on GitHub until it is resolved (get_conflict / resolve_conflict, or the user in the sidebar).";
+        return "The user's app has a merge CONFLICT on this scene: their newest edits are not on GitHub until it is resolved (get_conflict / resolve_conflict, or the user in the scene's panel).";
       }
       if (results.some((r) => r.autoSync === false && ["ahead", "local", "diverged"].includes(r.status))) {
         return "Auto-sync is OFF for this scene in the user's app and they have unpushed changes, which you don't see. The user decides when to push.";

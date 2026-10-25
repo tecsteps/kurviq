@@ -1,8 +1,8 @@
 // UI of the scenes plugin. Injected into excalidraw-app by ../vite.config.mts:
 //  - <ScenesTopLeftUI/> via the `renderTopLeftUI` prop of <Excalidraw/>
-//  - <ScenesSidebar/> as a child of <Excalidraw/> (custom <Sidebar/>)
+//  - <ScenesSidebar/> as a child of <Excalidraw/> (the slides sidebar and overlays)
 
-import { Sidebar, useExcalidrawAPI } from "@excalidraw/excalidraw";
+import { exportToBlob, getNonDeletedElements, restoreElements, useExcalidrawAPI } from "@excalidraw/excalidraw";
 import {
   ExternalLinkIcon,
   GithubIcon,
@@ -23,7 +23,7 @@ import { PresentationOverlay, presenter } from "./present";
 import { SlideNotesOverlay } from "./notes";
 import { ICON_PATHS } from "./icons";
 import { QuickTip } from "./quickTip";
-import { loadFontLibrary } from "./fonts";
+import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar } from "./slidesUI";
@@ -43,10 +43,10 @@ import {
 } from "./online/ui";
 
 import type { Activity, SceneListItem, ScenesState, SyncStatus } from "./controller";
+import type { SceneVersion } from "./api";
 
 import "./scenes.scss";
 
-export const SCENES_SIDEBAR_NAME = "scenes";
 
 const UNTITLED_LABEL = "Untitled";
 
@@ -240,13 +240,14 @@ const StatusBadge = ({ status, compact }: { status: SyncStatus; compact?: boolea
 // -----------------------------------------------------------------------------
 
 export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
-  const api = useAttachController();
+  useAttachController();
   const state = useScenes();
   const { current, busy, list } = state;
   const currentItem = list.find((item) => item.name === current);
   const status = currentItem?.status ?? "untitled";
   const offline = isOffline(state);
-  const [open, setOpen] = useState(false);
+  const [panel, setPanel] = useState<null | "switch" | "scene" | "github">(null);
+  const open = panel === "switch";
 
   return (
     <div className="scenes-switcher">
@@ -256,7 +257,7 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         title={`${STATUS[status].label}${offline ? " · offline" : ""} — switch scene`}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setPanel((value) => (value ? null : "switch"))}
       >
         <span className="scenes-pill__icon">{LoadIcon}</span>
         <span className="scenes-pill__name">{current ?? UNTITLED_LABEL}</span>
@@ -278,15 +279,11 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         )}
         <span className="scenes-pill__caret" aria-hidden>▾</span>
       </button>
-      {open && (
-        <SceneSwitcher
-          onClose={() => setOpen(false)}
-          onManage={() => {
-            setOpen(false);
-            api?.toggleSidebar({ name: SCENES_SIDEBAR_NAME, force: true });
-          }}
-        />
+      {panel === "switch" && (
+        <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onGitHub={() => setPanel("github")} />
       )}
+      {panel === "scene" && <SceneFlyover onClose={() => setPanel(null)} />}
+      {panel === "github" && <GitHubFlyover onClose={() => setPanel(null)} />}
     </div>
   );
 };
@@ -339,9 +336,18 @@ export const scenesTopRight =
 
 /**
  * Quick switch: the scenes as a dropdown under the pill. Type to filter,
- * arrows + Enter to pick, Esc to close; "Manage scenes…" opens the sidebar.
+ * arrows + Enter to pick, Esc to close. The pen on the open scene manages
+ * it (SceneFlyover), "GitHub…" the connection (GitHubFlyover).
  */
-const SceneSwitcher = ({ onClose, onManage }: { onClose: () => void; onManage: () => void }) => {
+const SceneSwitcher = ({
+  onClose,
+  onManageScene,
+  onGitHub,
+}: {
+  onClose: () => void;
+  onManageScene: () => void;
+  onGitHub: () => void;
+}) => {
   const { current, list } = useScenes();
   const query = useSceneFilter();
   /** null: the default (first match, or create) */
@@ -455,11 +461,11 @@ const SceneSwitcher = ({ onClose, onManage }: { onClose: () => void; onManage: (
           const { item } = entry;
           const isCurrent = !!item && item.name === current;
           return (
+            <div className="scenes-switcher__row" key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `${entry.owner}\u0000${entry.name}`}>
             <button
               type="button"
               role="option"
               aria-selected={isCurrent}
-              key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `${entry.owner}\u0000${entry.name}`}
               className={clsx("scenes-switcher__item", {
                 "scenes-switcher__item--current": isCurrent,
                 "scenes-switcher__item--active": index === active,
@@ -494,6 +500,17 @@ const SceneSwitcher = ({ onClose, onManage }: { onClose: () => void; onManage: (
                 />
               )}
             </button>
+            {isCurrent && (
+              <QuickTip tip="Manage this scene: save, rename, share, history" className="scenes-switcher__pen-tip" label={false}>
+                <button type="button" className="scenes-switcher__pen" aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`} onClick={onManageScene}>
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M13.5 3.5l3 3L7 16H4v-3z" />
+                    <path d="M11.5 5.5l3 3" />
+                  </svg>
+                </button>
+              </QuickTip>
+            )}
+            </div>
           );
         })}
         {canCreate && (
@@ -512,8 +529,8 @@ const SceneSwitcher = ({ onClose, onManage }: { onClose: () => void; onManage: (
         )}
         {!count && <div className="scenes-switcher__empty">No scene matches</div>}
       </div>
-      <button type="button" className="scenes-switcher__manage" onClick={onManage}>
-        Manage scenes…
+      <button type="button" className="scenes-switcher__manage" onClick={onGitHub}>
+        <span className="scenes-switcher__manage-icon">{GithubIcon}</span> GitHub…
       </button>
       {IS_ONLINE && <ConnectGitHubOffer />}
     </div>
@@ -860,119 +877,6 @@ const confirmDelete = (item: SceneListItem) => {
   return window.confirm(lines.filter(Boolean).join("\n\n"));
 };
 
-const SceneMenu = ({
-  item,
-  onPrompt,
-  onClose,
-}: {
-  item: SceneListItem;
-  onPrompt: (prompt: NamePrompt) => void;
-  onClose: () => void;
-}) => {
-  const name = item.name!;
-  useEffect(() => {
-    const close = (event: PointerEvent) => {
-      if (!(event.target as HTMLElement).closest?.(".scenes-menu")) {
-        onClose();
-      }
-    };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [onClose]);
-  return (
-    <div className="scenes-menu" role="menu">
-      <button type="button" role="menuitem" onClick={() => onPrompt({ mode: "rename", scene: name })}>
-        Rename…
-      </button>
-      <button type="button" role="menuitem" onClick={() => onPrompt({ mode: "duplicate", scene: name })}>
-        Duplicate…
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        className="scenes-menu__danger"
-        onClick={() => {
-          onClose();
-          if (confirmDelete(item)) {
-            scenesController.remove(name).catch(ignore);
-          }
-        }}
-      >
-        Delete
-      </button>
-    </div>
-  );
-};
-
-const SceneRow = ({
-  item,
-  active,
-  disabled,
-  menuOpen,
-  onMenu,
-  prompt,
-  onPrompt,
-  onSubmitName,
-}: {
-  item: SceneListItem;
-  active: boolean;
-  disabled: boolean;
-  menuOpen: boolean;
-  onMenu: (open: boolean) => void;
-  prompt: NamePrompt;
-  onPrompt: (prompt: NamePrompt) => void;
-  onSubmitName: (name: string, options: { localOnly: boolean }) => void;
-}) => {
-  const rowPrompt =
-    prompt && "scene" in prompt && prompt.scene === item.name && !active ? prompt : null;
-  return (
-    <li className="scenes-list__row">
-      <div className={clsx("scenes-item", { "scenes-item--active": active })}>
-        <button
-          type="button"
-          className="scenes-item__open"
-          disabled={disabled}
-          onClick={() => scenesController.open(item.name).catch(ignore)}
-          title={[
-            STATUS[item.status].label,
-            item.pendingRename ? `still “${item.pendingRename}” on GitHub` : null,
-            item.updatedAt ? `last change on GitHub: ${new Date(item.updatedAt).toLocaleString()}` : null,
-            item.name !== null && !item.autoSync && !item.localOnly ? "manual sync" : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        >
-          <span className="scenes-item__name">{item.name ?? <em>{UNTITLED_LABEL}</em>}</span>
-          {item.name !== null && !item.autoSync && !item.localOnly && <span className="scenes-item__manual">manual</span>}
-          {!["synced", "local", "local-only", "untitled"].includes(item.status) && <StatusBadge status={item.status} compact />}
-          <ScenePlace item={item} />
-        </button>
-        {item.name !== null && (
-          <button
-            type="button"
-            className={clsx("scenes-item__more", { "scenes-item__more--open": menuOpen })}
-            disabled={disabled}
-            aria-label={`Actions for ${item.name}`}
-            onClick={() => onMenu(!menuOpen)}
-          >
-            ⋯
-          </button>
-        )}
-        {menuOpen && <SceneMenu item={item} onPrompt={onPrompt} onClose={() => onMenu(false)} />}
-      </div>
-      {rowPrompt && (
-        <NameForm
-          key={`${rowPrompt.mode}:${rowPrompt.scene}`}
-          prompt={rowPrompt}
-          initialValue={rowPrompt.mode === "duplicate" ? `${rowPrompt.scene} copy` : rowPrompt.scene}
-          onSubmit={onSubmitName}
-          onCancel={() => onPrompt(null)}
-        />
-      )}
-    </li>
-  );
-};
-
 const ActivityLog = ({ activity: all, now, hidden }: { activity: Activity[]; now: number; hidden: string[] }) => {
   const [open, setOpen] = useState(false);
   // entries naming a filtered-out scene are not shown
@@ -1003,27 +907,208 @@ const ActivityLog = ({ activity: all, now, hidden }: { activity: Activity[]; now
   );
 };
 
-export const ScenesSidebar = () => {
-  useAttachController();
-  const state = useScenes();
-  const { current, busy, error, list, remote, autoSync, conflict, activity } = state;
-  const [prompt, setPrompt] = useState<NamePrompt>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
-  const now = useNow();
-  const filter = useSceneFilter();
-  const shownList = list.filter((item) => matchesFilter(item.name, filter, current));
-  const hiddenNames = list
-    .filter((item) => item.name !== null && !matchesFilter(item.name, filter, current))
-    .map((item) => item.name!);
+/** a date for the history: relative today, else day and time */
+const when = (iso: string | null, now: number) => {
+  if (!iso) {
+    return "";
+  }
+  const time = new Date(iso).getTime();
+  if (now - time < 20 * 3600 * 1000) {
+    return ago(iso, now);
+  }
+  return new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+};
 
+/** "Update scene: oredev" → "Update" (the scene is clear here) */
+const versionLabel = (version: SceneVersion) => {
+  const text = version.message.replace(/^Agent:\s*/i, "").replace(/\s*scenes?:.*$/i, "").trim() || "Change";
+  const label = text[0].toUpperCase() + text.slice(1);
+  return label === "Add" ? "Created" : label;
+};
+
+/** the scene's versions on GitHub; one can be looked at and restored */
+const SceneHistory = ({ item }: { item: SceneListItem }) => {
+  const name = item.name!;
+  const now = useNow(30000);
+  const [versions, setVersions] = useState<SceneVersion[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ commit: string; json?: string; url?: string; error?: string } | null>(null);
+  const [restored, setRestored] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    scenesController
+      .history(name)
+      .then((list) => !cancelled && setVersions(list))
+      .catch((err: Error) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+    // again after every push (the newest version changes)
+  }, [name, item.updatedAt]);
+
+  useEffect(
+    () => () => {
+      if (preview?.url) {
+        URL.revokeObjectURL(preview.url);
+      }
+    },
+    [preview],
+  );
+
+  const show = async (version: SceneVersion) => {
+    if (open === version.commit) {
+      setOpen(null);
+      return;
+    }
+    setOpen(version.commit);
+    setPreview({ commit: version.commit });
+    try {
+      const json = await scenesController.loadVersion(name, version);
+      const data = JSON.parse(json);
+      await registerSceneFonts(data);
+      const blob = await exportToBlob({
+        elements: getNonDeletedElements(restoreElements(data.elements, null, { repairBindings: true })),
+        appState: { exportBackground: true, viewBackgroundColor: data.appState?.viewBackgroundColor ?? "#ffffff" },
+        files: data.files || {},
+        maxWidthOrHeight: 640,
+        mimeType: "image/png",
+      });
+      setPreview((prev) => (prev?.commit === version.commit ? { commit: version.commit, json, url: URL.createObjectURL(blob) } : prev));
+    } catch (err: any) {
+      setPreview((prev) => (prev?.commit === version.commit ? { commit: version.commit, error: err.message } : prev));
+    }
+  };
+
+  const restore = (version: SceneVersion, json: string) => {
+    const date = version.at ? new Date(version.at).toLocaleString() : "this version";
+    if (!window.confirm(`Restore “${name}” as of ${date}?\n\nThe canvas shows that version again; undo with ⌘Z. It is saved as a new version, so nothing in the history is lost.`)) {
+      return;
+    }
+    scenesController.restoreVersion(json);
+    setRestored(`Restored the version of ${date}. Undo with ⌘Z.`);
+    setOpen(null);
+  };
+
+  if (error) {
+    return <div className="scenes-history__note">History not available: {error}</div>;
+  }
+  if (!versions) {
+    return <div className="scenes-history__note">Loading history…</div>;
+  }
+  if (!versions.length) {
+    return <div className="scenes-history__note">No versions on GitHub yet.</div>;
+  }
+  const shown = all ? versions : versions.slice(0, 8);
+  return (
+    <>
+      {restored && <div className="scenes-history__restored">{restored}</div>}
+      <ol className="scenes-history">
+        {shown.map((version, index) => (
+          <li key={version.commit} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.commit })}>
+            <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.commit}>
+              <span className="scenes-history__label">
+                {versionLabel(version)}
+                {index === 0 && <span className="scenes-history__tag">latest</span>}
+                {version.agent && <span className="scenes-history__tag scenes-history__tag--agent">agent</span>}
+              </span>
+              <span className="scenes-history__meta">
+                {when(version.at, now)}
+                {version.author ? ` · ${version.author}` : ""}
+              </span>
+            </button>
+            {open === version.commit && (
+              <div className="scenes-history__preview">
+                {preview?.url ? (
+                  <img src={preview.url} alt={`“${name}” as of ${version.at ?? "this version"}`} />
+                ) : preview?.error ? (
+                  <div className="scenes-history__note">Could not load it: {preview.error}</div>
+                ) : (
+                  <div className="scenes-history__note">Loading…</div>
+                )}
+                {index > 0 && preview?.json && (
+                  <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => restore(version, preview.json!)}>
+                    Restore this version
+                  </button>
+                )}
+                {index === 0 && <div className="scenes-history__note">The newest version on GitHub.</div>}
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+      {versions.length > shown.length && (
+        <button type="button" className="scenes-link" onClick={() => setAll(true)}>
+          Show all {versions.length} versions
+        </button>
+      )}
+    </>
+  );
+};
+
+/** a panel under the scene pill (closes on Esc and a click elsewhere) */
+const Flyover = ({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) => {
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (!(event.target as HTMLElement).closest?.(".scenes-switcher")) {
+        onClose();
+      }
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [onClose]);
+  return (
+    <div
+      className="scenes-flyover"
+      role="dialog"
+      onKeyDown={(event) => {
+        // keep Excalidraw's own shortcuts out of the way while typing here
+        event.stopPropagation();
+        if (event.key === "Escape") {
+          onClose();
+        }
+      }}
+    >
+      <div className="scenes-flyover__head">
+        <span className="scenes-flyover__title">{title}</span>
+        <button type="button" className="scenes-flyover__close" aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div className="scenes-flyover__body">{children}</div>
+    </div>
+  );
+};
+
+/** GitHub: the connection, sync settings and what was synced */
+const GitHubFlyover = ({ onClose }: { onClose: () => void }) => {
+  const state = useScenes();
+  const now = useNow();
+  useSyncExternalStore(connection.subscribe, connection.getState);
+  const withGitHub = !IS_ONLINE || connection.isActive();
+  return (
+    <Flyover title="GitHub" onClose={onClose}>
+      {IS_ONLINE ? <GitHubPanel /> : <RepoLink />}
+      {withGitHub && <SyncBar state={state} now={now} />}
+      <ActivityLog activity={state.activity} now={now} hidden={[]} />
+      {IS_ONLINE && <KurviqFooter />}
+    </Flyover>
+  );
+};
+
+/** the open scene: save, rename, share, sync mode, history */
+const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
+  const state = useScenes();
+  const { current, busy, error, list, autoSync, conflict } = state;
+  const [prompt, setPrompt] = useState<NamePrompt>(null);
   const isBusy = !!busy;
   const currentItem = list.find((item) => item.name === current);
   const status = currentItem?.status ?? "untitled";
   const sceneAutoSync = scenesController.autoSyncFor(current);
   const empty = !scenesController.getApi()?.getSceneElements().length;
-  // rename / duplicate of the open scene happen in the card, others in the list
-  const currentPrompt =
-    prompt && (!("scene" in prompt) || prompt.scene === current) ? prompt : null;
   // online without GitHub: everything stays in this browser, nothing to publish
   useSyncExternalStore(connection.subscribe, connection.getState);
   const withGitHub = !IS_ONLINE || connection.isActive();
@@ -1047,61 +1132,48 @@ export const ScenesSidebar = () => {
   };
 
   return (
-    <>
-    <Sidebar name={SCENES_SIDEBAR_NAME} className="scenes-sidebar">
-      <Sidebar.Header>
-        <div className="scenes-sidebar__title">Scenes</div>
-      </Sidebar.Header>
-      <div className="scenes-sidebar__body">
-        {IS_ONLINE && <GitHubPanel />}
-        {withGitHub && <SyncBar state={state} now={now} />}
+    <Flyover
+      title={
+        <>
+          {current ?? <em>{UNTITLED_LABEL}</em>}
+          {current !== null && (withGitHub || status !== "local-only") && <StatusBadge status={status} />}
+        </>
+      }
+      onClose={onClose}
+    >
+      <section className="scenes-current">
+        <div className="scenes-current__status">
+          {busy === "saving"
+            ? "Pushing to GitHub…"
+            : busy === "loading"
+            ? "Loading…"
+            : currentItem?.pendingRename
+            ? `Renamed here — on GitHub it is still “${currentItem.pendingRename}”, renamed there once reachable`
+            : !withGitHub && current !== null
+            ? "Saved in this browser"
+            : currentStatusText(status, { autoSync: sceneAutoSync, offline: isOffline(state), empty })}
+        </div>
 
-        <section className="scenes-current">
-          <div className="scenes-current__label">Current scene</div>
-          <div className="scenes-current__name">
-            {current ?? <em>{UNTITLED_LABEL}</em>}
-            {current !== null && (withGitHub || status !== "local-only") && <StatusBadge status={status} />}
-          </div>
-          <div className="scenes-current__status">
-            {busy === "saving"
-              ? "Pushing to GitHub…"
-              : busy === "loading"
-              ? "Loading…"
-              : currentItem?.pendingRename
-              ? `Renamed here — on GitHub it is still “${currentItem.pendingRename}”, renamed there once reachable`
-              : !withGitHub && current !== null
-              ? "Saved in this browser"
-              : currentStatusText(status, { autoSync: sceneAutoSync, offline: isOffline(state), empty })}
-          </div>
+        {conflict && current !== null && <ConflictBox name={current} clashes={conflict.clashes.length} />}
 
-          {conflict && current !== null && <ConflictBox name={current} clashes={conflict.clashes.length} />}
-
-          {currentPrompt ? (
-            <NameForm
-              key={currentPrompt.mode}
-              prompt={currentPrompt}
-              initialValue={
-                currentPrompt.mode === "saveAs" || currentPrompt.mode === "duplicate"
-                  ? `${current} copy`
-                  : currentPrompt.mode === "rename"
-                  ? current ?? ""
-                  : ""
-              }
-              onSubmit={submitName}
-              onCancel={() => setPrompt(null)}
-            />
-          ) : (
-            <div className="scenes-row">
-              {(withGitHub || current === null) && (
+        {prompt ? (
+          <NameForm
+            key={prompt.mode}
+            prompt={prompt}
+            initialValue={
+              prompt.mode === "saveAs" || prompt.mode === "duplicate" ? `${current} copy` : prompt.mode === "rename" ? current ?? "" : ""
+            }
+            onSubmit={submitName}
+            onCancel={() => setPrompt(null)}
+          />
+        ) : (
+          <div className="scenes-row">
+            {(withGitHub || current === null) && (
               <button
                 type="button"
                 className="scenes-btn scenes-btn--primary"
                 disabled={isBusy || !!conflict}
-                title={
-                  status === "local-only"
-                    ? "Put this scene on GitHub; it is synced from then on"
-                    : "Push to GitHub now"
-                }
+                title={status === "local-only" ? "Put this scene on GitHub; it is synced from then on" : "Push to GitHub now"}
                 onClick={() =>
                   current === null
                     ? setPrompt({ mode: "save" })
@@ -1112,124 +1184,107 @@ export const ScenesSidebar = () => {
               >
                 {save} {status === "local-only" ? "Publish" : "Save"}
               </button>
-              )}
-              {current !== null && (
-                <button type="button" className="scenes-btn" disabled={isBusy} onClick={() => setPrompt({ mode: "saveAs" })}>
-                  Save as…
-                </button>
-              )}
-              <button type="button" className="scenes-btn" disabled={isBusy} onClick={() => setPrompt({ mode: "new" })}>
-                {PlusIcon} New
+            )}
+            {current !== null && (
+              <button type="button" className="scenes-btn" disabled={isBusy} onClick={() => setPrompt({ mode: "saveAs" })}>
+                Save as…
               </button>
-            </div>
-          )}
+            )}
+            <button type="button" className="scenes-btn" disabled={isBusy} onClick={() => setPrompt({ mode: "new" })}>
+              {PlusIcon} New
+            </button>
+          </div>
+        )}
 
-          {current !== null && !currentPrompt && currentItem && (
-            <div className="scenes-current__manage">
-              <QuickTip tip="Give this scene a new name (its link changes too)" label={false}>
-                <button type="button" className="scenes-link" disabled={isBusy} onClick={() => setPrompt({ mode: "rename", scene: current })}>
-                  Rename
-                </button>
-              </QuickTip>
-              <QuickTip tip="Make a copy of this scene under a new name" label={false}>
-                <button type="button" className="scenes-link" disabled={isBusy} onClick={() => setPrompt({ mode: "duplicate", scene: current })}>
-                  Duplicate
-                </button>
-              </QuickTip>
-              <QuickTip
-                tip={
-                  currentItem.onGitHub
-                    ? "Delete this scene, also on GitHub (its git history keeps the old versions)"
-                    : "Delete this scene from this browser"
-                }
-                label={false}
+        {current !== null && !prompt && currentItem && (
+          <div className="scenes-current__manage">
+            <QuickTip tip="Give this scene a new name (its link changes too)" label={false}>
+              <button type="button" className="scenes-link" disabled={isBusy} onClick={() => setPrompt({ mode: "rename", scene: current })}>
+                Rename
+              </button>
+            </QuickTip>
+            <QuickTip tip="Make a copy of this scene under a new name" label={false}>
+              <button type="button" className="scenes-link" disabled={isBusy} onClick={() => setPrompt({ mode: "duplicate", scene: current })}>
+                Duplicate
+              </button>
+            </QuickTip>
+            <QuickTip
+              tip={
+                currentItem.onGitHub
+                  ? "Delete this scene, also on GitHub (its git history keeps the old versions)"
+                  : "Delete this scene from this browser"
+              }
+              label={false}
+            >
+              <button
+                type="button"
+                className="scenes-link scenes-link--danger"
+                disabled={isBusy}
+                onClick={() => confirmDelete(currentItem) && scenesController.remove(current).catch(ignore)}
               >
-                <button
-                  type="button"
-                  className="scenes-link scenes-link--danger"
-                  disabled={isBusy}
-                  onClick={() => confirmDelete(currentItem) && scenesController.remove(current).catch(ignore)}
-                >
-                  Delete
-                </button>
-              </QuickTip>
-              {IS_ONLINE && <SceneSharing item={currentItem} disabled={isBusy} />}
-            </div>
-          )}
+                Delete
+              </button>
+            </QuickTip>
+            {IS_ONLINE && <SceneSharing item={currentItem} disabled={isBusy} />}
+          </div>
+        )}
 
-          {current !== null && !currentPrompt && (
-            <div className="scenes-current__footer">
-              {currentItem && <SceneAutoSync item={currentItem} global={autoSync} />}
-              {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.onGitHub && (
-                <button
-                  type="button"
-                  className="scenes-link"
-                  disabled={isBusy}
-                  onClick={() => {
-                    if (
-                      status === "behind" ||
-                      window.confirm(`Discard your local changes to "${current}" and load the version from GitHub?`)
-                    ) {
-                      scenesController.discardLocal(current).catch(ignore);
-                    }
-                  }}
-                >
-                  {status === "behind" ? "Load newer version" : "Discard local changes"}
-                </button>
-              )}
-            </div>
-          )}
-        </section>
-
-        {error && <div className="scenes-error">{error}</div>}
-
-        <section className="scenes-list-section">
-          <div className="scenes-list-header">
-            <span>{filter.trim() ? "Scenes" : "All scenes"}</span>
-            {filter.trim() && (
-              <span className="scenes-filter-chip">
-                filter: {filter.trim()}
-                <button type="button" aria-label="Clear the filter" onClick={() => setSceneFilter("")}>
-                  ×
-                </button>
-              </span>
+        {current !== null && !prompt && (
+          <div className="scenes-current__footer">
+            {currentItem && withGitHub && <SceneAutoSync item={currentItem} global={autoSync} />}
+            {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.onGitHub && (
+              <button
+                type="button"
+                className="scenes-link"
+                disabled={isBusy}
+                onClick={() => {
+                  if (status === "behind" || window.confirm(`Discard your local changes to "${current}" and load the version from GitHub?`)) {
+                    scenesController.discardLocal(current).catch(ignore);
+                  }
+                }}
+              >
+                {status === "behind" ? "Load newer version" : "Discard local changes"}
+              </button>
             )}
           </div>
-          {remote === null && list.length === 0 && <div className="scenes-empty">Loading…</div>}
-          {list.length === 0 && remote !== null && <div className="scenes-empty">No scenes yet</div>}
-          <ul className="scenes-list">
-            {shownList.map((item) => (
-              <SceneRow
-                key={item.name ?? "\u0000untitled"}
-                item={item}
-                active={item.name === current}
-                disabled={isBusy}
-                menuOpen={menuFor !== null && menuFor === item.name}
-                onMenu={(open) => setMenuFor(open ? item.name : null)}
-                prompt={prompt}
-                onPrompt={(next) => {
-                  setMenuFor(null);
-                  setPrompt(next);
-                }}
-                onSubmitName={submitName}
-              />
-            ))}
-          </ul>
+        )}
+      </section>
+
+      {error && <div className="scenes-error">{error}</div>}
+
+      {currentItem && current !== null && (
+        <section className="scenes-history-section">
+          <div className="scenes-list-header">
+            <span>History</span>
+          </div>
+          {withGitHub && currentItem.onGitHub && !currentItem.localOnly ? (
+            <SceneHistory key={current} item={currentItem} />
+          ) : (
+            <div className="scenes-history__note">
+              {currentItem.localOnly || !withGitHub
+                ? "Only in this browser: versions are kept once it is on GitHub."
+                : "Not on GitHub yet: its versions start with the first save."}
+            </div>
+          )}
         </section>
+      )}
+    </Flyover>
+  );
+};
 
-        <ActivityLog activity={activity} now={now} hidden={hiddenNames} />
-
-        {IS_ONLINE ? <KurviqFooter /> : <RepoLink />}
-      </div>
-    </Sidebar>
-    <SlidesSidebar />
-    <PresentationOverlay />
-    <SlideNotesOverlay />
-    <PublicSceneOverlay />
-    <AddFontOverlay />
-    {IS_ONLINE && <RepoSetupDialog />}
-    {IS_ONLINE && <ReadOnlyGuard />}
-    {IS_ONLINE && <UpdateBanner />}
+/** overlays of the plugin (the scene itself is managed from the pill's flyovers) */
+export const ScenesSidebar = () => {
+  useAttachController();
+  return (
+    <>
+      <SlidesSidebar />
+      <PresentationOverlay />
+      <SlideNotesOverlay />
+      <PublicSceneOverlay />
+      <AddFontOverlay />
+      {IS_ONLINE && <RepoSetupDialog />}
+      {IS_ONLINE && <ReadOnlyGuard />}
+      {IS_ONLINE && <UpdateBanner />}
     </>
   );
 };

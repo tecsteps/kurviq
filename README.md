@@ -7,7 +7,7 @@ This repo is its source, and also runs locally:
 
 Local Excalidraw with **multiple scenes** that are saved to a GitHub repo
 (`SCENES_GIT_REPO`, default <https://github.com/tecsteps/excalidrawscenes>),
-usable by humans (sidebar in the app) and agents (MCP tools).
+usable by humans (the scene pill in the app) and agents (MCP tools).
 
 Upstream code is kept **untouched** and is not part of this repo: `npm run setup`
 clones it at the tested commits pinned in `scripts/setup.mjs`.
@@ -16,7 +16,7 @@ clones it at the tested commits pinned in `scripts/setup.mjs`.
 |---|---|
 | `excalidraw/` | upstream clone of excalidraw/excalidraw, **not modified** |
 | `excalidraw-mcp/` | upstream clone of excalidraw/excalidraw-mcp, **not modified** |
-| `scenes-plugin/` | the UI/logic, injected into `excalidraw-app` at build time by `scenes-plugin/vite.config.mts` (uses public `<Excalidraw/>` extension points only: `renderTopLeftUI` + a custom `<Sidebar/>`) |
+| `scenes-plugin/` | the UI/logic, injected into `excalidraw-app` at build time by `scenes-plugin/vite.config.mts` (uses public `<Excalidraw/>` extension points only: `renderTopLeftUI` + custom `<Sidebar/>`s) |
 | `scenes-server/` | tiny local Node server: commits & pushes `scenes/<name>.excalidraw` to the scenes repo with your local git credentials (via a transport clone in `scenes-server/.repo`); relays agent commands to the open app. **Stateless**, see below |
 | `scenes-mcp/` | MCP server = excalidraw-mcp's tools + scene tools (`tools.mjs`; `server.mjs` = local stdio server) |
 | `online/` | **Kurviq**, the online version at <https://kurviq.com>: Cloudflare Worker (GitHub sign-in, agent pairing, remote MCP), `llms.txt`, deploy config |
@@ -32,7 +32,7 @@ install:
   dialog).
 - **Connect GitHub** (optional) to sync your scenes with a repository, on all
   your devices and with other people:
-  Click **Connect GitHub** (welcome screen, scene menu or Scenes sidebar):
+  Click **Connect GitHub** (welcome screen or the scene list):
   it signs you in with GitHub (once Kurviq is allowed, GitHub sends you
   straight back). A checklist then shows only what is still missing:
   1. **Create `<you>/kurviq-scenes`**: GitHub's form opens filled in
@@ -53,7 +53,7 @@ install:
   element by element (see [Sync with GitHub](#sync-with-github)). The
   connection stays for months: Kurviq keeps GitHub's refresh token in an
   encrypted, httpOnly cookie of your browser; its server stores nothing.
-  **Disconnect** any time in the sidebar.
+  **Disconnect** any time under **GitHub…** in the scene list.
 - **AI agents (MCP):** click **MCP** (top left) for a prompt to give your
   agent (Claude Code, Codex, Cursor, Claude, …): it adds
   `https://kurviq.com/mcp` and signs in (OAuth). On first use your browser
@@ -73,14 +73,14 @@ install:
   stored), and the image's bytes never go through the model.
 
 - **Teams (spaces):** install the Kurviq app on a GitHub organization and
-  its members share `<org>/kurviq-scenes`. Switch spaces in the Scenes
-  sidebar (each space keeps its own scenes in the browser). GitHub is the
+  its members share `<org>/kurviq-scenes`. Switch spaces under
+  **GitHub…** (each space keeps its own scenes in the browser). GitHub is the
   only source of who may do what: write access edits, read access views
   (read-only mode, nothing is pushed, agents can't edit either), and when
   access ends on GitHub (removed, repository archived, deleted or
   renamed, protected branch) Kurviq stops syncing and says why; the
   scenes stay in the browser.
-- **Share a link:** **Copy link** (Scenes sidebar, current scene) gives
+- **Share a link:** **Copy link** (the pen on the open scene) gives
   `kurviq.com/@<owner>/<scene>`, unique because GitHub account names are.
   A teammate opens it, signs in with GitHub and sees the scene if GitHub
   lets them read the repository; with write access, **Edit in <owner>'s
@@ -93,7 +93,7 @@ install:
   **Make private** moves it back; what was public stays in the public
   repository's git history. Viewers can **Make a copy** (synced to their
   own repository when they're connected) or **▶ Present** it.
-- **Share a presentation:** **Copy presentation link** (Scenes sidebar) or
+- **Share a presentation:** **Copy presentation link** (the pen on the open scene) or
   **Share** (Slides sidebar) gives `kurviq.com/@<owner>/<scene>?present`:
   it opens presenting (`&slide=3` starts at slide 3; skipped slides are
   left out). Browsers allow fullscreen only after a click, so it starts in
@@ -242,14 +242,21 @@ on draw.test. Everything pushed to GitHub does.
 ## Using it
 
 The pill next to the menu (top-left) shows the current scene; a dot means
-uncommitted changes. Click it to open the **Scenes** sidebar:
+uncommitted changes. Click it for the scene list (type to filter or create;
+click a scene to switch). Two panels open from there:
 
-- **Save**: commit & push the current scene (asks for a name the first time)
-- **Save as…**: commit under a new name and continue there
-- **New**: new empty scene
-- click a scene to switch; **Sync now** checks GitHub right away
-- **Rename · Duplicate · Delete**: under the current scene, or via the **⋯**
-  menu of any scene in the list. Rename and delete happen on GitHub too (one
+- **The pen** on the open scene manages it:
+  - **Save**: commit & push the current scene (asks for a name the first time)
+  - **Save as…**: commit under a new name and continue there
+  - **New**: new empty scene
+  - **History**: the scene's versions on GitHub (newest first, with who made
+    them, agents marked). Click one to see it; **Restore this version** puts
+    it back on the canvas as a normal edit: undo with ⌘Z, and it is saved as
+    a new version, so nothing in the history is lost.
+- **GitHub…** (at the bottom of the list): the connection, **Sync now**,
+  the sync settings and the **Activity** log.
+- **Rename · Duplicate · Delete**: in the pen's panel of the open scene.
+  Rename and delete happen on GitHub too (one
   commit each; a rename is a git rename, history is kept; deleted scenes stay
   in the git history). Offline they apply locally right away and reach
   GitHub when it's back. Duplicate copies the scene incl. changes that aren't
@@ -401,12 +408,12 @@ version it is based on, which gives a visible status:
   `SCENES_WATCH_INTERVAL_MS`, e.g. `10000` for about 10 s). Views are never moved by a merge.
   Not realtime: no live cursors. Clock differences between machines decide
   "newer" when the same element is changed within seconds.
-- **Offline:** everything keeps working. The sidebar shows "GitHub not
+- **Offline:** everything keeps working. **GitHub…** shows "GitHub not
   reachable, working locally · N scenes waiting to sync", and syncing
   resumes when the connection is back.
 - Pushes are safe: the server rejects a push whose base version isn't the
   current one on GitHub (no silent overwrites), and the app merges instead.
-- Everything that happens is listed in the sidebar's **Activity** log.
+- Everything that happens is listed in the **Activity** log under **GitHub…**.
 
 Editing works as usual in localStorage. Switching away stashes the scene
 (incl. images) in IndexedDB, so uncommitted work in several scenes is kept.
