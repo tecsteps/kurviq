@@ -300,47 +300,6 @@ const SlideList = () => {
             "slides-card--drag": dragId === slide.id,
           })}
         >
-          <span className="slides-card__actions">
-            {templateId && (
-              <QuickTip tip={slide.template ? "Template off for this slide" : "Template on for this slide (header, footer, logo…)"} label={false}>
-                <button
-                  type="button"
-                  aria-label={`Template on slide ${slide.index + 1}`}
-                  aria-pressed={slide.template}
-                  onClick={() => patchSlideData(api(), new Map([[slide.id, { template: slide.template ? false : undefined }]]))}
-                >
-                  <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
-                    <rect x="2.5" y="4" width="15" height="12" rx="1.5" />
-                    <path d="M5 13h10" />
-                    {!slide.template && <path d="M3 3l14 14" />}
-                  </svg>
-                </button>
-              </QuickTip>
-            )}
-            <QuickTip tip="Duplicate" label={false}>
-              <button
-                type="button"
-                aria-label={`Duplicate slide ${slide.index + 1}`}
-                onClick={() => {
-                  const [copy] = duplicateSlides(api(), [slide.id]);
-                  if (copy) {
-                    setTimeout(() => focusFrame(copy), 50);
-                  }
-                }}
-              >
-                ⧉
-              </button>
-            </QuickTip>
-            <QuickTip tip="Delete (undo with ⌘Z)" label={false}>
-              <button
-                type="button"
-                aria-label={`Delete slide ${slide.index + 1}`}
-                onClick={() => window.confirm(`Delete slide ${slide.index + 1} “${slide.title}” with everything on it?`) && deleteSlides(api(), [slide.id])}
-              >
-                ×
-              </button>
-            </QuickTip>
-          </span>
           <button
             type="button"
             className="slides-card__open"
@@ -364,14 +323,76 @@ const SlideList = () => {
             <span className="slides-card__thumb">{thumbs[slide.id] ? <img src={thumbs[slide.id]} alt="" /> : null}</span>
             <span className="slides-card__meta">
               <span className="slides-card__title">{slide.title}</span>
-              <span className="slides-card__badges">
-                {slide.skip && <span>skipped</span>}
-                {templateId && !slide.template && <span className="slides-card__badge--off">no template</span>}
-                {slide.steps > 0 && <span>{slide.steps} step{slide.steps === 1 ? "" : "s"}</span>}
-                {slide.notes && <span>notes</span>}
-              </span>
             </span>
           </button>
+          <span className="slides-card__actions">
+            {templateId && (
+              <QuickTip tip={slide.template ? "Template is on: header, footer, logo… (click: off for this slide)" : "Template is off for this slide (click: on)"} label={false}>
+                <button
+                  type="button"
+                  className={clsx({ "slides-card__action--off": !slide.template })}
+                  aria-label={`Template on slide ${slide.index + 1}`}
+                  aria-pressed={slide.template}
+                  onClick={() => patchSlideData(api(), new Map([[slide.id, { template: slide.template ? false : undefined }]]))}
+                >
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                    <rect x="2.5" y="4" width="15" height="12" rx="1.5" />
+                    <path d="M5 13h10" />
+                    {!slide.template && <path d="M3 3l14 14" />}
+                  </svg>
+                </button>
+              </QuickTip>
+            )}
+            <QuickTip tip={slide.notes ? `Speaker notes: ${slide.notes.length > 80 ? `${slide.notes.slice(0, 80)}…` : slide.notes}` : "Add speaker notes"} label={false}>
+              <button
+                type="button"
+                className={clsx({ "slides-card__action--on": !!slide.notes })}
+                aria-label={`Speaker notes of slide ${slide.index + 1}`}
+                onClick={() => {
+                  focusFrame(slide.id);
+                  // the notes field below the list (shown for the active slide)
+                  setTimeout(() => {
+                    const field = document.querySelector<HTMLTextAreaElement>(".slides-notes");
+                    field?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                    field?.focus();
+                  }, 80);
+                }}
+              >
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                  <path d="M4 3.5h12v9.5l-4 3.5H4z" />
+                  <path d="M7 7.5h6M7 10.5h4" />
+                </svg>
+              </button>
+            </QuickTip>
+            <QuickTip tip="Duplicate slide" label={false}>
+              <button
+                type="button"
+                aria-label={`Duplicate slide ${slide.index + 1}`}
+                onClick={() => {
+                  const [copy] = duplicateSlides(api(), [slide.id]);
+                  if (copy) {
+                    setTimeout(() => focusFrame(copy), 50);
+                  }
+                }}
+              >
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                  <rect x="6.5" y="6.5" width="10" height="10" rx="1.5" />
+                  <path d="M13.5 3.5h-8a2 2 0 0 0-2 2v8" />
+                </svg>
+              </button>
+            </QuickTip>
+            <QuickTip tip="Delete slide (undo with ⌘Z)" label={false}>
+              <button
+                type="button"
+                aria-label={`Delete slide ${slide.index + 1}`}
+                onClick={() => window.confirm(`Delete slide ${slide.index + 1} “${slide.title}” with everything on it?`) && deleteSlides(api(), [slide.id])}
+              >
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                  <path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5l.8 11h7.4l.8-11" />
+                </svg>
+              </button>
+            </QuickTip>
+          </span>
         </li>
       ))}
     </ol>

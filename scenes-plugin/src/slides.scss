@@ -89,9 +89,9 @@
     border-radius: var(--border-radius-md);
     border: 1px solid transparent;
 
-    &:hover .slides-card__actions,
-    &:focus-within .slides-card__actions {
-      opacity: 1;
+    &:hover .slides-card__actions button,
+    &:focus-within .slides-card__actions button {
+      color: var(--text-primary-color);
     }
 
     &--active {
@@ -187,11 +187,13 @@
     }
   }
 
+  // the title on top, the card's icons (.slides-card__actions) below it
   .slides-card__meta {
     display: flex;
     flex-direction: column;
+    align-self: stretch;
     min-width: 0;
-    gap: 0.15rem;
+    padding-top: 0.2rem;
   }
 
   .slides-card__title {
@@ -199,25 +201,6 @@
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .slides-card__badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-
-    span {
-      padding: 0 0.3rem;
-      border-radius: 4px;
-      background: var(--color-surface-high);
-      color: var(--color-gray-60, inherit);
-      font-size: 0.68rem;
-    }
-
-    .slides-card__badge--off {
-      background: #fff3bf;
-      color: #8a6100;
-    }
   }
 
   .slides-details {
@@ -549,32 +532,43 @@ body.slides-presenting {
   }
 }
 
-// hover actions on a card of the sidebar list
+// the icons of a card in the sidebar list, below its title (num + thumb + gaps to the left)
 .excalidraw .slides-card__actions {
   position: absolute;
-  top: 0.3rem;
-  right: 0.3rem;
-  z-index: 1;
+  bottom: 0.45rem;
+  left: calc(0.35rem + 1.1rem + 6.5rem + 1rem);
   display: flex;
-  gap: 0.2rem;
-  opacity: 0;
-  transition: opacity 0.12s;
+  gap: 0.15rem;
 
   button {
-    width: 1.5rem;
-    height: 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
     padding: 0;
-    border: 1px solid var(--default-border-color);
+    border: none;
     border-radius: 4px;
-    background: var(--island-bg-color);
-    color: var(--text-primary-color);
-    font-size: 0.85rem;
-    line-height: 1;
+    background: none;
+    color: var(--color-gray-50, #868e96);
     cursor: pointer;
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
       background: var(--color-surface-high);
+      color: var(--color-primary) !important;
     }
+  }
+
+  // template off: yellow, so the slide stands out
+  .slides-card__action--off {
+    background: #fff3bf;
+    color: #8a6100 !important;
+  }
+
+  // the slide has speaker notes
+  .slides-card__action--on {
+    color: var(--color-primary) !important;
   }
 }
 
@@ -803,7 +797,7 @@ body.slides-presenting {
   }
 }
 
-.excalidraw.theme--dark .slides-card__badge--off {
+.excalidraw.theme--dark .slides-card__actions .slides-card__action--off {
   background: #5c4400;
-  color: #ffe08a;
+  color: #ffe08a !important;
 }
