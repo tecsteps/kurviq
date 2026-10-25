@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import clsx from "clsx";
 
 import { scenesController } from "./controller";
-import { deck } from "./deck";
+import { deck, isDeck } from "./deck";
 import { optimizeImages, pickSlides, printInBrowser, printToPdf, slidesHtml } from "./pdfExport";
 import { IS_ONLINE } from "./api";
 import { SlidesShare } from "./online/ui";
@@ -542,7 +542,7 @@ const startPresentation = () => {
   setTimeout(() => focusFrame(id), 50);
 };
 
-/** no slides yet: what slides are, and one button to start */
+/** not a presentation yet (a single frame isn't one): what slides are, and one button to start */
 const SlidesEmpty = () => (
   <section className="slides-empty">
     <svg className="slides-empty__art" viewBox="0 0 160 104" aria-hidden>
@@ -693,7 +693,8 @@ const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boo
 ];
 
 export const SlidesSidebar = () => {
-  const { slides, activeId } = useDeck();
+  const state = useDeck();
+  const { slides, activeId } = state;
   const tab = useSyncExternalStore(slidesTab.subscribe, slidesTab.get);
   const active = slides.find((s) => s.id === activeId) ? activeId : null;
   const tabs = TABS.filter((entry) => !entry.online || IS_ONLINE);
@@ -704,7 +705,7 @@ export const SlidesSidebar = () => {
         <div className="scenes-sidebar__title">Slides</div>
       </Sidebar.Header>
       <div className="slides-body">
-        {!slides.length ? (
+        {!isDeck(state) ? (
           <SlidesEmpty />
         ) : (
           <>
