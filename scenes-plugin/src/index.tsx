@@ -205,7 +205,7 @@ const ScenePlace = ({
             : item.localOnly
             ? "Only in this browser: kept local on purpose, never synced"
             : repo
-            ? `Only in this browser so far: not in ${repo} yet`
+            ? "Saved in localStorage, not synced to GitHub"
             : "Only in this browser (no repository connected)",
       };
   // private / public is a GitHub thing: the local install only knows its repository
