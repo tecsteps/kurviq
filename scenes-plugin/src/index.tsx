@@ -461,55 +461,63 @@ const SceneSwitcher = ({
           const { item } = entry;
           const isCurrent = !!item && item.name === current;
           return (
-            <div className="scenes-switcher__row" key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `${entry.owner}\u0000${entry.name}`}>
-            <button
-              type="button"
-              role="option"
-              aria-selected={isCurrent}
-              className={clsx("scenes-switcher__item", {
-                "scenes-switcher__item--current": isCurrent,
-                "scenes-switcher__item--active": index === active,
+            <div
+              className={clsx("scenes-switcher__row", {
+                "scenes-switcher__row--current": isCurrent,
+                "scenes-switcher__row--active": index === active,
               })}
+              key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `${entry.owner}\u0000${entry.name}`}
               onMouseEnter={() => setActive(index)}
-              onClick={() => choose(index)}
             >
-              <span className="scenes-switcher__name">{nameOf(entry) ?? UNTITLED_LABEL}</span>
-              {showOwner && entry.owner && (
-                <QuickTip
-                  tip={
-                    item
-                      ? `${entry.owner}'s space: the one this tab shows`
-                      : `${entry.owner}'s space: opening it switches this tab to that space`
-                  }
-                  className={clsx("scenes-switcher__owner", { "scenes-switcher__owner--other": !item })}
-                >
-                  {entry.owner}
+              <button
+                type="button"
+                role="option"
+                aria-selected={isCurrent}
+                className={clsx("scenes-switcher__item", { "scenes-switcher__item--current": isCurrent })}
+                onClick={() => choose(index)}
+              >
+                <span className="scenes-switcher__name">{nameOf(entry) ?? UNTITLED_LABEL}</span>
+                {showOwner && entry.owner && (
+                  <QuickTip
+                    tip={
+                      item
+                        ? `${entry.owner}'s space: the one this tab shows`
+                        : `${entry.owner}'s space: opening it switches this tab to that space`
+                    }
+                    className={clsx("scenes-switcher__owner", { "scenes-switcher__owner--other": !item })}
+                  >
+                    {entry.owner}
+                  </QuickTip>
+                )}
+                {item && !["synced", "local", "local-only", "untitled"].includes(item.status) && (
+                  <StatusBadge status={item.status} compact />
+                )}
+              </button>
+              {isCurrent && (
+                <QuickTip tip="Manage this scene: save, rename, share, history" className="scenes-switcher__pen-tip" label={false}>
+                  <button
+                    type="button"
+                    className="scenes-switcher__pen"
+                    aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`}
+                    onClick={onManageScene}
+                  >
+                    <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M13.5 3.5l3 3L7 16H4v-3z" />
+                      <path d="M11.5 5.5l3 3" />
+                    </svg>
+                  </button>
                 </QuickTip>
               )}
-              {item ? (
-                <>
-                  {!["synced", "local", "local-only", "untitled"].includes(item.status) && (
-                    <StatusBadge status={item.status} compact />
-                  )}
+              <span className="scenes-switcher__places">
+                {item ? (
                   <ScenePlace item={item} />
-                </>
-              ) : (
-                <ScenePlace
-                  item={{ name: entry.name, onGitHub: true, localOnly: false, public: false, status: "synced" }}
-                  repo={`${entry.owner}/kurviq-scenes`}
-                />
-              )}
-            </button>
-            {isCurrent && (
-              <QuickTip tip="Manage this scene: save, rename, share, history" className="scenes-switcher__pen-tip" label={false}>
-                <button type="button" className="scenes-switcher__pen" aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`} onClick={onManageScene}>
-                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M13.5 3.5l3 3L7 16H4v-3z" />
-                    <path d="M11.5 5.5l3 3" />
-                  </svg>
-                </button>
-              </QuickTip>
-            )}
+                ) : (
+                  <ScenePlace
+                    item={{ name: entry.name, onGitHub: true, localOnly: false, public: false, status: "synced" }}
+                    repo={`${entry.owner}/kurviq-scenes`}
+                  />
+                )}
+              </span>
             </div>
           );
         })}
