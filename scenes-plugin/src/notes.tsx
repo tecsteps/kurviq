@@ -228,7 +228,9 @@ export const SlideNotesOverlay = () => {
   const id = useOpenId();
   const api = deck.getApi();
   const appState = api?.getAppState();
-  const enabled = !!api && !presenting && !appState?.viewModeEnabled && (slides.length > 0 || !!templateId);
+  // only in presentations: a template, several slides or speaker notes (a single frame, e.g. an infographic, isn't one)
+  const isDeck = !!templateId || slides.length > 1 || slides.some((slide) => slide.notes.trim());
+  const enabled = !!api && !presenting && !appState?.viewModeEnabled && isDeck;
   const spots = useNameSpots(enabled);
   const container = document.querySelector<HTMLElement>(".excalidraw");
   const dark = appState?.theme === "dark";
