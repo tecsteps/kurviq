@@ -832,6 +832,12 @@ body.slides-presenting {
     opacity: 1;
     color: var(--color-primary);
   }
+
+  // over the end of a shortened name: on the canvas color, so the name doesn't show through
+  &--over {
+    opacity: 1;
+    background: var(--island-bg-color);
+  }
 }
 
 // … and the popover to see / edit them
@@ -908,4 +914,9 @@ body.slides-presenting {
     color: var(--color-gray-50, #868e96);
     font-size: 0.72rem;
   }
+}
+
+// a slide frame selected (deck.ts): no properties panel (opacity, layers … don't apply to a slide)
+.excalidraw.kq-slide-frame-selected .selected-shape-actions-container {
+  display: none;
 }

@@ -346,7 +346,9 @@ export default {
         );
       }
       const key = mcp[1];
-      return handleMcp(request, env, { pairing: await pairingName(key), via: "link", uploadUrl: `${url.origin}/mcp/${key}/upload` });
+      // its own upload token (like a signed-in agent's), not the link: the link key is full access
+      const pairing = await pairingName(key);
+      return handleMcp(request, env, { pairing, via: "link", uploadUrl: `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}` });
     }
 
     if (url.pathname === "/llms.txt") {

@@ -133,7 +133,7 @@ export const summarize = (elements, { textsOffset = 0, textsLimit = 100 } = {}) 
       return {
         id: container ? container.id : el.id,
         ...(container ? { shape: container.type } : {}),
-        text: el.text.replace(/\s+/g, " ").slice(0, 80),
+        text: (el.originalText ?? el.text).replace(/\s+/g, " ").slice(0, 80),
         ...rect,
       };
     })
@@ -189,7 +189,7 @@ export const diffElements = (before, after) => {
   const deleted = before.filter((el) => !next.has(el.id)).map((el) => ({
     id: el.id,
     type: el.type,
-    ...(el.text ? { text: el.text.slice(0, 80) } : {}),
+    ...(el.text ? { text: (el.originalText ?? el.text).slice(0, 80) } : {}),
   }));
   return { added, modified, deleted };
 };

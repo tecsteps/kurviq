@@ -14,7 +14,7 @@ import { IS_ONLINE } from "./api";
 import { SlidesShare } from "./online/ui";
 import { QuickTip } from "./quickTip";
 import { presenter } from "./present";
-import { notesText, slideNotes } from "./notes";
+import { slideNotes } from "./notes";
 import { setSlideParam } from "./router";
 import {
   addSlide,
@@ -345,22 +345,16 @@ const SlideList = () => {
                 </button>
               </QuickTip>
             )}
-            <QuickTip tip={slide.notes ? `Speaker notes: ${notesText(slide.notes).slice(0, 80)}` : "Add speaker notes"} label={false}>
-              <button
-                type="button"
-                className={clsx({ "slides-card__action--on": !!slide.notes })}
-                aria-label={`Speaker notes of slide ${slide.index + 1}`}
-                onClick={() => {
-                  focusFrame(slide.id);
-                  slideNotes.toggle(slide.id);
-                }}
-              >
-                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
-                  <path d="M4 3.5h12v9.5l-4 3.5H4z" />
-                  <path d="M7 7.5h6M7 10.5h4" />
-                </svg>
-              </button>
-            </QuickTip>
+            {templateId && slide.template && (
+              <QuickTip tip="Back to template: header, footer, logo… as in the template again, and the deck's fonts and colors on this slide (undo with ⌘Z)" label={false}>
+                <button type="button" aria-label={`Slide ${slide.index + 1} back to template`} onClick={() => resetSlides([slide.id])}>
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M4 10a6 6 0 1 0 1.8-4.3" />
+                    <path d="M4 3.5v3.2h3.2" />
+                  </svg>
+                </button>
+              </QuickTip>
+            )}
             <QuickTip tip="Duplicate slide" label={false}>
               <button
                 type="button"
@@ -454,11 +448,6 @@ const SlideDetails = ({ id }: { id: string }) => {
         <button type="button" className="slides-btn" onClick={() => addSlide(api(), id)}>
           + After
         </button>
-        <QuickTip tip="Template elements back as in the template, deck fonts and colors on everything on this slide" label={false}>
-          <button type="button" className="slides-btn" onClick={() => resetSlides([id])}>
-            Reset to template
-          </button>
-        </QuickTip>
       </div>
     </section>
   );
@@ -682,6 +671,24 @@ const slidesTab = (() => {
     }
   });
 }
+
+/** a slide's pen on the canvas (notes.tsx): the slide list, with this slide selected and in view */
+export const showSlideInList = (id: string) => {
+  const api = deck.getApi();
+  if (!api) {
+    return;
+  }
+  slidesTab.set("slides");
+  if (api.getAppState().openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
+    api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
+  }
+  api.updateScene({ appState: { selectedElementIds: { [id]: true } }, captureUpdate: CaptureUpdateAction.NEVER });
+  deck.setActive(id);
+  // its card, once the list shows
+  setTimeout(() => {
+    document.querySelector<HTMLElement>(`[data-slide-open="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, 120);
+};
 
 /** the template's edit icon on the canvas (notes.tsx): the Style tab, or closed again */
 export const toggleTemplateStyle = () => {

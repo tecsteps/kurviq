@@ -16,10 +16,13 @@ import {
   computeContainerDimensionForBoundText,
   getBoundTextMaxHeight,
   hashString,
+  measureText,
   refreshTextDimensions,
   syncInvalidIndices,
   updateBoundElements,
 } from "@excalidraw/element";
+
+import { getFontString } from "@excalidraw/common";
 
 import { registerSceneFonts, withFonts } from "./fonts";
 import { scenesApi } from "./api";
@@ -200,7 +203,55 @@ export const withTemplate = (elements: ExcalidrawElement[], deck: string) =>
   syncTemplate(elements, deck)?.elements ?? elements;
 
 /** fields an agent must not set directly */
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * customData of an update merges into what the element has (two levels:
+ * `customData.slides` too), so setting one key keeps the others (speaker
+ * notes, slide order …); a key set to null is removed. Like the app does.
+ */
+const mergeCustomData = (current: Record<string, unknown> | null | undefined, patch: unknown) => {
+  if (!isPlainObject(patch)) {
+    return patch;
+  }
+  const merged: Record<string, unknown> = { ...(current || {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete merged[key];
+    } else if (isPlainObject(value) && isPlainObject(merged[key])) {
+      const inner: Record<string, unknown> = { ...(merged[key] as Record<string, unknown>) };
+      for (const [innerKey, innerValue] of Object.entries(value)) {
+        if (innerValue === null) {
+          delete inner[innerKey];
+        } else {
+          inner[innerKey] = innerValue;
+        }
+      }
+      merged[key] = inner;
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+};
+
 const PROTECTED = new Set(["id", "type", "version", "versionNonce", "isDeleted", "index"]);
+
+/**
+ * A text box of a fixed width (`autoResize: false`) narrower than one of its
+ * words would break that word ("01" → "0", "1"): it gets wide enough for
+ * its longest word instead, like a shape grows for its label.
+ */
+const withRoomForWords = (el: any) => {
+  if (el.autoResize !== false) {
+    return el;
+  }
+  const font = getFontString(el);
+  const words = String(el.originalText ?? el.text).split(/\s+/).filter(Boolean);
+  const widest = Math.max(0, ...words.map((word) => measureText(word, font, el.lineHeight).width));
+  return widest > el.width ? { ...el, width: Math.ceil(widest) + 1 } : el;
+};
 
 /**
  * Apply an agent's add / update / delete to a list of elements (incl. deleted
@@ -286,7 +337,7 @@ const applyEdits = async (
       const patch: Record<string, unknown> = { ...(patches.get(id) || {}) };
       for (const [key, value] of Object.entries(rest)) {
         if (!PROTECTED.has(key)) {
-          patch[key] = value;
+          patch[key] = key === "customData" ? mergeCustomData((patch.customData ?? el.customData) as any, value) : value;
         }
       }
       if (label !== undefined && el.type !== "text") {
@@ -383,7 +434,7 @@ const applyEdits = async (
     const refreshed = new Map(
       elements
         .filter((el) => textUpdated.has(el.id) && el.type === "text" && !(el as any).containerId)
-        .map((el: any) => [el.id, { ...el, ...(refreshTextDimensions(el, null, map, el.originalText ?? el.text) || {}) }]),
+        .map((el: any) => [el.id, { ...el, ...(refreshTextDimensions(withRoomForWords(el), null, map, el.originalText ?? el.text) || {}) }]),
     );
     elements = elements.map((el) => {
       const next = refreshed.get(el.id) as any;

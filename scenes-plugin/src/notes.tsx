@@ -1,5 +1,5 @@
 // Speaker notes: an icon after each slide's name on the canvas, and a popover
-// (the template gets an edit icon instead: it opens the deck's style)
+// (before it, a pen: the slide in the slide list; the template's pen opens the deck's style)
 // to see and edit a slide's notes with formatting (the same editor and
 // toolbar as text on the canvas). Notes are stored as markdown-like text in
 // the slide's `customData.slides.notes` (see richText/model.ts), so plain
@@ -12,7 +12,7 @@ import clsx from "clsx";
 import { deck } from "./deck";
 import { usePresenter } from "./present";
 import { patchSlideData } from "./slides";
-import { toggleTemplateStyle } from "./slidesUI";
+import { showSlideInList, toggleTemplateStyle } from "./slidesUI";
 import { createRichEditable } from "./richText/editor";
 import { docFromMarkdown, docFromPlain, isPlainDoc, markdownOf, plainOf, richDocOf } from "./richText/model";
 import { docToHtml } from "./richText/layout";
@@ -57,7 +57,8 @@ const useOpenId = () =>
 // -----------------------------------------------------------------------------
 // where the slides' names are on screen (Excalidraw draws them as divs)
 
-type Spot = { x: number; y: number; h: number };
+/** after the name (x), up to where its frame ends on screen (max) */
+type Spot = { left: number; x: number; y: number; h: number; max: number };
 
 const useNameSpots = (enabled: boolean) => {
   const { slides, templateId } = useSyncExternalStore(deck.subscribe, deck.getState);
@@ -77,8 +78,10 @@ const useNameSpots = (enabled: boolean) => {
           continue; // off screen, or being renamed
         }
         const rect = name.getBoundingClientRect();
+        // Excalidraw shortens a name to its frame's width (maxWidth)
+        const max = rect.left + (parseFloat(name.style.maxWidth) || Infinity);
         if (rect.width) {
-          next[id] = { x: Math.round(rect.right), y: Math.round(rect.top), h: Math.round(rect.height) };
+          next[id] = { left: Math.round(rect.left), x: Math.round(rect.right), y: Math.round(rect.top), h: Math.round(rect.height), max: Math.round(max) };
         }
       }
       const key = JSON.stringify(next);
@@ -93,6 +96,29 @@ const useNameSpots = (enabled: boolean) => {
   }, [enabled, slides, templateId]);
   return spots;
 };
+
+/** room for the pen before the notes icon */
+const PEN_WIDTH = 22;
+const ICON_WIDTH = 22;
+
+/**
+ * where the icons start: after the name, but inside its frame (a shortened
+ * name: over its end, on a background); null when the frame is too narrow on screen
+ */
+const iconsAt = (spot: Spot, width: number) => {
+  if (spot.max - spot.left < width + 40) {
+    return null;
+  }
+  const left = Math.min(spot.x + 4, spot.max - width);
+  return { left, over: left < spot.x + 4 };
+};
+
+const PenIcon = () => (
+  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M13.5 3.5l3 3L7 16H4v-3z" />
+    <path d="M11.5 5.5l3 3" />
+  </svg>
+);
 
 const NotesIcon = ({ filled }: { filled: boolean }) => (
   <svg viewBox="0 0 20 20" width="14" height="14" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6" aria-hidden>
@@ -249,36 +275,49 @@ export const SlideNotesOverlay = () => {
         if (!spot) {
           return null;
         }
+        const at = iconsAt(spot, PEN_WIDTH + ICON_WIDTH);
+        if (!at) {
+          return null;
+        }
         const has = !!s.notes.trim();
-        return (
+        return [
+          <button
+            key={`${s.id}-pen`}
+            type="button"
+            className={clsx("slides-notes-btn slides-notes-btn--pen", { "slides-notes-btn--over": at.over })}
+            style={{ left: at.left, top: spot.y + spot.h / 2 }}
+            title="Show in the slide list"
+            aria-label={`Slide ${s.index + 1} in the slide list`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => showSlideInList(s.id)}
+          >
+            <PenIcon />
+          </button>,
           <button
             key={s.id}
             type="button"
-            className={clsx("slides-notes-btn", { "slides-notes-btn--has": has, "slides-notes-btn--open": s.id === id })}
-            style={{ left: spot.x + 4, top: spot.y + spot.h / 2 }}
+            className={clsx("slides-notes-btn", { "slides-notes-btn--has": has, "slides-notes-btn--open": s.id === id, "slides-notes-btn--over": at.over })}
+            style={{ left: at.left + PEN_WIDTH, top: spot.y + spot.h / 2 }}
             title={has ? `Speaker notes: ${notesText(s.notes).slice(0, 120)}` : "Add speaker notes"}
             aria-label={`Speaker notes of slide ${s.index + 1}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => slideNotes.toggle(s.id)}
           >
             <NotesIcon filled={has} />
-          </button>
-        );
+          </button>,
+        ];
       })}
-      {templateId && spots[templateId] && (
+      {templateId && spots[templateId] && iconsAt(spots[templateId], ICON_WIDTH) && (
         <button
           type="button"
-          className="slides-notes-btn slides-notes-btn--has"
-          style={{ left: spots[templateId].x + 4, top: spots[templateId].y + spots[templateId].h / 2 }}
+          className={clsx("slides-notes-btn slides-notes-btn--has", { "slides-notes-btn--over": iconsAt(spots[templateId], ICON_WIDTH)!.over })}
+          style={{ left: iconsAt(spots[templateId], ICON_WIDTH)!.left, top: spots[templateId].y + spots[templateId].h / 2 }}
           title="Edit the deck's style (fonts, colors, template)"
           aria-label="Edit the deck's style"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={toggleTemplateStyle}
         >
-          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M13.5 3.5l3 3L7 16H4v-3z" />
-            <path d="M11.5 5.5l3 3" />
-          </svg>
+          <PenIcon />
         </button>
       )}
       {slide && (

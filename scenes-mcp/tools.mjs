@@ -285,6 +285,17 @@ export const createScenesMcp = ({
         }
         out[key] = typeof value === "number" ? Math.round(value * 100) / 100 : value;
       }
+      if (el.type === "text") {
+        // the text as written: `text` holds it wrapped to the box (line breaks
+        // that aren't the author's; written back, they would become theirs)
+        if (typeof el.originalText === "string") {
+          out.text = el.originalText;
+        }
+        // a box of a fixed width (wraps inside it); the default (grows with its text) isn't listed
+        if (el.autoResize === false && !el.containerId) {
+          out.autoResize = false;
+        }
+      }
       // formatted text: as the markdown it's written in (not the raw runs)
       if (el.customData?.rich) {
         const markdown = markdownOfElement(el);
@@ -397,13 +408,13 @@ export const createScenesMcp = ({
   const PAYLOAD_ID = z
     .string()
     .optional()
-    .describe(`An edit you uploaded: { "add": [...], "update": [...], "delete": [...] } (or an array = add) as JSON, POSTed with curl --data-binary @edit.json ${uploadUrl ?? "<agent link>/upload"} (answers with its payloadId). Use it for big edits instead of pasting JSON.`);
+    .describe(`An edit you uploaded: { "add": [...], "update": [...], "delete": [...] } (or an array = add) as JSON, POSTed with curl --data-binary @edit.json to the upload address in read_me (answers with its payloadId). Use it for big edits instead of pasting JSON.`);
 
   /** where big edits come from: a local file, or (online) an upload */
   const EDIT_SOURCE = LOCAL_FILES ? { file: EDIT_FILE } : { payloadId: PAYLOAD_ID };
   const BIG_EDITS = LOCAL_FILES
     ? "Big edits: put them in a JSON file and pass file (absolute path)."
-    : `Big edits: upload the JSON ({ "add", "update", "delete" }) with curl --data-binary @edit.json ${uploadUrl ?? "<agent link>/upload"} and pass the payloadId it answers (nothing passes through your context twice).`;
+    : `Big edits: upload the JSON ({ "add", "update", "delete" }) with curl --data-binary @edit.json to the upload address in read_me and pass the payloadId it answers (nothing passes through your context twice).`;
 
   const IMAGES_HELP = `Images and icons: add { "type": "image", "id": "...", "x": 0, "y": 0, "width": 48, plus ONE of "src" (${LOCAL_FILES ? "absolute file path, " : ""}http(s) URL or data URL of a png/jpg/gif/webp/svg), "svg" (inline SVG markup) or "icon" ("lucide:<name>", e.g. "lucide:database", or "simple-icons:<slug>", e.g. "simple-icons:github"; "color" tints it)${LOCAL_FILES ? "" : ', or "fileId" of an image you uploaded (read_me: "Images from your machine")'} }. width or height alone keeps the aspect ratio. At most 20 images fetched per call (src / icon; uploaded fileIds don't count).
   Labels: label { text, strokeColor, fontSize, fontFamily, textAlign, verticalAlign } — the text is dark (#1e1e1e) unless you set strokeColor; the label's id is "<shape id>-label"; a shape grows so that no word of its label is broken.`;
@@ -418,6 +429,8 @@ export const createScenesMcp = ({
   - upsert: true lets add reuse ids of existing elements (they are replaced). Ids of deleted elements can always be used again.
   - Deleting a slide (frame) deletes everything on it, template copies included (like in the editor).
   - "slide": n counts slides in deck order AS IT IS NOW, after this edit's deletions: numbers shift when slides are deleted or moved. Prefer frame ids ("slide": "q12"); the result's slideNumbers says which frame each number hit.
+  - customData in an update MERGES into the element's (also one level down, e.g. customData.slides): { "customData": { "slides": { "skip": true } } } keeps the slide's notes and order; a key set to null is removed.
+  - Texts are listed as written (without the line breaks of wrapping); "autoResize": false marks a box of a fixed width, which re-wraps inside it and widens to its longest word (words are never broken).
   - Changing fontFamily / fontSize of a text measures it again (a box with "autoResize": false keeps its width and re-wraps). A free text with "width" wraps at that width; textAlign aligns inside x … x + width.
   - Deck theme: updating the template frame's customData.slides.theme re-applies it to slide elements that still had the old theme's values; restyle: true applies it to every slide element, also over fonts / colors set by hand (font sizes stay).`;
 
