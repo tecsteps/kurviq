@@ -3,7 +3,7 @@
 // so decks sync, merge and travel like any other scene:
 //
 //  - slide frames: { order, notes, skip, template: false = no template }
-//  - one template frame ({ role: "template", theme }): its elements (header,
+//  - one template frame ({ role: "template", theme: { transition } }): its elements (header,
 //    footer, logo, background, headline, eyebrow) are copied onto every slide,
 //    locked (headline and eyebrow not: each slide writes its own). What the
 //    user changes on a copy stays there, property by property: a headline
@@ -11,9 +11,9 @@
 //    position, font … (each copy remembers the template's values in `base`).
 //    A copy deleted on a slide stays away. "Back to template" (a slide, or
 //    all slides) brings the template's version back.
-//  - the deck theme (fonts, colors, sizes, stroke style) is the default for
-//    new elements; elements that still have the theme's values follow when
-//    the theme changes, anything set by hand on a slide stays.
+//    The template's elements are the deck's style: styled with Excalidraw's
+//    own tools there, every slide follows. (Older decks' theme values other
+//    than the transition are no longer used.)
 //  - elements: { step: n } appear on the n-th click while presenting.
 //
 // Template text may use {page} {total} {title} {deck} {date}.
@@ -33,7 +33,7 @@ import type {
   ExcalidrawFrameElement,
   NonDeleted,
 } from "@excalidraw/element/types";
-import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 export type DeckTheme = {
   fontFamily: number;
@@ -653,122 +653,117 @@ export const templateKey = (elements: readonly ExcalidrawElement[], deck: string
   return hashString(JSON.stringify(parts));
 };
 
-// -----------------------------------------------------------------------------
-// theme
-// -----------------------------------------------------------------------------
-
-type Styled = Record<string, unknown>;
-
-/** the theme's value for a style property of this element (undefined: not themed) */
-const themeValue = (el: ExcalidrawElement, key: string, theme: DeckTheme, isTitle: boolean) => {
-  if (el.type === "text") {
-    switch (key) {
-      case "fontFamily":
-        return theme.fontFamily;
-      case "strokeColor":
-        return theme.textColor;
-      case "fontSize":
-        return isTitle ? theme.titleSize : theme.bodySize;
-    }
-    return undefined;
-  }
-  if (el.type === "frame" || el.type === "image") {
-    return undefined;
-  }
-  switch (key) {
-    case "strokeColor":
-      return theme.strokeColor;
-    case "fillStyle":
-      return theme.fillStyle;
-    case "roughness":
-      return theme.roughness;
-    case "strokeWidth":
-      return theme.strokeWidth;
-  }
-  return undefined;
+/** what a hand change on a copy is called (properties that go together share a name) */
+const CHANGE_NAMES: Record<string, string> = {
+  x: "position",
+  y: "position",
+  width: "size",
+  height: "size",
+  angle: "rotation",
+  strokeColor: "color",
+  backgroundColor: "background",
+  fillStyle: "fill",
+  strokeWidth: "stroke width",
+  strokeStyle: "stroke style",
+  roughness: "sloppiness",
+  opacity: "opacity",
+  roundness: "corners",
+  link: "link",
+  originalText: "text",
+  fontFamily: "font",
+  fontSize: "font size",
+  textAlign: "alignment",
+  verticalAlign: "vertical alignment",
+  lineHeight: "line height",
+  autoResize: "box width",
+  points: "shape",
+  fileId: "image",
+  startArrowhead: "arrowheads",
+  endArrowhead: "arrowheads",
+  rich: "formatting",
 };
 
-const THEMED_KEYS = ["fontFamily", "strokeColor", "fontSize", "fillStyle", "roughness", "strokeWidth"];
-
-const isTitleText = (el: any, theme: DeckTheme) => el.type === "text" && el.fontSize === theme.titleSize;
+/**
+ * The hand changes of template copies among `ids`: per change name (color,
+ * text …) the copies that have it. Elements that aren't copies are left out.
+ */
+export const templateChanges = (elements: readonly ExcalidrawElement[], ids: readonly string[]) => {
+  const byId = new Map(elements.map((el) => [el.id, el]));
+  const result = new Map<string, string[]>();
+  for (const id of new Set(ids)) {
+    const el = byId.get(id);
+    const data = slideData(el);
+    const slide = el?.frameId ? (byId.get(el.frameId) as Frame | undefined) : undefined;
+    if (!el || el.isDeleted || !data.copyOf || !data.base || !slide) {
+      continue;
+    }
+    for (const key of changedByHand(el, slide, data.base)) {
+      const name = CHANGE_NAMES[key] ?? key;
+      result.set(name, [...(result.get(name) ?? []).filter((other) => other !== id), id]);
+    }
+  }
+  return result;
+};
 
 /**
- * Theme changed: elements of slides (and the template) that still have the
- * old theme's value of a property get the new one. With `force` (reset a
- * slide), the listed elements get the theme's values whatever they had.
+ * Copies back to the template, for some changes (names from templateChanges)
+ * or all of them: the same for the canvas's "back to template" bar and an
+ * agent's reset of single elements.
  */
-export const applyTheme = (
+export const resetTemplateChanges = (
   elements: readonly ExcalidrawElement[],
-  from: DeckTheme,
-  to: DeckTheme,
-  { force = null }: { force?: Set<string> | null } = {},
+  ids: readonly string[],
+  names: readonly string[] | null,
+  deck: string,
 ) => {
-  const frames = new Set([...getSlides(elements), getTemplate(elements)].filter(Boolean).map((f) => f!.id));
-  let changed = 0;
+  const byId = new Map(elements.map((el) => [el.id, el]));
+  const wanted = new Set(ids);
+  let touched = 0;
   const next = elements.map((el) => {
-    if (el.isDeleted || !el.frameId || !frames.has(el.frameId) || slideData(el).copyOf) {
+    const data = slideData(el);
+    const slide = el.frameId ? (byId.get(el.frameId) as Frame | undefined) : undefined;
+    if (!wanted.has(el.id) || el.isDeleted || !data.copyOf || !data.base || !slide) {
       return el;
     }
-    if (force && !force.has(el.frameId)) {
+    const base = data.base;
+    const keys = [...changedByHand(el, slide, base)].filter((key) => !names || names.includes(CHANGE_NAMES[key] ?? key));
+    if (!keys.length) {
       return el;
     }
-    const patch: Styled = {};
-    const wasTitle = isTitleText(el, from);
-    for (const key of THEMED_KEYS) {
-      const before = themeValue(el, key, from, wasTitle);
-      const after = themeValue(el, key, to, wasTitle);
-      if (after === undefined) {
-        continue;
+    // the template's values again (the sync below takes them from there)
+    const patch: Record<string, any> = {};
+    const any = el as any;
+    for (const key of keys) {
+      if (key === "x") {
+        patch.x = slide.x + (base.x as number) - (anchorX(el) - el.x);
+      } else if (key === "y") {
+        patch.y = slide.y + (base.y as number);
+      } else if (key === "originalText") {
+        patch.originalText = base.originalText;
+        patch.text = base.originalText;
+      } else if (key === "rich") {
+        const { rich: _rich, ...rest } = el.customData || {};
+        patch.customData = { ...(patch.customData ?? rest), ...(base.rich ? { rich: base.rich } : {}) };
+      } else {
+        patch[key] = base[key] ?? (key in any ? null : undefined);
       }
-      const current = (el as any)[key];
-      if ((force && key !== "fontSize" && current !== after) || (!force && current === before && before !== after)) {
-        patch[key] = after;
-      }
     }
-    if (!Object.keys(patch).length) {
-      return el;
-    }
-    changed++;
+    touched++;
     return newElementWith(el, patch as any);
   });
-  if (!changed) {
+  if (!touched) {
     return null;
   }
-  // texts whose font or size changed need new dimensions
-  // (bound text: measured against its shape)
-  const map = new Map(next.map((el) => [el.id, el])) as any;
-  return next.map((el, i) => {
-    if (el === elements[i] || el.type !== "text") {
-      return el;
-    }
-    const text = el as any;
-    const container = text.containerId ? map.get(text.containerId) ?? null : null;
-    return { ...el, ...(refreshTextDimensions(text, container, map, text.originalText ?? text.text) || {}) } as ExcalidrawElement;
-  });
+  return syncTemplate(next, deck)?.elements ?? next;
 };
 
 /**
  * Slides back to the template: its elements as in the template again (hand
- * changes and deleted ones back), and the deck's fonts and colors on
- * everything on them. The same for the slide card's icon, "Reset all
- * slides" and an agent's reset / restyle.
+ * changes and deleted ones back). The same for the slide card's icon,
+ * "Reset all slides" and an agent's reset / restyle.
  */
-export const resetToTemplate = (elements: readonly ExcalidrawElement[], ids: Set<string>, deck: string) => {
-  const theme = getTheme(elements);
-  const themed = applyTheme(elements, theme, theme, { force: ids }) ?? elements;
-  return syncTemplate(themed, deck, { reset: ids })?.elements ?? (themed === elements ? null : [...themed]);
-};
-
-/** the editor's defaults for new elements, from the theme */
-export const themeDefaults = (theme: DeckTheme): Partial<AppState> => ({
-  currentItemFontFamily: theme.fontFamily as any,
-  currentItemFontSize: theme.bodySize,
-  currentItemStrokeColor: theme.strokeColor,
-  currentItemBackgroundColor: theme.backgroundColor,
-  currentItemFillStyle: theme.fillStyle,
-  currentItemRoughness: theme.roughness,
-  currentItemStrokeWidthKey: theme.strokeWidth >= 4 ? "bold" : theme.strokeWidth <= 1 ? "thin" : "medium",
-});
+export const resetToTemplate = (elements: readonly ExcalidrawElement[], ids: Set<string>, deck: string) =>
+  syncTemplate(elements, deck, { reset: ids })?.elements ?? null;
 
 // -----------------------------------------------------------------------------
 // editing helpers (all undoable)

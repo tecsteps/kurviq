@@ -29,7 +29,9 @@ export const QuickTip = ({
       aria-label={label ? tip : undefined}
       role={label ? "img" : undefined}
       onMouseEnter={(event) => {
-        const rect = event.currentTarget.getBoundingClientRect();
+        // (around a positioned control, e.g. on the canvas, the wrapper has no size: the control's)
+        const own = event.currentTarget.getBoundingClientRect();
+        const rect = own.width ? own : (event.currentTarget.firstElementChild?.getBoundingClientRect() ?? own);
         const above = rect.bottom + 48 > window.innerHeight;
         timer.current = window.setTimeout(
           () => setAt({ x: rect.left + rect.width / 2, y: above ? rect.top - 8 : rect.bottom + 8, above }),

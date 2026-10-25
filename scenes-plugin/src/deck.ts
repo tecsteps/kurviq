@@ -2,7 +2,7 @@
 // sync, sets the deck theme as the editor's defaults, and offers the deck
 // (slides, template, theme, thumbnails) as a store for the UI.
 
-import { CaptureUpdateAction, hashString } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 
 import { scenesController } from "./controller";
 import {
@@ -15,7 +15,6 @@ import {
   slideVersion,
   syncTemplate,
   templateKey,
-  themeDefaults,
 } from "./slides";
 
 import type { DeckTheme, Frame } from "./slides";
@@ -56,7 +55,6 @@ class Deck {
   private listeners = new Set<() => void>();
   private lastKey = "";
   private lastTemplateKey = 0;
-  private lastThemeKey = "";
   private syncTimer = 0;
   private thumbTimer = 0;
   private thumbVersions = new Map<string, number>();
@@ -181,16 +179,7 @@ class Deck {
       templateId: template?.id ?? null,
       theme,
     });
-    // the deck's style is the default for new elements (once per scene + theme)
-    const themeKey = template ? `${this.deckName()}:${hashString(JSON.stringify(theme))}` : "";
-    if (themeKey && themeKey !== this.lastThemeKey && this.api) {
-      this.lastThemeKey = themeKey;
-      const api = this.api;
-      setTimeout(() => api.updateScene({ appState: themeDefaults(theme) as any, captureUpdate: CaptureUpdateAction.NEVER }));
-    }
-    if (!template) {
-      this.lastThemeKey = "";
-    }
+
   }
 
   // ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ import {
   saveLocalScene,
   withTemplate,
 } from "./cowork";
-import { DEFAULT_THEME, placeOnSlides } from "./slides";
+import { placeOnSlides } from "./slides";
 import { checkDeck } from "./deckCheck";
 import { pickSlides, slidesHtml } from "./pdfExport";
 import { renderScene } from "./render";
@@ -51,7 +51,6 @@ import type { EditCommand, LocalSceneCommand, ReadCommand, SceneEditCommand } fr
 
 import type { ClashChoice } from "./merge";
 import type { RenderCommand } from "./render";
-import type { DeckTheme } from "./slides";
 
 type Command =
   | { type: "status" }
@@ -116,32 +115,6 @@ const PSEUDO_TYPES = new Set(["cameraUpdate", "delete", "restoreCheckpoint"]);
  * elements (labels -> bound text, hand-drawn font), so scenes look exactly
  * like what the agent drew.
  */
-/** the deck theme a scene's template sets (null: no template) */
-const themeOf = (elements: any[]): DeckTheme | null => {
-  const template = elements.find(
-    (el) => el?.type === "frame" && !el.isDeleted && el.customData?.slides?.role === "template",
-  );
-  return template ? { ...DEFAULT_THEME, ...(template.customData.slides.theme || {}) } : null;
-};
-
-/**
- * In a deck, new text without its own font / color takes the theme's, so it
- * follows later theme changes like text the user typed
- */
-const withThemeDefaults = (el: any, theme: DeckTheme | null) => {
-  if (!theme || el.version !== undefined) {
-    return el;
-  }
-  if (el.type === "text") {
-    return { fontFamily: theme.fontFamily, strokeColor: theme.textColor, ...el };
-  }
-  if (el.label?.text !== undefined) {
-    return { ...el, label: { fontFamily: theme.fontFamily, strokeColor: theme.textColor, ...el.label } };
-  }
-  return el;
-};
-
-/** how big text will be, measured like the editor does (fonts loaded) */
 const measureTexts = async (
   input: Array<{ text?: string; markdown?: string; fontSize?: number; fontFamily?: number; lineHeight?: number; maxWidth?: number }>,
 ) => {
@@ -266,8 +239,7 @@ const withFontIds = (el: any) => {
 
 const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) => {
   const input = raw.map(withFontIds);
-  const theme = themeOf(input);
-  const elements = placeOnSlides(input.map(applyMarkdown), input).map((el) => (el ? withThemeDefaults(el, theme) : el));
+  const elements = placeOnSlides(input.map(applyMarkdown), input);
   // text is measured during conversion — the fonts (incl. the characters
   // used) must be loaded, otherwise widths are computed with a fallback font
   // and the text gets cut off in the user's browser

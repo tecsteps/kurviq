@@ -11,8 +11,9 @@ import clsx from "clsx";
 
 import { deck } from "./deck";
 import { usePresenter } from "./present";
+import { QuickTip } from "./quickTip";
 import { patchSlideData } from "./slides";
-import { showSlideInList, toggleTemplateStyle } from "./slidesUI";
+import { showSlideInList, editTemplate } from "./slidesUI";
 import { createRichEditable } from "./richText/editor";
 import { docFromMarkdown, docFromPlain, isPlainDoc, markdownOf, plainOf, richDocOf } from "./richText/model";
 import { docToHtml } from "./richText/layout";
@@ -97,9 +98,19 @@ const useNameSpots = (enabled: boolean) => {
   return spots;
 };
 
-/** room for the pen before the notes icon */
-const PEN_WIDTH = 22;
-const ICON_WIDTH = 22;
+/** the slide in the slide list */
+const ListIcon = () => (
+  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="3" y="3.5" width="5" height="4" rx="1" />
+    <rect x="3" y="12.5" width="5" height="4" rx="1" />
+    <path d="M11 5.5h6M11 14.5h6" />
+  </svg>
+);
+
+/** an icon's room (touch screens: bigger, see slides.scss) */
+const touch = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
+const PEN_WIDTH = touch ? 32 : 22;
+const ICON_WIDTH = touch ? 32 : 22;
 
 /**
  * where the icons start: after the name, but inside its frame (a shortened
@@ -281,44 +292,45 @@ export const SlideNotesOverlay = () => {
         }
         const has = !!s.notes.trim();
         return [
+          <QuickTip key={`${s.id}-list`} tip="Show in the slide list" label={false}>
+            <button
+              type="button"
+              className={clsx("slides-notes-btn", { "slides-notes-btn--over": at.over })}
+              style={{ left: at.left, top: spot.y + spot.h / 2 }}
+              aria-label={`Slide ${s.index + 1} in the slide list`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => showSlideInList(s.id)}
+            >
+              <ListIcon />
+            </button>
+          </QuickTip>,
+          <QuickTip key={s.id} tip={has ? `Speaker notes: ${notesText(s.notes).slice(0, 80)}` : "Speaker notes"} label={false}>
           <button
-            key={`${s.id}-pen`}
-            type="button"
-            className={clsx("slides-notes-btn slides-notes-btn--pen", { "slides-notes-btn--over": at.over })}
-            style={{ left: at.left, top: spot.y + spot.h / 2 }}
-            title="Show in the slide list"
-            aria-label={`Slide ${s.index + 1} in the slide list`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => showSlideInList(s.id)}
-          >
-            <PenIcon />
-          </button>,
-          <button
-            key={s.id}
             type="button"
             className={clsx("slides-notes-btn", { "slides-notes-btn--has": has, "slides-notes-btn--open": s.id === id, "slides-notes-btn--over": at.over })}
             style={{ left: at.left + PEN_WIDTH, top: spot.y + spot.h / 2 }}
-            title={has ? `Speaker notes: ${notesText(s.notes).slice(0, 120)}` : "Add speaker notes"}
             aria-label={`Speaker notes of slide ${s.index + 1}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => slideNotes.toggle(s.id)}
           >
             <NotesIcon filled={has} />
-          </button>,
+          </button>
+          </QuickTip>,
         ];
       })}
       {templateId && spots[templateId] && iconsAt(spots[templateId], ICON_WIDTH) && (
+        <QuickTip tip="Edit the template" label={false}>
         <button
           type="button"
           className={clsx("slides-notes-btn slides-notes-btn--has", { "slides-notes-btn--over": iconsAt(spots[templateId], ICON_WIDTH)!.over })}
           style={{ left: iconsAt(spots[templateId], ICON_WIDTH)!.left, top: spots[templateId].y + spots[templateId].h / 2 }}
-          title="Edit the deck's style (fonts, colors, template)"
-          aria-label="Edit the deck's style"
+          aria-label="Edit the template"
           onPointerDown={(event) => event.stopPropagation()}
-          onClick={toggleTemplateStyle}
+          onClick={editTemplate}
         >
           <PenIcon />
         </button>
+        </QuickTip>
       )}
       {slide && (
         <div

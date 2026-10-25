@@ -200,10 +200,9 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
 - Click-by-click reveals: `"customData": { "slides": { "step": 1 } }` on
   elements (1, 2, 3 …; a shape's label follows its shape).
 - Template: one frame with `"customData": { "slides": { "role": "template",
-  "theme": { "fontFamily": 5, "titleSize": 72, "bodySize": 36, "textColor":
-  "#1e1e1e", "strokeColor": "#1e1e1e", "roughness": 1, "strokeWidth": 2,
-  "fillStyle": "solid", "transition": "glide" } } }`. Its elements (header,
-  footer, logo, background) are copied onto every slide when you save or
+  "theme": { "transition": "glide" } } }` ("glide" or "cut": how the camera
+  moves between slides). Its elements (header, footer, logo, background,
+  headline, eyebrow) are the deck's style and are copied onto every slide when you save or
   edit the deck (and by the user's app). Template texts may use
   placeholders: `{page}` (slide number), `{total}` (number of slides),
   `{title}` (the slide frame's name), `{deck}` (the scene name), `{date}`
@@ -232,24 +231,19 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
 - Fonts: besides Excalidraw's own (`fontFamily` 5 Excalifont, 6 Nunito,
   7 Lilita One, 8 Comic Shanns, 2 Helvetica, 3 Cascadia), any font from
   Google Fonts works by its exact name, e.g. `"fontFamily": "Inter"` (also
-  in labels and the deck theme): the app fetches it on first use and the
+  in labels): the app fetches it on first use and the
   font travels with the scene. `add_font("Inter")` adds one ahead (e.g.
   before `measure_text`). `app_status` lists the added fonts as
   `customFonts`. Font files (not on Google Fonts) are added by the user:
   font picker → "Add font…" → Font file.
-- Theme: in a deck, text (and labels) without `fontFamily` / `strokeColor`
-  get the theme's font and text color, and follow when the theme changes.
-  Use the theme's `titleSize` / `bodySize` for titles and body. Change the
-  deck style by updating the template frame's `customData.slides.theme`:
-  elements that still have the old theme's values follow; with
-  `restyle: true` on that edit (or any edit), every slide goes back to the
-  template ("Reset all slides"): template elements as in the template, and
-  the theme's font, colors, roughness and stroke on everything, also where
-  set by hand (font sizes stay).
-- A neutral, modern look (instead of the hand-drawn default): theme
-  `{ "fontFamily": "Inter", "textColor": "#111827", "strokeColor": "#334155",
-  "roughness": 0, "strokeWidth": 2, "fillStyle": "solid", "titleSize": 72,
-  "bodySize": 36 }`, white or `#f8fafc` slides, one accent color (e.g.
+- Deck style: there is no separate theme. Style the template's elements
+  (headline, eyebrow, footer …) like any element; every slide follows, what
+  was changed on one slide stays there (read_scene: `changedOnSlide`).
+  `restyle: true` brings every slide back to the template ("Reset all
+  slides"), `reset` single slides or copies (also just some changes).
+- A neutral, modern look (instead of the hand-drawn default): `"fontFamily":
+  "Inter"`, text `#111827`, lines `#334155`, `"roughness": 0`, titles 72,
+  body 36 (on the template's headline and on what you add), white or `#f8fafc` slides, one accent color (e.g.
   `#2563eb`), fills like `#e0e7ff` / `#f1f5f9`, and `"roughness": 0` on
   shapes. Excalidraw's palette in `read_me` is hand-drawn-sketch style.
   Make slides visual: shapes, arrows, icons, sticky notes (`"type":

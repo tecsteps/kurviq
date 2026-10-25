@@ -289,8 +289,9 @@ pill) opens the deck:
   click steps and notes and goes right after its original; everything can
   be undone with ⌘Z. Per slide: title, "skip when presenting" (backup
   slides), "show template".
-- **On the canvas**, after each slide's name: a pen (shows the slide in the
-  list) and the notes icon. The template's pen opens the deck style.
+- **On the canvas**, after each slide's name: a list icon (shows the slide
+  in the slide list) and the notes icon. The template's pen opens it for
+  editing.
 - **Speaker notes:** the notes icon after a slide's name (filled
   when there are notes) opens them in a popover, with formatting (bold,
   lists, colors, links … the same toolbar as text on the canvas). Saved as
@@ -303,17 +304,19 @@ pill) opens the deck:
   `{date}`. On slides the copies are locked (headline and eyebrow not: each
   slide writes its own words). What you change on one slide stays there,
   property by property: a headline colored by hand keeps its color and
-  still follows the template's position and font. The card's
-  **back to template** icon brings the template version and the deck style
-  back for one slide, **Reset all slides** for the whole deck.
-- **Headline & eyebrow:** **Add headline & eyebrow** (Style tab) puts both
+  still follows the template's position and font. Select a changed copy
+  and a **Changed here** bar lists its changes (text, color …): each goes
+  back to the template on its own, also for several selected elements. The
+  card's **back to template** icon does it for a whole slide, **Reset all
+  slides** (Template section) for the deck.
+- **Headline & eyebrow:** **Add headline & eyebrow** (Template section of the Slides tab) puts both
   on a template that has none; slides' own headlines where the template's
   goes become theirs (words kept, place and style from the template),
   other slides (a title slide …) keep their layout.
-- **Deck style:** font, title and text size, colors, sloppiness, stroke,
-  fill and transition, stored with the template. New elements use it, and
-  elements that still have the deck's values follow when you change it.
-  Anything you styled by hand on a slide stays.
+- **Deck style** is the template: style its elements with Excalidraw's own
+  tools (there is no separate theme). The Template section (Slides tab)
+  has Edit template, Reset all slides, Add headline & eyebrow and the
+  transition between slides (glide or cut).
 - **PDF**: the whole deck, the selected slide or any slides ("1, 3-5"),
   one 16:9 page per slide, title slides and template included. Text stays
   real text (selectable, searchable) with the fonts embedded once, and
@@ -369,7 +372,7 @@ A font gets a number derived from its name (the same everywhere), and a
 scene that uses it carries the font in a `kurviqFonts` field of its file,
 so it looks the same for teammates, in shared and public links, in PDFs and
 for agents. This browser keeps every font it has seen for its other scenes;
-the deck style in the Slides sidebar offers them too. Agents use them by
+Excalidraw's font picker offers them too. Agents use them by
 name (`"fontFamily": "Geist"`); `app_status` lists them. One style per font
 (regular); bold and italic are drawn by the browser. Code:
 `scenes-plugin/src/fonts.ts`, `fontsUI.tsx`, `online/worker/fonts.ts`.

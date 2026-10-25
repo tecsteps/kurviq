@@ -1311,3 +1311,40 @@
   letter-spacing: normal;
   text-transform: none;
 }
+
+// phones: panels across the screen, a pill with room for the scene's name
+@media (max-width: 600px) {
+  .excalidraw .scenes-flyover {
+    position: fixed;
+    top: 4rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 9rem);
+  }
+
+  .excalidraw .scenes-switcher__menu {
+    position: fixed;
+    top: 4rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+  }
+
+  .excalidraw .scenes-pill--mobile {
+    max-width: calc(100vw - 9rem);
+
+    .scenes-pill__status,
+    .scenes-pill__offline {
+      display: none;
+    }
+  }
+}
+
+.excalidraw .scenes-pill--icon {
+  flex: none;
+  justify-content: center;
+  width: var(--lg-button-size, 2.25rem);
+  padding: 0;
+}

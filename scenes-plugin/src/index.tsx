@@ -21,6 +21,7 @@ import { connectRouter } from "./router";
 import { deck } from "./deck";
 import { PresentationOverlay, presenter } from "./present";
 import { SlideNotesOverlay } from "./notes";
+import { TemplateChangesBar } from "./templateChanges";
 import { ICON_PATHS } from "./icons";
 import { QuickTip } from "./quickTip";
 import { loadFontLibrary, registerSceneFonts } from "./fonts";
@@ -284,7 +285,27 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
       )}
       {panel === "scene" && <SceneFlyover onClose={() => setPanel(null)} />}
       {panel === "github" && <GitHubFlyover onClose={() => setPanel(null)} />}
+      {isMobile && <MobileSlidesButton />}
     </div>
+  );
+};
+
+/** phones have no top-right Slides / Present buttons: the slides sidebar opens from here */
+const MobileSlidesButton = () => {
+  const api = useExcalidrawAPI();
+  return (
+    <button
+      type="button"
+      className="scenes-pill scenes-pill--icon"
+      aria-label="Slides"
+      title="Slides"
+      onClick={() => api?.toggleSidebar({ name: SLIDES_SIDEBAR_NAME })}
+    >
+      <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
+        <rect x="2.5" y="3.5" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M10 13.5v3M6.5 16.5h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </button>
   );
 };
 
@@ -1288,6 +1309,7 @@ export const ScenesSidebar = () => {
       <SlidesSidebar />
       <PresentationOverlay />
       <SlideNotesOverlay />
+      <TemplateChangesBar />
       <PublicSceneOverlay />
       <AddFontOverlay />
       {IS_ONLINE && <RepoSetupDialog />}

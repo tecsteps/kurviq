@@ -27,7 +27,16 @@ import { getFontString } from "@excalidraw/common";
 import { registerSceneFonts, withFonts } from "./fonts";
 import { scenesApi } from "./api";
 import { applyMarkdownUpdate } from "./richText/agent";
-import { addTitleBlock, applyTheme, getSlides, getTemplate, getTheme, placeOnSlides, resetToTemplate, slideTitle, syncTemplate } from "./slides";
+import {
+  addTitleBlock,
+  getSlides,
+  placeOnSlides,
+  resetTemplateChanges,
+  resetToTemplate,
+  slideData,
+  slideTitle,
+  syncTemplate,
+} from "./slides";
 import { scenesController, withSceneName } from "./controller";
 import { getAgentBaseline, getCheckpoint, setAgentBaseline, setCheckpoint } from "./storage";
 
@@ -70,8 +79,8 @@ export type EditOptions = {
   upsert?: boolean;
   /** every slide back to the template ("Reset all slides" in the app) */
   restyle?: boolean;
-  /** these slides back to the template (frame ids or slide numbers; "all"): the slide card's icon in the app */
-  reset?: Array<string | number> | "all";
+  /** back to the template: slides (frame ids, numbers; "all": the card's icon), template copies (ids) or some of a copy's changes ({ id, changes }: the canvas's bar) */
+  reset?: Array<string | number | { id: string; changes?: string[] }> | "all";
   /** headline and eyebrow on the template ("Add headline & eyebrow" in the app) */
   addTitleBlock?: boolean;
   /** the agent's id for this edit: sent again (e.g. after a timeout), it is not applied twice */
@@ -317,7 +326,6 @@ const applyEdits = async (
     }
     return rest;
   };
-  const themeBefore = getTheme(elements);
 
   // partial updates
   const textUpdated = new Set<string>();
@@ -410,34 +418,6 @@ const applyEdits = async (
     });
   }
 
-  // the deck theme changed: slide elements that still had its values follow,
-  // like when the user changes the deck style
-  let restyled = 0;
-  const themeAfter = getTheme(elements);
-  if (getTemplate(elements) && JSON.stringify(themeBefore) !== JSON.stringify(themeAfter)) {
-    const frames = new Set(getSlides(elements).map((slide) => slide.id));
-    const template = getTemplate(elements);
-    if (template) {
-      frames.add(template.id);
-    }
-    await Fonts.loadElementsFonts([{ type: "text", fontFamily: themeAfter.fontFamily, text: "", originalText: "" } as any]).catch(() => []);
-    const themed = applyTheme(elements, themeBefore, themeAfter);
-    if (themed) {
-      themed.forEach((el, i) => {
-        if (el !== elements[i]) {
-          restyled++;
-          if (el.type === "text") {
-            textUpdated.add(el.id);
-          }
-          if ((el as any).containerId) {
-            reshaped.add((el as any).containerId);
-          }
-        }
-      });
-      elements = themed;
-    }
-  }
-
   // re-measure edited text, with its font loaded (else a fallback font is
   // measured and the text is cut off in the user's browser); a free text
   // keeps its alignment (centered text stays centered where it was)
@@ -472,24 +452,40 @@ const applyEdits = async (
       titleBlock = result.adopted;
     }
   }
+  // reset: slides (frame ids, numbers), template copies (ids), or a copy's
+  // single changes ({ id, changes: ["color"] }) — like the card's icon and the canvas's bar
   const slidesNow = getSlides(elements);
-  const resetIds =
-    command.restyle || command.reset === "all"
-      ? slidesNow.map((slide) => slide.id)
-      : (Array.isArray(command.reset) ? command.reset : []).map((ref) =>
-          typeof ref === "number" ? slidesNow[ref - 1]?.id ?? String(ref) : ref,
-        );
+  const refs = command.restyle || command.reset === "all" ? slidesNow.map((slide) => slide.id) : Array.isArray(command.reset) ? command.reset : [];
+  const resetIds: string[] = [];
+  const copyResets: Array<{ id: string; changes: string[] | null }> = [];
+  const unknown: string[] = [];
+  for (const ref of refs) {
+    const item = typeof ref === "object" && ref ? (ref as { id?: string; changes?: string[] }) : null;
+    const id = item ? String(item.id) : typeof ref === "number" ? slidesNow[ref - 1]?.id ?? String(ref) : String(ref);
+    if (slidesNow.some((slide) => slide.id === id) && !item) {
+      resetIds.push(id);
+    } else if (slideData(elements.find((el) => el.id === id && !el.isDeleted)).copyOf) {
+      copyResets.push({ id, changes: Array.isArray(item?.changes) ? item!.changes : null });
+    } else {
+      unknown.push(id);
+    }
+  }
+  if (unknown.length) {
+    throw new Error(`reset: no such slide or template copy: ${unknown.join(", ")} (frame ids, slide numbers or copy ids "<element>~<slide>"; nothing was changed)`);
+  }
   let reset = 0;
   if (resetIds.length) {
-    const unknown = resetIds.filter((id) => !slidesNow.some((slide) => slide.id === id));
-    if (unknown.length) {
-      throw new Error(`reset: no such slide: ${unknown.join(", ")} (frame ids or slide numbers; nothing was changed)`);
-    }
-    await Fonts.loadElementsFonts([{ type: "text", fontFamily: themeAfter.fontFamily, text: "", originalText: "" } as any]).catch(() => []);
     const next = resetToTemplate(elements, new Set(resetIds), deck);
     if (next) {
       elements = next as ExcalidrawElement[];
       reset = resetIds.length;
+    }
+  }
+  for (const { id, changes } of copyResets) {
+    const next = resetTemplateChanges(elements, [id], changes, deck);
+    if (next) {
+      elements = next as ExcalidrawElement[];
+      reset++;
     }
   }
 
@@ -580,8 +576,7 @@ const applyEdits = async (
     deleted: (command.delete || []).filter((id) => !missing.includes(id)),
     ...(alsoDeleted > 0 ? { alsoDeleted: `${alsoDeleted} more elements went with them (labels, and everything on deleted slides)` } : {}),
     ...(replacedIds.length ? { replaced: replacedIds } : {}),
-    ...(restyled ? { restyled: `${restyled} elements took the deck theme` } : {}),
-    ...(reset ? { reset: `${reset} slide${reset === 1 ? "" : "s"} back to the template` } : {}),
+    ...(reset ? { reset: `${reset} slide${reset === 1 ? "" : "s"} / template cop${reset === 1 ? "y" : "ies"} back to the template` } : {}),
     ...(titleBlock !== null ? { titleBlock: `headline and eyebrow on the template; ${titleBlock} slide texts became their copies` } : {}),
     ...(moved.problems.length ? { layerProblems: moved.problems } : {}),
     ...(slideTargets ? { slideNumbers: slideTargets } : {}),

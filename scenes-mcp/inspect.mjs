@@ -70,6 +70,42 @@ const slideData = (el) => el?.customData?.slides || {};
 const isFrame = (el) => el && !el.isDeleted && (el.type === "frame" || el.type === "magicframe");
 
 /** a deck's slide frames in deck order (as the app counts them: explicit order first, then rows left to right) */
+// what a template copy has changed on its slide (the app's slides.ts
+// templateChanges, for reading scenes without the app)
+const CHANGE_NAMES = {
+  x: "position", y: "position", width: "size", height: "size", angle: "rotation", strokeColor: "color",
+  backgroundColor: "background", fillStyle: "fill", strokeWidth: "stroke width", strokeStyle: "stroke style",
+  roughness: "sloppiness", opacity: "opacity", roundness: "corners", link: "link", originalText: "text",
+  fontFamily: "font", fontSize: "font size", textAlign: "alignment", verticalAlign: "vertical alignment",
+  lineHeight: "line height", autoResize: "box width", points: "shape", fileId: "image",
+  startArrowhead: "arrowheads", endArrowhead: "arrowheads", rich: "formatting",
+};
+const canon = (value) => {
+  if (Array.isArray(value)) return `[${value.map(canon).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canon(value[k])}`).join(",")}}`;
+  return JSON.stringify(typeof value === "number" ? Math.round(value * 2) / 2 : value);
+};
+const anchorX = (el) =>
+  el.type === "text" && !el.containerId ? (el.textAlign === "right" ? el.x + el.width : el.textAlign === "center" ? el.x + el.width / 2 : el.x) : el.x;
+const round2 = (value) => Math.round(value * 100) / 100;
+const currentValue = (el, key, slide) => {
+  if (key === "x") return el.containerId ? undefined : round2(anchorX(el) - slide.x);
+  if (key === "y") return el.containerId ? undefined : round2(el.y - slide.y);
+  if (key === "width" || key === "height") return el.type === "text" && (el.containerId || key === "height" || el.autoResize !== false) ? undefined : round2(el[key]);
+  if (key === "rich") return el.customData?.rich ?? null;
+  return el[key] ?? null;
+};
+export const templateChangesOf = (el, slide) => {
+  const base = slideData(el).base;
+  if (!base || !slide) return [];
+  const names = new Set();
+  for (const key of Object.keys(base)) {
+    const now = currentValue(el, key, slide);
+    if (now !== undefined && canon(now) !== canon(base[key])) names.add(CHANGE_NAMES[key] ?? key);
+  }
+  return [...names];
+};
+
 export const deckOrder = (elements) => {
   const frames = elements.filter((el) => isFrame(el) && el.type === "frame" && slideData(el).role !== "template");
   const canvasOrder = [...frames].sort((a, b) =>

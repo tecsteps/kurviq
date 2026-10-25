@@ -21,7 +21,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { convertInNode, needsConversion } from "./convert.mjs";
 import { markdownOfElement } from "./richText.mjs";
-import { byIds, commonBounds, deckOrder, diffElements, findSlide, inRegion, summarize, toRect } from "./inspect.mjs";
+import { byIds, commonBounds, deckOrder, diffElements, findSlide, inRegion, summarize, templateChangesOf, toRect } from "./inspect.mjs";
 import { readEditFile, resolveImages } from "./media.mjs";
 
 /** get_scene returns an overview instead of all elements above this size */
@@ -263,8 +263,10 @@ export const createScenesMcp = ({
   };
 
   /** compact form for the model: drop noise fields and defaults */
-  const compact = (elements) =>
-    elements.map((el) => {
+  const compact = (elements, all = elements) => {
+    // (with coordinates relative to slides, changes are judged on the originals)
+    const byId = new Map(all.map((el) => [el.id, el]));
+    return elements.map((el) => {
       const out = {};
       for (const [key, value] of Object.entries(el)) {
         if (
@@ -285,10 +287,15 @@ export const createScenesMcp = ({
         }
         out[key] = typeof value === "number" ? Math.round(value * 100) / 100 : value;
       }
-      // a template copy's remembered template values (internal: what differs was changed on the slide)
+      // a template copy's remembered template values (internal): what differs was changed on its slide
       if (out.customData?.slides?.base) {
         const { base: _base, ...slides } = out.customData.slides;
         out.customData = { ...out.customData, slides };
+        const original = byId.get(el.id) ?? el;
+        const changed = templateChangesOf(original, byId.get(original.frameId));
+        if (changed.length) {
+          out.changedOnSlide = changed;
+        }
       }
       if (el.type === "text") {
         // the text as written: `text` holds it wrapped to the box (line breaks
@@ -316,6 +323,7 @@ export const createScenesMcp = ({
       }
       return out;
     });
+  };
 
   // -----------------------------------------------------------------------------
   // tools
@@ -364,7 +372,7 @@ export const createScenesMcp = ({
     return {
       selected: picked.length,
       bounds: toRect(commonBounds(picked)),
-      elements: compact((relative ? relativeToSlides(picked, elements) : picked).slice(0, MAX_SELECTED)),
+      elements: compact((relative ? relativeToSlides(picked, elements) : picked).slice(0, MAX_SELECTED), elements),
       ...(picked.length > MAX_SELECTED
         ? { more: `${picked.length - MAX_SELECTED} more elements in this selection: use a smaller region or elementIds` }
         : {}),
@@ -437,8 +445,8 @@ export const createScenesMcp = ({
   - customData in an update MERGES into the element's (also one level down, e.g. customData.slides): { "customData": { "slides": { "skip": true } } } keeps the slide's notes and order; a key set to null is removed.
   - Texts are listed as written (without the line breaks of wrapping); "autoResize": false marks a box of a fixed width, which re-wraps inside it and widens to its longest word (words are never broken).
   - Changing fontFamily / fontSize of a text measures it again (a box with "autoResize": false keeps its width and re-wraps). A free text with "width" wraps at that width; textAlign aligns inside x … x + width.
-  - Deck theme: updating the template frame's customData.slides.theme re-applies it to slide elements that still had the old theme's values (like changing the deck style in the app).
-  - Template copies ("<element>~<slide>") follow their template element property by property: what was changed on a slide (by the user or by you) stays there, everything else follows the template. Headline and eyebrow copies (customData.slides.role) are the slide's own words: update their text (or markdown) on the slide; their place and style come from the template. reset: [slides] / restyle: true bring the template's version back (as the app's buttons do); addTitleBlock: true adds headline and eyebrow to a template that has none.`;
+  - Deck style = the template's elements: style them (font, color, size … as on any element) and every slide follows; there is no separate theme (customData.slides.theme only holds the slide transition: "glide" | "cut").
+  - Template copies ("<element>~<slide>") follow their template element property by property: what was changed on a slide (by the user or by you) stays there, everything else follows the template; read_scene lists those changes as changedOnSlide. Headline and eyebrow copies (customData.slides.role) are the slide's own words: update their text (or markdown) on the slide; their place and style come from the template. reset: [slides] / restyle: true bring the template's version back (as the app's buttons do); addTitleBlock: true adds headline and eyebrow to a template that has none.`;
 
   const registerSceneTools = (server) => {
     server.registerTool(
@@ -530,7 +538,7 @@ export const createScenesMcp = ({
           slide: { ...(number ? { number } : { template: true }), id: frame.id, name: frame.name ?? null, ...toRect(commonBounds([frame])) },
           ...(frame.customData?.slides ? { slideData: frame.customData.slides } : {}),
           selected: on.length,
-          elements: compact(picked.slice(0, MAX_SELECTED)),
+          elements: compact(picked.slice(0, MAX_SELECTED), elements),
           ...(on.length > MAX_SELECTED ? { more: `${on.length - MAX_SELECTED} more elements on this slide: use elementIds or region` } : {}),
           ...(copies ? { templateCopies: `${copies} template copies on this slide (not listed)` } : {}),
           ...relativeNote,
@@ -542,7 +550,7 @@ export const createScenesMcp = ({
       if (summary ?? defaultSummary) {
         return summarize(elements, { textsOffset });
       }
-      return { sceneBounds: toRect(commonBounds(elements)), elements: compact(relative ? relativeToSlides(elements, elements) : elements), ...relativeNote };
+      return { sceneBounds: toRect(commonBounds(elements)), elements: compact(relative ? relativeToSlides(elements, elements) : elements, elements), ...relativeNote };
     };
 
     /** how big a scene's file is, from its files (lean reads keep each picture's size) */
@@ -776,11 +784,11 @@ export const createScenesMcp = ({
               .describe("The scene you are co-working on (as returned by read_open_scene) — routes the edit to the tab showing it; nothing is applied if no tab shows it"),
             ...EDIT_SOURCE,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
-            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed by hand; the deck fonts / colors on everything; font sizes stay)'),
+            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
-              .union([z.array(z.union([z.string(), z.number()])), z.literal("all")])
+              .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
               .optional()
-              .describe('Deck: these slides back to the template (frame ids or slide numbers, or "all"), like the slide card\'s "back to template" icon in the app'),
+              .describe('Deck: back to the template — slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
             addTitleBlock: z
               .boolean()
               .optional()
@@ -1024,11 +1032,11 @@ ${EDIT_HELP}
             ...EDIT_SOURCE,
             basedOn: z.string().optional().describe("The revision your edit is based on (from read_scene / edit_scene)"),
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
-            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed by hand; the deck fonts / colors on everything; font sizes stay)'),
+            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
-              .union([z.array(z.union([z.string(), z.number()])), z.literal("all")])
+              .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
               .optional()
-              .describe('Deck: these slides back to the template (frame ids or slide numbers, or "all"), like the slide card\'s "back to template" icon in the app'),
+              .describe('Deck: back to the template — slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
             addTitleBlock: z
               .boolean()
               .optional()

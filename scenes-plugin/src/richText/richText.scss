@@ -234,3 +234,13 @@
     }
   }
 }
+
+// phones: the toolbar wraps onto a second row instead of running off screen
+@media (max-width: 600px) {
+  .rt-toolbar {
+    flex-wrap: wrap;
+    box-sizing: border-box;
+    max-width: calc(100vw - 16px);
+    white-space: normal;
+  }
+}

@@ -1,26 +1,13 @@
 // The "Slides" sidebar: the deck of the open scene (frames as slides),
 // per-slide settings, reveal steps, and the deck's template + style.
 
-import { CaptureUpdateAction, FONT_FAMILY, Sidebar, newElementWith } from "@excalidraw/excalidraw";
-import {
-  FillCrossHatchIcon,
-  FillHachureIcon,
-  FillSolidIcon,
-  FillZigZagIcon,
-  SloppinessArchitectIcon,
-  SloppinessArtistIcon,
-  SloppinessCartoonistIcon,
-  StrokeWidthBaseIcon,
-  StrokeWidthBoldIcon,
-  StrokeWidthExtraBoldIcon,
-} from "@excalidraw/excalidraw/components/icons";
+import { CaptureUpdateAction, Sidebar, newElementWith } from "@excalidraw/excalidraw";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import clsx from "clsx";
 
 import { scenesController } from "./controller";
 import { deck } from "./deck";
-import { customFonts } from "./fonts";
 import { optimizeImages, pickSlides, printInBrowser, printToPdf, slidesHtml } from "./pdfExport";
 import { IS_ONLINE } from "./api";
 import { SlidesShare } from "./online/ui";
@@ -31,7 +18,6 @@ import { setSlideParam } from "./router";
 import {
   addSlide,
   addTitleBlock,
-  applyTheme,
   createTemplate,
   deleteSlides,
   duplicateSlides,
@@ -78,36 +64,20 @@ const focusFrame = (id: string, select = true) => {
   setSlideParam(number || null);
 };
 
-/** Excalidraw's first swatches (its stroke colors) */
-const SWATCHES = ["#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00"];
-
-const FONTS: Array<[string, number]> = [
-  ["Excalifont (hand-drawn)", FONT_FAMILY.Excalifont],
-  ["Nunito", FONT_FAMILY.Nunito],
-  ["Lilita One", FONT_FAMILY["Lilita One"]],
-  ["Comic Shanns (code)", FONT_FAMILY["Comic Shanns"]],
-  ["Liberation Sans", FONT_FAMILY["Liberation Sans"]],
-  ["Assistant", FONT_FAMILY.Assistant],
-  ["Virgil (classic)", FONT_FAMILY.Virgil],
-];
-
-/** change the deck theme: stored on the template; matching elements follow */
-const setTheme = (patch: Partial<DeckTheme>) => {
+/** the slide transition (kept with the template) */
+const setTransition = (transition: DeckTheme["transition"]) => {
   const elements = api().getSceneElementsIncludingDeleted();
   const template = getTemplate(elements);
   if (!template) {
     return;
   }
-  const from = getTheme(elements);
-  const to = { ...from, ...patch };
-  const themed = applyTheme(elements, from, to) ?? elements;
   api().updateScene({
-    elements: themed.map((el) => (el.id === template.id ? withSlideData(el, { theme: to }) : el)),
+    elements: elements.map((el) => (el.id === template.id ? withSlideData(el, { theme: { ...getTheme(elements), transition } }) : el)),
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   });
 };
 
-/** slides back to the template: its elements as in the template, the deck's fonts and colors (slides.ts) */
+/** slides back to the template: its elements as in the template (slides.ts) */
 const resetSlides = (ids: string[]) => {
   const next = resetToTemplate(api().getSceneElementsIncludingDeleted(), new Set(ids), scenesController.getState().current ?? "Untitled");
   if (next) {
@@ -512,94 +482,34 @@ const StepPicker = () => {
   );
 };
 
-const ThemeForm = () => {
+/** the template: edit it, headline & eyebrow, back to template for all, the slide transition */
+const TemplateSection = () => {
   const { theme, templateId } = useDeck();
-  // fonts the user added are deck fonts too (a hook: before any early return)
-  useSyncExternalStore(customFonts.subscribe, customFonts.version);
   if (!templateId) {
     return (
-      <section className="slides-details">
-        <div className="slides-section__title">Template &amp; style</div>
-        <p className="slides-hint">
-          Header, footer and logo for every slide.
-        </p>
+      <section className="slides-details" id="slides-template">
+        <div className="slides-section__title">Template</div>
+        <p className="slides-hint">Header, footer, logo, headline and eyebrow for every slide.</p>
         <button type="button" className="slides-btn slides-btn--primary" onClick={() => focusFrame(createTemplate(api()), false)}>
           Create template
         </button>
       </section>
     );
   }
-  const select = <K extends keyof DeckTheme>(key: K, options: Array<[string, DeckTheme[K]]>) => (
-    <select
-      className="slides-input"
-      value={String(theme[key])}
-      onChange={(event) => {
-        const option = options.find(([, value]) => String(value) === event.target.value);
-        if (option) {
-          setTheme({ [key]: option[1] } as Partial<DeckTheme>);
-        }
-      }}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      {options.map(([label, value]) => (
-        <option key={String(value)} value={String(value)}>
-          {label}
-        </option>
-      ))}
-    </select>
-  );
-  /** a row of buttons, like Excalidraw's own properties (stroke width, sloppiness …) */
-  const choice = <K extends keyof DeckTheme>(key: K, label: string, options: Array<{ value: DeckTheme[K]; text: string; icon: ReactNode }>) => (
-    <fieldset>
-      <legend>{label}</legend>
-      <div className="buttonList">
-        {options.map((option) => (
-          <label key={String(option.value)} className={clsx({ active: theme[key] === option.value, "kq-choice--text": typeof option.icon === "string" })} title={option.text}>
-            <input type="radio" name={`deck-${key}`} checked={theme[key] === option.value} onChange={() => setTheme({ [key]: option.value } as Partial<DeckTheme>)} />
-            {option.icon}
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-  /** Excalidraw's swatches: a few colors and the deck's own (a picker) */
-  const color = (key: "textColor" | "strokeColor", label: string) => (
-    <fieldset>
-      <legend>{label}</legend>
-      <div className="kq-swatches">
-        {SWATCHES.map((value) => (
-          <button
-            key={value}
-            type="button"
-            className={clsx("color-picker__button", { active: theme[key].toLowerCase() === value })}
-            style={{ "--swatch-color": value } as React.CSSProperties}
-            title={value}
-            aria-label={`${label}: ${value}`}
-            onClick={() => setTheme({ [key]: value })}
-          >
-            <div className="color-picker__button-outline" />
-          </button>
-        ))}
-        <span className="kq-swatches__divider" />
-        <label className={clsx("color-picker__button color-picker__button--large kq-swatches__custom", { active: !SWATCHES.includes(theme[key].toLowerCase()) })} style={{ "--swatch-color": theme[key] } as React.CSSProperties} title="Another color">
-          <input type="color" value={theme[key]} onChange={(event) => setTheme({ [key]: event.target.value })} aria-label={`${label}: another color`} />
-        </label>
-      </div>
-    </fieldset>
-  );
   return (
-    <section className="slides-details">
-      <div className="slides-section__title">Template &amp; style</div>
+    <section className="slides-details" id="slides-template">
+      <div className="slides-section__title">Template</div>
+      <p className="slides-hint">Style its elements with Excalidraw's tools: every slide follows. What you change on one slide stays there.</p>
       <div className="slides-row">
         <button type="button" className="slides-btn" onClick={() => focusFrame(templateId, false)}>
           Edit template
         </button>
-        <QuickTip tip="Deck fonts and colors on every slide, template elements restored everywhere" label={false}>
+        <QuickTip tip="Every slide's template elements as in the template again (changes made on single slides go)" label={false}>
           <button
             type="button"
             className="slides-btn"
             onClick={() => {
-              if (window.confirm("Apply the deck style to every slide? Fonts and colors you changed on single slides are reset.")) {
+              if (window.confirm("Bring the template back on every slide? Template elements you changed on single slides are reset.")) {
                 resetSlides(deck.getState().slides.map((s) => s.id));
               }
             }}
@@ -624,39 +534,26 @@ const ThemeForm = () => {
       </p>
       <div className="selected-shape-actions kq-style">
         <fieldset>
-          <legend>Font</legend>
-          {select("fontFamily", [...FONTS, ...customFonts.list().map((font): [string, number] => [font.family, font.id])])}
+          <legend>Transition</legend>
+          <div className="buttonList">
+            {(
+              [
+                ["glide", "Glide", "The camera flies to the next slide"],
+                ["cut", "Cut", "The next slide right away"],
+              ] as const
+            ).map(([value, text, tip]) => (
+              <label key={value} className={clsx("kq-choice--text", { active: theme.transition === value })} title={tip}>
+                <input type="radio" name="deck-transition" checked={theme.transition === value} onChange={() => setTransition(value)} />
+                {text}
+              </label>
+            ))}
+          </div>
         </fieldset>
-        {choice("titleSize", "Title size", [48, 56, 64, 72, 96, 120].map((value) => ({ value, text: `${value} px`, icon: String(value) })))}
-        {choice("bodySize", "Text size", [20, 24, 28, 32, 36, 44].map((value) => ({ value, text: `${value} px`, icon: String(value) })))}
-        {color("textColor", "Text color")}
-        {color("strokeColor", "Line color")}
-        {choice("strokeWidth", "Stroke width", [
-          { value: 1, text: "Thin", icon: StrokeWidthBaseIcon },
-          { value: 2, text: "Bold", icon: StrokeWidthBoldIcon },
-          { value: 4, text: "Extra bold", icon: StrokeWidthExtraBoldIcon },
-        ])}
-        {choice("roughness", "Sloppiness", [
-          { value: 0, text: "Architect", icon: SloppinessArchitectIcon },
-          { value: 1, text: "Artist", icon: SloppinessArtistIcon },
-          { value: 2, text: "Cartoonist", icon: SloppinessCartoonistIcon },
-        ])}
-        {choice("fillStyle", "Fill", [
-          { value: "hachure", text: "Hachure", icon: FillHachureIcon },
-          { value: "cross-hatch", text: "Cross-hatch", icon: FillCrossHatchIcon },
-          { value: "solid", text: "Solid", icon: FillSolidIcon },
-          { value: "zigzag", text: "Zigzag", icon: FillZigZagIcon },
-        ])}
-        {choice("transition", "Transition", [
-          { value: "glide", text: "Glide: the camera flies to the next slide", icon: "Glide" },
-          { value: "cut", text: "Cut: the next slide right away", icon: "Cut" },
-        ])}
       </div>
     </section>
   );
 };
 
-/** the first slide (and the deck template with its footer, if there is none yet) */
 const startPresentation = () => {
   const id = addSlide(api());
   if (!getTemplate(api().getSceneElementsIncludingDeleted())) {
@@ -689,7 +586,7 @@ const SlidesEmpty = () => (
   </section>
 );
 
-type SlidesTab = "slides" | "style" | "share" | "pdf";
+type SlidesTab = "slides" | "share" | "pdf";
 
 /** the sidebar's tab: kept outside the sidebar, which unmounts when closed; set by the template watcher too */
 const slidesTab = (() => {
@@ -710,28 +607,27 @@ const slidesTab = (() => {
   };
 })();
 
-// editing the template (something on it selected): the Style tab opens;
-// back on a slide, the slide list returns (if it was opened this way)
+/** the slide list's Template section, in view */
+const showTemplateSection = () => {
+  slidesTab.set("slides");
+  setTimeout(() => document.getElementById("slides-template")?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 120);
+};
+
+// editing the template (something on it selected): the slides sidebar opens at its Template section
 {
   let lastActive: string | null = null;
-  let openedForTemplate = false;
   deck.subscribe(() => {
     const { activeId, templateId } = deck.getState();
     if (activeId === lastActive || deck.paused) {
       return;
     }
-    const was = lastActive;
     lastActive = activeId;
     if (templateId && activeId === templateId) {
-      openedForTemplate = slidesTab.get() !== "style";
-      slidesTab.set("style");
       const api = deck.getApi();
       if (api && api.getAppState().openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
         api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
       }
-    } else if (was && was === templateId && openedForTemplate && slidesTab.get() === "style") {
-      openedForTemplate = false;
-      slidesTab.set("slides");
+      showTemplateSection();
     }
   });
 }
@@ -754,21 +650,17 @@ export const showSlideInList = (id: string) => {
   }, 120);
 };
 
-/** the template's edit icon on the canvas (notes.tsx): the Style tab, or closed again */
-export const toggleTemplateStyle = () => {
+/** the template's pen on the canvas (notes.tsx): edit the template (selected, camera on it), the Template section in view */
+export const editTemplate = () => {
+  const { templateId } = deck.getState();
+  if (templateId) {
+    focusFrame(templateId);
+  }
   const api = deck.getApi();
-  if (!api) {
-    return;
-  }
-  const open = api.getAppState().openSidebar?.name === SLIDES_SIDEBAR_NAME;
-  if (open && slidesTab.get() === "style") {
-    api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: false });
-    return;
-  }
-  slidesTab.set("style");
-  if (!open) {
+  if (api && api.getAppState().openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
     api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
   }
+  showTemplateSection();
 };
 
 const icon = (children: ReactNode) => (
@@ -785,18 +677,6 @@ const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boo
       <>
         <rect x="2.5" y="5.5" width="12" height="9" rx="1.3" />
         <path d="M5.5 3h10.2c1 0 1.8.8 1.8 1.8V12" />
-      </>,
-    ),
-  },
-  {
-    tab: "style",
-    label: "Style",
-    icon: icon(
-      <>
-        <path d="M10 2.8a7.2 7.2 0 0 0 0 14.4c1 0 1.6-.7 1.6-1.5 0-.9-.7-1.2-.7-2 0-.8.6-1.3 1.4-1.3h1.6a3.3 3.3 0 0 0 3.3-3.3c0-3.5-3.2-6.3-7.2-6.3z" />
-        <circle cx="6.4" cy="9.6" r="1.1" fill="currentColor" stroke="none" />
-        <circle cx="8.9" cy="6.3" r="1.1" fill="currentColor" stroke="none" />
-        <circle cx="12.7" cy="6.8" r="1.1" fill="currentColor" stroke="none" />
       </>,
     ),
   },
@@ -852,9 +732,9 @@ export const SlidesSidebar = () => {
                 <p className="slides-hint">Drag or ⌥↑ / ⌥↓ to reorder.</p>
                 <StepPicker />
                 {active && <SlideDetails id={active} />}
+                <TemplateSection />
               </>
             )}
-            {shown === "style" && <ThemeForm />}
             {shown === "share" && <SlidesShare />}
             {shown === "pdf" && <PdfPanel />}
           </>
