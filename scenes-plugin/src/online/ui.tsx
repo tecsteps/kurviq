@@ -40,7 +40,7 @@ import type { RepoChoice, Space } from "./github";
 
 import lilitaLatin from "@excalidraw/excalidraw/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYEF8RXi4EwQ.woff2";
 
-import { deck } from "../deck";
+import { deck, isDeck } from "../deck";
 import { publicScene } from "../publicScene";
 import { appVersion, reloadApp } from "./version";
 import { openPublicScene } from "../router";
@@ -708,7 +708,7 @@ export const SlidesShare = () => {
 /** in the current scene's actions: share links, public / private */
 export const SceneSharing = ({ item, disabled }: { item: SceneListItem; disabled?: boolean }) => {
   const { repo } = useConnection();
-  const { slides } = useSyncExternalStore(deck.subscribe, deck.getState);
+  const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
   if (!repo || item.name === null || item.localOnly) {
     return null;
   }
@@ -716,7 +716,7 @@ export const SceneSharing = ({ item, disabled }: { item: SceneListItem; disabled
   return (
     <>
       <CopyLink link={item.onGitHub ? shareLink(repo.owner, name) : null} label="Copy link" tip={shareTip(item, repo, "scene")} />
-      {slides.length > 0 && (
+      {presentation && (
         <CopyLink
           link={item.onGitHub ? shareLink(repo.owner, name, { present: true }) : null}
           label="Copy presentation link"

@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
 
-import { deck } from "./deck";
+import { deck, isDeck } from "./deck";
 import { usePresenter } from "./present";
 import { QuickTip } from "./quickTip";
 import { patchSlideData } from "./slides";
@@ -226,15 +226,14 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
 // -----------------------------------------------------------------------------
 
 export const SlideNotesOverlay = () => {
-  const { slides, templateId } = useSyncExternalStore(deck.subscribe, deck.getState);
+  const state = useSyncExternalStore(deck.subscribe, deck.getState);
+  const { slides, templateId } = state;
   const presenting = usePresenter().active;
   const id = useOpenId();
   const api = deck.getApi();
   const appState = api?.getAppState();
-  // only in presentations: a template, several slides or speaker notes (a single frame, e.g. an infographic, isn't one)
-  const isDeck = !!templateId || slides.length > 1 || slides.some((slide) => slide.notes.trim());
   // (view mode, e.g. read-only while GitHub is checked, is looked at in the loop: it ends without a re-render here)
-  const enabled = !presenting && isDeck;
+  const enabled = !presenting && isDeck(state);
   const spots = useNameSpots(enabled);
   const container = document.querySelector<HTMLElement>(".excalidraw");
   const dark = appState?.theme === "dark";

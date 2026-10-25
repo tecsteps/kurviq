@@ -18,7 +18,7 @@ import { IS_ONLINE, SCENE_NAME_RE } from "./api";
 import { IDLE_PUSH_MS, scenesController } from "./controller";
 import { IS_RENDERER, connectLive } from "./live";
 import { connectRouter } from "./router";
-import { deck } from "./deck";
+import { deck, isDeck } from "./deck";
 import { PresentationOverlay, presenter } from "./present";
 import { SlideNotesOverlay } from "./notes";
 import { TemplateChangesBar } from "./templateChanges";
@@ -315,13 +315,13 @@ const MobileSlidesButton = () => {
 /** Slides and MCP, at the top right (next to the sidebar button) */
 const ScenesTopRightUI = ({ isMobile }: { isMobile: boolean }) => {
   const api = useExcalidrawAPI();
-  const { slides } = useSyncExternalStore(deck.subscribe, deck.getState);
+  const state = useSyncExternalStore(deck.subscribe, deck.getState);
   if (isMobile) {
     return null;
   }
   return (
     <div className="scenes-top-right">
-      {slides.some((slide) => !slide.skip) && (
+      {isDeck(state) && state.slides.some((slide) => !slide.skip) && (
         <button
           type="button"
           className="scenes-pill scenes-pill--primary"

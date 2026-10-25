@@ -51,6 +51,14 @@ export type DeckState = {
   activeId: string | null;
 };
 
+/**
+ * The scene is a presentation: a template, several slides or speaker notes (a
+ * single frame, e.g. an infographic, isn't one). The one test for Present,
+ * presentation links and the canvas icons.
+ */
+export const isDeck = ({ slides, templateId }: Pick<DeckState, "slides" | "templateId">) =>
+  !!templateId || slides.length > 1 || slides.some((slide) => slide.notes.trim());
+
 const THUMB_WIDTH = 480;
 
 /** set while a presentation runs (see present.tsx): a page that went away mid-presentation is cleaned up */
