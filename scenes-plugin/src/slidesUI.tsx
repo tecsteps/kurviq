@@ -586,7 +586,7 @@ const SlidesEmpty = () => (
   </section>
 );
 
-type SlidesTab = "slides" | "share" | "pdf";
+type SlidesTab = "slides" | "style" | "share" | "pdf";
 
 /** the sidebar's tab: kept outside the sidebar, which unmounts when closed; set by the template watcher too */
 const slidesTab = (() => {
@@ -607,27 +607,28 @@ const slidesTab = (() => {
   };
 })();
 
-/** the slide list's Template section, in view */
-const showTemplateSection = () => {
-  slidesTab.set("slides");
-  setTimeout(() => document.getElementById("slides-template")?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 120);
-};
-
-// editing the template (something on it selected): the slides sidebar opens at its Template section
+// editing the template (something on it selected): the Style tab opens;
+// back on a slide, the slide list returns (if it was opened this way)
 {
   let lastActive: string | null = null;
+  let openedForTemplate = false;
   deck.subscribe(() => {
     const { activeId, templateId } = deck.getState();
     if (activeId === lastActive || deck.paused) {
       return;
     }
+    const was = lastActive;
     lastActive = activeId;
     if (templateId && activeId === templateId) {
+      openedForTemplate = slidesTab.get() !== "style";
+      slidesTab.set("style");
       const api = deck.getApi();
       if (api && api.getAppState().openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
         api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
       }
-      showTemplateSection();
+    } else if (was && was === templateId && openedForTemplate && slidesTab.get() === "style") {
+      openedForTemplate = false;
+      slidesTab.set("slides");
     }
   });
 }
@@ -650,17 +651,21 @@ export const showSlideInList = (id: string) => {
   }, 120);
 };
 
-/** the template's pen on the canvas (notes.tsx): edit the template (selected, camera on it), the Template section in view */
+/** the template's pen on the canvas (notes.tsx): the Style tab, or closed again */
 export const editTemplate = () => {
-  const { templateId } = deck.getState();
-  if (templateId) {
-    focusFrame(templateId);
-  }
   const api = deck.getApi();
-  if (api && api.getAppState().openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
+  if (!api) {
+    return;
+  }
+  const open = api.getAppState().openSidebar?.name === SLIDES_SIDEBAR_NAME;
+  if (open && slidesTab.get() === "style") {
+    api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: false });
+    return;
+  }
+  slidesTab.set("style");
+  if (!open) {
     api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
   }
-  showTemplateSection();
 };
 
 const icon = (children: ReactNode) => (
@@ -677,6 +682,18 @@ const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boo
       <>
         <rect x="2.5" y="5.5" width="12" height="9" rx="1.3" />
         <path d="M5.5 3h10.2c1 0 1.8.8 1.8 1.8V12" />
+      </>,
+    ),
+  },
+  {
+    tab: "style",
+    label: "Style",
+    icon: icon(
+      <>
+        <path d="M10 2.8a7.2 7.2 0 0 0 0 14.4c1 0 1.6-.7 1.6-1.5 0-.9-.7-1.2-.7-2 0-.8.6-1.3 1.4-1.3h1.6a3.3 3.3 0 0 0 3.3-3.3c0-3.5-3.2-6.3-7.2-6.3z" />
+        <circle cx="6.4" cy="9.6" r="1.1" fill="currentColor" stroke="none" />
+        <circle cx="8.9" cy="6.3" r="1.1" fill="currentColor" stroke="none" />
+        <circle cx="12.7" cy="6.8" r="1.1" fill="currentColor" stroke="none" />
       </>,
     ),
   },
@@ -732,9 +749,9 @@ export const SlidesSidebar = () => {
                 <p className="slides-hint">Drag or ⌥↑ / ⌥↓ to reorder.</p>
                 <StepPicker />
                 {active && <SlideDetails id={active} />}
-                <TemplateSection />
               </>
             )}
+            {shown === "style" && <TemplateSection />}
             {shown === "share" && <SlidesShare />}
             {shown === "pdf" && <PdfPanel />}
           </>
