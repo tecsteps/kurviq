@@ -333,6 +333,40 @@
   padding-right: 0.5rem;
 }
 
+// after sign-in: the scenes to put in Drive
+.excalidraw .kq-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 14rem;
+  margin: 0;
+  padding: 0.25rem 0;
+  overflow: auto;
+  list-style: none;
+  border-top: 1px solid var(--default-border-color);
+  border-bottom: 1px solid var(--default-border-color);
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.25rem;
+    border-radius: var(--border-radius-md);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--button-hover-bg, var(--color-surface-high));
+    }
+  }
+
+  input {
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    accent-color: var(--color-primary);
+  }
+}
+
 .excalidraw .kq-welcome {
   display: flex;
   flex-direction: column;

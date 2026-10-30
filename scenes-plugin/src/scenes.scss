@@ -165,6 +165,27 @@
     &--public {
       color: var(--color-primary);
     }
+
+    // clickable (scene list, scene panel): in / out of Drive, share
+    &--action button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.4rem;
+      height: 1.4rem;
+      margin: -0.2rem;
+      padding: 0;
+      border: none;
+      border-radius: var(--border-radius-md);
+      background: none;
+      color: inherit;
+      cursor: pointer;
+
+      &:hover {
+        background: var(--button-hover-bg, var(--color-surface-high));
+        color: var(--color-primary);
+      }
+    }
   }
 
   .scenes-switcher__name {
