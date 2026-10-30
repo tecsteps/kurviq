@@ -141,13 +141,14 @@ const parseScene = async (json: string, access: { public?: boolean; canEdit?: bo
 };
 
 /**
- * How often an open shared scene checks for changes (only while the tab is
- * visible): every 10 s at first and after a change, slower while nothing
- * changes, up to once a minute (each check is a Worker request: the free plan
- * has 100,000 a day)
+ * When an open shared scene checks for changes: 10 s after opening, a change
+ * or the visitor's return, then 30 s, then every minute; and only while
+ * someone is there (the tab visible, the mouse or keys used in the last
+ * 3 minutes). Each check is a Worker request (the free plan has 100,000 a day):
+ * a tab left open doesn't use them up.
  */
-const REFRESH_MIN_MS = 10_000;
-const REFRESH_MAX_MS = 60_000;
+const REFRESH_STEPS_MS = [10_000, 30_000, 60_000];
+const AWAY_AFTER_MS = 3 * 60_000;
 
 const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide: startSlide }: Shown) => {
   const bundled = !fileId && !moved;
@@ -236,28 +237,33 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
     }
     let stopped = false;
     let busy = false;
-    let delay = REFRESH_MIN_MS;
+    let step = 0;
     let timer = 0;
+    let lastSeen = Date.now();
+    /** nobody there: no timer runs until the visitor is back */
+    let paused = false;
     sharedSceneVersion(fileId).then((v) => (version.current ??= v));
+    const away = () => document.visibilityState !== "visible" || Date.now() - lastSeen > AWAY_AFTER_MS;
     const schedule = () => {
       clearTimeout(timer);
-      timer = window.setTimeout(check, delay);
+      timer = window.setTimeout(check, REFRESH_STEPS_MS[Math.min(step, REFRESH_STEPS_MS.length - 1)]);
     };
     const check = async () => {
       if (busy || stopped) {
         return;
       }
-      if (document.visibilityState !== "visible") {
-        return; // a hidden tab doesn't ask; coming back checks right away
+      if (away()) {
+        paused = true;
+        return;
       }
       busy = true;
       try {
         const latest = await sharedSceneVersion(fileId);
         if (!latest || latest === version.current) {
-          delay = Math.min(REFRESH_MAX_MS, Math.round(delay * 1.5));
+          step++;
           return;
         }
-        delay = REFRESH_MIN_MS;
+        step = 0;
         const answer = await readSharedScene(fileId, { version: latest });
         if (stopped || !("scene" in answer)) {
           return;
@@ -276,18 +282,24 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
         }
       }
     };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        delay = REFRESH_MIN_MS;
+    // the visitor is back (or still there): checking goes on, from the start when it had stopped
+    const seen = () => {
+      lastSeen = Date.now();
+      if (paused && document.visibilityState === "visible") {
+        paused = false;
+        step = 0;
         check();
       }
     };
+    const activity = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"] as const;
+    activity.forEach((type) => window.addEventListener(type, seen, { passive: true }));
+    document.addEventListener("visibilitychange", seen);
     schedule();
-    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stopped = true;
       clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
+      activity.forEach((type) => window.removeEventListener(type, seen));
+      document.removeEventListener("visibilitychange", seen);
     };
   }, [fileId, api, !!scene]);
 
