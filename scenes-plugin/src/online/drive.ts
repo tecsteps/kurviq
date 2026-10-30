@@ -1004,9 +1004,28 @@ export type SharedSceneAnswer =
   /** no such file, or no access */
   | { missing: true };
 
-export const readSharedScene = async (fileId: string): Promise<SharedSceneAnswer> => {
+/**
+ * A shared scene's current version (Drive's MD5 of it): for public ones from
+ * Kurviq's Worker, else from Drive with the visitor's sign-in; null: unknown
+ */
+export const sharedSceneVersion = async (fileId: string): Promise<string | null> => {
+  try {
+    const res = await fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}/version`);
+    if (res.ok) {
+      return (await res.json()).version ?? null;
+    }
+  } catch {}
+  if (!(await getToken().catch(() => null))) {
+    return null;
+  }
+  const file = await fetchSharedFile(fileId).catch(() => null);
+  return file?.md5Checksum ?? null;
+};
+
+/** `version`: that version of a public scene (past the edge cache's copy) */
+export const readSharedScene = async (fileId: string, { version }: { version?: string } = {}): Promise<SharedSceneAnswer> => {
   // public scenes: through Kurviq's edge cache (the page preloads this very URL), no sign-in needed
-  const publicCopy = fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}`)
+  const publicCopy = fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}${version ? `?v=${version}` : ""}`)
     .then(async (res) => (res.ok ? { json: await res.text(), name: decodeURIComponent(res.headers.get("X-Kurviq-Name") || "") } : null))
     .catch(() => null);
   const signedIn = getToken().catch(() => null);
