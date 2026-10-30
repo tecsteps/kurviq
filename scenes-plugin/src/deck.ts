@@ -97,10 +97,13 @@ class Deck {
     this.listeners.forEach((listener) => listener());
   }
 
+  private detach: (() => void) | null = null;
+
   attach(api: ExcalidrawImperativeAPI) {
     if (this.api === api) {
       return;
     }
+    this.detach?.();
     this.api = api;
     // the page went away during a presentation (reload, update): Excalidraw
     // keeps zen mode, which would hide the whole editor UI from now on
@@ -110,11 +113,25 @@ class Deck {
         api.updateScene({ appState: { zenModeEnabled: false } });
       }
     } catch {}
-    api.onChange((elements, appState) => {
+    this.detach = api.onChange((elements, appState) => {
       this.onChange(elements);
       this.onSelection(elements, appState.selectedElementIds);
     });
     this.onChange(api.getSceneElementsIncludingDeleted());
+  }
+
+  /**
+   * Another canvas is the deck for a while (a shared scene's viewer: the
+   * presentation runs on it); the returned function gives the editor back
+   */
+  borrow(api: ExcalidrawImperativeAPI) {
+    const editor = this.api;
+    this.attach(api);
+    return () => {
+      if (this.api === api && editor) {
+        this.attach(editor);
+      }
+    };
   }
 
   getApi() {
