@@ -1,18 +1,21 @@
-// Client for the scenes backend: the local scenes git server (see
-// ../../scenes-server), or — in the online build (Kurviq) — GitHub's API,
-// called from the browser (./online/github.ts).
+// Client for the scenes backend: Google Drive, called from the browser
+// (./online/drive.ts), in both builds. The local install also talks to its
+// scenes server (../../scenes-server), which relays agent commands to this
+// tab; online that is the pairing WebSocket (live.ts).
 
-import { githubScenes } from "./online/github";
+import { driveScenes } from "./online/drive";
 
 export type RemoteScene = {
   name: string;
   sha: string;
   updatedAt: string | null;
-  /** online: in the space's public repository (kurviq-public) */
+  /** shared "anyone with the link" in Drive */
   public?: boolean;
+  /** the scene's Google Drive file */
+  fileId?: string;
 };
 
-/** a version of a scene in the git history (newest first in lists) */
+/** a version of a scene in Drive's revisions (newest first in lists) */
 export type SceneVersion = {
   commit: string;
   at: string | null;
@@ -20,20 +23,20 @@ export type SceneVersion = {
   message: string;
   /** made by an agent (commit trailer) */
   agent: boolean;
-  /** local: the scene's blob sha in that commit (online: looked up when loaded) */
+  /** the scene's version (MD5 of its content) in that revision */
   sha?: string;
 };
 
 export type RemoteInfo = {
-  /** GitHub reachable at the last attempt (null = not tried yet) */
+  /** Google Drive reachable at the last attempt (null = not tried yet) */
   online: boolean | null;
   lastFetchAt: string | null;
   lastError: string | null;
-  /** online: GitHub lets this user read the space's repository, not change it (why) */
+  /** a shared scene Drive lets this user read, not change (why) */
   readOnly?: string | null;
 };
 
-/** Kurviq: the online build (GitHub API in the browser, no scenes server) */
+/** Kurviq: the online build (kurviq.com, no scenes server) */
 export const IS_ONLINE = import.meta.env.VITE_APP_SCENES_TARGET === "online";
 
 export const BASE_URL: string = (
@@ -45,14 +48,14 @@ export const TAB_ID = Math.random().toString(36).slice(2, 10);
 
 export type ApiError = Error & {
   status: number;
-  /** server or GitHub not reachable — keep working locally, retry later */
+  /** server or Google Drive not reachable — keep working locally, retry later */
   offline?: boolean;
   remoteSha?: string | null;
   /** rename: the target name already exists */
   exists?: boolean;
-  /** online: GitHub is not connected (or no repo chosen) — work locally */
+  /** not signed in with Google (or no Drive access) — work locally */
   notConnected?: boolean;
-  /** online: the space is read only on GitHub — nothing can be pushed */
+  /** a shared scene that may only be viewed — nothing can be saved */
   readOnly?: boolean;
 };
 
@@ -81,74 +84,8 @@ const request = async (path: string, init?: RequestInit) => {
   return res;
 };
 
-const scenePath = (name: string) => `/api/scenes/${encodeURIComponent(name)}`;
-
-const localScenesApi = {
-  /** online only: move a scene to the space's public repository and back */
-  setPublic: undefined as undefined | ((name: string, on: boolean) => Promise<unknown>),
-  list: async (
-    refresh = false,
-  ): Promise<{ scenes: RemoteScene[]; remote: RemoteInfo }> =>
-    (await request(`/api/scenes${refresh ? "?refresh" : ""}`)).json(),
-  /** latest version, or a specific one (blob sha) */
-  load: async (
-    name: string,
-    sha?: string,
-  ): Promise<{ json: string; sha: string }> => {
-    const res = await request(
-      `${scenePath(name)}${sha ? `?sha=${encodeURIComponent(sha)}` : ""}`,
-    );
-    return { json: await res.text(), sha: res.headers.get("X-Scene-Sha") || sha || "" };
-  },
-  /**
-   * Commit & push. baseSha = the version this content is based on ("none" for
-   * a new scene) — the server answers 409 if GitHub has something else.
-   */
-  save: async (
-    name: string,
-    json: string,
-    baseSha: string,
-    /** who saves: this tab (default) or "agent" (the agent's headless tab) */
-    source = `app:${TAB_ID}`,
-  ): Promise<{ sha: string; commit: string | null; changed: boolean }> =>
-    (
-      await request(scenePath(name), {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Scenes-Source": source,
-          "X-Scenes-Client": "app",
-          "X-Base-Sha": baseSha,
-        },
-        body: json,
-      })
-    ).json(),
-  /** delete on GitHub; baseSha: only if GitHub still has that version (else 409) */
-  remove: async (name: string, baseSha?: string | null) =>
-    (
-      await request(scenePath(name), {
-        method: "DELETE",
-        headers: {
-          "X-Scenes-Source": `app:${TAB_ID}`,
-          "X-Scenes-Client": "app",
-          ...(baseSha ? { "X-Base-Sha": baseSha } : {}),
-        },
-      })
-    ).json(),
-  /** rename on GitHub (one commit, content unchanged, so the blob sha stays) */
-  rename: async (from: string, to: string): Promise<{ sha: string; commit: string | null }> =>
-    (
-      await request(`${scenePath(from)}/rename`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Scenes-Source": `app:${TAB_ID}`, "X-Scenes-Client": "app" },
-        body: JSON.stringify({ to }),
-      })
-    ).json(),
-  /** the scene's versions, newest first */
-  history: async (name: string): Promise<SceneVersion[]> =>
-    (await (await request(`${scenePath(name)}/history`)).json()).versions,
-  /** the scene as it was in one of those versions */
-  loadVersion: (name: string, version: SceneVersion) => localScenesApi.load(name, version.sha),
+/** this tab's state and its answers to agent commands, for the local scenes server */
+const localRelay = {
   reportState: (state: {
     current: string | null;
     dirty: boolean;
@@ -171,18 +108,22 @@ const localScenesApi = {
     }).catch(() => {}),
 };
 
-/** online: the same calls against GitHub; the live channel is a WebSocket (live.ts) */
-const onlineScenesApi: typeof localScenesApi = {
-  list: githubScenes.list,
-  load: githubScenes.load,
-  save: (name, json, baseSha, source = `app:${TAB_ID}`) => githubScenes.save(name, json, baseSha, source),
-  remove: githubScenes.remove,
-  rename: githubScenes.rename,
-  setPublic: githubScenes.setPublic,
-  history: githubScenes.history,
-  loadVersion: (name, version) => githubScenes.loadAt(name, version.commit),
-  reportState: async () => {},
-  sendResult: async () => {},
+export const scenesApi = {
+  list: driveScenes.list,
+  /** latest version, or a specific one (its MD5) */
+  load: driveScenes.load,
+  /**
+   * Save to Drive. baseSha = the version this content is based on ("none"
+   * for a new scene) — 409 if Drive has something else.
+   */
+  save: (name: string, json: string, baseSha: string, source = `app:${TAB_ID}`) => driveScenes.save(name, json, baseSha, source),
+  /** delete in Drive; baseSha: only if Drive still has that version (else 409) */
+  remove: driveScenes.remove,
+  /** rename in Drive (content unchanged, so the version stays) */
+  rename: driveScenes.rename,
+  /** the scene's versions, newest first */
+  history: driveScenes.history,
+  /** the scene as it was in one of those versions */
+  loadVersion: (name: string, version: SceneVersion) => driveScenes.loadAt(name, version.commit),
+  ...(IS_ONLINE ? { reportState: async () => {}, sendResult: async () => {} } : localRelay),
 };
-
-export const scenesApi = IS_ONLINE ? onlineScenesApi : localScenesApi;

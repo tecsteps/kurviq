@@ -23,7 +23,7 @@ import { scenesController } from "./controller";
 import {
   editLocalScene,
   editOpenScene,
-  editSceneOnGitHub,
+  editSceneOnDrive,
   readLocalScene,
   readOpenScene,
   saveLocalScene,
@@ -43,7 +43,7 @@ import { editsRunning, getPayload, keepPayload, onceForRequest } from "./agentRe
 import { keepUpload, withUploads } from "./uploads";
 import { createReceiver, sendMessage } from "./online/frames";
 import { OUTDATED_MESSAGE, checkServerBuild } from "./online/version";
-import { connection } from "./online/github";
+import { connection } from "./online/drive";
 import { pairing } from "./online/pairing";
 import { serveRequest } from "./online/tabServer";
 
@@ -533,17 +533,17 @@ const status = () => {
     autoSync,
     // fonts the user added (besides Excalidraw's own): usable by name as fontFamily
     customFonts: customFonts.list().map((font) => font.family),
-    github: sync.notConnected
+    drive: sync.notConnected
       ? "not connected (all scenes stay in the user's browser, local-only)"
       : sync.readOnly
       ? `read only: ${sync.readOnly} (scenes can be read, not changed)`
-      : sync.githubOnline === false
+      : sync.driveOnline === false
       ? "offline"
-      : sync.githubOnline
+      : sync.driveOnline
       ? "online"
       : sync.lastCheckedAt
       ? "unknown"
-      : "checking (the first check with GitHub hasn't finished yet)",
+      : "checking (the first check with Drive hasn't finished yet)",
     lastCheckedAt: sync.lastCheckedAt,
     // the health of this tab: what it is working on (an edit or picture running for minutes is stuck)
     busy: [...busy.values()].map(({ what, since }) => `${what} for ${Math.round((Date.now() - since) / 1000)} s`),
@@ -553,14 +553,14 @@ const status = () => {
     scenes: list
       .filter((item) => item.name !== null)
       .map(({ name, status, pendingRename, localOnly }) =>
-        `${name}: ${status}${localOnly ? " (only in the user's browser, never synced to GitHub)" : scenesController.autoSyncFor(name!) ? "" : " (auto-sync off)"}${pendingRename ? ` (rename on GitHub pending, still "${pendingRename}" there)` : ""}`,
+        `${name}: ${status}${localOnly ? " (only in the user's browser, never synced to Drive)" : scenesController.autoSyncFor(name!) ? "" : " (auto-sync off)"}${pendingRename ? ` (rename in Drive pending, still "${pendingRename}" there)` : ""}`,
       ),
     autoSyncInfo:
-      "The app pushes local changes of a scene to GitHub by itself (about 10 s after the last edit) and pulls/merges GitHub changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push.",
+      "The app pushes local changes of a scene to Drive by itself (about 10 s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push.",
   };
 };
 
-/** app_status: right after the tab opened, wait a moment for its first GitHub check */
+/** app_status: right after the tab opened, wait a moment for its first Drive check */
 const statusSettled = async () => {
   for (let i = 0; i < 25 && !scenesController.getState().sync.lastCheckedAt && !scenesController.getState().sync.notConnected; i++) {
     await sleep(200);
@@ -602,7 +602,7 @@ const exclusive = <T,>(task: () => Promise<T>) => {
   return run;
 };
 
-/** online: GitHub lets the user read this space, not change it — agents can't either */
+/** online: Drive lets the user read this space, not change it — agents can't either */
 const refuseIfReadOnly = (name: string | null | undefined) => {
   const { readOnly } = scenesController.getState().sync;
   if (readOnly && !(name && scenesController.isLocalOnly(name))) {
@@ -689,13 +689,11 @@ const runCommand = async (command: Command) => {
       refuseIfReadOnly(command.name);
       const run = onceForRequest(
         command.requestId,
-        () => queueEdit(() => editSceneOnGitHub(command, convertMcpElements)),
+        () => queueEdit(() => editSceneOnDrive(command, convertMcpElements)),
         async () => JSON.parse((await scenesApi.load(command.name)).json).elements || [],
       );
-      if (IS_ONLINE) {
-        // committed from this tab: no server announces it, sync right away
-        run.then(() => scenesController.syncNow({ refresh: true })).catch(() => {});
-      }
+      // saved to Drive from this tab: no server announces it, sync right away
+      run.then(() => scenesController.syncNow({ refresh: true })).catch(() => {});
       return run;
     }
     case "upload-payload":
@@ -768,13 +766,13 @@ const runCommand = async (command: Command) => {
           };
         case "mine":
           await scenesController.keepMine(command.name);
-          return { resolved: true, kept: "mine (GitHub overwritten)", ...status() };
+          return { resolved: true, kept: "mine (Drive overwritten)", ...status() };
         case "theirs":
           await scenesController.takeTheirs(command.name);
-          return { resolved: true, kept: "GitHub's (local changes discarded)", ...status() };
+          return { resolved: true, kept: "Drive's (local changes discarded)", ...status() };
         case "both": {
           const copy = await scenesController.keepBoth(command.name);
-          return { resolved: true, kept: `GitHub's; local version saved as "${copy}"`, copy, ...status() };
+          return { resolved: true, kept: `Drive's; local version saved as "${copy}"`, copy, ...status() };
         }
       }
       throw new Error(`Unknown resolution: ${(command as any).resolution}`);
@@ -836,7 +834,7 @@ const tabState = () => {
     dirty,
     visible: document.visibilityState === "visible",
     focusedAt,
-    ...(IS_ONLINE ? { github: connection.isActive() } : {}),
+    drive: connection.isActive(),
   };
 };
 

@@ -1,7 +1,9 @@
-// Sets the Worker's secrets on Cloudflare once: GITHUB_CLIENT_SECRET (from
-// KURVIQ_GITHUB_CLIENT_SECRET in ../.env) and a new random COOKIE_KEY.
-// Re-running makes a new COOKIE_KEY, which disconnects every browser's GitHub
-// connection (they reconnect with one click) — only do that on purpose.
+// Sets the Worker's secrets on Cloudflare once: GOOGLE_CLIENT_SECRET and
+// GOOGLE_API_KEY (from KURVIQ_GOOGLE_CLIENT_SECRET / KURVIQ_GOOGLE_API_KEY in
+// ../.env) and a new random COOKIE_KEY. Name the ones to set, e.g.
+// `npm run secrets -- GOOGLE_CLIENT_SECRET GOOGLE_API_KEY`: a new COOKIE_KEY
+// signs every browser out of Google (they sign in again with one click) —
+// only make one on purpose.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -23,7 +25,8 @@ for (const file of [".env", ".env.local"]) {
 }
 const only = process.argv.slice(2);
 const secrets = {
-  GITHUB_CLIENT_SECRET: env.KURVIQ_GITHUB_CLIENT_SECRET,
+  GOOGLE_CLIENT_SECRET: env.KURVIQ_GOOGLE_CLIENT_SECRET,
+  GOOGLE_API_KEY: env.KURVIQ_GOOGLE_API_KEY,
   COOKIE_KEY: randomBytes(32).toString("base64"),
 };
 for (const [name, value] of Object.entries(secrets)) {
@@ -31,7 +34,7 @@ for (const [name, value] of Object.entries(secrets)) {
     continue;
   }
   if (!value) {
-    console.error(`[secrets] ${name}: no value (set KURVIQ_GITHUB_CLIENT_SECRET in .env)`);
+    console.error(`[secrets] ${name}: no value (set KURVIQ_${name} in .env)`);
     process.exit(1);
   }
   const result = spawnSync("node", [path.join(HERE, "with-env.mjs"), "npx", "wrangler", "secret", "put", name], {

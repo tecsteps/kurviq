@@ -1,27 +1,29 @@
 ---
 name: excalidraw-scenes
-description: Draw, co-edit, look at and save diagrams in the user's local Kurviq / Excalidraw (git-backed scenes, MCP server "excalidraw"). Use whenever the user asks to draw or change a diagram/sketch/scene in Excalidraw, wants to co-work on a drawing, asks what is on their canvas, or mentions Excalidraw scenes.
+description: Draw, co-edit, look at and save diagrams in the user's local Kurviq / Excalidraw (scenes synced with Google Drive, MCP server "excalidraw"). Use whenever the user asks to draw or change a diagram/sketch/scene in Excalidraw, wants to co-work on a drawing, asks what is on their canvas, or mentions Excalidraw scenes.
 ---
 
 # Kurviq (local): how to work with the user's drawings
 
 The user runs Kurviq, a local Excalidraw app (http://draw.test), with **scenes**
-(named drawings, URL `http://draw.test/<scene>`) synced to a GitHub repo.
-The MCP server `excalidraw` gives you tools for it. The user is often
-**looking at the app while you work** and edits by hand in between.
+(named drawings, URL `http://draw.test/<scene>`) kept in their browser and,
+if they signed in with Google, synced with their Google Drive. The MCP
+server `excalidraw` gives you tools for it. The user is often **looking at
+the app while you work** and edits by hand in between.
 
-**You have your own Excalidraw.** You never work in the user's browser: you
-read and edit scenes in a hidden headless Excalidraw, and every edit is
-committed to GitHub right away. The user's app picks your commits up within
-seconds and merges them with what they are doing. Before you read or edit a
-scene, the user's app pushes its unpushed changes of it, so you see their
-latest work.
+**You work through the user's open Kurviq tab.** Every tool needs the app
+open in the user's browser (any scene). Your reads and edits run in that tab
+with the real Excalidraw, so you always see the user's latest work, pushed or
+not. The tab merges your edits into what the user is doing and saves them to
+Drive right away with the user's sign-in. Without sign-in (`app_status`
+shows `drive: false`) all scenes are local-only: they exist only in that
+browser, and you read and edit them there the same way.
 
 ## Golden rules
 
 1. **Always `read_scene` before you edit.** It reports what the user
    changed since an agent last edited the scene (`userChanges`), found in the
-   git history, so it works across conversations and agents.
+   scene's Drive history, so it works across conversations and agents.
 2. **Edit with `edit_scene`**, not by re-creating the scene. It changes only
    the elements you name; the user's other work is untouched. Pass the
    `revision` from your last `read_scene` / `edit_scene` as `basedOn`.
@@ -36,12 +38,12 @@ latest work.
 6. **Don't touch the user's view.** `open_scene` (and `open: true`) switches
    what the user sees: only when they ask you to show them something.
 7. **Only these tools, never around them.** You never push, sync or write
-   scene files yourself: `edit_scene` hands your change to your headless
-   Excalidraw, which commits it; the user's app syncs their own work by
+   scene files yourself: `edit_scene` hands your change to the user's
+   Kurviq tab, which saves it; the user's app syncs their own work by
    itself (auto-sync). Never call the scenes server's HTTP API
    (localhost:3101) with curl or scripts, and never write `.excalidraw`
-   files or git commits: direct writes are refused, and they would bypass
-   merging and the user's unpushed work. If a tool can't do what you need,
+   files or Drive files yourself: direct writes are refused, and they would
+   bypass merging and the user's unpushed work. If a tool can't do what you need,
    tell the user instead of working around it. Never overwrite an existing
    scene with `save_scene`. Conflicts: `get_conflict` / `resolve_conflict`.
 
@@ -150,7 +152,7 @@ instead of `text`, e.g. a title, a sentence and bullets in one box:
 
 ## Seeing scenes (they can be huge)
 
-- `view_scene(name)`: a scene, incl. the user's latest pushed edits;
+- `view_scene(name)`: a scene, incl. the user's latest edits;
   `view_scene(checkpointId)`: a `create_view` draft.
 - Zoom: `elementIds: [...]` (those elements + padding + whatever overlaps) or
   `region: {x, y, width, height}`; `maxSize` caps the image size.
@@ -167,15 +169,15 @@ instead of `text`, e.g. a title, a sentence and bullets in one box:
   (change those with `edit_scene`); `replace: true` only when the user
   explicitly wants the whole scene replaced by a new drawing.
 - `rename_scene(name, newName)`, `clone_scene(name, newName)`,
-  `delete_scene(name)`: one commit on GitHub; the user's app follows (their
-  unpushed changes are pushed first and move along). **Only delete when the
-  user asked for exactly that scene** (it stays in the git history; a
-  local-only scene has no other copy).
-- `list_scenes` lists the scenes on GitHub. `app_status`: which scene the
-  user has open, and each scene's sync status in their app: synced · ahead
-  (not pushed) · behind (newer on GitHub) · diverged · conflict · local (not
-  on GitHub) · "auto-sync off" (the user pushes when they decide; you don't
-  see their unpushed changes of such a scene).
+  `delete_scene(name)`: in the user's app and in their Drive (a renamed
+  scene keeps its file and links; unpushed changes move along). **Only
+  delete when the user asked for exactly that scene** (in Drive it goes to
+  the bin for 30 days; a local-only scene has no other copy).
+- `list_scenes` lists the user's scenes. `app_status`: which scene the
+  user has open, whether Drive is connected (`drive`), and each scene's sync
+  status in their app: synced · ahead (not pushed) · behind (newer in
+  Drive) · diverged · conflict · local (not in Drive) · "auto-sync off" (the
+  user pushes when they decide).
 
 ## Slides (presentations)
 
@@ -281,35 +283,36 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
 ## Local-only scenes
 
 Some scenes are **local only**: they live only in the user's browser and are
-never pushed to or pulled from GitHub (e.g. confidential customer work). The
-user picks this per scene; `app_status` / `list_scenes` mark them.
+never pushed to or pulled from Google Drive (e.g. confidential customer
+work). The user picks this per scene; without Google sign-in every scene is
+local only. `app_status` / `list_scenes` mark them.
 
 - `read_scene`, `edit_scene`, `view_scene`, `get_scene`, rename, clone and
   delete work on them as usual, through the user's app, which must be open.
-  They answer with a "Local-only scene" note; no GitHub commit happens.
+  They answer with a "Local-only scene" note; nothing goes to Drive.
 - New local-only scene: `save_scene(name, …, local: true)`, only when the
   user asks for a local / private / not-synced scene.
 - `set_local_only(name, localOnly)`: make a scene local only, or sync it
-  with GitHub again. Only when the user asks.
+  with Drive again. Only when the user asks.
 
 ## Merge conflicts
 
 By default the user's app settles clashes by itself (the same element
 changed on both sides: the newer edit wins), so conflicts are rare. If the
-user switched that off and the local and GitHub versions changed the **same
+user switched that off and the local and Drive versions changed the **same
 elements** differently, the scene is in **conflict** in the user's app
 (shown in the scene's panel, in `app_status` and in `read_scene`'s `sync`). Their
-newest edits of that scene don't reach GitHub until it is resolved. Changes
+newest edits of that scene don't reach Drive until it is resolved. Changes
 that only one side made are merged automatically.
 
 1. `get_conflict(name, view: true)`: per clashing element the base,
-   **mine** (the user's local version) and **github** version, which fields
+   **mine** (the user's local version) and **drive** version, which fields
    each side changed, plus images of both versions of the clashing area.
 2. `resolve_conflict(name, resolution: "merge", choices: {id: "mine" |
-   "github"}, otherwise: "mine" | "github")`: keeps both sides' other
+   "drive"}, otherwise: "mine" | "drive")`: keeps both sides' other
    changes and decides each clash, then pushes. Alternatives: `"mine"`
-   (user's whole version overwrites GitHub), `"github"` (discard the
-   user's local changes), `"both"` (GitHub's version, user's kept as a
+   (user's whole version overwrites Drive), `"drive"` (discard the
+   user's local changes), `"both"` (Drive's version, user's kept as a
    copy scene).
 
 When it's not obvious which version is right, show the user the
@@ -318,15 +321,17 @@ differences and ask. Never silently throw away the user's work.
 ## Where things are stored
 
 Nothing is stored by the servers: scenes live in the user's browser
-(localStorage / IndexedDB) and in the GitHub repo. Your edits are git
-commits, marked as agent commits; that is how `userChanges` finds your last
-version. Your `create_view` drafts live in your headless Excalidraw and are
-gone when it stops.
+(localStorage / IndexedDB) and in their Google Drive (one
+`<name>.excalidraw` file per scene, in a folder "Kurviq"). After your edit
+the user's tab marks that Drive revision as the agent's version (`agentRev`
+in the file's appProperties); that is how `userChanges` finds your last
+version. Your `create_view` drafts live in the user's Kurviq tab (browser
+storage).
 
 ## Live mode (only if your tools are `read_open_scene` / `edit_open_scene`)
 
-The user can switch to live mode (`SCENES_AGENT_MODE=live`). Then you work
-directly in their open browser tab: `read_open_scene(scene: "X")` instead of
+The user can switch to live mode (`SCENES_AGENT_MODE=live`). Then you
+co-edit the canvas they have open, live: `read_open_scene(scene: "X")` instead of
 `read_scene`, `edit_open_scene(expectScene: "X", …)` instead of
 `edit_scene`. These act on the canvas the user sees (incl. their unsaved
 edits, undoable with Cmd/Ctrl+Z), and the app's auto-sync pushes the
@@ -337,5 +342,10 @@ push now.
 
 - "Scenes server not reachable": the user runs `npm start` in the project
   folder (kurviq).
-- "No Chrome found": your headless Excalidraw needs Chrome or another
-  Chromium browser (`CHROME_PATH` in `.env`).
+- "Kurviq is not open": ask the user to open the app (http://draw.test) in
+  their browser and keep the tab open, then try again.
+- "Google Drive is not connected": the user can sign in with Google in the
+  app (scene list → Sign in with Google); until then, work with local-only
+  scenes.
+- "No Chrome found": PDFs, and pictures when no tab is open, need Chrome or
+  another Chromium browser (`CHROME_PATH` in `.env`).

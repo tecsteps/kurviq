@@ -1,9 +1,10 @@
-// Kurviq's own UI (online build only): Connect GitHub (scenes go to the
-// private repository <account>/kurviq-scenes), the "MCP" button with the agent link and prompt, and the
-// footer (built on Excalidraw, llms.txt).
+// Kurviq's own UI: Sign in with Google (scenes go to the folder "Kurviq" in
+// the user's Google Drive), sharing a scene (Drive's permissions), the "MCP"
+// button with the agent link and prompt (online), and the footer (built on
+// Excalidraw, llms.txt).
 
 import { MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
-import { GithubIcon, ExternalLinkIcon } from "@excalidraw/excalidraw/components/icons";
+import { ExternalLinkIcon, GithubIcon } from "@excalidraw/excalidraw/components/icons";
 import clsx from "clsx";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
@@ -13,35 +14,32 @@ import { scenesController } from "../controller";
 import { PlaceSvg } from "../icons";
 import { QuickTip } from "../quickTip";
 
-import { SPACE_KEY, currentSpace, spaceSuffix } from "../storage";
-
 import {
   CONNECTING_KEY,
-  SCENES_REPO,
+  FOLDER_NAME,
+  addPerson,
+  changeRole,
   checkConnection,
-  chooseRepo,
-  connectGitHub,
+  connectGoogle,
   connection,
-  copyScenes,
-  createScenesRepo,
-  disconnectGitHub,
-  findScenesRepo,
-  isInstalledFor,
-  listSpaces,
-  newRepoUrl,
-  notPrivate,
-  storeRepoForSpace,
-} from "./github";
+  disconnectGoogle,
+  enterSpace,
+  linkAccessOf,
+  listPermissions,
+  removeAccess,
+  setLinkAccess,
+  shareLink,
+  sharedFileId,
+} from "./drive";
 import { pairing } from "./pairing";
 
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "../../../scenes-mcp/feedback.mjs";
 import type { SceneListItem } from "../controller";
-import type { RepoChoice, Space } from "./github";
+import type { LinkAccess, Permission } from "./drive";
 
 import lilitaLatin from "@excalidraw/excalidraw/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYEF8RXi4EwQ.woff2";
 
 import { deck, isDeck } from "../deck";
-import { publicScene } from "../publicScene";
 import { appVersion, reloadApp } from "./version";
 import { openPublicScene } from "../router";
 
@@ -50,51 +48,41 @@ import "./online.scss";
 const useConnection = () => useSyncExternalStore(connection.subscribe, connection.getState);
 const usePairingKey = () => useSyncExternalStore(pairing.subscribe, pairing.getKey);
 
+export const GoogleIcon = (
+  <svg viewBox="0 0 48 48" width="16" height="16" aria-hidden>
+    <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" />
+    <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+    <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+    <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.2-.1-2.3-.4-3.5z" />
+  </svg>
+);
+
+export const DriveIcon = (
+  <svg viewBox="0 0 87.3 78" width="18" height="16" aria-hidden>
+    <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da" />
+    <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47" />
+    <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335" />
+    <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d" />
+    <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc" />
+    <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00" />
+  </svg>
+);
+
 // -----------------------------------------------------------------------------
-// start: is this browser connected? (and the answer of a GitHub redirect)
+// start: is this browser signed in? (and the answer of a Google redirect)
 // -----------------------------------------------------------------------------
 
 let notice: string | null = null;
 let started = false;
-/** the answer of a GitHub redirect, read before anything can rewrite the URL */
-const githubAnswer = new URLSearchParams(window.location.search).get("github");
+/** the answer of a Google redirect, read before anything can rewrite the URL */
+const googleAnswer = new URLSearchParams(window.location.search).get("google");
 
-// setting up sync, as a dialog: a space is a GitHub account or organization
-// with its <owner>/kurviq-scenes; Kurviq uses it, or creates it, and where it
-// can't, the dialog says what to do on GitHub. GitHub decides who may do what.
-type Setup =
-  | null
-  | { step: "working"; owner: string }
-  | { step: "create"; owner: string }
-  | { step: "access"; owner: string }
-  | { step: "move"; owner: string; from: RepoChoice }
-  | { step: "error"; owner: string; message: string }
-  | { step: "done"; owner: string; repo: RepoChoice; published: number; copied: number };
+/** the Google account this browser's scenes were synced with last (switching accounts resyncs everything) */
+const ACCOUNT_KEY = "kurviq-drive-account";
 
-// what the user did on GitHub in this tab (sessionStorage: survives the trips there)
-const CREATED_KEY = "kurviq-setup-created";
-const MOVE_KEY = "kurviq-setup-move-from";
-/** the old scenes repository the user chose to leave alone */
-const KEEP_KEY = "kurviq-keep-repo";
+// after signing in: a short dialog (sync is on / Drive access missing)
+type Setup = null | { step: "done"; published: number } | { step: "nodrive" };
 
-const session = {
-  get: (key: string) => {
-    try {
-      return sessionStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  },
-  set: (key: string, value: string | null) => {
-    try {
-      value === null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value);
-    } catch {}
-  },
-};
-
-/** the user created (or already has) <owner>/kurviq-scenes */
-const markCreated = (owner: string) => session.set(CREATED_KEY, owner.toLowerCase());
-const wasCreated = (owner: string) => session.get(CREATED_KEY) === owner.toLowerCase();
 let setup: Setup = null;
 const setupListeners = new Set<() => void>();
 const setSetup = (next: Setup) => {
@@ -118,170 +106,86 @@ const localOnlyScenes = () =>
     .list.filter((item) => item.name !== null && item.localOnly)
     .map((item) => item.name!);
 
-/** sync this space with its repository from now on; returns how many local-only scenes went along */
-const activateRepo = async (repo: RepoChoice) => {
-  const current = connection.getState().repo;
-  const switching = !!current && (current.owner !== repo.owner || current.name !== repo.name);
-  chooseRepo(repo);
-  // from now on new scenes go to GitHub with auto-sync
+/** signed in just now: new scenes sync, and the scenes kept in this browser go to Drive; returns how many */
+const activateSync = async () => {
   scenesController.setNewScenesLocalOnly(false);
-  if (switching) {
-    await scenesController.resetGitHubState();
-  }
   let published = 0;
-  if (!repo.readOnly) {
-    for (const name of localOnlyScenes()) {
-      await scenesController.setLocalOnly(name, false).then(
-        () => published++,
-        () => {},
-      );
-    }
+  for (const name of localOnlyScenes()) {
+    await scenesController.setLocalOnly(name, false).then(
+      () => published++,
+      () => {},
+    );
   }
   scenesController.syncNow({ refresh: true });
   return published;
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** the browser-storage id of a space: "" = the personal one */
-const spaceIdOf = (owner: string) =>
-  owner.toLowerCase() === connection.getState().user?.login.toLowerCase() ? "" : owner.toLowerCase();
-
-/** the space whose scenes this tab shows (its owner), if sync is set up */
-export const spaceOwner = () => connection.getState().repo?.owner ?? null;
-
-/**
- * Switch this tab to another space: its scenes live in their own browser
- * storage, so the page reloads into it (the open scene is kept first).
- */
-const enterSpace = async (owner: string, repo: RepoChoice, path = "/") => {
-  const space = spaceIdOf(owner);
-  storeRepoForSpace(space, repo);
-  try {
-    const metaKey = `excalidraw-scenes${spaceSuffix(space)}`;
-    if (!localStorage.getItem(metaKey)) {
-      // a space new to this browser: its new scenes sync (like after setting up sync)
-      localStorage.setItem(metaKey, JSON.stringify({ newLocalOnly: false }));
-    }
-    localStorage.setItem(SPACE_KEY, space);
-  } catch {}
+/** back to the user's own scenes, from a shared scene's space */
+export const leaveSharedScene = async () => {
   await scenesController.leaveForReload();
-  window.location.href = path;
+  enterSpace(null);
 };
 
-/**
- * Sync with <owner>/kurviq-scenes (default: the space of this tab, or the
- * personal one). Another space than this tab's: the tab switches into it,
- * and opens `path` there.
- */
-export const setUpSync = async (owner?: string, path?: string) => {
-  const login = connection.getState().user?.login;
-  if (!login) {
-    return;
-  }
-  owner ??= currentSpace ? spaceOwner() ?? currentSpace : login;
-  setSetup({ step: "working", owner });
-  try {
-    let repo = await findScenesRepo(owner);
-    if (!repo) {
-      // GitHub shows a private repository only once Kurviq may use it: "not
-      // found" means missing, or not shared with Kurviq yet. With the app's
-      // Administration permission Kurviq could create it; without it (the
-      // default) the user does, in GitHub's form, and then shares it.
-      if (!wasCreated(owner) && (await isInstalledFor(owner))) {
-        const created = await createScenesRepo(owner);
-        if (created === "created") {
-          for (let attempt = 0; attempt < 10 && !repo; attempt++) {
-            await sleep(1000);
-            repo = await findScenesRepo(owner);
-          }
-        } else if (created === "exists") {
-          markCreated(owner);
-        }
-      }
-      if (!repo) {
-        setSetup({ step: wasCreated(owner) ? "access" : "create", owner });
-        return;
-      }
-    }
-    if (!repo.private) {
-      // private scenes never go to a public repository
-      setSetup({ step: "error", owner, message: notPrivate(owner) });
-      return;
-    }
-    session.set(CREATED_KEY, null);
-    if (spaceIdOf(owner) !== currentSpace) {
-      await enterSpace(owner, repo, path);
-      return;
-    }
-    // moving from an older scenes repository: its scenes come along
-    const from = JSON.parse(session.get(MOVE_KEY) || "null") as RepoChoice | null;
-    const copied = from ? await copyScenes(from, repo) : 0;
-    session.set(MOVE_KEY, null);
-    setSetup({ step: "done", owner, repo, published: await activateRepo(repo), copied });
-  } catch (error: any) {
-    setSetup({ step: "error", owner, message: error.message });
-  }
-};
-
-export const startOnline = () => {
+export const startDrive = () => {
   if (started) {
     return;
   }
   started = true;
-  // someone's shared scene: members of that space edit it there
-  publicScene.setSpaceOpener((owner, name) => {
-    publicScene.close();
-    setUpSync(owner, `/${encodeURIComponent(name)}`);
-  });
   // keep the scenes even under storage pressure (Safari, full disks)
   navigator.storage?.persist?.().catch(() => {});
 
-  const params = new URLSearchParams(window.location.search);
-  const answer = githubAnswer;
+  const answer = googleAnswer;
   if (answer) {
     notice =
       answer === "connected"
         ? null
         : answer === "cancelled"
-        ? "GitHub connection cancelled."
-        : "GitHub connection failed — please try again.";
-    params.delete("github");
+        ? "Sign-in cancelled."
+        : answer === "nodrive"
+        ? null
+        : "Sign-in failed — please try again.";
+    const params = new URLSearchParams(window.location.search);
+    params.delete("google");
     const query = params.toString();
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   }
 
-  // back from GitHub without sync yet: set it up right away (only if this
-  // tab went there to connect: a link with ?github=connected does nothing)
+  // only the tab that went to Google acts on its answer (a link with ?google=connected does nothing)
   let asked = false;
   try {
     asked = Date.now() - Number(sessionStorage.getItem(CONNECTING_KEY) || 0) < 30 * 60_000;
     sessionStorage.removeItem(CONNECTING_KEY);
   } catch {}
-  let showSetup = answer === "connected" && asked;
-  let offeredMove = false;
+  let afterSignIn = asked ? answer : null;
   let last = "";
   connection.subscribe(() => {
-    const { user, repo, lost } = connection.getState();
-    if (showSetup && user !== undefined) {
-      showSetup = false;
-      // (signed in to see someone's shared scene: no setup of one's own then)
-      if (user && !repo && !/^\/(@|%40)/i.test(window.location.pathname)) {
-        setUpSync();
-      }
+    const { user, drive } = connection.getState();
+    if (user === undefined) {
+      return;
     }
-    // synced with an older scenes repository (from before kurviq-scenes): offer the move, once
-    if (user && repo && !lost && !currentSpace && repo.name !== SCENES_REPO && !offeredMove && !/^\/(@|%40)/i.test(window.location.pathname)) {
-      offeredMove = true;
-      let kept = false;
+    if (user && drive && !sharedFileId) {
+      let previous: string | null = null;
       try {
-        kept = localStorage.getItem(KEEP_KEY) === `${repo.owner}/${repo.name}`;
+        previous = localStorage.getItem(ACCOUNT_KEY);
+        localStorage.setItem(ACCOUNT_KEY, user.email);
       } catch {}
-      if (!kept && !setup) {
-        setSetup({ step: "move", owner: user.login, from: repo });
+      if (previous !== user.email) {
+        // what this browser knew about the remote side was another Drive's
+        // (another account), or GitHub's (the first sign-in in this browser:
+        // scenes without local changes take Drive's copy of them)
+        scenesController.resetRemoteState({ keepDirty: previous === null });
       }
     }
-    const key = JSON.stringify([user?.login ?? null, repo]);
+    if (afterSignIn) {
+      const what = afterSignIn;
+      afterSignIn = null;
+      if (user && !drive) {
+        setSetup({ step: "nodrive" });
+      } else if (user && what === "connected" && !sharedFileId && !/^\/s\//.test(window.location.pathname)) {
+        activateSync().then((published) => setSetup({ step: "done", published }));
+      }
+    }
+    const key = JSON.stringify([user?.email ?? null, drive]);
     if (key !== last) {
       last = key;
       scenesController.syncNow({ refresh: true });
@@ -291,13 +195,26 @@ export const startOnline = () => {
 };
 
 // -----------------------------------------------------------------------------
-// sidebar: GitHub
+// sidebar: Google Drive
 // -----------------------------------------------------------------------------
 
-const repoUrl = (repo: RepoChoice) => `https://github.com/${repo.owner}/${repo.name}`;
+const folderUrl = () => {
+  const email = connection.getState().user?.email ?? "";
+  let id: string | null = null;
+  try {
+    id = localStorage.getItem(`kurviq-drive-folder:${email}`);
+  } catch {}
+  return id ? `https://drive.google.com/drive/folders/${id}` : "https://drive.google.com/drive/my-drive";
+};
 
-/** in the scene dropdown: offer GitHub while it is not connected */
-export const ConnectGitHubOffer = () => {
+const SignInButton = ({ label = "Sign in with Google" }: { label?: string }) => (
+  <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => connectGoogle()}>
+    <span className="kq-icon">{GoogleIcon}</span> {label}
+  </button>
+);
+
+/** in the scene dropdown: offer Google while not signed in */
+export const ConnectDriveOffer = () => {
   const { user } = useConnection();
   if (user !== null) {
     return null;
@@ -305,9 +222,7 @@ export const ConnectGitHubOffer = () => {
   return (
     <div className="kq-switcher-github">
       <span className="kq-muted">Scenes are saved in this browser only.</span>
-      <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => connectGitHub()}>
-        <span className="kq-icon">{GithubIcon}</span> Connect GitHub
-      </button>
+      <SignInButton />
     </div>
   );
 };
@@ -347,7 +262,7 @@ export const KurviqLogo = () => (
 
 /** on the welcome screen (injected by ../../vite.config.mts), instead of upstream's storage warning */
 export const WelcomeHeading = () => {
-  const { user, repo } = useConnection();
+  const { user, drive } = useConnection();
   return (
     <div className="kq-welcome">
       <p>
@@ -369,11 +284,9 @@ export const WelcomeHeading = () => {
         .
       </p>
       <p className="kq-welcome__storage">
-        {user && repo
-          ? "Your drawings are saved in this browser and synced with GitHub."
-          : user
-          ? "Your drawings are saved in this browser. Set up sync in the Scenes sidebar to keep them in your repository."
-          : "Your drawings are saved in this browser. Connect GitHub to keep them safe in your repository."}
+        {user && drive
+          ? "Your drawings are saved in this browser and in your Google Drive."
+          : "Your drawings are saved in this browser. Sign in with Google to keep them safe in your Google Drive."}
       </p>
       <a
         className="kq-welcome__signature"
@@ -388,25 +301,36 @@ export const WelcomeHeading = () => {
   );
 };
 
-/** on the welcome screen (injected by ../../vite.config.mts), while GitHub is not connected */
-export const WelcomeConnectGitHub = () => {
+/** on the welcome screen (injected by ../../vite.config.mts), while not signed in */
+export const WelcomeConnectDrive = () => {
   const { user } = useConnection();
   if (user !== null) {
     return null;
   }
   return (
-    <WelcomeScreen.Center.MenuItem onSelect={() => connectGitHub()} icon={GithubIcon} shortcut={null}>
-      Connect GitHub to sync
+    <WelcomeScreen.Center.MenuItem onSelect={() => connectGoogle()} icon={GoogleIcon} shortcut={null}>
+      Sign in with Google to sync
     </WelcomeScreen.Center.MenuItem>
   );
 };
 
-/** top of the Scenes sidebar: the GitHub connection of this browser */
-export const GitHubPanel = () => {
-  const { user, repo, error, lost } = useConnection();
+const confirmSignOut = () => {
+  if (
+    window.confirm(
+      "Sign out of Google in this browser? Your scenes stay here; changes are synced again once you sign in.",
+    )
+  ) {
+    disconnectGoogle();
+  }
+};
+
+/** top of the Scenes sidebar: the Google Drive connection of this browser */
+export const DrivePanel = () => {
+  const { user, drive, error, needsAccess } = useConnection();
+  const { remote } = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
 
   if (user === undefined) {
-    return <section className="kq-card kq-muted">Checking GitHub connection…</section>;
+    return <section className="kq-card kq-muted">Checking Google sign-in…</section>;
   }
   if (!user) {
     return (
@@ -414,155 +338,83 @@ export const GitHubPanel = () => {
         {notice && <div className="kq-notice">{notice}</div>}
         <div className="kq-card__title">Your scenes are saved in this browser</div>
         <div className="kq-muted">
-          No account needed. Connect GitHub to sync them with a repository: on all your devices, with other people
-          who use the same repository, and with your coding agents.
+          No account needed. Sign in with Google to keep them in your Google Drive: on all your devices, shared with
+          whom you choose, and with your coding agents.
         </div>
         {error && <div className="scenes-error">{error}</div>}
         <div className="scenes-row">
-          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => connectGitHub()}>
-            <span className="kq-icon">{GithubIcon}</span> Connect GitHub
-          </button>
+          <SignInButton />
         </div>
         <span className="kq-muted kq-left">
-          Your scenes go to the private repository <code>{SCENES_REPO}</code> on your GitHub account.
+          They go to the folder <strong>{FOLDER_NAME}</strong> in your Drive. Kurviq only sees the files it creates.
         </span>
       </section>
     );
   }
-  if (lost && repo) {
+  if (!drive) {
     return (
       <section className="kq-card">
-        <div className="kq-card__title">Sync with {repo.owner}/{repo.name} stopped</div>
-        <div className="kq-muted">{lost}. Your scenes are safe in this browser.</div>
+        <div className="kq-card__title">Signed in as {user.email}, without Google Drive</div>
+        <div className="kq-muted">
+          Kurviq needs your permission to keep its own files in your Drive (it sees nothing else there). Sign in once
+          more and tick the Google Drive box.
+        </div>
         <div className="scenes-row">
-          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => setUpSync(repo.owner)}>
-            Set up sync again
+          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => connectGoogle({ consent: true })}>
+            Allow Google Drive
           </button>
         </div>
-        <SpaceSwitcher />
-        <button type="button" className="scenes-link kq-left" onClick={() => disconnectGitHub()}>
-          Disconnect GitHub
+        <button type="button" className="scenes-link kq-left" onClick={() => disconnectGoogle()}>
+          Sign out
         </button>
       </section>
     );
   }
-  if (!repo) {
+  if (sharedFileId) {
     return (
       <section className="kq-card">
-        <div className="kq-card__title">
-          Connected as <strong>{user.login}</strong>, sync is not set up yet
-        </div>
+        <div className="kq-card__title">A scene shared with you</div>
         <div className="kq-muted">
-          Your scenes go to the private repository{" "}
-          <code>
-            {currentSpace || user.login}/{SCENES_REPO}
-          </code>
-          ; Kurviq creates it if it doesn't exist.
+          {needsAccess
+            ? "Kurviq may not open it yet: open its link again and allow it."
+            : `"${remote?.[0]?.name ?? "It"}" is a file in someone's Google Drive: your changes are saved to it, for everyone it is shared with.`}
         </div>
         <div className="scenes-row">
-          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => setUpSync()}>
-            Set up sync
+          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => leaveSharedScene()}>
+            Back to my scenes
           </button>
         </div>
-        <SpaceSwitcher />
-        <button type="button" className="scenes-link kq-left" onClick={() => disconnectGitHub()}>
-          Disconnect GitHub
-        </button>
+        <span className="kq-muted kq-left">as {user.email}</span>
       </section>
     );
   }
   return (
     <section className="kq-card kq-card--repo">
-      <a className="scenes-repo" href={repoUrl(repo)} target="_blank" rel="noopener noreferrer" title={`Open ${repoUrl(repo)}`}>
-        <span className="scenes-repo__logo">{GithubIcon}</span>
+      <a className="scenes-repo" href={folderUrl()} target="_blank" rel="noopener noreferrer" title="Open the folder in Google Drive">
+        <span className="scenes-repo__logo">{DriveIcon}</span>
         <span className="scenes-repo__text">
-          <span className="scenes-repo__caption">
-            {repo.readOnly ? "Read only on GitHub" : "Synced with GitHub"}
-            <span className="scenes-repo__branch">{repo.branch}</span>
-          </span>
-          <span className="scenes-repo__name">
-            <span className="scenes-repo__owner">{repo.owner}/</span>
-            <wbr />
-            {repo.name}
-          </span>
+          <span className="scenes-repo__caption">Synced with Google Drive</span>
+          <span className="scenes-repo__name">{FOLDER_NAME}</span>
         </span>
         <span className="scenes-repo__external">{ExternalLinkIcon}</span>
       </a>
-      {repo.readOnly && <div className="kq-muted">Read only: {repo.readOnly}.</div>}
-      <SpaceSwitcher />
       <div className="kq-repo-actions">
-        <span className="kq-muted">as {user.login}</span>
-        <button
-          type="button"
-          className="scenes-link scenes-link--danger"
-          onClick={() => {
-            if (
-              window.confirm(
-                "Disconnect GitHub in this browser? Your scenes stay here; changes are synced again once you reconnect.",
-              )
-            ) {
-              disconnectGitHub();
-            }
-          }}
-        >
-          Disconnect
+        <span className="kq-muted">as {user.email}</span>
+        <button type="button" className="scenes-link scenes-link--danger" onClick={confirmSignOut}>
+          Sign out
         </button>
       </div>
     </section>
   );
 };
 
-/**
- * Spaces: your account and every organization where the Kurviq app is
- * installed (as GitHub lists them). Switching reloads the tab into that
- * space's scenes.
- */
-const SpaceSwitcher = () => {
-  const { user, repo } = useConnection();
-  const [spaces, setSpaces] = useState<Space[] | null>(null);
-  useEffect(() => {
-    listSpaces()
-      .then(setSpaces)
-      .catch(() => setSpaces(null));
-  }, [user?.login]);
-  if (!user) {
-    return null;
-  }
-  const here = (repo?.owner ?? (currentSpace || user.login)).toLowerCase();
-  return (
-    <div className="kq-space">
-      <label className="kq-field">
-        <span>Space</span>
-        <select
-          value={here}
-          onChange={(event) => {
-            const owner = spaces?.find((space) => space.owner.toLowerCase() === event.target.value)?.owner;
-            if (owner) {
-              setUpSync(owner);
-            }
-          }}
-        >
-          {!spaces?.some((space) => space.owner.toLowerCase() === here) && <option value={here}>{repo?.owner ?? here}</option>}
-          {(spaces ?? []).map((space) => (
-            <option key={space.owner} value={space.owner.toLowerCase()}>
-              {space.owner}
-              {space.organization ? " (organization)" : " (personal)"}
-            </option>
-          ))}
-        </select>
-      </label>
-      <QuickTip tip="Install the Kurviq app on an organization on GitHub; its members then share that space" label={false}>
-        <button type="button" className="scenes-link kq-left" onClick={() => connectGitHub("install")}>
-          Add an organization…
-        </button>
-      </QuickTip>
-    </div>
-  );
-};
+// -----------------------------------------------------------------------------
+// sharing: Drive's permissions of a scene's file, and its links
+// -----------------------------------------------------------------------------
 
-/** kurviq.com/@owner/scene (?present: starts presenting) */
-const shareLink = (owner: string, name: string, { present = false } = {}) =>
-  `${window.location.origin}/@${encodeURIComponent(owner)}/${encodeURIComponent(name)}${present ? "?present" : ""}`;
+/** kurviq.com/s/<fileId>/<name> (?present: starts presenting) */
+const sceneLink = (fileId: string, name: string, { present = false } = {}) =>
+  `${shareLink(fileId, name)}${present ? "?present" : ""}`;
 
 /** a link button that copies and says so; `tip` says who can open the link (null: nothing to share yet) */
 const CopyLink = ({
@@ -601,20 +453,16 @@ const CopyLink = ({
   );
 };
 
-/** who can open a scene's link, for its tooltip */
-const shareTip = (item: SceneListItem | undefined, repo: RepoChoice | null, what: string) => {
-  if (!repo) {
-    return `Nothing to share yet: this ${what} is only in this browser. Sign in with GitHub to sync it, then share it.`;
+/** why a scene can't be shared (yet), or null */
+const notShareable = (item: SceneListItem | undefined, what: string) => {
+  const { user, drive } = connection.getState();
+  if (!user || !drive) {
+    return `Nothing to share yet: this ${what} is only in this browser. Sign in with Google to save it to your Drive, then share it.`;
   }
   if (!item || item.name === null || item.localOnly) {
     return `Nothing to share: this ${what} is local only (only in this browser). Turn sync on for it to share it.`;
   }
-  if (!item.onGitHub) {
-    return `Not on GitHub yet: you can share this ${what} once it has synced.`;
-  }
-  return item.public
-    ? `Copies a link to this ${what}. It is public: anyone with the link can open it, no sign-in needed.`
-    : `Copies a link to this ${what}. It is private: only people who can read ${repo.owner}/${repo.name} on GitHub can open it, after signing in with GitHub. To share with anyone: Manage scenes → Make public.`;
+  return null;
 };
 
 const LINK_ICON = (
@@ -629,115 +477,277 @@ const LINK_ICON = (
   </svg>
 );
 
-const togglePublic = (name: string, isPublic: boolean | undefined, repo: RepoChoice) => {
-  const ok = isPublic
-    ? window.confirm(
-        `Make "${name}" private again? It moves back to ${repo.owner}/${SCENES_REPO}. Note: what was public stays in the git history of ${repo.owner}/kurviq-public.`,
-      )
-    : window.confirm(
-        `Make "${name}" public? It moves to the public repository ${repo.owner}/kurviq-public: anyone can view it, including images and text on it, and it stays in that repository's git history.`,
-      );
-  if (ok) {
-    scenesController.setPublic(name, !isPublic).catch((error) => window.alert(error.message));
-  }
+// the share dialog: one at a time, for a scene by name
+let sharing: string | null = null;
+const sharingListeners = new Set<() => void>();
+export const openShareDialog = (name: string) => {
+  sharing = name;
+  sharingListeners.forEach((listener) => listener());
+};
+const closeShareDialog = () => openShareDialog(null as unknown as string);
+const useSharing = () =>
+  useSyncExternalStore(
+    (listener) => {
+      sharingListeners.add(listener);
+      return () => {
+        sharingListeners.delete(listener);
+      };
+    },
+    () => sharing,
+  );
+
+const ROLE_LABEL: Record<string, string> = { reader: "Can view", commenter: "Can view", writer: "Can edit", owner: "Owner" };
+
+const LINK_LABEL: Record<LinkAccess, string> = {
+  restricted: "Only people added here",
+  reader: "Anyone with the link can view",
+  writer: "Anyone with the link can edit",
 };
 
-const visibilityTip = (isPublic: boolean | undefined, repo: RepoChoice) =>
-  isPublic
-    ? `Public now: anyone with the link can view it, without a GitHub account. "Make private" moves it back to your private ${repo.owner}/${SCENES_REPO}; then only people with access to that repository can open it.`
-    : `Private now: only people with access to ${repo.owner}/${SCENES_REPO} on GitHub can open it. "Make public" lets anyone with the link view it, without a GitHub account (it moves to the public repository ${repo.owner}/kurviq-public).`;
+const LINK_HINT: Record<LinkAccess, string> = {
+  restricted: "The link only works for the people above, signed in with Google.",
+  reader: "Anyone who has the link can view and present it, no account needed.",
+  writer: "Anyone who has the link can view it; with a Google account they can also change it.",
+};
 
-/** the Slides sidebar's Share tab: who can open the links, the links, public / private */
+const ShareDialog = ({ name }: { name: string }) => {
+  const [fileId, setFileId] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<Permission[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"reader" | "writer">("writer");
+  const me = connection.getState().user?.email?.toLowerCase();
+  const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
+
+  const reload = async (id: string) => setPermissions(await listPermissions(id));
+
+  useEffect(() => {
+    scenesController
+      .fileForSharing(name)
+      .then(async (id) => {
+        setFileId(id);
+        await reload(id);
+      })
+      .catch((err) => setError(err.message));
+  }, [name]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeShareDialog();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const run = async (what: () => Promise<unknown>) => {
+    if (!fileId) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await what();
+      await reload(fileId);
+      scenesController.syncNow({ refresh: true });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const people = (permissions ?? []).filter((permission) => permission.type !== "anyone");
+  const access = permissions ? linkAccessOf(permissions) : "restricted";
+  const link = fileId ? sceneLink(fileId, name) : null;
+  const add = () => {
+    const address = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      setError("Please enter an email address");
+      return;
+    }
+    run(async () => {
+      await addPerson(
+        fileId!,
+        address,
+        role,
+        `I shared "${name}" with you on Kurviq. Open it here: ${link}`,
+      );
+      setEmail("");
+    });
+  };
+
+  return (
+    <div className="kq-overlay" onClick={(event) => event.target === event.currentTarget && closeShareDialog()}>
+      <div className="kq-dialog kq-dialog--narrow kq-share" role="dialog" aria-modal="true" aria-labelledby="kq-share-title">
+        <div className="kq-dialog__head">
+          <h2 id="kq-share-title">Share "{name}"</h2>
+          <button type="button" className="kq-close" aria-label="Close" onClick={closeShareDialog}>
+            ×
+          </button>
+        </div>
+        {!permissions && !error && <p className="kq-muted">Saving it to Google Drive and asking who has access…</p>}
+        {permissions && (
+          <>
+            <div className="kq-share__add">
+              <input
+                type="email"
+                placeholder="Add people by email"
+                value={email}
+                disabled={busy}
+                onChange={(event) => setEmail(event.target.value)}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === "Enter") {
+                    add();
+                  }
+                }}
+              />
+              <select value={role} disabled={busy} onChange={(event) => setRole(event.target.value as "reader" | "writer")}>
+                <option value="writer">Can edit</option>
+                <option value="reader">Can view</option>
+              </select>
+              <button type="button" className="scenes-btn scenes-btn--primary" disabled={busy || !email.trim()} onClick={add}>
+                Share
+              </button>
+            </div>
+            <p className="kq-muted">
+              Google emails them a link. People without a Google account create one for their address (no Gmail needed).
+            </p>
+            <ul className="kq-share__people">
+              {people.map((person) => {
+                const isMe = person.emailAddress?.toLowerCase() === me;
+                return (
+                  <li key={person.id}>
+                    <span className="kq-share__who">
+                      <strong>{person.displayName || person.emailAddress}</strong>
+                      {isMe && " (you)"}
+                      {person.displayName && person.emailAddress && <span className="kq-muted"> {person.emailAddress}</span>}
+                    </span>
+                    {person.role === "owner" || isMe ? (
+                      <span className="kq-muted">{ROLE_LABEL[person.role] ?? person.role}</span>
+                    ) : (
+                      <select
+                        value={person.role === "writer" ? "writer" : "reader"}
+                        disabled={busy}
+                        onChange={(event) =>
+                          event.target.value === "remove"
+                            ? run(() => removeAccess(fileId!, person.id))
+                            : run(() => changeRole(fileId!, person.id, event.target.value as "reader" | "writer"))
+                        }
+                      >
+                        <option value="writer">Can edit</option>
+                        <option value="reader">Can view</option>
+                        <option value="remove">Remove access</option>
+                      </select>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <label className="kq-field">
+              <span>General access</span>
+              <select
+                value={access}
+                disabled={busy}
+                onChange={(event) => run(() => setLinkAccess(fileId!, event.target.value as LinkAccess))}
+              >
+                {(Object.keys(LINK_LABEL) as LinkAccess[]).map((value) => (
+                  <option key={value} value={value}>
+                    {LINK_LABEL[value]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="kq-muted">{LINK_HINT[access]}</p>
+            <div className="scenes-row">
+              <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />
+              {presentation && (
+                <CopyLink
+                  className="scenes-btn"
+                  link={fileId ? sceneLink(fileId, name, { present: true }) : null}
+                  label="Copy presentation link"
+                  tip="Copies a link that starts presenting this scene"
+                />
+              )}
+              <a
+                className="scenes-link"
+                href={`https://drive.google.com/file/d/${fileId}/view`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open in Drive
+              </a>
+            </div>
+          </>
+        )}
+        {error && <p className="scenes-error">{error}</p>}
+      </div>
+    </div>
+  );
+};
+
+/** the Slides sidebar's Share tab: who can open the links, the links, Share… */
 export const SlidesShare = () => {
-  const { repo } = useConnection();
   const { current, list } = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
+  useConnection();
   const item = list.find((entry) => entry.name === current);
-  const shareable = !!repo && !!item && item.name !== null && !item.localOnly && item.onGitHub;
+  const why = notShareable(item, "presentation");
+  const fileId = item?.fileId ?? null;
   const name = item?.name ?? null;
   return (
     <section className="slides-details">
-      {shareable ? (
+      {why ? (
+        <p className="slides-hint">{why}</p>
+      ) : (
         <>
           <span className={clsx("slides-badge", item!.public ? "slides-badge--public" : "slides-badge--private")}>
             <PlaceSvg kind={item!.public ? "public" : "private"} />
-            {item!.public ? "Public" : "Private"}
+            {item!.public ? "Anyone with the link" : "Private"}
           </span>
           <p className="slides-hint">
-            {item!.public ? (
-              "Anyone with the link can watch it, no sign-in needed."
-            ) : (
-              <>
-                Only people who can read{" "}
-                <a href={repoUrl(repo!)} target="_blank" rel="noopener noreferrer">
-                  {repo!.owner}/{repo!.name}
-                </a>{" "}
-                on GitHub can open the link, after signing in with GitHub.
-              </>
-            )}
+            {item!.public
+              ? "Anyone with the link can watch it, no sign-in needed."
+              : "Only people you share it with can open the link, signed in with Google."}
           </p>
         </>
-      ) : (
-        <p className="slides-hint">{shareTip(item, repo, "presentation")}</p>
       )}
       <div className="slides-row">
-        <CopyLink
+        <button
+          type="button"
           className="slides-btn slides-btn--primary"
-          link={shareable ? shareLink(repo!.owner, name!, { present: true }) : null}
-          label="Copy presentation link"
-          icon={LINK_ICON}
-          tip={shareTip(item, repo, "presentation")}
-        />
+          aria-disabled={!!why || undefined}
+          onClick={() => !why && name && openShareDialog(name)}
+        >
+          Share…
+        </button>
         <CopyLink
           className="slides-btn"
-          link={shareable ? shareLink(repo!.owner, name!) : null}
-          label="Copy scene link"
-          tip={shareTip(item, repo, "scene")}
+          link={!why && fileId && name ? sceneLink(fileId, name, { present: true }) : null}
+          label="Copy presentation link"
+          icon={LINK_ICON}
+          tip={why ?? (fileId ? "Copies a link that starts presenting (who can open it: Share…)" : "Saving to Drive first: try again in a moment")}
         />
       </div>
-      {shareable && !repo!.readOnly && (
-        <QuickTip tip={visibilityTip(item!.public, repo!)} label={false}>
-          <button type="button" className="slides-btn" onClick={() => togglePublic(name!, item!.public, repo!)}>
-            {item!.public ? "Make private" : "Make public"}
-          </button>
-        </QuickTip>
-      )}
     </section>
   );
 };
 
-/** in the current scene's actions: share links, public / private */
+/** in the current scene's actions: Share… and the link */
 export const SceneSharing = ({ item, disabled }: { item: SceneListItem; disabled?: boolean }) => {
-  const { repo } = useConnection();
-  const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
-  if (!repo || item.name === null || item.localOnly) {
+  useConnection();
+  if (item.name === null || notShareable(item, "scene")) {
     return null;
   }
   const name = item.name;
   return (
     <>
-      <CopyLink link={item.onGitHub ? shareLink(repo.owner, name) : null} label="Copy link" tip={shareTip(item, repo, "scene")} />
-      {presentation && (
-        <CopyLink
-          link={item.onGitHub ? shareLink(repo.owner, name, { present: true }) : null}
-          label="Copy presentation link"
-          tip={shareTip(item, repo, "presentation")}
-        />
-      )}
-      {!repo.readOnly && (
-        <QuickTip
-          label={false}
-          tip={visibilityTip(item.public, repo)}
-        >
-          <button
-            type="button"
-            className="scenes-link"
-            disabled={disabled}
-            onClick={() => togglePublic(name, item.public, repo)}
-          >
-            {item.public ? "Make private" : "Make public"}
-          </button>
-        </QuickTip>
-      )}
+      <button type="button" className="scenes-link" disabled={disabled} onClick={() => openShareDialog(name)}>
+        Share…
+      </button>
+      <CopyLink
+        link={item.fileId ? sceneLink(item.fileId, name) : null}
+        label="Copy link"
+        tip={item.fileId ? `Copies the link to this scene (${item.public ? "anyone with it can view it" : "only people you share it with can open it"})` : "Not in Google Drive yet: you can copy its link once it has synced"}
+      />
     </>
   );
 };
@@ -755,7 +765,7 @@ export const UpdateBanner = () => {
   ) : null;
 };
 
-/** a read-only space: the editor shows the scenes, nothing can be changed */
+/** a scene that may only be viewed: the editor shows it, nothing can be changed */
 export const ReadOnlyGuard = () => {
   const { sync, checking } = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
   const current = useSyncExternalStore(scenesController.subscribe, () => scenesController.getState().current);
@@ -773,44 +783,10 @@ export const ReadOnlyGuard = () => {
   ) : null;
 };
 
-/** the steps of setting up sync, as GitHub has them */
-const Checklist = ({ owner, at }: { owner: string; at: "create" | "access" | "done" }) => {
-  const { user } = useConnection();
-  const order = ["signin", "create", "access", "done"] as const;
-  const now = order.indexOf(at);
-  const steps: Array<[(typeof order)[number], React.ReactNode]> = [
-    ["signin", <>Signed in as {user?.login}</>],
-    [
-      "create",
-      <>
-        Create <code>{owner}/{SCENES_REPO}</code> (private)
-      </>,
-    ],
-    ["access", <>Give Kurviq access to it</>],
-    ["done", <>Sync is on</>],
-  ];
-  return (
-    <ol className="kq-steps">
-      {steps.map(([key, label], index) => (
-        <li
-          key={key}
-          className={clsx("kq-steps__item", {
-            "kq-steps__item--done": index < now || at === "done",
-            "kq-steps__item--now": index === now && at !== "done",
-          })}
-        >
-          <span className="kq-steps__mark">{index < now || at === "done" ? "✓" : index + 1}</span>
-          <span>{label}</span>
-        </li>
-      ))}
-    </ol>
-  );
-};
-
-/** setting up sync (rendered next to the editor, see index.tsx) */
-export const RepoSetupDialog = () => {
+/** after signing in (rendered next to the editor, see index.tsx), and the share dialog */
+export const DriveDialogs = () => {
   const current = useSetup();
-  const { user } = useConnection();
+  const shareName = useSharing();
   const close = () => setSetup(null);
 
   useEffect(() => {
@@ -818,184 +794,63 @@ export const RepoSetupDialog = () => {
       return;
     }
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && close();
-    // back from GitHub's tab (repository created): look again
-    const onFocus = () => current.step === "create" && wasCreated(current.owner) && setUpSync(current.owner);
     window.addEventListener("keydown", onKey);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("focus", onFocus);
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, [current]);
 
-  if (!current || !user) {
+  if (shareName) {
+    return <ShareDialog key={shareName} name={shareName} />;
+  }
+  if (!current) {
     return null;
   }
-  const { owner } = current;
-  const personal = owner.toLowerCase() === user.login.toLowerCase();
-  const target = `${owner}/${SCENES_REPO}`;
-  const retry = () => setUpSync(owner);
-  const later = (
-    <button type="button" className="scenes-link kq-left" onClick={close}>
-      Later (Scenes sidebar, top left)
-    </button>
-  );
-  const body = (() => {
-    switch (current.step) {
-      case "working":
-        return (
-          <>
-            <h2 id="kq-setup-title">Setting up sync…</h2>
-            <p className="kq-muted">
-              Checking <code>{target}</code> on GitHub.
-            </p>
-          </>
-        );
-      case "create":
-        return (
-          <>
-            <h2 id="kq-setup-title">Set up sync</h2>
-            <Checklist owner={owner} at="create" />
-            <p className="kq-muted">
-              GitHub opens its form with everything filled in. Click <strong>Create repository</strong> there, then come
-              back to this tab.{personal ? "" : ` You need the right to create repositories in ${owner}.`}
-            </p>
-            <div className="scenes-row">
-              <a
-                className="scenes-btn scenes-btn--primary"
-                href={newRepoUrl(owner)}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => markCreated(owner)}
-              >
-                Create it on GitHub
-              </a>
-              <button
-                type="button"
-                className="scenes-btn"
-                onClick={() => {
-                  markCreated(owner);
-                  setSetup({ step: "access", owner });
-                }}
-              >
-                I already have it
-              </button>
-            </div>
-            {later}
-          </>
-        );
-      case "access":
-        return (
-          <>
-            <h2 id="kq-setup-title">Set up sync</h2>
-            <Checklist owner={owner} at="access" />
-            <p className="kq-muted">
-              On GitHub, pick <strong>{owner}</strong> and allow Kurviq <code>{SCENES_REPO}</code>: under{" "}
-              <em>Only select repositories</em> choose it (or keep <em>All repositories</em>). You're back here right
-              after.{personal ? "" : ` In organizations, an owner may have to approve this.`}
-            </p>
-            <div className="scenes-row">
-              <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => connectGitHub("install")}>
-                Continue on GitHub
-              </button>
-              <button type="button" className="scenes-btn" onClick={retry}>
-                Check again
-              </button>
-            </div>
-            {later}
-          </>
-        );
-      case "move":
-        return (
-          <>
-            <h2 id="kq-setup-title">Move to {SCENES_REPO}?</h2>
-            <p>
-              Kurviq now keeps your scenes in your own private repository <code>{target}</code>. This browser still
-              syncs with{" "}
-              <a href={repoUrl(current.from)} target="_blank" rel="noopener noreferrer">
-                {current.from.owner}/{current.from.name}
-              </a>
-              .
-            </p>
-            <p className="kq-muted">
-              Moving copies its scenes into <code>{SCENES_REPO}</code> (the old repository stays as it is), and syncs
-              there from then on.
-            </p>
-            <div className="scenes-row">
-              <button
-                type="button"
-                className="scenes-btn scenes-btn--primary"
-                onClick={() => {
-                  session.set(MOVE_KEY, JSON.stringify(current.from));
-                  setUpSync(owner);
-                }}
-              >
-                Move to {SCENES_REPO}
-              </button>
-              <button
-                type="button"
-                className="scenes-btn"
-                onClick={() => {
-                  try {
-                    localStorage.setItem(KEEP_KEY, `${current.from.owner}/${current.from.name}`);
-                  } catch {}
-                  close();
-                }}
-              >
-                Keep {current.from.name}
-              </button>
-            </div>
-          </>
-        );
-      case "done":
-        return (
-          <>
-            <h2 id="kq-setup-title">{current.repo.readOnly ? "Connected, read only" : "Synced with GitHub ✓"}</h2>
-            <Checklist owner={owner} at="done" />
-            <p>
-              Your scenes now sync with{" "}
-              <a href={repoUrl(current.repo)} target="_blank" rel="noopener noreferrer">
-                {current.repo.owner}/{current.repo.name}
-              </a>
-              .
-            </p>
-            <p className="kq-muted">
-              {current.repo.readOnly
-                ? `Read only: ${current.repo.readOnly}. You can view its scenes and make copies of them.`
-                : [
-                    current.copied ? `${current.copied} scene${current.copied === 1 ? "" : "s"} copied from the old repository.` : "",
-                    current.published
-                      ? `${current.published} scene${current.published === 1 ? "" : "s"} from this browser ${
-                          current.published === 1 ? "goes" : "go"
-                        } there now.`
-                      : "",
-                    "Every change is saved there a few seconds after you stop drawing.",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-            </p>
-            <div className="scenes-row">
-              <button type="button" className="scenes-btn scenes-btn--primary" onClick={close}>
-                Start drawing
-              </button>
-            </div>
-          </>
-        );
-      case "error":
-        return (
-          <>
-            <h2 id="kq-setup-title">Sync could not be set up</h2>
-            <p className="scenes-error">{current.message}</p>
-            <div className="scenes-row">
-              <button type="button" className="scenes-btn scenes-btn--primary" onClick={retry}>
-                Try again
-              </button>
-            </div>
-            {later}
-          </>
-        );
-    }
-  })();
+  const body =
+    current.step === "nodrive" ? (
+      <>
+        <h2 id="kq-setup-title">Allow Google Drive</h2>
+        <p>
+          You're signed in, but Kurviq may not keep your scenes in your Google Drive yet: the Drive box wasn't ticked.
+        </p>
+        <p className="kq-muted">
+          Kurviq only sees the files it creates there (a folder <strong>{FOLDER_NAME}</strong>), nothing else in your
+          Drive.
+        </p>
+        <div className="scenes-row">
+          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => connectGoogle({ consent: true })}>
+            Allow Google Drive
+          </button>
+          <button type="button" className="scenes-btn" onClick={close}>
+            Later
+          </button>
+        </div>
+      </>
+    ) : (
+      <>
+        <h2 id="kq-setup-title">Synced with Google Drive ✓</h2>
+        <p>
+          Your scenes are kept in the folder{" "}
+          <a href={folderUrl()} target="_blank" rel="noopener noreferrer">
+            {FOLDER_NAME}
+          </a>{" "}
+          of your Google Drive now.
+        </p>
+        <p className="kq-muted">
+          {[
+            current.published
+              ? `${current.published} scene${current.published === 1 ? "" : "s"} from this browser ${current.published === 1 ? "goes" : "go"} there now.`
+              : "",
+            "Every change is saved there a few seconds after you stop drawing. Share a scene with Share… in the scene list.",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        </p>
+        <div className="scenes-row">
+          <button type="button" className="scenes-btn scenes-btn--primary" onClick={close}>
+            Start drawing
+          </button>
+        </div>
+      </>
+    );
   return (
     <div className="kq-overlay">
       <div className="kq-dialog kq-dialog--narrow" role="dialog" aria-modal="true" aria-labelledby="kq-setup-title">

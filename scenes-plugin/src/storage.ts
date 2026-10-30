@@ -3,19 +3,24 @@
 // The *active* scene keeps living in Excalidraw's regular localStorage keys
 // (the app saves it as usual). We add:
 //  - a metadata record in localStorage: which scene is active, and per scene
-//    the GitHub version it is based on, dirty flag, sync settings, conflicts
+//    the Drive version it is based on, dirty flag, sync settings, conflicts
 //  - snapshots of inactive scenes in IndexedDB (incl. image files, which
 //    would quickly blow the localStorage quota)
 
 import { createStore, del, delMany, entries, get, set } from "idb-keyval";
 
-// Kurviq: each space (a GitHub account or organization with its scenes
-// repository) keeps its own scenes in the browser. "" is the personal space,
-// which uses the keys from before spaces existed.
+// Kurviq: each space keeps its own scenes in the browser. "" is the user's
+// own scenes (their Kurviq folder in Google Drive); "f:<fileId>" is a scene
+// someone shared (one Drive file). Older spaces (Drive accounts) are left.
 export const SPACE_KEY = "kurviq-space";
 export const currentSpace = (() => {
   try {
-    return localStorage.getItem(SPACE_KEY) || "";
+    const space = localStorage.getItem(SPACE_KEY) || "";
+    if (space && !/^f:[\w-]{10,200}$/.test(space)) {
+      localStorage.removeItem(SPACE_KEY);
+      return "";
+    }
+    return space;
   } catch {
     return "";
   }
@@ -30,17 +35,17 @@ const snapshotStore = createStore(`excalidraw-scenes-db${spaceSuffix(currentSpac
 export const UNTITLED = "\u0000untitled";
 
 export type SceneMeta = {
-  /** git blob sha on GitHub the local copy is based on; null = never pushed */
+  /** version in Drive (MD5 of the content) the local copy is based on; null = never saved there */
   baseSha: string | null;
-  /** last seen sha on GitHub (null = not on GitHub) — for status while offline */
+  /** last seen version in Drive (null = not in Drive) — for status while offline */
   remoteSha?: string | null;
   /** local changes not pushed yet (for the active scene this is live state) */
   dirty: boolean;
   /** per-scene override of the global auto-sync switch */
   autoSync?: boolean;
   /**
-   * kept only in this browser: never pushed or pulled (a copy that is on
-   * GitHub already stays there unchanged); syncing can be turned on later
+   * kept only in this browser: never pushed or pulled (a copy that is in
+   * Drive already stays there unchanged); syncing can be turned on later
    */
   localOnly?: boolean;
   /** both sides changed the same elements — waits for the user */
@@ -52,7 +57,7 @@ export type SceneMeta = {
   };
   /** pre-sync-engine metadata, resolved on the first remote listing */
   legacy?: boolean;
-  /** renamed locally, the rename on GitHub is still pending (old name) */
+  /** renamed locally, the rename in Drive is still pending (old name) */
   renamedFrom?: string;
   /** legacy field */
   inRepo?: boolean;
@@ -71,8 +76,8 @@ export type ScenesMeta = {
   clashes?: "newest" | "ask";
   scenes: Record<string, SceneMeta>;
   /**
-   * deleted locally, the delete on GitHub is still pending (offline):
-   * name -> the GitHub version that was deleted (only that one gets deleted)
+   * deleted locally, the delete in Drive is still pending (offline):
+   * name -> the Drive version that was deleted (only that one gets deleted)
    */
   pendingDeletes: Record<string, string>;
 };

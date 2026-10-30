@@ -1,12 +1,12 @@
-// Scenes: switching, saving and syncing with GitHub. Talks to the editor only
+// Scenes: switching, saving and syncing with Drive. Talks to the editor only
 // through the public ExcalidrawImperativeAPI.
 //
 // Offline-first: the browser (localStorage + IndexedDB) is the source of
-// truth. GitHub is a sync target — when it (or the scenes server) is not
+// truth. Drive is a sync target — when it (or the scenes server) is not
 // reachable, everything keeps working locally and syncs later.
 //
-// Per scene we track the GitHub version (git blob sha) the local copy is based
-// on. Compared with the latest sha on GitHub and the local dirty flag this
+// Per scene we track the Drive version (MD5 of its content) the local copy is based
+// on. Compared with the latest sha in Drive and the local dirty flag this
 // gives a visible status: synced / ahead / behind / diverged / conflict / local.
 // Auto-sync (default on, per-scene override) pushes after 10s idle, pulls clean
 // scenes, merges element-wise on divergence and stops on real clashes.
@@ -48,11 +48,11 @@ import type {
 } from "@excalidraw/excalidraw/types";
 
 export type SyncStatus =
-  /** same as on GitHub */
+  /** same as in Drive */
   | "synced"
   /** local changes not pushed yet */
   | "ahead"
-  /** GitHub has a newer version, no local changes */
+  /** Drive has a newer version, no local changes */
   | "behind"
   /** both changed — will be merged */
   | "diverged"
@@ -70,15 +70,17 @@ export type SceneListItem = {
   name: string | null;
   status: SyncStatus;
   dirty: boolean;
-  onGitHub: boolean;
+  inDrive: boolean;
   autoSync: boolean;
-  /** kept only in this browser, never synced to GitHub */
+  /** kept only in this browser, never synced to Drive */
   localOnly: boolean;
   updatedAt?: string | null;
-  /** renamed here, not yet on GitHub: the name it still has there */
+  /** renamed here, not yet in Drive: the name it still has there */
   pendingRename?: string;
-  /** online: in the space's public repository (everyone can read it) */
+  /** shared "anyone with the link" in Drive */
   public?: boolean;
+  /** its Google Drive file */
+  fileId?: string;
 };
 
 export type Activity = {
@@ -90,14 +92,14 @@ export type Activity = {
 export type SyncInfo = {
   /** scenes server reachable (null = not tried yet) */
   serverReachable: boolean | null;
-  /** GitHub reachable at the server's last attempt */
-  githubOnline: boolean | null;
+  /** Drive reachable at the server's last attempt */
+  driveOnline: boolean | null;
   lastCheckedAt: string | null;
   lastError: string | null;
   running: boolean;
-  /** online (Kurviq): GitHub not connected or no repo chosen — everything stays in this browser */
+  /** not signed in with Google (or no Drive access) — everything stays in this browser */
   notConnected: boolean;
-  /** online: GitHub lets this user read the space, not change it (why) — nothing is pushed */
+  /** a shared scene Drive lets this user read, not change (why) — nothing is pushed */
   readOnly: string | null;
 };
 
@@ -113,15 +115,15 @@ export type ScenesState = {
   activity: Activity[];
   /** clashing element ids of the active scene, if it is in conflict */
   conflict: { clashes: string[] } | null;
-  /** the open scene is a local copy being checked against GitHub (read-only) */
+  /** the open scene is a local copy being checked against Drive (read-only) */
   checking: boolean;
 };
 
 /** push the active scene after this long without changes */
 export const IDLE_PUSH_MS = 10_000;
-/** check GitHub for changes this often */
+/** check Drive for changes this often */
 export const POLL_MS = 60_000;
-/** a just-opened local copy is read-only at most this long while GitHub is asked */
+/** a just-opened local copy is read-only at most this long while Drive is asked */
 const CHECK_LOCK_MS = 3_000;
 
 const sceneHash = (
@@ -198,7 +200,7 @@ class ScenesController {
     autoSync: this.meta.autoSync,
     sync: {
       serverReachable: null,
-      githubOnline: null,
+      driveOnline: null,
       lastCheckedAt: null,
       lastError: null,
       running: false,
@@ -470,18 +472,18 @@ class ScenesController {
     return this.meta.scenes[name]?.autoSync ?? this.meta.autoSync;
   }
 
-  /** latest known sha on GitHub: string, null (not there) or undefined (unknown) */
+  /** latest known sha in Drive: string, null (not there) or undefined (unknown) */
   private remoteShaOf(name: string): string | null | undefined {
-    // renamed here but not on GitHub yet: it still has the old name there
-    const githubName = this.meta.scenes[name]?.renamedFrom ?? name;
+    // renamed here but not in Drive yet: it still has the old name there
+    const driveName = this.meta.scenes[name]?.renamedFrom ?? name;
     if (this.state.remote) {
-      return this.state.remote.find((scene) => scene.name === githubName)?.sha ?? null;
+      return this.state.remote.find((scene) => scene.name === driveName)?.sha ?? null;
     }
     return this.meta.scenes[name]?.remoteSha;
   }
 
   /**
-   * GitHub names that are deleted / renamed here, but not on GitHub yet —
+   * Drive names that are deleted / renamed here, but not in Drive yet —
    * hidden from the list (unless a local scene took the name again)
    */
   private hiddenRemoteNames() {
@@ -516,14 +518,14 @@ class ScenesController {
     const base = meta?.baseSha ?? null;
     const remote = this.remoteShaOf(name);
     if (remote === undefined) {
-      // GitHub state unknown (offline since start)
+      // Drive state unknown (offline since start)
       return base ? (dirty ? "ahead" : "synced") : "local";
     }
     if (!remote) {
       return base && dirty ? "ahead" : "local";
     }
     if (!base) {
-      // on GitHub, never synced locally
+      // in Drive, never synced locally
       return dirty ? "diverged" : "behind";
     }
     if (remote === base) {
@@ -552,18 +554,19 @@ class ScenesController {
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const meta = this.meta.scenes[name];
-        const githubName = meta?.renamedFrom ?? name;
-        const remote = this.state.remote?.find((scene) => scene.name === githubName);
+        const driveName = meta?.renamedFrom ?? name;
+        const remote = this.state.remote?.find((scene) => scene.name === driveName);
         return {
           name,
           status: this.statusOf(name),
           dirty: this.isDirty(name),
-          onGitHub: remote ? true : !!meta?.remoteSha,
+          inDrive: remote ? true : !!meta?.remoteSha,
           autoSync: this.autoSyncFor(name),
           localOnly: !!meta?.localOnly,
           updatedAt: remote?.updatedAt,
           ...(meta?.renamedFrom ? { pendingRename: meta.renamedFrom } : {}),
           ...(remote?.public ? { public: true } : {}),
+          ...(remote?.fileId ? { fileId: remote.fileId } : {}),
         };
       });
     if (this.state.current === null || this.meta.scenes[UNTITLED]) {
@@ -571,7 +574,7 @@ class ScenesController {
         name: null,
         status: "untitled",
         dirty: this.state.current === null ? this.state.dirty : true,
-        onGitHub: false,
+        inDrive: false,
         autoSync: false,
         localOnly: false,
       });
@@ -587,7 +590,7 @@ class ScenesController {
     ).length;
   }
 
-  /** scenes deleted here whose deletion on GitHub is still pending */
+  /** scenes deleted here whose deletion in Drive is still pending */
   pendingDeletes() {
     return Object.keys(this.meta.pendingDeletes);
   }
@@ -607,7 +610,7 @@ class ScenesController {
     this.refresh();
   };
 
-  /** same element changed here and on GitHub: newest edit wins, or ask */
+  /** same element changed here and in Drive: newest edit wins, or ask */
   clashMode() {
     return this.meta.clashes ?? "newest";
   }
@@ -632,12 +635,16 @@ class ScenesController {
   };
 
   /**
-   * Online: another repo (or account) was connected. What this browser knew
-   * about GitHub belonged to the old repo: every scene with content counts as
-   * changed here, so it is pushed to (or merged with) the new repo — nothing
-   * local is lost or overwritten.
+   * What this browser knew about the remote side is void: another Google
+   * account signed in (its Drive is another one), or the first sign-in after
+   * GitHub (versions there were git's). Scenes keep their content; with
+   * `keepDirty`, a scene without local changes takes Drive's version (the
+   * GitHub copies were moved to Drive as they were) and only scenes changed
+   * here are merged. Otherwise every scene with content counts as changed
+   * here, so it is saved to (or merged with) the new Drive — nothing local is
+   * lost or overwritten.
    */
-  resetGitHubState = async () => {
+  resetRemoteState = async ({ keepDirty = false }: { keepDirty?: boolean } = {}) => {
     await this.ready;
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
       if (name === UNTITLED) {
@@ -647,18 +654,23 @@ class ScenesController {
       delete meta.remoteSha;
       delete meta.conflict;
       delete meta.renamedFrom;
-      if (name !== this.meta.current) {
+      if (name !== this.meta.current && !keepDirty) {
         const json = await this.localJson(name);
         meta.dirty = !!json && !isEmptyJson(json);
       }
     }
     this.meta.pendingDeletes = {};
-    this.meta.baseline = null;
+    if (!keepDirty) {
+      this.meta.baseline = null;
+    }
     this.persistMeta();
     this.setState({ remote: null, conflict: null });
     this.recomputeDirty();
     this.refresh();
-    this.log("info", "Connected another GitHub repo — your scenes sync with it now");
+    this.log(
+      "info",
+      keepDirty ? "Your scenes sync with Google Drive now" : "Signed in with another Google account — your scenes sync with its Drive now",
+    );
     this.syncNow({ refresh: true });
   };
 
@@ -679,7 +691,7 @@ class ScenesController {
 
   /**
    * Keep a scene only in this browser (never pushed or pulled), or sync it
-   * again. A copy already on GitHub stays there unchanged meanwhile; when
+   * again. A copy already in Drive stays there unchanged meanwhile; when
    * syncing is turned on again, both versions are merged as usual.
    */
   setLocalOnly = (name: string, on: boolean) =>
@@ -693,7 +705,7 @@ class ScenesController {
         throw new Error(`"${name}" has a conflict — resolve it first`);
       }
       if (on && meta.renamedFrom) {
-        throw new Error(`The rename of "${name}" is not on GitHub yet — try again once it is`);
+        throw new Error(`The rename of "${name}" is not in Drive yet — try again once it is`);
       }
       if (on) {
         meta.localOnly = true;
@@ -705,8 +717,8 @@ class ScenesController {
       this.log(
         "info",
         on
-          ? `"${name}" is local only now — not synced to GitHub${this.remoteShaOf(name) ? " (the copy there stays as it is)" : ""}`
-          : `"${name}" is synced with GitHub again`,
+          ? `"${name}" is local only now — not synced to Drive${this.remoteShaOf(name) ? " (the copy there stays as it is)" : ""}`
+          : `"${name}" is synced with Drive again`,
       );
     }).then(() => {
       if (!on && this.autoSyncFor(name)) {
@@ -869,7 +881,7 @@ class ScenesController {
 
   private openChain: Promise<unknown> = Promise.resolve();
 
-  /** editing is locked while a just-opened local copy is checked against GitHub */
+  /** editing is locked while a just-opened local copy is checked against Drive */
   private openLock: { token: number; viewMode: boolean } | null = null;
   private openToken = 0;
 
@@ -885,8 +897,8 @@ class ScenesController {
   }
 
   /**
-   * The local copy is on screen (read-only); ask GitHub for a newer version.
-   * Editing unlocks when GitHub answers, or after CHECK_LOCK_MS at the latest
+   * The local copy is on screen (read-only); ask Drive for a newer version.
+   * Editing unlocks when Drive answers, or after CHECK_LOCK_MS at the latest
    * (then the sync merges whatever comes later).
    */
   private checkOpenedScene(name: string) {
@@ -920,7 +932,7 @@ class ScenesController {
         delete meta.legacy;
         this.persistMeta();
         await this.setBaselineFromCanvas();
-        this.log("pull", `Updated "${name}" from GitHub`);
+        this.log("pull", `Updated "${name}" from Drive`);
         this.refresh();
       })
       .catch(() => {}) // offline: the local copy it is
@@ -944,28 +956,28 @@ class ScenesController {
       let json: string | null = null;
       let baseline: number | null = null;
       let loadedSha: string | null = null;
-      let checkGitHub = false;
+      let checkDrive = false;
       const meta = name === null ? undefined : this.meta.scenes[name];
 
       if (name === null || (snapshot && (snapshot.dirty || meta?.conflict))) {
-        // local changes win — sync takes care of GitHub
+        // local changes win — sync takes care of Drive
         json = snapshot?.json ?? null;
         baseline = snapshot?.baseline ?? null;
-      } else if (this.state.sync.githubOnline === false || this.state.sync.serverReachable === false) {
+      } else if (this.state.sync.driveOnline === false || this.state.sync.serverReachable === false) {
         if (!snapshot) {
           throw Object.assign(
-            new Error(`"${name}" was never downloaded to this browser and GitHub is not reachable`),
+            new Error(`"${name}" was never downloaded to this browser and Drive is not reachable`),
             { status: 503 },
           );
         }
         json = snapshot.json;
       } else if (snapshot) {
-        // show the local copy (no local changes) right away, check GitHub in
+        // show the local copy (no local changes) right away, check Drive in
         // the background; it is its own base
         json = snapshot.json;
-        checkGitHub = true;
+        checkDrive = true;
       } else {
-        // never opened here: GitHub's version is all there is
+        // never opened here: Drive's version is all there is
         const latest = await scenesApi.load(name);
         json = latest.json;
         loadedSha = latest.sha;
@@ -1009,29 +1021,29 @@ class ScenesController {
           offsets: { top: vertical + shift, bottom: Math.max(48, vertical - shift), left: horizontal, right: horizontal },
         });
       }
-      if (checkGitHub && name !== null) {
+      if (checkDrive && name !== null) {
         this.checkOpenedScene(name);
       }
   }
 
   /**
-   * Online: make a scene public (it moves to the space's public repository)
-   * or private again. Unpushed changes go to GitHub first.
+   * The scene's Drive file, for sharing: unsaved changes go to Drive first
+   * (a scene that is only in this browser can't be shared).
    */
-  setPublic = (name: string, on: boolean) =>
+  fileForSharing = (name: string) =>
     this.withBusy("saving", async () => {
-      if (!scenesApi.setPublic) {
-        throw new Error("Public scenes need Kurviq online");
-      }
       if (this.isLocalOnly(name)) {
-        throw new Error(`"${name}" is kept in this browser only: sync it with GitHub first`);
+        throw new Error(`"${name}" is kept in this browser only: sync it with Google Drive first`);
       }
       if (this.isDirty(name) || this.statusOf(name) !== "synced") {
         await this.pushScene(name, { manual: true });
       }
-      await scenesApi.setPublic(name, on);
       await this.refreshListing();
-      this.log("push", on ? `"${name}" is public now` : `"${name}" is private again`);
+      const fileId = this.state.remote?.find((scene) => scene.name === name)?.fileId;
+      if (!fileId) {
+        throw new Error(`"${name}" is not in Google Drive yet`);
+      }
+      return fileId;
     });
 
   /**
@@ -1073,7 +1085,7 @@ class ScenesController {
     if (name === this.meta.current) {
       return;
     }
-    // online without GitHub: there is nowhere else to look, a new scene right away
+    // online without Drive: there is nowhere else to look, a new scene right away
     if (!this.exists(name) && this.state.sync.notConnected) {
       await this.create(name);
       return;
@@ -1098,7 +1110,7 @@ class ScenesController {
 
   /**
    * metadata for a new local scene. If a scene of that name was deleted here
-   * and the deletion is not on GitHub yet, the new scene simply replaces it
+   * and the deletion is not in Drive yet, the new scene simply replaces it
    * there (based on the deleted version) instead of deleting + re-adding.
    */
   private claimName(name: string, dirty: boolean): SceneMeta {
@@ -1160,7 +1172,7 @@ class ScenesController {
       const result = await this.pushScene(targetName, { manual: true });
       if (this.meta.scenes[targetName]?.conflict) {
         throw new Error(
-          `"${targetName}" has conflicting changes on GitHub — resolve them in the Scenes sidebar`,
+          `"${targetName}" has conflicting changes in Drive — resolve them in the Scenes sidebar`,
         );
       }
       return { name: targetName, ...(result || {}) };
@@ -1173,7 +1185,7 @@ class ScenesController {
   private syncing = false;
   private syncAgain = false;
 
-  /** check GitHub and (with auto-sync) push / pull / merge what's needed */
+  /** check Drive and (with auto-sync) push / pull / merge what's needed */
   syncNow = async ({ refresh = false }: { refresh?: boolean } = {}) => {
     await this.ready;
     if (this.syncing) {
@@ -1189,7 +1201,7 @@ class ScenesController {
       } catch (error: any) {
         if (error.notConnected) {
           this.setState({
-            sync: { ...this.state.sync, serverReachable: true, githubOnline: false, notConnected: true, lastError: null },
+            sync: { ...this.state.sync, serverReachable: true, driveOnline: false, notConnected: true, lastError: null },
           });
           return;
         }
@@ -1201,7 +1213,7 @@ class ScenesController {
         });
         return;
       }
-      const wasOnline = this.state.sync.githubOnline;
+      const wasOnline = this.state.sync.driveOnline;
       this.applyListing(listing.scenes);
       this.setState({
         sync: {
@@ -1209,23 +1221,23 @@ class ScenesController {
           serverReachable: true,
           notConnected: false,
           readOnly: listing.remote.readOnly ?? null,
-          githubOnline: listing.remote.online,
+          driveOnline: listing.remote.online,
           lastCheckedAt: listing.remote.lastFetchAt,
           lastError: listing.remote.lastError,
         },
       });
       if (listing.remote.online === false) {
         if (wasOnline !== false) {
-          this.log("error", `GitHub not reachable — working locally (${listing.remote.lastError})`);
+          this.log("error", `Drive not reachable — working locally (${listing.remote.lastError})`);
         }
         return;
       }
       if (wasOnline === false) {
-        this.log("info", "GitHub reachable again");
+        this.log("info", "Drive reachable again");
       }
 
       if (this.state.sync.readOnly) {
-        // GitHub lets this user read the space, not change it: only pull
+        // Drive lets this user read the space, not change it: only pull
         for (const item of this.state.list) {
           if (item.name !== null && this.statusOf(item.name) === "behind" && !this.isDirty(item.name)) {
             await this.exclusive(() => this.pullScene(item.name!));
@@ -1238,7 +1250,7 @@ class ScenesController {
       // are explicit user actions, independent of auto-sync
       await this.exclusive(() => this.pushPendingOps());
       await this.exclusive(() => this.adoptEmptyLocalOnly());
-      await this.exclusive(async () => this.dropScenesDeletedOnGitHub());
+      await this.exclusive(async () => this.dropScenesDeletedInDrive());
 
       for (const item of this.state.list) {
         const name = item.name;
@@ -1260,7 +1272,7 @@ class ScenesController {
         } else if (status === "diverged") {
           await this.exclusive(() => this.mergeScene(name));
         } else if (status === "conflict" && this.conflictOutdated(name)) {
-          // GitHub moved on, or found by an older merge: maybe it merges now
+          // Drive moved on, or found by an older merge: maybe it merges now
           await this.exclusive(() => this.mergeScene(name));
         }
       }
@@ -1279,7 +1291,7 @@ class ScenesController {
 
   /**
    * An empty local-only scene (e.g. opened by URL) whose name now exists on
-   * GitHub (an agent drew it): it takes the GitHub version and syncs.
+   * Drive (an agent drew it): it takes the Drive version and syncs.
    */
   private async adoptEmptyLocalOnly() {
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
@@ -1294,7 +1306,7 @@ class ScenesController {
       meta.baseSha = null;
       meta.dirty = false;
       this.persistMeta();
-      this.log("info", `"${name}" now exists on GitHub — loading it`);
+      this.log("info", `"${name}" now exists in Drive — loading it`);
     }
     this.refresh();
   }
@@ -1337,7 +1349,7 @@ class ScenesController {
     this.setState({ remote: scenes });
   }
 
-  /** push local content; on "GitHub changed meanwhile" merge instead */
+  /** push local content; on "Drive changed meanwhile" merge instead */
   private async pushScene(name: string, { manual = false } = {}) {
     if (this.isLocalOnly(name)) {
       return null; // never leaves this browser
@@ -1349,11 +1361,11 @@ class ScenesController {
       return null;
     }
     if (this.meta.scenes[name]?.renamedFrom) {
-      // the rename has to reach GitHub before the content can
+      // the rename has to reach Drive before the content can
       await this.pushPendingRename(name);
       if (this.meta.scenes[name]?.renamedFrom) {
         if (manual) {
-          throw new Error(`Saved locally — the rename of "${name}" is not on GitHub yet, will retry`);
+          throw new Error(`Saved locally — the rename of "${name}" is not in Drive yet, will retry`);
         }
         return null;
       }
@@ -1390,19 +1402,19 @@ class ScenesController {
       if (apiError.status === 409) {
         meta.remoteSha = apiError.remoteSha ?? null;
         this.updateRemoteSha(name, apiError.remoteSha ?? null);
-        this.log("info", `"${name}" changed on GitHub meanwhile — merging`);
+        this.log("info", `"${name}" changed in Drive meanwhile — merging`);
         await this.mergeScene(name, { pushAfter: true });
         return null;
       }
       if (apiError.notConnected) {
-        this.setState({ sync: { ...this.state.sync, githubOnline: false, notConnected: true } });
+        this.setState({ sync: { ...this.state.sync, driveOnline: false, notConnected: true } });
         if (manual) {
-          throw new Error("Saved in this browser — connect GitHub to sync it");
+          throw new Error("Saved in this browser — sign in with Google to sync it");
         }
         return null;
       }
       if (apiError.readOnly) {
-        // GitHub refused for good (permissions, archived, protected branch): stop pushing
+        // Drive refused for good (the sharing changed): stop pushing
         this.setState({ sync: { ...this.state.sync, readOnly: apiError.message.replace(/^Read only: /, "") } });
         this.log("error", apiError.message);
         if (manual) {
@@ -1412,10 +1424,10 @@ class ScenesController {
       }
       if (apiError.offline) {
         this.setState({
-          sync: { ...this.state.sync, githubOnline: apiError.status === 0 ? this.state.sync.githubOnline : false, serverReachable: apiError.status === 0 ? false : true },
+          sync: { ...this.state.sync, driveOnline: apiError.status === 0 ? this.state.sync.driveOnline : false, serverReachable: apiError.status === 0 ? false : true },
         });
         if (manual) {
-          throw new Error(`Saved locally — GitHub not reachable, will sync when back online`);
+          throw new Error(`Saved locally — Drive not reachable, will sync when back online`);
         }
         return null;
       }
@@ -1453,7 +1465,7 @@ class ScenesController {
     return result;
   }
 
-  /** GitHub has a newer version and there are no local changes */
+  /** Drive has a newer version and there are no local changes */
   private async pullScene(name: string) {
     if (this.statusOf(name) !== "behind") {
       return; // changed meanwhile
@@ -1477,14 +1489,14 @@ class ScenesController {
     meta.remoteSha = latest.sha;
     delete meta.legacy;
     this.persistMeta();
-    this.log("pull", wasKnown ? `Updated "${name}" from GitHub` : `Downloaded "${name}" from GitHub`);
+    this.log("pull", wasKnown ? `Updated "${name}" from Drive` : `Downloaded "${name}" from Drive`);
     this.refresh();
   }
 
   /**
    * Auto-sync never pushes an empty scene over one that has content on
-   * GitHub: an editor that lost its canvas (a crash, a broken load) looks
-   * exactly like that. If nothing was deleted here in this session, GitHub's
+   * Drive: an editor that lost its canvas (a crash, a broken load) looks
+   * exactly like that. If nothing was deleted here in this session, Drive's
    * version comes back; otherwise the empty version stays local until the
    * user saves it on purpose.
    */
@@ -1504,7 +1516,7 @@ class ScenesController {
     const deletedHere =
       name === this.meta.current && this.api ? this.api.getSceneElementsIncludingDeleted().some((el) => el.isDeleted) : false;
     if (deletedHere) {
-      this.log("error", `Not pushed: "${name}" is empty here but not on GitHub. Save it in the sidebar if you really want to empty it.`);
+      this.log("error", `Not pushed: "${name}" is empty here but not in Drive. Save it in the sidebar if you really want to empty it.`);
       return true;
     }
     const meta = this.sceneMeta(name);
@@ -1513,7 +1525,7 @@ class ScenesController {
     meta.remoteSha = latest.sha;
     delete meta.conflict;
     this.persistMeta();
-    this.log("pull", `"${name}" was empty here (not by an edit): loaded it from GitHub instead of pushing the empty version`);
+    this.log("pull", `"${name}" was empty here (not by an edit): loaded it from Drive instead of pushing the empty version`);
     this.refresh();
     return true;
   }
@@ -1532,7 +1544,7 @@ class ScenesController {
       theirs = await scenesApi.load(name);
     } catch (error) {
       if ((error as ApiError).status === 404 && mineJson) {
-        // deleted on GitHub meanwhile: ours becomes a new scene again
+        // deleted in Drive meanwhile: ours becomes a new scene again
         this.sceneMeta(name).baseSha = null;
         this.sceneMeta(name).remoteSha = null;
         this.persistMeta();
@@ -1554,13 +1566,13 @@ class ScenesController {
     }
     const mine = JSON.parse(mineJson);
     const theirsData = JSON.parse(theirs.json);
-    // the merge is based on mineJson: if the scene changed while GitHub was
+    // the merge is based on mineJson: if the scene changed while Drive was
     // asked (edited, or switched to/away), drop this round — the next sync merges
     const unchanged = async () =>
       name === this.meta.current
         ? this.serializeCurrent().json === mineJson
         : (await getSnapshot(name))?.json === mineJson;
-    // a local copy without any elements never deletes GitHub's content by a
+    // a local copy without any elements never deletes Drive's content by a
     // merge (an editor that lost its canvas looks like "the user deleted everything")
     if (!getNonDeletedElements(mine.elements || []).length && getNonDeletedElements(theirsData.elements || []).length) {
       if (!(await unchanged())) {
@@ -1571,7 +1583,7 @@ class ScenesController {
       meta.remoteSha = theirs.sha;
       delete meta.conflict;
       this.persistMeta();
-      this.log("pull", `"${name}" was empty here: took GitHub's version`);
+      this.log("pull", `"${name}" was empty here: took Drive's version`);
       this.refresh();
       return null;
     }
@@ -1580,7 +1592,7 @@ class ScenesController {
     if (merged.clashes.length && this.clashMode() === "newest") {
       // like live collaboration: per element the newer edit wins
       const auto = newestWins(mine.elements || [], theirsData.elements || [], merged.clashes);
-      settled = merged.clashes.map((id) => `${id}: ${auto[id] === "mine" ? "yours" : "GitHub's"}`);
+      settled = merged.clashes.map((id) => `${id}: ${auto[id] === "mine" ? "yours" : "Drive's"}`);
       merged = mergeElements(base?.elements, mine.elements || [], theirsData.elements || [], { ...auto, ...choices });
     }
     meta.remoteSha = theirs.sha;
@@ -1591,7 +1603,7 @@ class ScenesController {
       this.persistMeta();
       this.log(
         "conflict",
-        `Conflict in "${name}": you and GitHub changed the same ${merged.clashes.length} element(s) — choose how to resolve`,
+        `Conflict in "${name}": you and Drive changed the same ${merged.clashes.length} element(s) — choose how to resolve`,
       );
       this.refresh();
       return null;
@@ -1611,7 +1623,7 @@ class ScenesController {
     meta.baseSha = theirs.sha;
     delete meta.conflict;
     if (name === this.meta.current) {
-      // base is now GitHub's version: dirty = merged differs from it
+      // base is now Drive's version: dirty = merged differs from it
       this.meta.baseline = hashJson(theirs.json);
       this.applyScene(mergedJson, name, { keepView: true });
       await nextFrame();
@@ -1623,7 +1635,7 @@ class ScenesController {
     }
     this.persistMeta();
     const parts = [
-      merged.fromTheirs ? `${merged.fromTheirs} change(s) from GitHub` : null,
+      merged.fromTheirs ? `${merged.fromTheirs} change(s) from Drive` : null,
       merged.fromMine ? `${merged.fromMine} of yours` : null,
       settled.length
         ? `changed on both sides, newer edit kept: ${settled.slice(0, 5).join(", ")}${settled.length > 5 ? ` (+${settled.length - 5})` : ""}`
@@ -1641,16 +1653,16 @@ class ScenesController {
     for (const [name, sha] of Object.entries(this.meta.pendingDeletes)) {
       try {
         await scenesApi.remove(name, sha);
-        this.log("push", `Deleted "${name}" on GitHub`);
+        this.log("push", `Deleted "${name}" in Drive`);
       } catch (error) {
         const apiError = error as ApiError;
         if (apiError.offline) {
           return;
         }
         if (apiError.status === 409) {
-          this.log("info", `"${name}" was changed on GitHub after you deleted it — kept on GitHub`);
+          this.log("info", `"${name}" was changed in Drive after you deleted it — kept in Drive`);
         } else if (apiError.status !== 404) {
-          this.log("error", `Could not delete "${name}" on GitHub: ${apiError.message}`);
+          this.log("error", `Could not delete "${name}" in Drive: ${apiError.message}`);
           continue;
         }
       }
@@ -1665,7 +1677,7 @@ class ScenesController {
     }
   }
 
-  /** returns false when GitHub is not reachable */
+  /** returns false when Drive is not reachable */
   private async pushPendingRename(name: string) {
     const meta = this.meta.scenes[name];
     const from = meta?.renamedFrom;
@@ -1677,14 +1689,14 @@ class ScenesController {
       meta.remoteSha = result.sha;
       this.updateRemoteSha(from, null);
       this.updateRemoteSha(name, result.sha);
-      this.log("push", `Renamed "${from}" to "${name}" on GitHub`);
+      this.log("push", `Renamed "${from}" to "${name}" in Drive`);
     } catch (error) {
       const apiError = error as ApiError;
       if (apiError.offline) {
         return false;
       }
       if (apiError.status === 404) {
-        // gone from GitHub meanwhile: ours is a new scene now
+        // gone from Drive meanwhile: ours is a new scene now
         meta.baseSha = null;
         meta.remoteSha = null;
         meta.dirty = true;
@@ -1692,8 +1704,8 @@ class ScenesController {
         this.log(
           "error",
           apiError.exists
-            ? `Can't rename "${from}" to "${name}" on GitHub: "${name}" exists there — rename this scene again`
-            : `Rename of "${from}" on GitHub failed: ${apiError.message}`,
+            ? `Can't rename "${from}" to "${name}" in Drive: "${name}" exists there — rename this scene again`
+            : `Rename of "${from}" in Drive failed: ${apiError.message}`,
         );
         return true;
       }
@@ -1705,15 +1717,15 @@ class ScenesController {
   }
 
   /**
-   * Scenes that were on GitHub and are gone now (deleted or renamed elsewhere,
+   * Scenes that were in Drive and are gone now (deleted or renamed elsewhere,
    * e.g. on another laptop). Unchanged local copies are removed too; with
    * local changes they are kept and pushed again (edits are never lost).
    */
-  private async dropScenesDeletedOnGitHub() {
+  private async dropScenesDeletedInDrive() {
     const remote = new Set((this.state.remote ?? []).map((scene) => scene.name));
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
       if (meta.localOnly && meta.baseSha && !remote.has(meta.renamedFrom ?? name)) {
-        // its old copy on GitHub is gone: the local scene is all there is
+        // its old copy in Drive is gone: the local scene is all there is
         meta.baseSha = null;
         meta.dirty = true;
         this.persistMeta();
@@ -1730,17 +1742,17 @@ class ScenesController {
         continue;
       }
       if (this.isDirty(name)) {
-        this.log("info", `"${name}" was deleted on GitHub — you changed it here, so it is kept`);
+        this.log("info", `"${name}" was deleted in Drive — you changed it here, so it is kept`);
         meta.baseSha = null;
       } else if (name === this.meta.current) {
-        this.log("info", `"${name}" was deleted on GitHub — still open here as a local scene`);
+        this.log("info", `"${name}" was deleted in Drive — still open here as a local scene`);
         meta.baseSha = null;
         this.meta.baseline = null;
       } else {
         await deleteSnapshot(name);
         await deleteAgentBaseline(name);
         delete this.meta.scenes[name];
-        this.log("pull", `"${name}" was deleted on GitHub — removed here too`);
+        this.log("pull", `"${name}" was deleted in Drive — removed here too`);
       }
       this.persistMeta();
     }
@@ -1763,11 +1775,11 @@ class ScenesController {
   }
 
   // ---------------------------------------------------------------------------
-  // rename / delete / duplicate — applied here right away, on GitHub right
+  // rename / delete / duplicate — applied here right away, in Drive right
   // away too when it is reachable, otherwise queued until it is
   // ---------------------------------------------------------------------------
 
-  /** latest GitHub listing before renaming / deleting / duplicating (best effort) */
+  /** latest Drive listing before renaming / deleting / duplicating (best effort) */
   private async refreshListing() {
     try {
       this.applyListing((await scenesApi.list()).scenes);
@@ -1806,31 +1818,31 @@ class ScenesController {
       if (meta?.conflict) {
         throw new Error(`"${from}" has a conflict — resolve it first`);
       }
-      // local-only scenes are renamed here only (a copy on GitHub keeps its name)
-      const githubName = meta?.localOnly ? null : meta?.renamedFrom ?? (this.remoteShaOf(from) ? from : null);
+      // local-only scenes are renamed here only (a copy in Drive keeps its name)
+      const driveName = meta?.localOnly ? null : meta?.renamedFrom ?? (this.remoteShaOf(from) ? from : null);
       const next: SceneMeta = { ...(meta ?? { baseSha: null, dirty: false }) };
       if (meta?.localOnly && meta.baseSha) {
-        next.baseSha = null; // no longer related to the GitHub copy
+        next.baseSha = null; // no longer related to the Drive copy
         next.dirty = true;
       }
       delete next.renamedFrom;
 
-      if (githubName) {
+      if (driveName) {
         try {
-          const result = await scenesApi.rename(githubName, to);
+          const result = await scenesApi.rename(driveName, to);
           next.remoteSha = result.sha;
-          this.updateRemoteSha(githubName, null);
+          this.updateRemoteSha(driveName, null);
           this.updateRemoteSha(to, result.sha);
         } catch (error) {
           const apiError = error as ApiError;
           if (apiError.status === 404) {
-            next.baseSha = null; // not on GitHub (anymore): just a local scene
+            next.baseSha = null; // not in Drive (anymore): just a local scene
           } else if (!apiError.offline) {
             throw apiError;
           } else if (!(await this.hasLocalContent(from))) {
-            throw new Error(`"${from}" was never downloaded to this browser and GitHub is not reachable — try again online`);
+            throw new Error(`"${from}" was never downloaded to this browser and Drive is not reachable — try again online`);
           } else {
-            next.renamedFrom = githubName; // GitHub follows when reachable
+            next.renamedFrom = driveName; // Drive follows when reachable
           }
         }
       }
@@ -1855,8 +1867,8 @@ class ScenesController {
       this.log(
         "info",
         next.renamedFrom
-          ? `Renamed "${from}" to "${to}" — on GitHub once it is reachable`
-          : `Renamed "${from}" to "${to}"${githubName ? " (also on GitHub)" : ""}`,
+          ? `Renamed "${from}" to "${to}" — in Drive once it is reachable`
+          : `Renamed "${from}" to "${to}"${driveName ? " (also in Drive)" : ""}`,
       );
     });
 
@@ -1914,30 +1926,30 @@ class ScenesController {
       this.updateRemoteSha(to, sha);
       this.persistMeta();
       this.setState({ current: this.meta.current });
-      this.log("info", `"${from}" was renamed to "${to}" on GitHub`);
+      this.log("info", `"${from}" was renamed to "${to}" in Drive`);
       this.refresh();
     });
 
-  /** delete a scene here and on GitHub (only the version you know of there) */
+  /** delete a scene here and in Drive (only the version you know of there) */
   remove = (name: string) =>
     this.withBusy("saving", async () => {
       await this.refreshListing();
       this.requireScene(name);
       const meta = this.meta.scenes[name];
-      const githubName = meta?.renamedFrom ?? name;
-      // local-only scenes are deleted here only (a copy on GitHub stays)
-      const githubSha = meta?.localOnly ? null : this.remoteShaOf(name) ?? meta?.conflict?.remoteSha ?? null;
+      const driveName = meta?.renamedFrom ?? name;
+      // local-only scenes are deleted here only (a copy in Drive stays)
+      const driveSha = meta?.localOnly ? null : this.remoteShaOf(name) ?? meta?.conflict?.remoteSha ?? null;
       let queued = false;
-      if (githubSha) {
+      if (driveSha) {
         try {
-          await scenesApi.remove(githubName, githubSha);
-          this.updateRemoteSha(githubName, null);
+          await scenesApi.remove(driveName, driveSha);
+          this.updateRemoteSha(driveName, null);
         } catch (error) {
           const apiError = error as ApiError;
           if (apiError.status === 409) {
-            throw new Error(`"${name}" was just changed on GitHub — not deleted. Have a look at the new version first.`);
+            throw new Error(`"${name}" was just changed in Drive — not deleted. Have a look at the new version first.`);
           } else if (apiError.offline) {
-            this.meta.pendingDeletes[githubName] = githubSha;
+            this.meta.pendingDeletes[driveName] = driveSha;
             queued = true;
           } else if (apiError.status !== 404) {
             throw apiError;
@@ -1958,8 +1970,8 @@ class ScenesController {
       this.log(
         "info",
         queued
-          ? `Deleted "${name}" — on GitHub once it is reachable`
-          : `Deleted "${name}"${githubSha ? " (also on GitHub)" : ""}`,
+          ? `Deleted "${name}" — in Drive once it is reachable`
+          : `Deleted "${name}"${driveSha ? " (also in Drive)" : ""}`,
       );
     });
 
@@ -2035,7 +2047,7 @@ class ScenesController {
           new Error(
             this.isLocalOnly(name)
               ? `A local-only scene named "${name}" already exists`
-              : `A scene named "${name}" already exists (synced with GitHub)`,
+              : `A scene named "${name}" already exists (synced with Drive)`,
           ),
           { status: 409 },
         );
@@ -2056,7 +2068,7 @@ class ScenesController {
   // conflict resolution (user decides)
   // ---------------------------------------------------------------------------
 
-  /** overwrite GitHub with the local version */
+  /** overwrite Drive with the local version */
   keepMine = (name: string) =>
     this.withBusy("saving", async () => {
       const meta = this.sceneMeta(name);
@@ -2071,7 +2083,7 @@ class ScenesController {
       await this.pushScene(name, { manual: true });
     });
 
-  /** discard the local version, take GitHub's */
+  /** discard the local version, take Drive's */
   takeTheirs = (name: string) =>
     this.withBusy("loading", async () => {
       const latest = await scenesApi.load(name);
@@ -2081,11 +2093,11 @@ class ScenesController {
       meta.baseSha = latest.sha;
       meta.remoteSha = latest.sha;
       this.persistMeta();
-      this.log("pull", `"${name}": took the version from GitHub`);
+      this.log("pull", `"${name}": took the version from Drive`);
       this.refresh();
     });
 
-  /** throw away local changes of a scene, load the latest version from GitHub */
+  /** throw away local changes of a scene, load the latest version from Drive */
   discardLocal = (name: string) => this.takeTheirs(name);
 
   /** the three versions of a scene in conflict (for agents) */
@@ -2110,7 +2122,7 @@ class ScenesController {
     return { meta, mine: JSON.parse(mineJson), theirs, base };
   }
 
-  /** what clashes: per element the base, my and GitHub's version */
+  /** what clashes: per element the base, my and Drive's version */
   // ---------------------------------------------------------------------------
   // history: the scene's versions in git, and putting an older one back
   // ---------------------------------------------------------------------------
@@ -2160,9 +2172,9 @@ class ScenesController {
     const [b, m, t] = [live(base?.elements), live(mine.elements), live(theirs.elements)];
     return {
       scene: name,
-      githubSha: meta.conflict!.remoteSha,
+      driveSha: meta.conflict!.remoteSha,
       baseKnown: !!base,
-      autoMerged: { fromMine: merged.fromMine, fromGitHub: merged.fromTheirs },
+      autoMerged: { fromMine: merged.fromMine, fromDrive: merged.fromTheirs },
       clashes: merged.clashes.map((id) => {
         const [be, me, te] = [b.get(id), m.get(id), t.get(id)];
         return {
@@ -2186,7 +2198,7 @@ class ScenesController {
 
   /**
    * Settle a conflict element by element: merge both versions, take my or
-   * GitHub's version for each clashing element (choices, else `otherwise`),
+   * Drive's version for each clashing element (choices, else `otherwise`),
    * and push. Elements changed on one side only are merged as usual.
    */
   resolveConflict = (
@@ -2214,14 +2226,14 @@ class ScenesController {
       await this.mergeScene(name, { pushAfter: true, choices: all });
       const left = this.meta.scenes[name]?.conflict;
       if (left) {
-        // GitHub changed again meanwhile and the new version clashes, too
+        // Drive changed again meanwhile and the new version clashes, too
         return { resolved: false, clashes: left.clashes };
       }
       this.log("info", `"${name}": conflict resolved element by element`);
       return { resolved: true, status: this.statusOf(name) };
     });
 
-  /** keep the local version as a copy, take GitHub's for this scene */
+  /** keep the local version as a copy, take Drive's for this scene */
   keepBoth = async (name: string) => {
     const copyName = `${name} (conflict ${timestamp()})`;
     await this.withBusy("saving", async () => {

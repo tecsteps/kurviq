@@ -1,0 +1,6 @@
+{
+  "//": "Public values of Kurviq's Google Cloud project (none of them secret): the web OAuth client, the browser API key (Picker, public files) and the project number (the Picker's app id). Secrets live in Cloudflare (GOOGLE_CLIENT_SECRET, COOKIE_KEY, GOOGLE_API_KEY).",
+  "clientId": "",
+  "browserApiKey": "",
+  "projectNumber": ""
+}

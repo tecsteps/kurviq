@@ -382,9 +382,9 @@ const sceneUrls = () => ({
  * service worker leaves the Worker's routes (/auth, /mcp, /live) alone.
  */
 const SITE = "https://kurviq.com";
-const KURVIQ_TITLE = "Kurviq – free whiteboard with GitHub sync and AI agents";
+const KURVIQ_TITLE = "Kurviq – free whiteboard with Google Drive sync and AI agents";
 const KURVIQ_DESCRIPTION =
-  "Kurviq is a free online whiteboard built on Excalidraw: hand-drawn diagrams, scenes, slides and formatted text. No account – your drawings stay in your browser. Optionally sync them with a GitHub repository and let AI agents draw with you via MCP.";
+  "Kurviq is a free online whiteboard built on Excalidraw: hand-drawn diagrams, scenes, slides and formatted text. No account – your drawings stay in your browser. Optionally keep them in your Google Drive, share them with anyone, and let AI agents draw with you via MCP.";
 
 const KURVIQ_META = `<!-- Primary Meta Tags -->
     <meta name="title" content="${KURVIQ_TITLE}" />
@@ -402,7 +402,7 @@ const KURVIQ_META = `<!-- Primary Meta Tags -->
     <meta property="og:image" content="${SITE}/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Kurviq: hand-drawn diagrams and slides, synced with GitHub, AI agents draw with you" />
+    <meta property="og:image:alt" content="Kurviq: hand-drawn diagrams and slides, synced with Google Drive, AI agents draw with you" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="${KURVIQ_TITLE}" />
     <meta name="twitter:description" content="${KURVIQ_DESCRIPTION}" />
@@ -425,7 +425,7 @@ const KURVIQ_META = `<!-- Primary Meta Tags -->
         "Named scenes with their own URLs",
         "Slides and presentations with templates and PDF export",
         "Formatted text: bold, lists, checklists, links",
-        "Optional sync with a GitHub repository, shared by several people",
+        "Optional sync with your Google Drive; share scenes with people or by link",
         "AI agents draw and edit with you (remote MCP server)",
         "No account; works offline",
       ],
@@ -445,12 +445,12 @@ const KURVIQ_ICONS = `<link rel="icon" href="/favicon.ico" sizes="48x48" />
 const KURVIQ_STATIC = `<style>.kq-static{opacity:0;animation:kq-static-show .3s 4s forwards}@keyframes kq-static-show{to{opacity:1}}</style>
     <noscript><style>.kq-static{opacity:1;animation:none}</style></noscript>
     <div id="root"><main class="kq-static" style="max-width:40rem;margin:12vh auto;padding:0 1.5rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#555;line-height:1.55">
-      <h1 style="color:#1f1d3a;font-size:2rem;margin:0 0 .5rem">Kurviq: hand-drawn diagrams, synced with GitHub</h1>
+      <h1 style="color:#1f1d3a;font-size:2rem;margin:0 0 .5rem">Kurviq: hand-drawn diagrams, synced with Google Drive</h1>
       <p>Kurviq is a free online whiteboard built on <a href="https://github.com/excalidraw/excalidraw">Excalidraw</a>. Sketch diagrams with a hand-drawn look, organise them as named scenes, present them as slides and write formatted text. No account needed: your drawings stay in your browser. <a href="/features">All features</a>.</p>
-      <h2 style="font-size:1.1rem;color:#1f1d3a">Sync with GitHub, together</h2>
-      <p>Connect GitHub to keep your scenes in a repository of your choice, on all your devices. Several people can work in the same repository; changes are merged element by element.</p>
+      <h2 style="font-size:1.1rem;color:#1f1d3a">Sync with Google Drive, share with anyone</h2>
+      <p>Sign in with Google to keep your scenes in your Google Drive, on all your devices. Share a scene with people or by link, like a Google Doc; changes are merged element by element.</p>
       <h2 style="font-size:1.1rem;color:#1f1d3a">AI agents draw with you</h2>
-      <p>Give Claude, Codex, Cursor or any MCP client your personal Kurviq link and it reads, draws and edits your scenes while you work. Agents: see <a href="/llms.txt">llms.txt</a>.</p>
+      <p>Connect Claude, Codex, Cursor or any MCP client to Kurviq and it reads, draws and edits your scenes while you work. Agents: see <a href="/llms.txt">llms.txt</a>.</p>
       <p><a href="https://github.com/tecsteps/kurviq">Open source (MIT)</a> · unofficial, not affiliated with Excalidraw · <a href="/third-party-licenses.txt">licenses</a> · <a href="/imprint">imprint</a> · <a href="/privacy">privacy</a></p>
     </main></div>`;
 
@@ -470,7 +470,7 @@ const KURVIQ_FILES: Record<string, string> = {
 /**
  * Upstream's build loads fonts from Excalidraw's CDN and warms up Google
  * Fonts: Kurviq serves its fonts itself, so visitors' browsers talk to
- * kurviq.com only (and to GitHub once they connect it).
+ * kurviq.com only (and to Google once they sign in).
  */
 const EXCALIDRAW_CDN = "https://excalidraw.nyc3.cdn.digitaloceanspaces.com/oss/";
 const selfHosted = (text: string) =>
@@ -548,10 +548,10 @@ const kurviqOnline = () => ({
       return patch("AppWelcomeScreen.tsx", [
         ["<WelcomeScreen.Center.Logo />", '<WelcomeScreen.Center.Logo><KurviqLogo /></WelcomeScreen.Center.Logo>'],
         ["{!isExcalidrawPlusSignedUser && (", "{false && ("],
-        ["<WelcomeScreen.Center.MenuItemHelp />", "<WelcomeScreen.Center.MenuItemHelp />\n          <WelcomeConnectGitHub />"],
+        ["<WelcomeScreen.Center.MenuItemHelp />", "<WelcomeScreen.Center.MenuItemHelp />\n          <WelcomeConnectDrive />"],
         // Kurviq's own words instead of upstream's storage warning
         ["{headingContent}", "<WelcomeHeading />"],
-        [/^/, `import { KurviqLogo, WelcomeConnectGitHub, WelcomeHeading } from ${JSON.stringify(path.resolve(HERE, "src/online/ui.tsx"))};\n`],
+        [/^/, `import { KurviqLogo, WelcomeConnectDrive, WelcomeHeading } from ${JSON.stringify(path.resolve(HERE, "src/online/ui.tsx"))};\n`],
       ]);
     }
     // bottom right: Kurviq's legal links instead of the shield, whose tooltip
@@ -672,8 +672,9 @@ const kurviqOnline = () => ({
 
 /**
  * Content-Security-Policy for kurviq.com. Scripts only from this site (the
- * page's few inline scripts by their hash), GitHub's API as the only other
- * place to talk to, no plugins, no framing. Scene content can't run code even
+ * page's few inline scripts by their hash, Google's Picker), Google's APIs
+ * (sign-in tokens come from this site) as the other place to talk to, no
+ * plugins, no framing. Scene content can't run code even
  * if something slipped through.
  *   - wasm-unsafe-eval: font subsetting (harfbuzz / woff2 in WebAssembly)
  *   - worker-src blob: data:  image resizing (pica) starts its workers so
@@ -688,12 +689,13 @@ const securityHeaders = (html: string) => {
     .map(([, , body]) => `'sha256-${createHash("sha256").update(body).digest("base64")}'`);
   const csp = [
     "default-src 'self'",
-    `script-src 'self' 'wasm-unsafe-eval' ${hashes.join(" ")}`,
+    // apis.google.com: Google's Picker (opening a scene someone shared lets Kurviq read it)
+    `script-src 'self' 'wasm-unsafe-eval' https://apis.google.com https://www.gstatic.com ${hashes.join(" ")}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https://esm.sh",
     // data: imported fonts are subset for SVG / PDF export from their data URLs
-    "connect-src 'self' data: https://api.github.com https://libraries.excalidraw.com https://esm.sh",
+    "connect-src 'self' data: https://www.googleapis.com https://content.googleapis.com https://libraries.excalidraw.com https://esm.sh",
     "worker-src 'self' blob: data:",
     "frame-src https:",
     "media-src 'self' data: blob:",
@@ -734,10 +736,10 @@ const kurviqPwa = () =>
     // icons the page itself uses (tab, header): there offline too
     includeAssets: ["kurviq.svg", "favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png"],
     workbox: {
-      navigateFallbackDenylist: [/^\/auth\//, /^\/oauth\//, /^\/\.well-known\//, /^\/mcp(\/|$)/, /^\/live\//, /^\/llms\.txt$/, /^\/(imprint|privacy)(\.html)?$/, /\.txt$/],
+      navigateFallbackDenylist: [/^\/auth\//, /^\/drive\//, /^\/oauth\//, /^\/\.well-known\//, /^\/mcp(\/|$)/, /^\/live\//, /^\/llms\.txt$/, /^\/(imprint|privacy)(\.html)?$/, /\.txt$/],
       globIgnores: ["fonts.css", "**/locales/**", "service-worker.js", "**/*.chunk-*.js", "**/CodeMirrorEditor-*.js"],
       // only this site's own files, matched by path (a pattern on the whole URL
-      // would also catch GitHub API requests that happen to contain "woff2");
+      // would also catch API requests that happen to contain "woff2");
       // new cache names, so entries of the old, too broad rules are never served
       runtimeCaching: [
         {
@@ -771,7 +773,7 @@ const kurviqPwa = () =>
     manifest: {
       short_name: "Kurviq",
       name: "Kurviq",
-      description: "Hand-drawn diagrams, scenes and slides, built on Excalidraw. Optionally synced with GitHub.",
+      description: "Hand-drawn diagrams, scenes and slides, built on Excalidraw. Optionally synced with Google Drive.",
       icons: [
         { src: "kurviq.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
         { src: "android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
@@ -832,11 +834,9 @@ export default async (configEnv: { mode: string; command: string }) => {
       "import.meta.env.VITE_APP_SCENES_TARGET": JSON.stringify(online ? "online" : "local"),
       // the commit this build is made from (the Worker gets the same: a tab can tell it is outdated)
       "import.meta.env.VITE_APP_KURVIQ_BUILD": JSON.stringify(online ? kurviqBuild() : ""),
-      "import.meta.env.VITE_APP_SCENES_GIT_REPO": JSON.stringify(
-        env.SCENES_GIT_REPO || "",
-      ),
-      "import.meta.env.VITE_APP_SCENES_GIT_BRANCH": JSON.stringify(
-        env.SCENES_GIT_BRANCH || "main",
+      // Google sign-in: kurviq.com itself, or (the local install) through kurviq.com
+      "import.meta.env.VITE_APP_KURVIQ_AUTH_URL": JSON.stringify(
+        online ? "" : (env.KURVIQ_AUTH_URL || "https://kurviq.com").replace(/\/$/, ""),
       ),
       "import.meta.env.VITE_APP_SCENES_SERVER_URL": JSON.stringify(
         env.SCENES_SERVER_URL || "http://localhost:3101",

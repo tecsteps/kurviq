@@ -3,8 +3,9 @@
 // scenes; "Make a copy" does that on purpose.
 //  - Kurviq's own (kurviq.com/features): online/scenes/<name>.excalidraw,
 //    served at /scenes/<name>.excalidraw
-//  - shared ones (kurviq.com/@owner/scene): from GitHub, public without
-//    sign-in, private with the visitor's own GitHub access (see readSharedScene)
+//  - shared ones (kurviq.com/s/<fileId>/…): a Google Drive file, "anyone
+//    with the link" without sign-in, else with the visitor's own Drive
+//    access (see readSharedScene)
 
 import { exportToCanvas, restoreElements } from "@excalidraw/excalidraw";
 import clsx from "clsx";
@@ -14,7 +15,8 @@ import type { BinaryFiles } from "@excalidraw/excalidraw/types";
 
 import { IS_ONLINE } from "./api";
 import { scenesController } from "./controller";
-import { connectGitHub, connection, readSharedScene } from "./online/github";
+import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId } from "./online/drive";
+import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
 import { getSlides, renderSlide } from "./slides";
 
@@ -29,10 +31,12 @@ export const isPublicScene = (name: string | null): name is string => !!name && 
 // -----------------------------------------------------------------------------
 
 /**
- * A bundled scene (name), or someone's shared one. present / slide: a
- * presentation link (?present&slide=3) starts presenting at that slide.
+ * A bundled scene (name), or a shared one (its Drive file; name: from the
+ * link, until it is loaded), or an old kind of link (moved: kurviq.com/@owner/scene).
+ * present / slide: a presentation link (?present&slide=3) starts presenting
+ * at that slide.
  */
-export type Shown = { name: string; owner?: string; present?: boolean; slide?: number };
+export type Shown = { name: string; fileId?: string; moved?: boolean; present?: boolean; slide?: number };
 
 let shown: Shown | null = null;
 const listeners = new Set<() => void>();
@@ -41,17 +45,11 @@ const setShown = (next: Shown | null) => {
   listeners.forEach((listener) => listener());
 };
 
-/** opens <owner>'s space at a scene (registered by the online UI) */
-let openInSpace: ((owner: string, name: string) => void) | null = null;
-
 export const publicScene = {
-  show: (name: string, owner?: string, start: { present?: boolean; slide?: number } = {}) =>
-    setShown({ name, owner, ...start }),
+  show: (name: string, start: { fileId?: string; moved?: boolean; present?: boolean; slide?: number } = {}) =>
+    setShown({ name, ...start }),
   close: () => setShown(null),
   shown: () => shown,
-  setSpaceOpener: (open: (owner: string, name: string) => void) => {
-    openInSpace = open;
-  },
   subscribe: (listener: () => void) => {
     listeners.add(listener);
     return () => {
@@ -80,8 +78,8 @@ const makeCopy = async (base: string, json: string) => {
       }
       throw error;
     }
-    // with GitHub connected, the copy goes to the visitor's repository too
-    if (connection.isActive() && !connection.getState().repo?.readOnly) {
+    // signed in with Google, the copy goes to the visitor's Drive too
+    if (connection.isActive() && !sharedFileId) {
       await scenesController.setLocalOnly(copy, false).catch(() => {});
     }
     publicScene.close();
@@ -108,11 +106,31 @@ type Deck = {
 /** a drawing without slides is shown as one picture of everything */
 const WHOLE = "\u0000whole";
 
-const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Shown) => {
-  const bundled = !owner;
-  const title = bundled ? PUBLIC_SCENES[name].title : name;
+/**
+ * Edit a shared scene: one of the visitor's own scenes opens among them,
+ * someone else's in a space of its own (the page reloads into it)
+ */
+const editShared = async (fileId: string, name: string) => {
+  const own = scenesController.getState().remote?.find((scene) => scene.fileId === fileId);
+  publicScene.close();
+  if (own && !sharedFileId) {
+    await scenesController.open(own.name);
+    return;
+  }
+  await scenesController.leaveForReload();
+  enterSpace(fileId, window.location.pathname.startsWith("/s/") ? window.location.pathname : `/s/${fileId}/${encodeURIComponent(name)}`);
+};
+
+const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide: startSlide }: Shown) => {
+  const bundled = !fileId && !moved;
+  const [name, setName] = useState(linkName);
+  const title = bundled ? PUBLIC_SCENES[name].title : name || "A shared scene";
   const [deck, setDeck] = useState<Deck | null>(null);
-  const [missing, setMissing] = useState(false);
+  /** why a shared scene can't be shown (yet) */
+  const [missing, setMissing] = useState<Exclude<SharedSceneAnswer, { scene: unknown }> | { moved: true } | null>(
+    moved ? { moved: true } : null,
+  );
+  const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [copying, setCopying] = useState(false);
@@ -124,8 +142,20 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
   const pictures = useRef(new Map<number, HTMLCanvasElement>());
 
   useEffect(() => {
-    const load = owner
-      ? readSharedScene(owner, name).then((found) => found ?? Promise.reject(Object.assign(new Error(""), { missing: true })))
+    if (moved) {
+      return;
+    }
+    setMissing(null);
+    const load = fileId
+      ? readSharedScene(fileId).then((answer) => {
+          if (!("scene" in answer)) {
+            return Promise.reject(Object.assign(new Error(""), { missing: answer }));
+          }
+          if (answer.scene.name) {
+            setName(answer.scene.name);
+          }
+          return answer.scene;
+        })
       : fetchScene(name).then((json) => ({ json, public: true, canEdit: false }));
     load
       .then(async ({ json, public: isPublic, canEdit }) => {
@@ -149,9 +179,9 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
           canEdit,
         });
       })
-      .catch((err) => (err.missing ? setMissing(true) : setError(err.message)));
+      .catch((err) => (err.missing ? setMissing(err.missing) : setError(err.message)));
     root.current?.focus();
-  }, [name, owner]);
+  }, [fileId, attempt]);
 
   // the current slide as a picture (cached)
   useEffect(() => {
@@ -267,9 +297,9 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
     >
       <div className="public-scene__bar">
         <strong className="public-scene__title">{title}</strong>
-        {owner && deck && (
+        {fileId && deck && (
           <span className="public-scene__meta">
-            @{owner} · {deck.public ? "public" : "private, shared with you on GitHub"}
+            {deck.public ? "anyone with the link can view it" : "shared with you in Google Drive"}
           </span>
         )}
         <span className="public-scene__spacer" />
@@ -278,14 +308,14 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
             ▶ Present
           </button>
         )}
-        {owner && deck?.canEdit && openInSpace && (
+        {fileId && deck?.canEdit && (
           <button
             type="button"
             className="slides-btn"
-            title={`You can change ${owner}'s scenes on GitHub: open this one in that space`}
-            onClick={() => openInSpace!(owner, name)}
+            title="Google Drive lets you change this scene: open it in the editor (your changes are saved to it)"
+            onClick={() => editShared(fileId, name).catch((err) => setError(err.message))}
           >
-            Edit in {owner}'s space
+            Edit
           </button>
         )}
         <button
@@ -295,7 +325,7 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
           title="Add a copy to your scenes, to change or present it"
           onClick={() => {
             setCopying(true);
-            makeCopy(bundled ? PUBLIC_SCENES[name].copyName : name, deck!.json)
+            makeCopy(bundled ? PUBLIC_SCENES[name].copyName : name || "Shared scene", deck!.json)
               .catch((err) => setError(err.message))
               .finally(() => setCopying(false));
           }}
@@ -309,10 +339,7 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
       {error && <p className="scenes-error public-scene__error">{error}</p>}
       {missing && (
         <div className="public-scene__missing">
-          <p>
-            <strong>{name}</strong> by @{owner} doesn't exist, or it is private.
-          </p>
-          <SignInOrAsk owner={owner!} />
+          <WhyMissing why={missing} fileId={fileId} retry={() => setAttempt((n) => n + 1)} />
         </div>
       )}
       {presenting && (
@@ -353,38 +380,66 @@ const Viewer = ({ name, owner, present: startPresenting, slide: startSlide }: Sh
   );
 };
 
-/** a private scene: GitHub decides who may read it */
-const SignInOrAsk = ({ owner }: { owner: string }) => {
-  const [signedIn, setSignedIn] = useState<boolean | null>(null);
-  useEffect(() => {
-    import("./online/github").then(({ getToken }) =>
-      getToken()
-        .then((token) => setSignedIn(!!token))
-        .catch(() => setSignedIn(false)),
+/** a shared scene that isn't shown: why, and what the visitor can do */
+const WhyMissing = ({
+  why,
+  fileId,
+  retry,
+}: {
+  why: Exclude<SharedSceneAnswer, { scene: unknown }> | { moved: true };
+  fileId?: string;
+  retry: () => void;
+}) => {
+  const [error, setError] = useState<string | null>(null);
+  if ("moved" in why) {
+    return (
+      <p>
+        This link is from an older version of Kurviq and doesn't work any more. Kurviq now keeps scenes in Google Drive:
+        ask whoever sent it for a new link.
+      </p>
     );
-  }, []);
-  if (signedIn === null) {
-    return null;
   }
-  return signedIn ? (
-    <p className="kq-muted">
-      If it's private: ask @{owner} for read access to <code>{owner}/kurviq-scenes</code> on GitHub, then reload.
-    </p>
-  ) : (
-    <>
-      <p className="kq-muted">If it's private, sign in with GitHub: you see it if GitHub lets you read it.</p>
-      <button type="button" className="slides-btn slides-btn--primary" onClick={() => connectGitHub("login")}>
-        Sign in with GitHub
-      </button>
-    </>
-  );
+  if ("signIn" in why) {
+    return (
+      <>
+        <p>This scene isn't public. Sign in with Google: you see it if it was shared with you.</p>
+        <button type="button" className="slides-btn slides-btn--primary" onClick={() => connectGoogle()}>
+          Sign in with Google
+        </button>
+      </>
+    );
+  }
+  if ("needsAccess" in why) {
+    return (
+      <>
+        <p>
+          Google Drive asks you to allow Kurviq to open this scene, once. Click below, then <strong>Select</strong> in
+          Google's window.
+        </p>
+        <button
+          type="button"
+          className="slides-btn slides-btn--primary"
+          onClick={() =>
+            pickFiles({ fileId })
+              .then((ids) => ids.length && retry())
+              .catch((err) => setError(err.message))
+          }
+        >
+          Allow Kurviq to open it
+        </button>
+        <p className="kq-muted">If Google doesn't show the scene there, it wasn't shared with this Google account.</p>
+        {error && <p className="scenes-error">{error}</p>}
+      </>
+    );
+  }
+  return <p>This scene doesn't exist (any more), or it isn't shared with you.</p>;
 };
 
 /** rendered next to the editor (see index.tsx) */
 export const PublicSceneOverlay = () => {
   const current = useSyncExternalStore(publicScene.subscribe, publicScene.shown);
-  if (!current || (!current.owner && !isPublicScene(current.name))) {
+  if (!current || (!current.fileId && !current.moved && !isPublicScene(current.name))) {
     return null;
   }
-  return <Viewer key={`${current.owner ?? ""}/${current.name}`} {...current} />;
+  return <Viewer key={current.fileId ?? current.name} {...current} />;
 };

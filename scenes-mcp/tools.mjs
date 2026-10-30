@@ -2,11 +2,11 @@
  * The scenes MCP tools, independent of where they run:
  *
  * = the upstream excalidraw-mcp tools (read_me, create_view, …) unchanged,
- *   plus tools to manage git-backed scenes (list/get/save/open/rename/delete/
+ *   plus tools to manage scenes in Google Drive (list/get/save/open/rename/delete/
  *   clone, co-working on scenes, slides, conflicts, …).
  *
  * Stateless: drafts (create_view checkpoints) and agent baselines are kept by
- * the app in the browser; scenes live in the browser and on GitHub.
+ * the app in the browser; scenes live in the browser and in Google Drive.
  *
  * Everything goes through `serverFetch` = the scenes server's HTTP API:
  *  - locally (./server.mjs, stdio): the scenes server on this machine;
@@ -43,8 +43,8 @@ const MAX_CHANGE_DETAILS = 25;
  * @param {(name: string, pdf: Uint8Array, file?: string) => Promise<object>} options.savePdf
  * @param {boolean} [options.livePreview] live mode: mirror create_view into the app
  * @param {string} [options.name] server name
- * @param {boolean} [options.githubOptional] online: the user's app may have no GitHub connected
- *   (app_status `github: false`) — new scenes are then local-only
+ * @param {boolean} [options.driveOptional] online: the user's app may have no Google Drive connected
+ *   (app_status `drive: false`) — new scenes are then local-only
  */
 export const createScenesMcp = ({
   serverFetch,
@@ -56,7 +56,7 @@ export const createScenesMcp = ({
   savePdf,
   livePreview = true,
   name = "Kurviq",
-  githubOptional = false,
+  driveOptional = false,
   /**
    * reads that only look at a scene take it without image bytes (Kurviq
    * online: the tab that serves it keeps the images and fills them in for
@@ -163,7 +163,7 @@ export const createScenesMcp = ({
   const LEAN = !!leanReads;
   const leanQuery = (lean) => (lean && LEAN ? "?lean=1" : "");
 
-  /** a scene on GitHub plus its blob sha (null if it doesn't exist) */
+  /** a scene in Google Drive plus its version, the MD5 of its content (null if it doesn't exist) */
   const loadSceneWithSha = async (name, { lean = false } = {}) => {
     const res = await serverFetch(`${sceneUrl(name)}${leanQuery(lean)}`).catch(() => {
       throw new Error(unreachable);
@@ -189,19 +189,19 @@ export const createScenesMcp = ({
   };
 
   /**
-   * Local-only scenes exist only in the user's browser (never on GitHub): the
+   * Local-only scenes exist only in the user's browser (never in Google Drive): the
    * flush answer says so, and they are then read and edited through the
    * user's app.
    */
   const isLocalOnly = (flushed) => (flushed?.results || []).some((r) => r && r.localOnly);
 
   const LOCAL_NOTE =
-    "Local-only scene: it exists only in the user's browser and is never synced to GitHub (the user decides if it ever is). You read and edit it through their app, which must be open.";
+    "Local-only scene: it exists only in the user's browser and is never synced to Google Drive (the user decides if it ever is). You read and edit it through their app, which must be open.";
 
   const loadLocalScene = (name, since, { lean = false } = {}) =>
     appCommand({ type: "local-read", name, targetScene: name, ...(since ? { since } : {}), ...(lean && LEAN ? { lean: true } : {}) });
 
-  /** a scene's content: from the user's browser if it is local-only, else from GitHub */
+  /** a scene's content: from the user's browser if it is local-only, else from Google Drive */
   const loadAnyScene = async (name, { lean = false } = {}) => {
     const flushed = await flushUser(name);
     if (isLocalOnly(flushed)) {
@@ -212,7 +212,7 @@ export const createScenesMcp = ({
 
   const notFound = (name) =>
     new Error(
-      `Scene "${name}" not found on GitHub. list_scenes shows what exists. (Local-only scenes live in the user's browser: they are only reachable while the app is open.)`,
+      `Scene "${name}" not found in Google Drive. list_scenes shows what exists. (Local-only scenes live in the user's browser: they are only reachable while the app is open.)`,
     );
 
   // -----------------------------------------------------------------------------
@@ -361,7 +361,7 @@ export const createScenesMcp = ({
 
   const SCENE_NAME = z
     .string()
-    .describe("Scene name: letters, numbers, spaces and _ . ( ) - (max 100 chars). Stored as scenes/<name>.excalidraw in the git repo.");
+    .describe("Scene name: letters, numbers, spaces and _ . ( ) - (max 100 chars). Stored as <name>.excalidraw in the user's Google Drive (folder Kurviq).");
 
   const TEXTS_OFFSET = z
     .number()
@@ -492,7 +492,7 @@ export const createScenesMcp = ({
       "list_scenes",
       {
         description:
-          "List the scenes in the git-backed scene repo (pulls first), the user's local-only scenes (only in their browser, never synced; listed while the app is open), plus which scene is currently open in the user's Excalidraw app and whether it has uncommitted changes.",
+          "List the scenes in the user's Google Drive (folder Kurviq), the user's local-only scenes (only in their browser, never synced; listed while the app is open), plus which scene is currently open in the user's Excalidraw app and whether it has unsaved changes.",
         annotations: { readOnlyHint: true },
       },
       tool(async () => {
@@ -517,7 +517,7 @@ export const createScenesMcp = ({
     server.registerTool(
       "get_scene",
       {
-        description: `Read a scene as stored on GitHub (the user's browser may have newer, not yet pushed changes — list_scenes / app_status show the sync status; for the scene open in the app use read_open_scene). Scenes can be huge, so:
+        description: `Read a scene as stored in Google Drive (the user's browser may have newer, not yet pushed changes — list_scenes / app_status show the sync status; for the scene open in the app use read_open_scene). Scenes can be huge, so:
   - summary=true (default for scenes with more than ${SUMMARY_THRESHOLD} elements): overview only — scene bounds, element counts, frames and all text labels with their positions. Use it to find the part you need.
   - region or elementIds: only the elements in that area / those elements (+ their labels).
   - otherwise all elements (compact).
@@ -644,14 +644,14 @@ export const createScenesMcp = ({
     /** how the open scene syncs — so agents leave pushing to the app */
     const syncNote = ({ scene, syncStatus, autoSync }) => {
       if (scene === null) {
-        return "Untitled scene, not on GitHub. Only save it (save_open_scene with a name) if the user asks.";
+        return "Untitled scene, not in Google Drive. Only save it (save_open_scene with a name) if the user asks.";
       }
       if (syncStatus === "conflict") {
-        return `CONFLICT: the user's version and GitHub's both changed the same elements. Nothing syncs until it is resolved — get_conflict("${scene}") shows the clashes, resolve_conflict settles them.`;
+        return `CONFLICT: the user's version and Drive's both changed the same elements. Nothing syncs until it is resolved — get_conflict("${scene}") shows the clashes, resolve_conflict settles them.`;
       }
       return autoSync
-        ? `status: ${syncStatus}. Auto-sync is on: the app pushes changes (yours and the user's) to GitHub by itself about 10 s after the last edit. Don't push yourself.`
-        : `status: ${syncStatus}. Auto-sync is OFF for this scene: the user decides when it goes to GitHub. Don't push unless the user asks.`;
+        ? `status: ${syncStatus}. Auto-sync is on: the app pushes changes (yours and the user's) to Google Drive by itself about 10 s after the last edit. Don't push yourself.`
+        : `status: ${syncStatus}. Auto-sync is OFF for this scene: the user decides when it goes to Google Drive. Don't push unless the user asks.`;
     };
 
     /** diff → compact report of what changed */
@@ -707,7 +707,7 @@ export const createScenesMcp = ({
       }
       const when = `since an agent last ${baseline.action === "edit" ? "edited" : baseline.action === "save" ? "saved" : "read"} this scene (${baseline.at})`;
       return {
-        ...describeChanges(baseline.elements, elements, `by the user (or pulled from GitHub) ${when}`),
+        ...describeChanges(baseline.elements, elements, `by the user (or pulled from Google Drive) ${when}`),
         firstLook: false,
       };
     };
@@ -800,7 +800,7 @@ export const createScenesMcp = ({
       server.registerTool(
         "edit_open_scene",
         {
-          description: `Edit the scene open in the user's app, live and in place — merged with the user's own work (never overwrites their other changes) and undoable by the user as one step (Cmd/Ctrl+Z). This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to GitHub and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
+          description: `Edit the scene open in the user's app, live and in place — merged with the user's own work (never overwrites their other changes) and undoable by the user as one step (Cmd/Ctrl+Z). This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to Google Drive and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
     Safety net: before applying, it checks whether the USER changed the scene since an agent last read/edited it. If so, your edit is still applied, but the result starts with a WARNING listing the user's changes (plus an image of them) — look at them and adjust if your edit conflicts with what the user did. Calling read_open_scene first avoids surprises.
     - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding — arrows may bind to existing elements). Use new unique ids.
     - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element. Like in the editor, a moved / resized shape takes its label and bound arrows along, and a moved frame (slide) takes everything on it. A shape's label: { "id": "box", "label": { "text": "…", "fontSize": 28 } } (changes it or adds one; it is re-wrapped and the shape grows to fit).
@@ -882,7 +882,7 @@ export const createScenesMcp = ({
             revision,
             note:
               info.scene === null
-                ? "Live in the user's app. The scene is untitled — it reaches GitHub once it gets a name (save_open_scene with name)."
+                ? "Live in the user's app. The scene is untitled — it reaches Google Drive once it gets a name (save_open_scene with name)."
                 : info.autoSync
                 ? "Live in the user's app, not pushed yet — the app's auto-sync pushes it after 10s without edits (save_open_scene pushes now)."
                 : "Live in the user's app. Auto-sync is OFF for this scene — it is only pushed when the user saves or you call save_open_scene.",
@@ -904,10 +904,10 @@ export const createScenesMcp = ({
 
     // ---------------------------------------------------------------------------
     // detached mode: the agent works in its own headless Excalidraw on the
-    // GitHub version; the user's app picks its commits up within seconds
+    // Google Drive version; the user's app picks the edits up within seconds
     // ---------------------------------------------------------------------------
 
-    /** a specific version (blob sha) of a scene */
+    /** a specific version (MD5 of its content) of a scene */
     const loadVersion = async (name, sha) =>
       JSON.parse(await call(`${sceneUrl(name)}?sha=${encodeURIComponent(sha)}${LEAN ? "&lean=1" : ""}`));
 
@@ -915,10 +915,10 @@ export const createScenesMcp = ({
     const userSyncNote = (flushed) => {
       const results = (flushed?.results || []).filter((r) => r && !r.error);
       if (!flushed || !flushed.tabs) {
-        return "The user's app is not open: you see the GitHub version.";
+        return "The user's app is not open: you see the Google Drive version.";
       }
       if (results.some((r) => r.status === "conflict")) {
-        return "The user's app has a merge CONFLICT on this scene: their newest edits are not on GitHub until it is resolved (get_conflict / resolve_conflict, or the user in the scene's panel).";
+        return "The user's app has a merge CONFLICT on this scene: their newest edits are not in Google Drive until it is resolved (get_conflict / resolve_conflict, or the user in the scene's panel).";
       }
       if (results.some((r) => r.autoSync === false && ["ahead", "local", "diverged"].includes(r.status))) {
         return "Auto-sync is OFF for this scene in the user's app and they have unpushed changes, which you don't see. The user decides when to push.";
@@ -926,7 +926,7 @@ export const createScenesMcp = ({
       return "Up to date: the user's app pushed its changes of this scene before this read.";
     };
 
-    /** what the user (or anyone else) changed since `since` or the agent's last commit */
+    /** what the user (or anyone else) changed since `since` or the agent's last edit */
     const changesSince = async (name, current, since) => {
       let base = null;
       let label;
@@ -969,7 +969,7 @@ export const createScenesMcp = ({
       }
     };
 
-    /** a local-only scene from the user's browser, shaped like a GitHub version */
+    /** a local-only scene from the user's browser, shaped like a Google Drive version */
     const localVersion = async (name, since) => {
       const { file, revision, base } = await loadLocalScene(name, since, { lean: true });
       return {
@@ -987,7 +987,7 @@ export const createScenesMcp = ({
         "read_scene",
         {
           description: `Read a scene and find out what the USER changed since an agent last edited it. You work on your own copy (a headless Excalidraw), never in the user's browser: before reading, the user's app is asked to push its unpushed changes of this scene, so you see their latest work.
-  userChanges lists what changed (added / modified with changedFields / deleted) since the last agent edit of this scene (found in the git history), or since revision=<since> if you pass one. The result has a "revision": pass it as basedOn to edit_scene, or as since to the next read_scene, to get exactly what changed in between. view=true adds an IMAGE of the user's changes (or of the scene).
+  userChanges lists what changed (added / modified with changedFields / deleted) since the last agent edit of this scene (remembered in Google Drive), or since revision=<since> if you pass one. The result has a "revision": pass it as basedOn to edit_scene, or as since to the next read_scene, to get exactly what changed in between. view=true adds an IMAGE of the user's changes (or of the scene).
   Scene data: summary=true (default above ${SUMMARY_THRESHOLD} elements) gives an overview (bounds, counts, slides in deck order, all text labels with positions); slide = one slide's elements (number, frame id or "template"); region / elementIds give element data for a part; otherwise all elements. relative=true gives x / y of elements on a slide relative to the slide, as edits take them with "slide". changesOnly=true skips the scene data. sceneFile tells how big the file is (pictures).`,
           inputSchema: {
             name: SCENE_NAME,
@@ -1049,7 +1049,7 @@ export const createScenesMcp = ({
       server.registerTool(
         "edit_scene",
         {
-          description: `Edit a scene: applied in your own headless Excalidraw to the newest version and committed to GitHub right away (one commit per edit). The user's app picks it up within seconds and merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call the scenes server's HTTP API yourself (direct writes are refused).
+          description: `Edit a scene: applied in your own headless Excalidraw to the newest version and saved to Google Drive right away (one version per edit). The user's app picks it up within seconds and merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call the scenes server's HTTP API yourself (direct writes are refused).
   Safety net: the user's app first pushes its unpushed changes of this scene. If the user changed the scene since basedOn (the revision from your last read_scene / edit_scene; default: the last agent edit), your edit is still applied, but the result starts with a WARNING listing their changes (plus an image) — check them and adjust your edit if it clashes.
   - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding — arrows may bind to existing elements). Use new unique ids.
   - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element (labels are text elements with containerId).
@@ -1096,7 +1096,7 @@ ${EDIT_HELP}
           const local = isLocalOnly(await flushUser(name));
           const before = local ? await localVersion(name, basedOn) : await loadSceneWithSha(name, { lean: true });
           if (!before) {
-            throw new Error(`Scene "${name}" not found on GitHub. Create new scenes with create_view + save_scene.`);
+            throw new Error(`Scene "${name}" not found in Google Drive. Create new scenes with create_view + save_scene.`);
           }
           const beforeElements = (before.file.elements || []).filter((el) => !el.isDeleted);
           const changes = local ? before.changes(beforeElements) : await changesSince(name, beforeElements, basedOn);
@@ -1172,7 +1172,7 @@ ${EDIT_HELP}
             revision: local ? edited.revision : edited.sha,
             ...(local
               ? { note: `${LOCAL_NOTE} Your edit is in their app now; nothing else to do.` }
-              : { commit: edited.commit, note: "Committed to GitHub. The user's app merges it within seconds; nothing else to do." }),
+              : { commit: edited.commit, note: "Saved to Google Drive. The user's app merges it within seconds; nothing else to do." }),
           });
           if (view) {
             result.content.push(...(await imageOf(after, [...edited.addedIds, ...edited.updated], "the edited area")));
@@ -1372,9 +1372,9 @@ ${EDIT_HELP}
     server.registerTool(
       "save_scene",
       {
-        description: `Save a NEW drawing as a scene: writes scenes/<name>.excalidraw, commits and pushes it to GitHub.
+        description: `Save a NEW drawing as a scene: writes scenes/<name>.excalidraw, saves it to Google Drive.
   Provide EITHER checkpointId (from create_view: draw with create_view, then save its checkpoint) OR elements (same JSON format as create_view, incl. restoreCheckpoint/delete). open=true switches the user's app to it${MODE === "detached" ? " (only when the user asked to see it)" : ""}.
-  NOT for changing an existing scene: the user's app holds the newest version (possibly with unpushed edits) and syncs it to GitHub by itself (auto-sync), so writing to GitHub directly races with it and causes conflicts. To change an existing scene: ${MODE === "detached" ? "read_scene + edit_scene" : "open_scene(name) if it isn't open, then read_open_scene + edit_open_scene; the app pushes"}. save_scene refuses existing scenes unless replace=true: for when the user explicitly wants the whole scene replaced by a new drawing, or when the app isn't open in any browser (the app merges it on its next sync).
+  NOT for changing an existing scene: the user's app holds the newest version (possibly with unpushed edits) and syncs it to Google Drive by itself (auto-sync), so writing to Google Drive directly races with it and causes conflicts. To change an existing scene: ${MODE === "detached" ? "read_scene + edit_scene" : "open_scene(name) if it isn't open, then read_open_scene + edit_open_scene; the app pushes"}. save_scene refuses existing scenes unless replace=true: for when the user explicitly wants the whole scene replaced by a new drawing, or when the app isn't open in any browser (the app merges it on its next sync).
   ${IMAGES_HELP}
   ${MODE === "live" ? 'Note: while you draw, every create_view call is mirrored live into the user\'s app (scene "agent-live"), so the user can watch.' : ""}`,
         inputSchema: {
@@ -1392,7 +1392,7 @@ ${EDIT_HELP}
           local: z
             .boolean()
             .optional()
-            .describe("Keep it only in the user's browser: a local-only scene, never synced to GitHub (needs the app open). Only when the user asks for a local / private / not-synced scene"),
+            .describe("Keep it only in the user's browser: a local-only scene, never synced to Google Drive (needs the app open). Only when the user asks for a local / private / not-synced scene"),
         },
       },
       tool(async ({ name, checkpointId, elements, elementsFile, payloadId, open, replace, local }) => {
@@ -1406,8 +1406,8 @@ ${EDIT_HELP}
         if (!checkpointId && !elements) {
           throw new Error(`Provide checkpointId, elements or ${LOCAL_FILES ? "elementsFile" : "payloadId"}`);
         }
-        if (!local && githubOptional && (await callJson("/api/app/state")).github === false) {
-          local = true; // no GitHub in the user's app: the browser is the scene's home
+        if (!local && driveOptional && (await callJson("/api/app/state")).drive === false) {
+          local = true; // no Google Drive in the user's app: the browser is the scene's home
         }
         const flushed = await flushUser(name);
         const emptyLocal = (flushed?.results || []).some((r) => r && r.localOnly && r.empty);
@@ -1501,20 +1501,20 @@ ${EDIT_HELP}
     // ---------------------------------------------------------------------------
     // rename / delete / clone — through the app when it is open (keeps its
     // local copies, unpushed changes and agent baselines consistent and works
-    // offline), else directly on GitHub
+    // offline), else directly in Google Drive
     // ---------------------------------------------------------------------------
 
     const appConnected = async () => (await callJson("/api/app/state")).connected;
 
-    const viaGitHubNote =
+    const viaDriveNote =
       MODE === "detached"
-        ? "Done on GitHub. The user's app follows within seconds (their unpushed changes were pushed first)."
-        : "The app is not open in a browser, so this was done on GitHub directly — the app picks it up on its next sync.";
+        ? "Done in Google Drive. The user's app follows within seconds (their unpushed changes were pushed first)."
+        : "The app is not open in a browser, so this was done in Google Drive directly — the app picks it up on its next sync.";
 
     server.registerTool(
       "rename_scene",
       {
-        description: `Rename a scene on GitHub (one commit, history kept); the user's app follows (its local copy incl. unpushed changes moves along, the URL follows if it is open). Fails if newName exists.`,
+        description: `Rename a scene in Google Drive (the file keeps its id, so links keep working); the user's app follows (its local copy incl. unpushed changes moves along, the URL follows if it is open). Fails if newName exists.`,
         inputSchema: { name: SCENE_NAME, newName: SCENE_NAME },
       },
       tool(async ({ name, newName }) => {
@@ -1530,14 +1530,14 @@ ${EDIT_HELP}
           headers: { "Content-Type": "application/json", "X-Scenes-Source": "agent", "X-Scenes-Client": "mcp" },
           body: JSON.stringify({ to: newName }),
         });
-        return text({ renamed: name, to: newName, commit: result.commit, note: viaGitHubNote });
+        return text({ renamed: name, to: newName, commit: result.commit, note: viaDriveNote });
       }),
     );
 
     server.registerTool(
       "delete_scene",
       {
-        description: `Delete a scene on GitHub (one commit; it stays in the git history); the user's app follows. Only delete when the user asked for it, and name the scene exactly.`,
+        description: `Delete a scene in Google Drive (it goes to the Drive bin: restorable for 30 days); the user's app follows. Only delete when the user asked for it, and name the scene exactly.`,
         inputSchema: { name: SCENE_NAME },
         annotations: { destructiveHint: true },
       },
@@ -1552,7 +1552,7 @@ ${EDIT_HELP}
           method: "DELETE",
           headers: { "X-Scenes-Source": "agent", "X-Scenes-Client": "mcp" },
         });
-        return text({ deleted: name, commit: result.commit, note: viaGitHubNote });
+        return text({ deleted: name, commit: result.commit, note: viaDriveNote });
       }),
     );
 
@@ -1583,7 +1583,7 @@ ${EDIT_HELP}
           body: JSON.stringify({ ...file, appState: { ...(file.appState || {}), name: newName } }, null, 2),
         });
         const app = open ? await appCommand({ type: "open", name: newName }).catch((error) => ({ error: error.message })) : null;
-        return text({ cloned: name, to: newName, commit: result.commit, note: viaGitHubNote, ...(app ? { app } : {}) });
+        return text({ cloned: name, to: newName, commit: result.commit, note: viaDriveNote, ...(app ? { app } : {}) });
       }),
     );
 
@@ -1596,7 +1596,7 @@ ${EDIT_HELP}
             : "Switch the user's Excalidraw app (open in the browser) to a scene. Unsaved changes of the previous scene are kept locally in the browser. Set create=true to create a new empty scene with that name instead.",
         inputSchema: {
           name: SCENE_NAME,
-          create: z.boolean().optional().describe("Create a new empty, uncommitted scene"),
+          create: z.boolean().optional().describe("Create a new empty, unsaved scene"),
         },
       },
       tool(async ({ name, create }) =>
@@ -1618,7 +1618,7 @@ ${EDIT_HELP}
       "app_status",
       {
         description:
-          "Which scene is open in the user's Excalidraw app, whether it has unpushed changes, and every scene the app knows about with its sync status: synced, ahead (not pushed yet), behind (newer on GitHub), diverged, conflict (needs get_conflict / resolve_conflict), local (not on GitHub). The app syncs by itself (auto-sync); scenes marked \"auto-sync off\" are pushed only when the user decides. health checks that edits and pictures are answered right now (what the tab is busy with, if not): use it when calls time out.",
+          "Which scene is open in the user's Excalidraw app, whether it has unpushed changes, and every scene the app knows about with its sync status: synced, ahead (not pushed yet), behind (newer in Google Drive), diverged, conflict (needs get_conflict / resolve_conflict), local (not in Google Drive). The app syncs by itself (auto-sync); scenes marked \"auto-sync off\" are pushed only when the user decides. health checks that edits and pictures are answered right now (what the tab is busy with, if not): use it when calls time out.",
         annotations: { readOnlyHint: true },
       },
       tool(async () => {
@@ -1651,7 +1651,7 @@ ${EDIT_HELP}
       "set_local_only",
       {
         description:
-          "Make a scene local-only (kept only in the user's browser, never pushed to or pulled from GitHub; a copy already on GitHub stays there unchanged) or sync it with GitHub again (localOnly=false: the app pushes it, or merges it with the GitHub copy). Only when the user asks. Needs the app open.",
+          "Make a scene local-only (kept only in the user's browser, never pushed to or pulled from Google Drive; a copy already in Google Drive stays there unchanged) or sync it with Google Drive again (localOnly=false: the app pushes it, or merges it with the Google Drive copy). Only when the user asks. Needs the app open.",
         inputSchema: { name: SCENE_NAME, localOnly: z.boolean() },
       },
       tool(async ({ name, localOnly }) => {
@@ -1667,7 +1667,7 @@ ${EDIT_HELP}
         "save_open_scene",
         {
           description:
-            "Push the scene open in the user's app to GitHub right now, including the user's edits. Usually NOT needed: with auto-sync on (the default) the app pushes by itself about 10 s after the last edit and pulls GitHub changes within about a minute. Use it only when the user asks to save/commit/push now, or to give an untitled scene a name. If auto-sync is off for the scene, the user wants to decide when it goes to GitHub: only push when they ask.",
+            "Push the scene open in the user's app to Google Drive right now, including the user's edits. Usually NOT needed: with auto-sync on (the default) the app pushes by itself about 10 s after the last edit and pulls Google Drive changes within about a minute. Use it only when the user asks to save/commit/push now, or to give an untitled scene a name. If auto-sync is off for the scene, the user wants to decide when it goes to Google Drive: only push when they ask.",
           inputSchema: { name: SCENE_NAME.optional() },
         },
         tool(async ({ name }) => text(await appCommand({ type: "save", ...(name ? { name } : {}) }))),
@@ -1675,7 +1675,7 @@ ${EDIT_HELP}
     }
 
     // ---------------------------------------------------------------------------
-    // merge conflicts: the user's version and GitHub's changed the same elements
+    // merge conflicts: the user's version and Drive's changed the same elements
     // ---------------------------------------------------------------------------
 
     const requireApp = async () => {
@@ -1692,20 +1692,20 @@ ${EDIT_HELP}
         type: (clash.mine || clash.theirs || clash.base)?.type,
         label: (clash.mine || clash.theirs || clash.base)?.text,
         mineChanged: clash.mineChanged,
-        githubChanged: clash.theirsChanged,
+        driveChanged: clash.theirsChanged,
         base: clash.base ? compact([clash.base])[0] : "(unknown or not in base)",
         mine: side(clash.mine),
-        github: side(clash.theirs),
+        drive: side(clash.theirs),
       };
     };
 
     server.registerTool(
       "get_conflict",
       {
-        description: `Show a merge conflict of a scene (status "conflict" in app_status / read_open_scene): elements that the user's local version AND GitHub's version both changed differently since their common version. Everything else was merged automatically. Per clashing element you get base / mine (the user's local version) / github, and which fields each side changed. view=true adds two images of the clashing area: the user's version and GitHub's. Then settle it with resolve_conflict.`,
+        description: `Show a merge conflict of a scene (status "conflict" in app_status / read_open_scene): elements that the user's local version AND Drive's version both changed differently since their common version. Everything else was merged automatically. Per clashing element you get base / mine (the user's local version) / drive, and which fields each side changed. view=true adds two images of the clashing area: the user's version and Drive's. Then settle it with resolve_conflict.`,
         inputSchema: {
           name: SCENE_NAME,
-          view: z.boolean().optional().describe("Also return images of the clashing area: mine and GitHub's version"),
+          view: z.boolean().optional().describe("Also return images of the clashing area: mine and Drive's version"),
           limit: z.number().optional().describe("Max clashes with full details (default 40); the rest are listed by id"),
         },
         annotations: { readOnlyHint: true },
@@ -1720,21 +1720,21 @@ ${EDIT_HELP}
           ...(info.baseKnown ? {} : { note: "The common base version is unknown, so every difference counts as a clash." }),
           details: info.clashes.slice(0, limit).map(clashView),
           ...(info.clashes.length > limit ? { moreIds: info.clashes.slice(limit).map((c) => c.id) } : {}),
-          next: 'resolve_conflict(name, resolution: "merge", choices: {id: "mine" | "github"}, otherwise: "mine" | "github") keeps the auto-merged changes of both sides and decides each clashing element. Other resolutions: "mine" (overwrite GitHub with the user\'s whole version), "github" (discard the user\'s local changes), "both" (GitHub\'s version, user\'s kept as a copy). Ask the user when the right choice is not obvious.',
+          next: 'resolve_conflict(name, resolution: "merge", choices: {id: "mine" | "drive"}, otherwise: "mine" | "drive") keeps the auto-merged changes of both sides and decides each clashing element. Other resolutions: "mine" (overwrite Google Drive with the user\'s whole version), "drive" (discard the user\'s local changes), "both" (Google Drive\'s version, user\'s kept as a copy). Ask the user when the right choice is not obvious.',
         });
         if (view && info.clashes.length) {
           const ids = info.clashes.map((c) => c.id);
           for (const side of ["mine", "theirs"]) {
             const sideIds = ids.filter((id) => info.clashes.find((c) => c.id === id)[side]);
             if (!sideIds.length) {
-              result.content.push({ type: "text", text: `(${side === "mine" ? "mine" : "GitHub's"}: all clashing elements are deleted there)` });
+              result.content.push({ type: "text", text: `(${side === "mine" ? "mine" : "Drive's"}: all clashing elements are deleted there)` });
               continue;
             }
             try {
               const { image, meta } = await renderImage({ conflict: { name, side }, elementIds: sideIds, maxSize: 1200 }, { userTab: true });
               result.content.push(image, {
                 type: "text",
-                text: `Image above: ${side === "mine" ? "the USER's version (mine)" : "GITHUB's version"} of the clashing area (bounds ${JSON.stringify(meta.renderedBounds)}).`,
+                text: `Image above: ${side === "mine" ? "the USER's version (mine)" : "DRIVE's version"} of the clashing area (bounds ${JSON.stringify(meta.renderedBounds)}).`,
               });
             } catch (error) {
               result.content.push({ type: "text", text: `(could not render ${side}: ${error.message})` });
@@ -1745,22 +1745,22 @@ ${EDIT_HELP}
       }),
     );
 
-    const SIDE = z.enum(["mine", "github"]);
-    const toSide = (choice) => (choice === "github" ? "theirs" : choice);
+    const SIDE = z.enum(["mine", "drive"]);
+    const toSide = (choice) => (choice === "drive" ? "theirs" : choice);
 
     server.registerTool(
       "resolve_conflict",
       {
-        description: `Resolve a merge conflict of a scene (see get_conflict) and push the result to GitHub.
-  - resolution "merge" (recommended): keeps every change that only one side made, and decides each clashing element: choices = {"<element id>": "mine" | "github"}, otherwise = the side for all clashes not in choices. Every clash needs a decision. "mine" = the user's local version of that element, "github" = the version on GitHub; a side where the element is deleted removes it.
-  - "mine": the user's whole local version overwrites GitHub (GitHub's other changes are lost).
-  - "github": take GitHub's version, discard the user's local changes.
-  - "both": take GitHub's version and keep the user's version as a copy scene.
+        description: `Resolve a merge conflict of a scene (see get_conflict) and push the result to Google Drive.
+  - resolution "merge" (recommended): keeps every change that only one side made, and decides each clashing element: choices = {"<element id>": "mine" | "drive"}, otherwise = the side for all clashes not in choices. Every clash needs a decision. "mine" = the user's local version of that element, "drive" = the version in Google Drive; a side where the element is deleted removes it.
+  - "mine": the user's whole local version overwrites Google Drive (Drive's other changes are lost).
+  - "drive": take Drive's version, discard the user's local changes.
+  - "both": take Drive's version and keep the user's version as a copy scene.
   Afterwards, fix details with read_open_scene / edit_open_scene if needed. Ask the user when it is unclear which version they want; never silently discard their work.`,
         inputSchema: {
           name: SCENE_NAME,
-          resolution: z.enum(["merge", "mine", "github", "both"]),
-          choices: z.record(z.string(), SIDE).optional().describe('For "merge": element id -> "mine" | "github"'),
+          resolution: z.enum(["merge", "mine", "drive", "both"]),
+          choices: z.record(z.string(), SIDE).optional().describe('For "merge": element id -> "mine" | "drive"'),
           otherwise: SIDE.optional().describe('For "merge": side for clashes not listed in choices'),
         },
         annotations: { destructiveHint: true },
@@ -1770,14 +1770,14 @@ ${EDIT_HELP}
         const result = await appCommand({
           type: "conflict-resolve",
           name,
-          resolution: resolution === "github" ? "theirs" : resolution,
+          resolution: resolution === "drive" ? "theirs" : resolution,
           ...(choices ? { choices: Object.fromEntries(Object.entries(choices).map(([id, c]) => [id, toSide(c)])) } : {}),
           ...(otherwise ? { otherwise: toSide(otherwise) } : {}),
         });
         if (result.resolved === false) {
           return text({
             ...result,
-            note: "GitHub changed again meanwhile and the newest version clashes too. Call get_conflict again.",
+            note: "Google Drive changed again meanwhile and the newest version clashes too. Call get_conflict again.",
           });
         }
         return text(result);

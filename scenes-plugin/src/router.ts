@@ -1,29 +1,32 @@
 // Scene URLs: http://draw.test/<scene name> opens that scene (creating it
 // locally if it doesn't exist yet) and the URL follows the current scene.
-// Online, two more kinds open in a viewer above the editor instead (see
+// Two more kinds open in a viewer above the editor instead (see
 // publicScene.tsx): Kurviq's own (kurviq.com/features) and shared ones,
-// kurviq.com/@<owner>/<scene> (the owner's space; the visitor's own space
-// opens as usual).
+// kurviq.com/s/<fileId>/<name> (a Google Drive file). A shared scene this tab
+// edits (its space, see storage.ts) opens in the editor, at the same URL.
 
 import { IS_ONLINE } from "./api";
 import { scenesController } from "./controller";
-import { connection } from "./online/github";
+import { sharedFileId } from "./online/drive";
 import { isPublicScene, publicScene } from "./publicScene";
 import { deck } from "./deck";
 import { getSlides } from "./slides";
 
-/** /@owner/scene: someone's shared scene */
-const sharedFromPath = (): { owner: string; name: string } | null => {
-  const match = IS_ONLINE && window.location.pathname.match(/^\/(?:@|%40)([A-Za-z0-9-]{1,39})\/(.+?)\/?$/i);
+/** /s/<fileId>/<name>: a shared scene (the name only makes the link readable) */
+const sharedFromPath = (): { fileId: string; name: string } | null => {
+  const match = window.location.pathname.match(/^\/s\/([\w-]{10,200})(?:\/([^/]*))?\/?$/);
   if (!match) {
     return null;
   }
   try {
-    return { owner: match[1], name: decodeURIComponent(match[2]) };
+    return { fileId: match[1], name: decodeURIComponent(match[2] ?? "").replace(/-/g, " ") };
   } catch {
-    return null;
+    return { fileId: match[1], name: "" };
   }
 };
+
+/** /@owner/scene: a link of the time scenes were on GitHub */
+const isOldSharedPath = () => IS_ONLINE && /^\/(?:@|%40)[A-Za-z0-9-]{1,39}\/.+/i.test(window.location.pathname);
 
 /** a presentation link: ?present (and &slide=3) */
 const presentFromSearch = () => {
@@ -33,16 +36,28 @@ const presentFromSearch = () => {
 };
 
 /**
- * A shared scene of the space this tab shows is just one of its scenes,
- * unless the link is a presentation link: that one is presented for everyone.
+ * The shared scene this tab edits (its space) opens in the editor, unless
+ * the link is a presentation link: that one is presented for everyone.
  */
-const isOwnSpace = (owner: string) =>
-  !presentFromSearch().present && connection.getState().repo?.owner.toLowerCase() === owner.toLowerCase();
+const isThisSpace = (fileId: string) => !presentFromSearch().present && sharedFileId === fileId;
+
+/** show a shared link's scene in the viewer (true), or leave it to the editor */
+const showShared = () => {
+  const shared = sharedFromPath();
+  if (shared && !isThisSpace(shared.fileId)) {
+    publicScene.show(shared.name, { fileId: shared.fileId, ...presentFromSearch() });
+    return true;
+  }
+  if (isOldSharedPath()) {
+    publicScene.show("", { moved: true });
+    return true;
+  }
+  return false;
+};
 
 const sceneFromPath = (): string | null => {
-  const shared = sharedFromPath();
-  if (shared) {
-    return isOwnSpace(shared.owner) ? shared.name : null;
+  if (sharedFromPath() || isOldSharedPath()) {
+    return null;
   }
   const raw = window.location.pathname.replace(/^\/+|\/+$/g, "");
   if (!raw) {
@@ -55,8 +70,13 @@ const sceneFromPath = (): string | null => {
   }
 };
 
-const pathFor = (name: string | null) =>
-  name === null ? "/" : `/${encodeURIComponent(name)}`;
+const pathFor = (name: string | null) => {
+  // a shared scene's space keeps its link
+  if (sharedFileId) {
+    return name === null ? "/" : `/s/${sharedFileId}/${encodeURIComponent(name)}`;
+  }
+  return name === null ? "/" : `/${encodeURIComponent(name)}`;
+};
 
 const navigateTo = (name: string) =>
   scenesController.openOrCreate(name).catch((error) => {
@@ -165,11 +185,9 @@ export const connectRouter = async () => {
   };
 
   const target = sceneFromPath();
-  const shared = sharedFromPath();
-  if (shared && !isOwnSpace(shared.owner)) {
-    publicScene.show(shared.name, shared.owner, presentFromSearch()); // right away, the editor loads underneath
-  } else if (isPublicScene(target)) {
-    publicScene.show(target, undefined, presentFromSearch());
+  // right away, the editor loads underneath
+  if (!showShared() && isPublicScene(target)) {
+    publicScene.show(target, presentFromSearch());
   }
 
   await scenesController.ready;
@@ -177,6 +195,19 @@ export const connectRouter = async () => {
 
   if (target !== null && !isPublicScene(target)) {
     await navigateTo(target);
+  } else if (sharedFileId && sharedFromPath()?.fileId === sharedFileId) {
+    // this space's one scene (its name comes from Drive, with the first sync)
+    for (let tries = 0; tries < 120; tries++) {
+      const { list, remote, current } = scenesController.getState();
+      const name = list.find((item) => item.name !== null)?.name ?? remote?.[0]?.name;
+      if (name) {
+        if (name !== current) {
+          await navigateTo(name);
+        }
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
   syncUrl("replace");
   showSlideFromUrl();
@@ -206,14 +237,12 @@ export const connectRouter = async () => {
   });
 
   window.addEventListener("popstate", () => {
-    const shared = sharedFromPath();
-    if (shared && !isOwnSpace(shared.owner)) {
-      publicScene.show(shared.name, shared.owner, presentFromSearch());
+    if (showShared()) {
       return;
     }
     const name = sceneFromPath();
     if (isPublicScene(name)) {
-      publicScene.show(name, undefined, presentFromSearch());
+      publicScene.show(name, presentFromSearch());
       return;
     }
     if (publicScene.shown()) {

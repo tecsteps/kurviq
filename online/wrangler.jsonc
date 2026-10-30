@@ -1,7 +1,9 @@
-// Kurviq on Cloudflare: one Worker serves the app (static assets), Connect
-// GitHub (/auth), agent pairings (Durable Object) and the remote MCP.
+// Kurviq on Cloudflare: one Worker serves the app (static assets), Sign in
+// with Google (/auth), public scenes from Google Drive (/api/public), agent
+// pairings (Durable Object) and the remote MCP.
 // Deploy: `npm run deploy:online` in the project root. Secrets (set once,
-// see README): GITHUB_CLIENT_SECRET, COOKIE_KEY.
+// see README): GOOGLE_CLIENT_SECRET, COOKIE_KEY, GOOGLE_API_KEY. The Google
+// client id and other public values: ./google.json.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kurviq",
@@ -26,9 +28,7 @@
     { "binding": "FEEDBACK", "database_name": "kurviq-feedback", "database_id": "b0ab0f4a-ee15-4287-baaa-5043937f5952" }
   ],
   "vars": {
-    "CANONICAL_HOST": "kurviq.com",
-    "GITHUB_APP_SLUG": "kurviq",
-    "GITHUB_CLIENT_ID": "Iv23lipNDWTi1X98E29f"
+    "CANONICAL_HOST": "kurviq.com"
   },
   "routes": [
     { "pattern": "kurviq.com", "custom_domain": true },

@@ -1,6 +1,6 @@
 # Kurviq
 
-> Kurviq (https://kurviq.com) is a free online whiteboard built on Excalidraw (unofficial), with named scenes, slides and formatted text. No account: drawings live in the user's browser and can optionally be synced with a GitHub repository. AI agents draw and edit with the user through a remote MCP server that works via the user's open Kurviq tab.
+> Kurviq (https://kurviq.com) is a free online whiteboard built on Excalidraw (unofficial), with named scenes, slides and formatted text. No account needed: drawings live in the user's browser and can optionally be synced with the user's Google Drive (Sign in with Google) and shared per scene. AI agents draw and edit with the user through a remote MCP server that works via the user's open Kurviq tab.
 
 ## Connect an agent (MCP)
 
@@ -26,24 +26,24 @@ The MCP server's instructions (sent on connect) explain everything in detail. In
 - Slides: every frame is a slide; a "Template" frame holds header/footer/logo. `validate_deck` checks a deck (text that doesn't fit, cut-off elements, contrast, …).
 - Formatted text: write markdown in `text` (bold, italic, lists, checklists, links, sizes).
 - Images and icons: `{ "type": "image", "src": "<http(s) or data URL>" }`, `"svg": "<svg…>"` or `"icon": "lucide:database"`.
-- `app_status`: which scene the user has open, whether GitHub is connected (`github`), each scene's sync status. `open_scene` switches what the user sees: only when they ask.
+- `app_status`: which scene the user has open, whether Google Drive is connected (`drive`), each scene's sync status. `open_scene` switches what the user sees: only when they ask.
 - Don't push, write files or call HTTP APIs yourself: the tools and the user's app do all syncing and merging.
 - Something in Kurviq doesn't work, or a tool is missing? `send_feedback(kind: "bug" | "change", title, text)` reports it to Kurviq's developers (plain text, no personal data). Users report the same way with the Feedback link at the bottom right.
 
-## GitHub (optional, per browser)
+## Google Drive (optional, per browser)
 
-- Without GitHub every scene is local-only: it exists only in that browser. Agents read and edit local-only scenes the same way.
-- With GitHub (Connect GitHub → allow the Kurviq GitHub App), scenes are stored as `scenes/<name>.excalidraw` in the user's private repository `<account>/kurviq-scenes` (Kurviq creates it). Edits are pushed about 10 s after the user stops drawing; other people's changes arrive within a minute and are merged element by element. Agent edits are commits by the user's GitHub account, marked with a `Scenes-Source: agent` trailer.
-- Teams: a space is a GitHub account or organization with its `<owner>/kurviq-scenes`; the user switches spaces under "GitHub…" in the scene list, and the tools work on the open space. Permissions are GitHub's: with read access only, `app_status` reports `github: read only …` and edits are refused.
+- Without sign-in every scene is local-only: it exists only in that browser. Agents read and edit local-only scenes the same way.
+- With Google (Sign in with Google on the welcome screen or in the scene list), each scene is one file `<name>.excalidraw` (images embedded) in a folder "Kurviq" in the user's My Drive. Kurviq uses the `drive.file` scope: it only sees files it created or the user opened with it. Edits are saved about 10 s after the user stops drawing; other people's changes arrive within a minute and are merged element by element. Agent edits are saved by the user's tab with the user's sign-in; the tab marks the agent's last Drive revision (`agentRev`), which is how `read_scene` finds `userChanges`. Drive keeps old versions for about 30 days; deleted scenes go to Drive's bin.
+- Sharing is per scene (no teams): Share… adds people by email (Can view / Can edit) and sets general access ("Only people added here", "Anyone with the link can view" or "can edit"). Drive's permissions decide who may do what. Scenes shared with the user that Kurviq may open are listed in the scene list with the owner's name.
 - Fonts: besides Excalidraw's own, any Google font works by its exact name, e.g. `"fontFamily": "Inter"` (fetched on first use, then carried by the scene); `add_font("Inter")` adds one ahead. `app_status` lists added fonts as `customFonts`. Font files are added by the user (font picker → "Add font…").
-- Sharing: scenes have links `https://kurviq.com/@<owner>/<scene>`. Public scenes (in `<owner>/kurviq-public`) open for everyone; private ones for people who can read the repository on GitHub. The raw JSON of a public scene: `https://kurviq.com/api/public/<owner>/<scene>`. Add `?present` (and `&slide=3`) to a scene link to open it presenting.
-- The connection stays for months: Kurviq keeps a refresh token in an encrypted, httpOnly cookie of the browser (nothing is stored on Kurviq's server). Disconnect any time under "GitHub…" in the scene list.
+- Links: the user's own scenes `https://kurviq.com/<scene>`, shared scenes `https://kurviq.com/s/<fileId>/<name>`. Scenes open to "anyone with the link" open for everyone without an account; their raw JSON: `https://kurviq.com/api/public/<fileId>`. Others need Sign in with Google and access in Drive. Add `?present` (and `&slide=3`) to a scene link to open it presenting. Old links `https://kurviq.com/@<owner>/<scene>` no longer work.
+- The sign-in stays: Kurviq keeps Google's refresh token in an encrypted, httpOnly cookie of the browser (nothing is stored on Kurviq's server). Sign out any time under "Google Drive…" in the scene list.
 
 ## Limits of the online version
 
 - Local file paths (image `src`, edit files) don't work: Kurviq's MCP server runs on kurviq.com, not on the agent's machine. Images from your machine: upload them with `curl -s --data-binary @image.png <upload address>` (the upload address is in `read_me` and the MCP server's instructions, valid for a week; PNG, JPEG, GIF, WebP, SVG up to 10 MB), then add `{ "type": "image", "fileId": "<the answer's fileId>", "x": 0, "y": 0, "width": 800 }`. The image's bytes never pass through your context; it goes straight to the user's open Kurviq tab.
 - `export_pdf` is not available through MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).
-- Want everything on your own machine (local Excalidraw, git CLI, headless rendering without an open tab)? Use the local install: https://github.com/tecsteps/kurviq
+- Want Kurviq on your own machine (local Excalidraw, local file paths, PDF export through MCP)? Use the local install: https://github.com/tecsteps/kurviq
 
 ## Links
 

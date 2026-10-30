@@ -730,10 +730,10 @@ export const editOpenScene = async (
 
 /**
  * Detached mode, in the agent's headless tab: apply the edit to the newest
- * version on GitHub and commit it (the user's app merges it within seconds).
- * If GitHub moved on meanwhile, the edit is simply applied again on top.
+ * version in Drive and save it (the user's app merges it within seconds).
+ * If Drive moved on meanwhile, the edit is simply applied again on top.
  */
-export const editSceneOnGitHub = async (
+export const editSceneOnDrive = async (
   command: SceneEditCommand,
   convert: (elements: any[]) => Promise<any[]>,
 ) => {
@@ -766,7 +766,7 @@ export const editSceneOnGitHub = async (
 };
 
 // -----------------------------------------------------------------------------
-// local-only scenes: they exist only in the user's browser (never on GitHub),
+// local-only scenes: they exist only in the user's browser (never in Drive),
 // so the agent reads and edits them through the user's tab. Revisions and the
 // agent's last version are kept here too.
 // -----------------------------------------------------------------------------

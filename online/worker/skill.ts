@@ -6,18 +6,18 @@ const INTRO = (app: string) => `# Kurviq: how to work with the user's drawings
 
 The user works in **Kurviq** (${app}), an Excalidraw with **scenes** (named
 drawings, URL \`${app}/<scene>\`). Scenes live in the user's browser and,
-if the user connected GitHub, in a GitHub repo they chose (several people
-can share one repo). The MCP server gives you tools for it. The user is
-often **looking at Kurviq while you work** and edits by hand in between.
+if the user signed in with Google, in their Google Drive (one file per
+scene, in a folder "Kurviq"; scenes are shared with other people one by
+one). The MCP server gives you tools for it. The user is often **looking
+at Kurviq while you work** and edits by hand in between.
 
 **You work through the user's open Kurviq tab.** Your MCP link belongs to
 one browser: every tool needs Kurviq open there (any scene). Your edits run
 in that tab with the real Excalidraw (text measured with the real fonts,
-real PNG images) and are committed to GitHub with the user's connection,
-marked as agent commits; the tab merges them into what the user is doing.
-Without GitHub (\`app_status\` shows \`github: false\`) all scenes are
-local-only: they exist only in that browser, and you read and edit them
-there the same way.
+real PNG images); the tab merges them into what the user is doing and saves
+them to Google Drive with the user's sign-in. Without sign-in
+(\`app_status\` shows \`drive: false\`) all scenes are local-only: they
+exist only in that browser, and you read and edit them there the same way.
 
 If a tool answers "Kurviq is not open", ask the user to open ${app} and
 keep the tab open, then try again.
@@ -28,8 +28,8 @@ const TROUBLESHOOTING = (app: string) => `## Troubleshooting
 
 - "Kurviq is not open in the user's browser": ask the user to open ${app}
   in the browser where they allowed this agent.
-- "GitHub is not connected": the user can connect it under "GitHub…" in the scene list;
-  until then, work with local-only scenes.
+- "Google Drive is not connected": the user can sign in with Google in the
+  scene list (Sign in with Google); until then, work with local-only scenes.
 - Local file paths (edit files, image src) and PDF export are not available
   through the Kurviq MCP: upload images and big edits (see "Images from your
   machine"); the user exports PDFs in Kurviq (Slides sidebar → PDF).
@@ -93,11 +93,8 @@ export const kurviqSkill = (app: string, uploadUrl = "<the upload address from t
     }
   }
   text = text
-    .replace(/your headless\s+Excalidraw, which commits it/g, "the user's Kurviq tab, which commits it")
-    .replace(/in your headless Excalidraw and are\s+gone when it stops/g, "in the user's Kurviq tab (browser storage)")
-    .replace(/your headless Excalidraw/g, "the user's Kurviq tab")
     .replace(/\s*\(localhost:3101\)/g, "")
-    .replace(/the scenes server's HTTP API/g, "Kurviq's or GitHub's HTTP API")
+    .replace(/the scenes server's HTTP API/g, "Kurviq's or Google's HTTP API")
     .replace(/absolute file path,\s+/g, "")
     .replace(
       /- \*\*Big edits:\*\* write[\s\S]*?instead of pasting it into the call\./,

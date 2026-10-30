@@ -1,44 +1,53 @@
-// Shared scenes: kurviq.com/@<owner>/<scene>. The owner is a GitHub account
-// or organization (globally unique), the scene a file in its repository, so
-// the link is unique without anything stored here.
+// Shared scenes: kurviq.com/s/<fileId>/<slug>. The file id is the scene's
+// Google Drive file (unique, and it stays when the scene is renamed), the
+// slug only makes the link readable; nothing is stored here.
 //
-//   /api/public/<owner>/<scene>  a public scene, from <owner>/kurviq-public on
-//                                GitHub, kept in Cloudflare's cache for a minute
-//   /@<owner>/<scene>            the app, with the scene's title for link
-//                                previews (Slack, Teams, …) and the scene preloaded
+//   /api/public/<fileId>   a scene shared "anyone with the link" on Drive,
+//                          read with Kurviq's API key, kept in Cloudflare's
+//                          cache for a minute
+//   /s/<fileId>/<slug>     the app, with the scene's title for link previews
+//                          (Slack, Teams, …) and the scene preloaded
 //
-// Private scenes are never fetched here: the visitor's browser reads them
-// from GitHub with the visitor's own access.
+// Scenes shared only with people are never fetched here: the visitor's
+// browser reads them from Drive with the visitor's own sign-in.
 
-import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
-
-const OWNER_RE = /^[A-Za-z0-9-]{1,39}$/;
-const PUBLIC_REPO = "kurviq-public";
-
-const parse = (owner: string, encoded: string) => {
-  let name: string;
-  try {
-    name = decodeURIComponent(encoded);
-  } catch {
-    return null;
-  }
-  return OWNER_RE.test(owner) && isSceneName(name) ? { owner, name } : null;
+export type SharedEnv = {
+  /** API key (Drive API only) for files shared "anyone with the link" */
+  GOOGLE_API_KEY?: string;
 };
 
-const apiPath = (owner: string, name: string) => `/api/public/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
+const SCENE_MIME = "application/vnd.excalidraw+json";
+const EXTENSION = ".excalidraw";
+/** bigger scenes are opened in the browser (signed in), not through the Worker */
+const MAX_BYTES = 25 * 1024 * 1024;
+
+const apiPath = (fileId: string) => `/api/public/${fileId}`;
+
+const notPublic = () =>
+  new Response("Not a public scene", {
+    status: 404,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=30" },
+  });
 
 /** a public scene, through the edge cache (stale copies are fine for a minute) */
-const publicScene = async (origin: string, owner: string, name: string, ctx: ExecutionContext) => {
+const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: ExecutionContext) => {
   const cache = caches.default;
-  const key = new Request(`${origin}${apiPath(owner, name)}`);
+  const key = new Request(`${origin}${apiPath(fileId)}`);
   const hit = await cache.match(key);
   if (hit) {
     return hit;
   }
-  const upstream = await fetch(
-    `https://raw.githubusercontent.com/${owner}/${PUBLIC_REPO}/HEAD/scenes/${encodeURIComponent(name)}.excalidraw`,
-  );
-  const response = upstream.ok
+  if (!env.GOOGLE_API_KEY) {
+    return notPublic();
+  }
+  const drive = `https://www.googleapis.com/drive/v3/files/${fileId}`;
+  const meta = await fetch(`${drive}?fields=name,mimeType,size&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`);
+  const info: any = meta.ok ? await meta.json() : null;
+  const isScene = !!info && (info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION)) && Number(info.size || 0) <= MAX_BYTES;
+  const upstream = isScene ? await fetch(`${drive}?alt=media&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`) : null;
+  const name = isScene ? String(info.name).replace(/\.excalidraw$/, "") : "";
+  const response = upstream?.ok
     ? new Response(upstream.body, {
         headers: {
           "Content-Type": "application/json; charset=utf-8",
@@ -46,55 +55,55 @@ const publicScene = async (origin: string, owner: string, name: string, ctx: Exe
           // someone else's content: data only, never a page
           "X-Content-Type-Options": "nosniff",
           "Content-Security-Policy": "default-src 'none'; sandbox",
-          "X-Kurviq-Source": `github.com/${owner}/${PUBLIC_REPO}`,
+          "X-Kurviq-Name": encodeURIComponent(name),
+          "Access-Control-Expose-Headers": "X-Kurviq-Name",
         },
       })
-    : new Response("Not a public scene", {
-        status: 404,
-        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=30" },
-      });
+    : notPublic();
   ctx.waitUntil(cache.put(key, response.clone()));
   return response;
 };
 
-/** /api/public/<owner>/<scene> */
-export const handlePublicApi = (request: Request, ctx: ExecutionContext): Promise<Response> | null => {
+/** /api/public/<fileId> */
+export const handlePublicApi = (request: Request, env: SharedEnv, ctx: ExecutionContext): Promise<Response> | null => {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/public\/([^/]+)\/([^/]+)$/);
+  const match = url.pathname.match(/^\/api\/public\/([^/]+)$/);
   if (!match) {
     return null;
   }
-  // (the owner needs no decoding: GitHub names are letters, digits and dashes)
-  const scene = parse(match[1], match[2]);
-  if (!scene || request.method !== "GET") {
+  if (!FILE_ID_RE.test(match[1]) || request.method !== "GET") {
     return Promise.resolve(new Response("Not found", { status: 404 }));
   }
-  return publicScene(url.origin, scene.owner, scene.name, ctx);
+  return publicScene(url.origin, match[1], env, ctx);
 };
 
-/** /@<owner>/<scene>: the app page, titled after the scene (if it is public) */
+const escapeHtml = (text: string) =>
+  text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
+
+/** /s/<fileId>/<slug>: the app page, titled after the scene (if it is public) */
 export const handleSharedPage = async (
   request: Request,
+  env: SharedEnv,
   assets: Fetcher,
   ctx: ExecutionContext,
 ): Promise<Response | null> => {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/(?:@|%40)([^/]+)\/([^/]+)\/?$/i);
+  const match = url.pathname.match(/^\/s\/([^/]+)(?:\/[^/]*)?\/?$/);
   if (!match || request.method !== "GET") {
     return null;
   }
-  const scene = parse(match[1], match[2]);
-  // the app's page itself (asking for this path would redirect "@" to "%40")
   const page = await assets.fetch(new Request(new URL("/", url), { headers: request.headers }));
-  if (!scene || !(page.headers.get("Content-Type") || "").includes("text/html")) {
+  if (!FILE_ID_RE.test(match[1]) || !(page.headers.get("Content-Type") || "").includes("text/html")) {
     return page;
   }
-  const isPublic = (await publicScene(url.origin, scene.owner, scene.name, ctx)).ok;
-  const title = isPublic ? `${scene.name} by @${scene.owner} · Kurviq` : `A shared scene on Kurviq`;
-  const description = isPublic
-    ? `A drawing by @${scene.owner}, made with Kurviq. Open it in your browser: no sign-up.`
-    : `Shared with you on Kurviq. Sign in with GitHub to see it, if you have access to it on GitHub.`;
-  const link = scene ? `${url.origin}/@${scene.owner}/${encodeURIComponent(scene.name)}` : url.href;
+  const fileId = match[1];
+  const scene = await publicScene(url.origin, fileId, env, ctx);
+  const name = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-Name") || "") : "";
+  const title = name ? `${name} · Kurviq` : `A shared scene on Kurviq`;
+  const description = name
+    ? `A drawing made with Kurviq. Open it in your browser: no sign-up.`
+    : `Shared with you on Kurviq. Sign in with Google to see it, if it was shared with you.`;
+  const link = `${url.origin}${url.pathname}`;
   const content = (value: string) => ({ element: (el: Element) => el.setAttribute("content", value) });
   const rewritten = new HTMLRewriter()
     .on("title", { element: (el) => el.setInnerContent(title) })
@@ -105,8 +114,8 @@ export const handleSharedPage = async (
     .on("head", {
       element: (el) =>
         el.append(
-          isPublic
-            ? `<link rel="preload" href="${apiPath(scene.owner, scene.name)}" as="fetch" crossorigin="anonymous">`
+          name
+            ? `<link rel="preload" href="${escapeHtml(apiPath(fileId))}" as="fetch" crossorigin="anonymous">`
             : `<meta name="robots" content="noindex">`,
           { html: true },
         ),

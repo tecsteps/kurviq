@@ -1,39 +1,63 @@
-// "Connect GitHub" without a Kurviq account: GitHub App user tokens, kept in
-// an encrypted httpOnly cookie of this browser. The Worker stores nothing —
-// the cookie is the only place the refresh token exists (besides GitHub).
+// "Sign in with Google" without a Kurviq account: Google's OAuth tokens,
+// kept in an encrypted httpOnly cookie of this browser. The Worker stores
+// nothing — the cookie is the only place the refresh token exists (besides
+// Google).
 //
-//   GET  /auth/login?return=…    sign in with GitHub (OAuth of the GitHub App)
-//   GET  /auth/install?return=…  install the app on (more) repositories
-//   GET  /auth/callback          GitHub's redirect: code -> tokens -> cookie
-//   POST /auth/token             a valid access token (8 h) for the page,
+//   GET  /auth/login?return=…    sign in with Google (Drive: drive.file only)
+//   GET  /auth/callback          Google's redirect: code -> tokens -> cookie
+//   POST /auth/token             a valid access token (1 h) for the page,
 //                                refreshed with the refresh token when needed
 //                                ({ connected: false } if there is none)
-//   POST /auth/logout            forget the connection (and revoke the token)
+//   POST /auth/logout            forget the connection in this browser
 //
-// GitHub user tokens expire after 8 hours, their refresh token after 6
-// months — and every refresh gives a new 6-month refresh token, so a browser
-// that opens Kurviq at least twice a year stays connected for good.
+// The local install (localhost, *.test) signs in through these routes too:
+// its return address is allowed, and instead of a cookie (which it couldn't
+// read) it gets the session sealed in the URL fragment. It keeps that blob
+// and sends it to /auth/token and /auth/logout (CORS, local origins only).
+//
+// Google's refresh tokens don't expire while they are used (the consent
+// screen must be "In production"; in "Testing" they last 7 days) and don't
+// rotate, so tabs refreshing at the same moment don't hurt each other.
+
+import google from "../google.json";
 
 export type AuthEnv = {
-  GITHUB_CLIENT_ID: string;
-  GITHUB_CLIENT_SECRET: string;
-  GITHUB_APP_SLUG: string;
+  /** default: online/google.json */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET: string;
   /** base64 of 32 random bytes: encrypts the cookies */
   COOKIE_KEY: string;
 };
 
-const SESSION_COOKIE = "kq_github";
+const clientId = (env: AuthEnv) => env.GOOGLE_CLIENT_ID || google.clientId;
+
+const SESSION_COOKIE = "kq_google";
 const STATE_COOKIE = "kq_oauth_state";
-const UA = "Kurviq";
+/** purpose of a session handed to the local install (never valid as a cookie) */
+const LOCAL_SESSION = "kq_google_local";
+/** browsers cap cookies at 400 days; every refresh renews it */
+const SESSION_DAYS = 400;
+
+export const SCOPES = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/drive.install",
+];
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+
+export type GoogleUser = { email: string; name: string | null; avatarUrl: string | null };
 
 type Session = {
   /** access token and when it expires (ms) */
   a: string;
   ae: number;
-  /** refresh token and when it expires (ms) */
+  /** refresh token */
   r: string;
-  re: number;
-  user: { login: string; avatarUrl: string | null };
+  user: GoogleUser;
+  /** the user allowed Kurviq's Drive access (Google lets them untick it) */
+  drive: boolean;
 };
 
 // -----------------------------------------------------------------------------
@@ -103,75 +127,122 @@ const cookie = (request: Request, name: string, value: string, maxAgeSeconds: nu
 };
 
 // -----------------------------------------------------------------------------
-// GitHub
+// Google
 // -----------------------------------------------------------------------------
 
 type TokenAnswer = {
   access_token?: string;
   expires_in?: number;
   refresh_token?: string;
-  refresh_token_expires_in?: number;
+  scope?: string;
+  id_token?: string;
   error?: string;
   error_description?: string;
 };
 
 const exchange = async (env: AuthEnv, params: Record<string, string>): Promise<TokenAnswer> => {
-  const res = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": UA },
-    body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, ...params }),
-  });
-  return res.ok ? res.json() : { error: `http_${res.status}` };
+  let res: Response;
+  try {
+    res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: clientId(env), client_secret: env.GOOGLE_CLIENT_SECRET, ...params }),
+    });
+  } catch {
+    return { error: "http_0" };
+  }
+  if (res.ok) {
+    return res.json();
+  }
+  const body: any = await res.json().catch(() => ({}));
+  return { error: res.status >= 500 ? `http_${res.status}` : String(body.error || `http_${res.status}`) };
 };
 
-const sessionFrom = (answer: TokenAnswer, user: Session["user"]): Session | null => {
-  if (!answer.access_token) {
+/** who signed in: from the ID token, which came straight from Google's token endpoint (TLS) */
+const userOf = (idToken: string | undefined): GoogleUser | null => {
+  try {
+    const claims = JSON.parse(new TextDecoder().decode(fromB64url(idToken!.split(".")[1])));
+    if (!claims.email) {
+      return null;
+    }
+    return {
+      email: String(claims.email),
+      name: claims.name ? String(claims.name) : null,
+      avatarUrl: claims.picture ? String(claims.picture) : null,
+    };
+  } catch {
     return null;
   }
-  const now = Date.now();
+};
+
+const grantsDrive = (scope: string | undefined) => (scope ?? "").split(" ").includes(DRIVE_SCOPE);
+
+const sessionCookie = async (request: Request, env: AuthEnv, session: Session) =>
+  cookie(request, SESSION_COOKIE, await seal(env, session, SESSION_COOKIE), SESSION_DAYS * 24 * 3600);
+
+/** a session with a fresh access token, or why there is none */
+const refresh = async (env: AuthEnv, session: Session): Promise<Session | "expired" | "unreachable"> => {
+  const answer = await exchange(env, { grant_type: "refresh_token", refresh_token: session.r });
+  if (!answer.access_token) {
+    return answer.error?.startsWith("http_") ? "unreachable" : "expired";
+  }
   return {
+    ...session,
     a: answer.access_token,
-    ae: now + (answer.expires_in ?? 8 * 3600) * 1000,
-    // tokens without expiry (app setting off): no refresh token
-    r: answer.refresh_token ?? "",
-    re: now + (answer.refresh_token_expires_in ?? 180 * 24 * 3600) * 1000,
-    user,
+    ae: Date.now() + (answer.expires_in ?? 3600) * 1000,
+    drive: answer.scope ? grantsDrive(answer.scope) : session.drive,
   };
 };
 
-const fetchUser = async (accessToken: string) => {
-  const res = await fetch("https://api.github.com/user", {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/vnd.github+json", "User-Agent": UA },
-  });
-  if (!res.ok) {
-    return null;
-  }
-  const user: any = await res.json();
-  return { login: String(user.login), avatarUrl: user.avatar_url ? String(user.avatar_url) : null };
-};
-
-const sessionCookie = async (request: Request, env: AuthEnv, session: Session) =>
-  cookie(request, SESSION_COOKIE, await seal(env, session, SESSION_COOKIE), (session.re - Date.now()) / 1000);
+const tokenAnswer = (session: Session) => ({
+  token: session.a,
+  expiresAt: new Date(session.ae).toISOString(),
+  user: session.user,
+  drive: session.drive,
+});
 
 // -----------------------------------------------------------------------------
 // routes
 // -----------------------------------------------------------------------------
 
+/** the local install: localhost, 127.0.0.1, *.localhost and *.test (Herd), any port */
+const isLocalOrigin = (origin: string | null) => {
+  if (!origin) {
+    return false;
+  }
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1" ||
+        url.hostname.endsWith(".localhost") ||
+        url.hostname.endsWith(".test"))
+    );
+  } catch {
+    return false;
+  }
+};
+
 /**
- * Only paths on this site (no open redirects): parsed like a browser would
- * (which drops tabs and newlines and reads "\\" as "/"), and kept only if it
- * stays on this origin.
+ * Where to go back to: a path on this site, or a page of the local install
+ * (no open redirects otherwise). Parsed like a browser would (which drops
+ * tabs and newlines and reads "\\" as "/").
  */
-const safeReturn = (value: string | null, origin: string) => {
-  if (!value || !value.startsWith("/") || /[\u0000-\u001f\\]/.test(value)) {
-    return "/";
+const safeReturn = (value: string | null, origin: string): { back: string; local: boolean } => {
+  if (!value || /[\u0000-\u001f\\]/.test(value)) {
+    return { back: "/", local: false };
   }
   try {
     const target = new URL(value, origin);
-    return target.origin === origin ? `${target.pathname}${target.search}${target.hash}` : "/";
-  } catch {
-    return "/";
-  }
+    if (value.startsWith("/") && target.origin === origin) {
+      return { back: `${target.pathname}${target.search}`, local: false };
+    }
+    if (isLocalOrigin(target.origin) && target.origin !== origin) {
+      return { back: `${target.origin}${target.pathname}${target.search}`, local: true };
+    }
+  } catch {}
+  return { back: "/", local: false };
 };
 
 const withParam = (path: string, key: string, value: string) =>
@@ -183,20 +254,62 @@ const redirect = (location: string, cookies: string[] = []) => {
   return new Response(null, { status: 302, headers });
 };
 
-const json = (status: number, body: unknown, cookies: string[] = []) => {
+const json = (status: number, body: unknown, cookies: string[] = [], corsOrigin?: string) => {
   const headers = new Headers({ "Content-Type": "application/json", "Cache-Control": "no-store" });
   cookies.forEach((value) => headers.append("Set-Cookie", value));
+  if (corsOrigin) {
+    headers.set("Access-Control-Allow-Origin", corsOrigin);
+    headers.set("Vary", "Origin");
+  }
   return new Response(JSON.stringify(body), { status, headers });
 };
 
-/** POSTs only from Kurviq's own pages */
-const sameOrigin = (request: Request) => request.headers.get("Origin") === new URL(request.url).origin;
+type Flow = { state: string; back: string; local: boolean; consent: boolean };
 
-const startFlow = async (request: Request, env: AuthEnv, target: (state: string, origin: string) => string) => {
+const startFlow = async (request: Request, env: AuthEnv, back: string, local: boolean, consent: boolean, hint?: string) => {
   const url = new URL(request.url);
   const state = b64url(crypto.getRandomValues(new Uint8Array(18)));
-  const sealed = await seal(env, { state, back: safeReturn(url.searchParams.get("return"), url.origin) }, STATE_COOKIE);
-  return redirect(target(state, url.origin), [cookie(request, STATE_COOKIE, sealed, 900)]);
+  const sealed = await seal(env, { state, back, local, consent } satisfies Flow, STATE_COOKIE);
+  const target = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  target.searchParams.set("client_id", clientId(env));
+  target.searchParams.set("redirect_uri", `${url.origin}/auth/callback`);
+  target.searchParams.set("response_type", "code");
+  target.searchParams.set("scope", SCOPES.join(" "));
+  target.searchParams.set("access_type", "offline");
+  target.searchParams.set("include_granted_scopes", "true");
+  target.searchParams.set("state", state);
+  // Google hands out a refresh token only on consent: asked for once more
+  // when a sign-in came back without one (see the callback)
+  target.searchParams.set("prompt", consent ? "consent" : "select_account");
+  if (hint) {
+    target.searchParams.set("login_hint", hint);
+  }
+  return redirect(target.toString(), [cookie(request, STATE_COOKIE, sealed, 900)]);
+};
+
+/** back to the page that asked: this site (cookie) or the local install (sealed session in the fragment) */
+const finish = async (request: Request, env: AuthEnv, flow: Flow, status: string, session?: Session) => {
+  const clearState = cookie(request, STATE_COOKIE, "", 0);
+  if (flow.local) {
+    const fragment = new URLSearchParams({ "kurviq-google": status });
+    if (session) {
+      fragment.set("session", await seal(env, session, LOCAL_SESSION));
+    }
+    return redirect(`${flow.back}#${fragment}`, [clearState]);
+  }
+  return redirect(withParam(flow.back, "google", status), session ? [clearState, await sessionCookie(request, env, session)] : [clearState]);
+};
+
+/**
+ * The session a request carries: Kurviq's own pages send the cookie, the
+ * local install sends its sealed session in the body ({ session }).
+ */
+const sessionOf = async (request: Request, env: AuthEnv, local: boolean) => {
+  if (!local) {
+    return unseal<Session>(env, readCookie(request, SESSION_COOKIE), SESSION_COOKIE);
+  }
+  const body: any = await request.json().catch(() => ({}));
+  return unseal<Session>(env, typeof body.session === "string" ? body.session : undefined, LOCAL_SESSION);
 };
 
 export const handleAuth = async (request: Request, env: AuthEnv): Promise<Response | null> => {
@@ -204,100 +317,98 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
   if (!url.pathname.startsWith("/auth/")) {
     return null;
   }
-  if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET || !env.COOKIE_KEY) {
-    return json(503, { error: "GitHub is not configured on this Kurviq server" });
+  const origin = request.headers.get("Origin");
+  const local = isLocalOrigin(origin) && origin !== url.origin;
+
+  if (request.method === "OPTIONS" && local && (url.pathname === "/auth/token" || url.pathname === "/auth/logout")) {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": origin!,
+        "Access-Control-Allow-Methods": "POST",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400",
+        Vary: "Origin",
+      },
+    });
+  }
+  if (!clientId(env) || !env.GOOGLE_CLIENT_SECRET || !env.COOKIE_KEY) {
+    if (url.pathname === "/auth/token") {
+      // a Kurviq without Google: nobody is signed in, scenes stay in the browser
+      return json(200, { connected: false }, [], local ? origin! : undefined);
+    }
+    return json(503, { error: "Google sign-in is not configured on this Kurviq server" }, [], local ? origin! : undefined);
   }
 
   if (url.pathname === "/auth/login" && request.method === "GET") {
-    return startFlow(request, env, (state, origin) => {
-      const target = new URL("https://github.com/login/oauth/authorize");
-      target.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
-      target.searchParams.set("redirect_uri", `${origin}/auth/callback`);
-      target.searchParams.set("state", state);
-      return target.toString();
-    });
-  }
-
-  if (url.pathname === "/auth/install" && request.method === "GET") {
-    return startFlow(
-      request,
-      env,
-      (state) => `https://github.com/apps/${encodeURIComponent(env.GITHUB_APP_SLUG)}/installations/new?state=${encodeURIComponent(state)}`,
-    );
+    const { back, local: toLocal } = safeReturn(url.searchParams.get("return"), url.origin);
+    return startFlow(request, env, back, toLocal, url.searchParams.has("consent"), url.searchParams.get("hint") ?? undefined);
   }
 
   if (url.pathname === "/auth/callback" && request.method === "GET") {
-    const flow = await unseal<{ state: string; back: string }>(env, readCookie(request, STATE_COOKIE), STATE_COOKIE);
-    const clearState = cookie(request, STATE_COOKIE, "", 0);
-    const back = flow?.back ?? "/";
+    const flow = await unseal<Flow>(env, readCookie(request, STATE_COOKIE), STATE_COOKIE);
+    if (!flow || flow.state !== url.searchParams.get("state")) {
+      return redirect("/?google=failed", [cookie(request, STATE_COOKIE, "", 0)]);
+    }
     const code = url.searchParams.get("code");
     if (url.searchParams.get("error") || !code) {
-      return redirect(withParam(back, "github", "cancelled"), [clearState]);
+      return finish(request, env, flow, "cancelled");
     }
-    if (!flow || flow.state !== url.searchParams.get("state")) {
-      // e.g. an installation started on github.com (no state of ours): sign in
-      // properly, GitHub answers at once since the app is authorized already
-      return redirect(`/auth/login?return=${encodeURIComponent(back)}`, [clearState]);
+    const answer = await exchange(env, { grant_type: "authorization_code", code, redirect_uri: `${url.origin}/auth/callback` });
+    const user = userOf(answer.id_token);
+    if (!answer.access_token || !user) {
+      return finish(request, env, flow, "failed");
     }
-    const answer = await exchange(env, { code, redirect_uri: `${url.origin}/auth/callback` });
-    const user = answer.access_token ? await fetchUser(answer.access_token) : null;
-    const session = user && sessionFrom(answer, user);
-    if (!session) {
-      return redirect(withParam(back, "github", "failed"), [clearState]);
+    if (!answer.refresh_token) {
+      // allowed before (another browser has the refresh token): ask for consent once more
+      if (!flow.consent) {
+        return startFlow(request, env, flow.back, flow.local, true, user.email);
+      }
+      return finish(request, env, flow, "failed");
     }
-    return redirect(withParam(back, "github", "connected"), [clearState, await sessionCookie(request, env, session)]);
+    const session: Session = {
+      a: answer.access_token,
+      ae: Date.now() + (answer.expires_in ?? 3600) * 1000,
+      r: answer.refresh_token,
+      user,
+      drive: grantsDrive(answer.scope),
+    };
+    return finish(request, env, flow, session.drive ? "connected" : "nodrive", session);
   }
 
   if (url.pathname === "/auth/token" && request.method === "POST") {
-    if (!sameOrigin(request)) {
+    if (origin !== url.origin && !local) {
       return json(403, { error: "Forbidden" });
     }
-    const session = await unseal<Session>(env, readCookie(request, SESSION_COOKIE), SESSION_COOKIE);
+    const cors = local ? origin! : undefined;
+    const session = await sessionOf(request, env, local);
     if (!session) {
-      return json(200, { connected: false });
+      return json(200, { connected: false }, [], cors);
     }
     if (session.ae - Date.now() > 10 * 60_000) {
-      return json(200, { token: session.a, expiresAt: new Date(session.ae).toISOString(), user: session.user });
+      return json(200, tokenAnswer(session), [], cors);
     }
-    if (!session.r || session.re <= Date.now()) {
-      return json(200, { connected: false, expired: true }, [cookie(request, SESSION_COOKIE, "", 0)]);
+    const next = await refresh(env, session);
+    if (next === "unreachable") {
+      return json(503, { error: "Google not reachable" }, [], cors);
     }
-    const answer = await exchange(env, { grant_type: "refresh_token", refresh_token: session.r });
-    const next = sessionFrom(answer, session.user);
-    if (!next) {
-      if (answer.error === "bad_refresh_token" && !request.headers.get("X-Kurviq-Retry")) {
-        // most likely another tab refreshed it a moment ago: its answer set
-        // the new cookie, the page asks once more with it
-        return json(409, { error: "Token was refreshed meanwhile, ask again" });
-      }
-      if (answer.error && answer.error.startsWith("http_")) {
-        return json(503, { error: "GitHub not reachable" });
-      }
-      return json(200, { connected: false, expired: true }, [cookie(request, SESSION_COOKIE, "", 0)]);
+    if (next === "expired") {
+      // revoked at Google (or the password changed): signed out
+      return json(200, { connected: false, expired: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], cors);
     }
-    return json(200, { token: next.a, expiresAt: new Date(next.ae).toISOString(), user: next.user }, [
-      await sessionCookie(request, env, next),
-    ]);
+    if (local) {
+      return json(200, { ...tokenAnswer(next), session: await seal(env, next, LOCAL_SESSION) }, [], cors);
+    }
+    return json(200, tokenAnswer(next), [await sessionCookie(request, env, next)]);
   }
 
   if (url.pathname === "/auth/logout" && request.method === "POST") {
-    if (!sameOrigin(request)) {
+    if (origin !== url.origin && !local) {
       return json(403, { error: "Forbidden" });
     }
-    const session = await unseal<Session>(env, readCookie(request, SESSION_COOKIE), SESSION_COOKIE);
-    if (session) {
-      // revoke the token at GitHub too (best effort)
-      await fetch(`https://api.github.com/applications/${env.GITHUB_CLIENT_ID}/token`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Basic ${btoa(`${env.GITHUB_CLIENT_ID}:${env.GITHUB_CLIENT_SECRET}`)}`,
-          Accept: "application/vnd.github+json",
-          "User-Agent": UA,
-        },
-        body: JSON.stringify({ access_token: session.a }),
-      }).catch(() => {});
-    }
-    return json(200, { ok: true }, [cookie(request, SESSION_COOKIE, "", 0)]);
+    // not revoked at Google: that would end Kurviq's access in every other
+    // browser of this user too (they remove it at myaccount.google.com/permissions)
+    return json(200, { ok: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], local ? origin! : undefined);
   }
 
   return json(404, { error: "Not found" });

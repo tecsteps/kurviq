@@ -17,7 +17,7 @@ type TabState = {
   dirty?: boolean;
   visible?: boolean;
   focusedAt?: number;
-  github?: boolean;
+  drive?: boolean;
 };
 
 /**

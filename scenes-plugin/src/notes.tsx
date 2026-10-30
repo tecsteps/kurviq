@@ -229,7 +229,7 @@ export const SlideNotesOverlay = () => {
   const id = useOpenId();
   const api = deck.getApi();
   const appState = api?.getAppState();
-  // (view mode, e.g. read-only while GitHub is checked, is looked at in the loop: it ends without a re-render here)
+  // (view mode, e.g. read-only while Drive is checked, is looked at in the loop: it ends without a re-render here)
   const enabled = !presenting && isDeck(state);
   const spots = useNameSpots(enabled);
   const container = document.querySelector<HTMLElement>(".excalidraw");

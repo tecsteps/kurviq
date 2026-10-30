@@ -3,11 +3,12 @@
  * Kurviq's MCP server (stdio), for the local install: the tools of
  * ./tools.mjs against the scenes server on this machine (../scenes-server).
  *
- * By default (SCENES_AGENT_MODE=detached) the agent works in its own headless
- * Excalidraw tab that the scenes server starts: reads/edits/renders happen
- * there and edits are committed to GitHub; the user's browser only syncs
- * (it is asked to push a scene before the agent reads it). In live mode the
- * agent works in the user's open tab instead.
+ * The agent always works through the user's open Kurviq tab: the scenes
+ * server relays its requests there, the tab reads/edits/renders with the real
+ * Excalidraw, merges the edits and saves them to Google Drive with the user's
+ * sign-in (local-only scenes stay in the browser). By default
+ * (SCENES_AGENT_MODE=detached) the agent edits scenes as data, merged into
+ * what the user does; in live mode it co-edits the open canvas live.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -47,9 +48,9 @@ const server = createScenesMcp({
   serverFetch: (pathname, init) => fetch(`${SERVER_URL}${pathname}`, init),
   unreachable: `Scenes server not reachable at ${SERVER_URL}. Start it with \`npm run start\` in ${WORKSPACE}.`,
   /**
-   * detached (default): the agent works in its own headless Excalidraw against
-   * GitHub; the user's browser only syncs. live: the agent edits the user's
-   * open canvas directly (co-working in the same tab).
+   * detached (default): the agent's edits run in the user's open tab, which
+   * merges them and saves them to Drive. live: the agent edits the user's
+   * open canvas directly (co-working in the same tab, undoable).
    */
   mode: env.SCENES_AGENT_MODE === "live" ? "live" : "detached",
   appHint: (env.SCENES_APP_URL || "http://localhost:3001").replace(/\/$/, ""),

@@ -24,7 +24,7 @@ export const live = (elements: readonly El[] | undefined) =>
 
 const changed = (base: El | undefined, other: El | undefined) => !sameContent(base, other);
 
-/** how to settle clashing elements: take my version or GitHub's */
+/** how to settle clashing elements: take my version or Drive's */
 export type ClashChoice = "mine" | "theirs";
 
 export type MergeResult = {
@@ -82,7 +82,7 @@ export const mergeElements = (
 
 /**
  * Settle clashes without asking, like live collaboration does: per element
- * the newer edit wins (`updated` timestamp; on a tie GitHub's). An edit beats
+ * the newer edit wins (`updated` timestamp; on a tie Drive's). An edit beats
  * a delete, so nobody's work silently disappears.
  */
 export const newestWins = (

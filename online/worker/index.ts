@@ -1,6 +1,6 @@
 // Kurviq (https://kurviq.com): the Cloudflare Worker.
 //
-//   /auth/*          Connect GitHub (./auth.ts) — stateless, encrypted cookie
+//   /auth/*          Sign in with Google (./auth.ts) — stateless, encrypted cookie
 //   /live/<key>      WebSocket of a Kurviq tab to its agent pairing (./pairing.ts)
 //   /mcp             remote MCP for agents (scenes-mcp/tools.mjs), answered
 //                    through the pairing's open Kurviq tab; agents sign in
@@ -9,9 +9,10 @@
 //                    agent is told to sign in
 //   /oauth/*, /.well-known/oauth-*  the sign-in (./oauth.ts)
 //   /llms.txt        how agents use Kurviq
-//   /api/public/…    public scenes, cached (./shared.ts)
+//   /api/public/…    scenes shared "anyone with the link" on Drive, cached (./shared.ts)
 //   /api/fonts/…     fonts from Google Fonts for "Add font", cached (./fonts.ts)
-//   /@owner/scene    a shared scene: the app, titled for link previews (./shared.ts)
+//   /s/<fileId>/…    a shared scene: the app, titled for link previews (./shared.ts)
+//   /drive/open      Drive's "Open with Kurviq": to /s/<fileId>
 //   everything else  the app (static assets, built by `npm run build:online`)
 
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -29,10 +30,11 @@ import { handlePublicApi, handleSharedPage } from "./shared";
 import { kurviqSkill } from "./skill";
 
 import type { AuthEnv } from "./auth";
+import type { SharedEnv } from "./shared";
 
 export { Pairing } from "./pairing";
 
-type Env = AuthEnv & FeedbackEnv & {
+type Env = AuthEnv & SharedEnv & FeedbackEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -251,7 +253,7 @@ const handleMcp = async (request: Request, env: Env, access: Access) => {
     name: "Kurviq",
     mode: "detached",
     appHint: app,
-    githubOptional: true,
+    driveOptional: true,
     // scenes full of images: read without their bytes (CPU budget), the tab fills them in for pictures
     leanReads: true,
     // no access to the agent's files here: images and big edits are uploaded
@@ -375,11 +377,19 @@ export default {
     if (fonts) {
       return fonts;
     }
-    const publicApi = handlePublicApi(request, ctx);
+    const publicApi = handlePublicApi(request, env, ctx);
     if (publicApi) {
       return publicApi;
     }
-    const page = await handleSharedPage(request, env.ASSETS, ctx);
+    // Drive's "Open with Kurviq" (Drive UI integration): state={"ids":[…],"action":"open"}
+    if (url.pathname === "/drive/open") {
+      let id = "";
+      try {
+        id = String(JSON.parse(url.searchParams.get("state") || "{}").ids?.[0] ?? "");
+      } catch {}
+      return Response.redirect(new URL(/^[\w-]{10,200}$/.test(id) ? `/s/${id}` : "/", url).toString(), 302);
+    }
+    const page = await handleSharedPage(request, env, env.ASSETS, ctx);
     if (page) {
       return page;
     }

@@ -4,8 +4,6 @@
 
 import { exportToBlob, getNonDeletedElements, restoreElements, useExcalidrawAPI } from "@excalidraw/excalidraw";
 import {
-  ExternalLinkIcon,
-  GithubIcon,
   LoadIcon,
   PlusIcon,
   save,
@@ -30,19 +28,19 @@ import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar } from "./slidesUI";
-import { connection, otherSpacesScenes } from "./online/github";
-import type { SpaceScenes } from "./online/github";
+import { connection, enterSpace, sharedFileId, sharedWithMe } from "./online/drive";
+import type { SharedWithMe } from "./online/drive";
 import {
-  ConnectGitHubOffer,
-  GitHubPanel,
+  ConnectDriveOffer,
+  DriveDialogs,
+  DriveIcon,
+  DrivePanel,
   KurviqFooter,
   McpButton,
   ReadOnlyGuard,
-  RepoSetupDialog,
   SceneSharing,
   UpdateBanner,
-  setUpSync,
-  startOnline,
+  startDrive,
 } from "./online/ui";
 
 import type { Activity, SceneListItem, ScenesState, SyncStatus } from "./controller";
@@ -122,9 +120,7 @@ const useAttachController = () => {
       scenesController.attach(api);
       connectLive();
       if (!IS_RENDERER) {
-        if (IS_ONLINE) {
-          startOnline();
-        }
+        startDrive();
         deck.attach(api);
         connectRouter();
         scenesController.startSync();
@@ -155,10 +151,10 @@ const ago = (iso: string | number | null, now: number) => {
 const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> = {
   synced: { icon: "✓", label: "Synced", tone: "ok" },
   ahead: { icon: "↑", label: "Not pushed", tone: "warn" },
-  behind: { icon: "↓", label: "Newer on GitHub", tone: "info" },
+  behind: { icon: "↓", label: "Newer in Drive", tone: "info" },
   diverged: { icon: "⇅", label: "Changed on both sides", tone: "warn" },
   conflict: { icon: "!", label: "Conflict", tone: "danger" },
-  local: { icon: "○", label: "Not on GitHub yet", tone: "muted" },
+  local: { icon: "○", label: "Not in Drive yet", tone: "muted" },
   "local-only": { icon: "⌂", label: "Local only", tone: "muted" },
   untitled: { icon: "○", label: "Not saved", tone: "muted" },
 };
@@ -175,29 +171,21 @@ const PlaceIcon = ({ kind, title }: { kind: keyof typeof ICON_PATHS; title: stri
   </QuickTip>
 );
 
-/** the repository scenes sync with, as "owner/name" (null: none) */
-const useRepoName = () => {
-  const online = useSyncExternalStore(connection.subscribe, connection.getState);
-  if (IS_ONLINE) {
-    return online.repo ? `${online.repo.owner}/${online.repo.name}` : null;
-  }
-  return repoInfo ? `${repoInfo.owner}/${repoInfo.name}` : null;
-};
-
 const ScenePlace = ({
   item,
-  repo: otherRepo,
+  owner,
 }: {
-  item: Pick<SceneListItem, "name" | "onGitHub" | "localOnly" | "public" | "status">;
-  /** a scene of another space: its repository */
-  repo?: string;
+  item: Pick<SceneListItem, "name" | "inDrive" | "localOnly" | "public" | "status">;
+  /** a scene someone shared: whose */
+  owner?: string;
 }) => {
-  const ownRepo = useRepoName();
-  const repo = otherRepo ?? ownRepo;
-  const inRepo = item.name !== null && !item.localOnly && item.onGitHub;
-  const owner = repo?.split("/")[0];
-  const where = inRepo
-    ? { kind: "repository" as const, title: `In the repository ${item.public && owner ? `${owner}/kurviq-public` : repo ?? "on GitHub"}${item.status === "synced" ? "" : ` (${STATUS[item.status].label.toLowerCase()})`}` }
+  const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
+  const inDrive = item.name !== null && !item.localOnly && item.inDrive;
+  const where = inDrive
+    ? {
+        kind: "repository" as const,
+        title: `${owner ? `In ${owner}'s Google Drive` : "In your Google Drive"}${item.status === "synced" ? "" : ` (${STATUS[item.status].label.toLowerCase()})`}`,
+      }
     : {
         kind: "browser" as const,
         title:
@@ -205,30 +193,31 @@ const ScenePlace = ({
             ? "Only in this browser: not saved yet"
             : item.localOnly
             ? "Only in this browser: kept local on purpose, never synced"
-            : repo
-            ? "Saved in localStorage, not synced to GitHub"
-            : "Only in this browser (no repository connected)",
+            : signedIn
+            ? "Saved in this browser, not in Google Drive yet"
+            : "Only in this browser (not signed in with Google)",
       };
-  // private / public is a GitHub thing: the local install only knows its repository
   const who =
-    !IS_ONLINE && inRepo
-      ? null
-      : item.public && inRepo
-      ? { kind: "public" as const, title: "Public: anyone with the link can view it" }
+    item.public && inDrive
+      ? { kind: "public" as const, title: "Anyone with the link can view it" }
       : {
           kind: "private" as const,
-          title: inRepo ? `Private: only people with access to ${repo ?? "the repository"} can see it` : "Private: only you, in this browser",
+          title: inDrive
+            ? owner
+              ? `Shared with you by ${owner}`
+              : "Private: only you and the people you share it with"
+            : "Private: only you, in this browser",
         };
   return (
     <span className="scenes-places">
       <PlaceIcon {...where} />
-      {who && <PlaceIcon {...who} />}
+      <PlaceIcon {...who} />
     </span>
   );
 };
 
 const isOffline = (state: ScenesState) =>
-  !state.sync.notConnected && (state.sync.serverReachable === false || state.sync.githubOnline === false);
+  !state.sync.notConnected && (state.sync.serverReachable === false || state.sync.driveOnline === false);
 
 const StatusBadge = ({ status, compact }: { status: SyncStatus; compact?: boolean }) => {
   const info = STATUS[status];
@@ -268,7 +257,7 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         <span className="scenes-pill__name">{current ?? UNTITLED_LABEL}</span>
         {currentItem && <ScenePlace item={currentItem} />}
         {state.checking ? (
-          <QuickTip tip="Local copy, read-only while GitHub is checked" className="scenes-pill__status" label={false}>
+          <QuickTip tip="Local copy, read-only while Drive is checked" className="scenes-pill__status" label={false}>
             checking…
           </QuickTip>
         ) : busy === "saving" || state.sync.running ? (
@@ -285,10 +274,10 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         <span className="scenes-pill__caret" aria-hidden>▾</span>
       </button>
       {panel === "switch" && (
-        <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onGitHub={() => setPanel("github")} />
+        <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onDrive={() => setPanel("github")} />
       )}
       {panel === "scene" && <SceneFlyover onClose={() => setPanel(null)} />}
-      {panel === "github" && <GitHubFlyover onClose={() => setPanel(null)} />}
+      {panel === "github" && <DriveFlyover onClose={() => setPanel(null)} />}
       {isMobile && <MobileSlidesButton />}
     </div>
   );
@@ -362,29 +351,34 @@ export const scenesTopRight =
 /**
  * Quick switch: the scenes as a dropdown under the pill. Type to filter,
  * arrows + Enter to pick, Esc to close. The pen on the open scene manages
- * it (SceneFlyover), "GitHub…" the connection (GitHubFlyover).
+ * it (SceneFlyover), "Google Drive…" the connection (DriveFlyover).
+ * Scenes others shared with the user are listed too; each opens in a space
+ * of its own (the tab reloads into it).
  */
 const SceneSwitcher = ({
   onClose,
   onManageScene,
-  onGitHub,
+  onDrive,
 }: {
   onClose: () => void;
   onManageScene: () => void;
-  onGitHub: () => void;
+  onDrive: () => void;
 }) => {
   const { current, list } = useScenes();
   const query = useSceneFilter();
   /** null: the default (first match, or create) */
   const [picked, setActive] = useState<number | null>(null);
-  const { user, repo } = useSyncExternalStore(connection.subscribe, connection.getState);
-  // the user's other spaces (organizations): their scenes are listed too
-  const [others, setOthers] = useState<SpaceScenes[]>([]);
+  const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
+  // scenes others shared with the user (not the one this tab shows)
+  const [others, setOthers] = useState<SharedWithMe[]>([]);
   useEffect(() => {
-    if (IS_ONLINE && user && repo) {
-      otherSpacesScenes().then(setOthers, () => setOthers([]));
+    if (signedIn) {
+      sharedWithMe().then(
+        (found) => setOthers(found.filter((entry) => entry.fileId !== sharedFileId)),
+        () => setOthers([]),
+      );
     }
-  }, [user, repo]);
+  }, [signedIn]);
 
   useEffect(() => {
     const close = (event: PointerEvent) => {
@@ -397,13 +391,12 @@ const SceneSwitcher = ({
   }, [onClose]);
 
   const needle = query.trim().toLowerCase();
-  type Entry = { item: SceneListItem; owner: string | null } | { item?: undefined; owner: string; name: string };
-  const here = repo?.owner ?? null;
+  type Entry = { item: SceneListItem; owner: string | null } | { item?: undefined; owner: string; name: string; fileId: string };
   const items: Entry[] = [
-    ...list.filter((item) => matchesFilter(item.name, query, current)).map((item) => ({ item, owner: here })),
-    ...others.flatMap((space) =>
-      space.scenes.filter((name) => matchesFilter(name, query, null)).map((name) => ({ owner: space.owner, name })),
-    ),
+    ...list.filter((item) => matchesFilter(item.name, query, current)).map((item) => ({ item, owner: null })),
+    ...others
+      .filter((shared) => matchesFilter(shared.name, query, null))
+      .map((shared) => ({ owner: shared.owner, name: shared.name, fileId: shared.fileId })),
   ];
   const nameOf = (entry: Entry) => (entry.item ? entry.item.name : entry.name);
   // one list, by name (Untitled first), each scene with its space when there are several
@@ -428,8 +421,9 @@ const SceneSwitcher = ({
     if (index < items.length) {
       const entry = items[index];
       if (!entry.item) {
-        // a scene of another space: the tab switches into that space and opens it
-        setUpSync(entry.owner, `/${encodeURIComponent(entry.name)}`);
+        // a scene someone shared: the tab switches into its space and opens it
+        const { fileId, name } = entry;
+        scenesController.leaveForReload().then(() => enterSpace(fileId, `/s/${fileId}/${encodeURIComponent(name)}`));
       } else if (entry.item.name !== current) {
         scenesController.open(entry.item.name).catch(ignore);
       }
@@ -491,7 +485,7 @@ const SceneSwitcher = ({
                 "scenes-switcher__row--current": isCurrent,
                 "scenes-switcher__row--active": index === active,
               })}
-              key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `${entry.owner}\u0000${entry.name}`}
+              key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `shared\u0000${entry.fileId}`}
               onMouseEnter={() => setActive(index)}
             >
               <button
@@ -504,12 +498,8 @@ const SceneSwitcher = ({
                 <span className="scenes-switcher__name">{nameOf(entry) ?? UNTITLED_LABEL}</span>
                 {showOwner && entry.owner && (
                   <QuickTip
-                    tip={
-                      item
-                        ? `${entry.owner}'s space: the one this tab shows`
-                        : `${entry.owner}'s space: opening it switches this tab to that space`
-                    }
-                    className={clsx("scenes-switcher__owner", { "scenes-switcher__owner--other": !item })}
+                    tip={`Shared with you by ${entry.owner}: opening it switches this tab to it`}
+                    className="scenes-switcher__owner scenes-switcher__owner--other"
                   >
                     {entry.owner}
                   </QuickTip>
@@ -538,8 +528,8 @@ const SceneSwitcher = ({
                   <ScenePlace item={item} />
                 ) : (
                   <ScenePlace
-                    item={{ name: entry.name, onGitHub: true, localOnly: false, public: false, status: "synced" }}
-                    repo={`${entry.owner}/kurviq-scenes`}
+                    item={{ name: entry.name, inDrive: true, localOnly: false, public: false, status: "synced" }}
+                    owner={entry.owner}
                   />
                 )}
               </span>
@@ -562,10 +552,10 @@ const SceneSwitcher = ({
         )}
         {!count && <div className="scenes-switcher__empty">No scene matches</div>}
       </div>
-      <button type="button" className="scenes-switcher__manage" onClick={onGitHub}>
-        <span className="scenes-switcher__manage-icon">{GithubIcon}</span> GitHub…
+      <button type="button" className="scenes-switcher__manage" onClick={onDrive}>
+        <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Google Drive…
       </button>
-      {IS_ONLINE && <ConnectGitHubOffer />}
+      <ConnectDriveOffer />
     </div>
   );
 };
@@ -573,46 +563,6 @@ const SceneSwitcher = ({
 // -----------------------------------------------------------------------------
 // sidebar
 // -----------------------------------------------------------------------------
-
-/** https://github.com/owner/repo from https / ssh remote URLs */
-const repoInfo = (() => {
-  const raw = (import.meta.env.VITE_APP_SCENES_GIT_REPO || "").trim();
-  const match = raw.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  if (!match) {
-    return null;
-  }
-  return {
-    url: `https://github.com/${match[1]}/${match[2]}`,
-    owner: match[1],
-    name: match[2],
-    branch: import.meta.env.VITE_APP_SCENES_GIT_BRANCH || "main",
-  };
-})();
-
-const RepoLink = () =>
-  repoInfo ? (
-    <a
-      className="scenes-repo"
-      href={repoInfo.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={`Open ${repoInfo.url} in a new tab`}
-    >
-      <span className="scenes-repo__logo">{GithubIcon}</span>
-      <span className="scenes-repo__text">
-        <span className="scenes-repo__caption">
-          Synced with GitHub
-          <span className="scenes-repo__branch">{repoInfo.branch}</span>
-        </span>
-        <span className="scenes-repo__name">
-          <span className="scenes-repo__owner">{repoInfo.owner}/</span>
-          <wbr />
-          {repoInfo.name}
-        </span>
-      </span>
-      <span className="scenes-repo__external">{ExternalLinkIcon}</span>
-    </a>
-  ) : null;
 
 /** connection + auto-sync bar at the top of the sidebar */
 const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
@@ -627,14 +577,14 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
   } else if (sync.readOnly) {
     tone = "muted";
     text = `Read only — ${sync.readOnly}`;
-  } else if (sync.githubOnline === false) {
+  } else if (sync.driveOnline === false) {
     tone = "danger";
-    text = "GitHub not reachable — working locally";
-  } else if (sync.githubOnline === null) {
+    text = "Drive not reachable — working locally";
+  } else if (sync.driveOnline === null) {
     tone = "muted";
-    text = "Connecting to GitHub…";
+    text = "Connecting to Google Drive…";
   } else {
-    text = `GitHub · checked ${ago(sync.lastCheckedAt, now)}`;
+    text = `Drive · checked ${ago(sync.lastCheckedAt, now)}`;
   }
 
   return (
@@ -653,13 +603,13 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
       </div>
       {pending > 0 && (
         <div className="scenes-syncbar__pending">
-          {pending} scene{pending === 1 ? "" : "s"} with changes not on GitHub yet
+          {pending} scene{pending === 1 ? "" : "s"} with changes not in Drive yet
           {isOffline(state) ? " — will sync when back online" : ""}
         </div>
       )}
       {deletes.length > 0 && (
         <div className="scenes-syncbar__pending">
-          Deleted here, still on GitHub: {deletes.map((name) => `“${name}”`).join(", ")} — deleted there once
+          Deleted here, still in Drive: {deletes.map((name) => `“${name}”`).join(", ")} — deleted there once
           reachable
         </div>
       )}
@@ -691,7 +641,7 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
           <span className="scenes-switch__hint">
             {scenesController.newScenesLocalOnly()
               ? "stay in this browser until you publish them"
-              : "go to GitHub with auto-sync"}
+              : "go to Drive with auto-sync"}
           </span>
         </span>
       </label>
@@ -721,29 +671,29 @@ const currentStatusText = (
 ) => {
   switch (status) {
     case "synced":
-      return "Same as on GitHub";
+      return "Same as in Drive";
     case "ahead":
       return offline
-        ? "Local changes — will be pushed when GitHub is reachable"
+        ? "Local changes — will be pushed when Drive is reachable"
         : autoSync
         ? `Local changes — pushed automatically after ${IDLE_PUSH_MS / 1000}s without edits`
         : "Local changes — not pushed (auto-sync is off for this scene)";
     case "behind":
-      return autoSync ? "Newer version on GitHub — updating…" : "A newer version is on GitHub";
+      return autoSync ? "Newer version in Drive — updating…" : "A newer version is in Drive";
     case "diverged":
       return autoSync
-        ? "Changed here and on GitHub — merging…"
-        : "Changed here and on GitHub — Save merges both";
+        ? "Changed here and in Drive — merging…"
+        : "Changed here and in Drive — Save merges both";
     case "conflict":
-      return "You and GitHub changed the same elements";
+      return "You and Drive changed the same elements";
     case "local":
       return empty
         ? "New, empty scene — only in this browser"
         : autoSync
         ? "Only in this browser — pushed automatically after a short pause"
-        : "Only in this browser — Save to put it on GitHub";
+        : "Only in this browser — Save to put it in Drive";
     case "local-only":
-      return "Local only — stays in this browser, never synced to GitHub. Publish puts it on GitHub.";
+      return "Local only — stays in this browser, never synced to Drive. Publish puts it in Drive.";
     case "untitled":
       return empty ? "Empty — draw something, then save it" : "Not saved yet — give it a name";
   }
@@ -804,7 +754,7 @@ const NameForm = ({
       {offersLocalOnly && (
         <label className="scenes-form__check">
           <input type="checkbox" checked={localOnly} onChange={(event) => setLocalOnly(event.target.checked)} />
-          Local only (not synced to GitHub)
+          Local only (not synced to Drive)
         </label>
       )}
       <div className="scenes-row">
@@ -825,24 +775,24 @@ const ConflictBox = ({ name, clashes }: { name: string; clashes: number }) => {
     <div className="scenes-conflict">
       <div className="scenes-conflict__title">Conflict</div>
       <div className="scenes-conflict__text">
-        You and GitHub both changed {clashes} element{clashes === 1 ? "" : "s"} of this scene.
+        You and Drive both changed {clashes} element{clashes === 1 ? "" : "s"} of this scene.
         Nothing is lost until you choose:
       </div>
       <div className="scenes-conflict__actions">
         <button type="button" className="scenes-btn" onClick={() => scenesController.keepMine(name).catch(ignore)}>
           Keep mine
-          <span className="scenes-btn__hint">overwrite GitHub</span>
+          <span className="scenes-btn__hint">overwrite Drive</span>
         </button>
         <button
           type="button"
           className="scenes-btn"
           onClick={() => {
-            if (window.confirm(`Discard your version of "${name}" and take the one from GitHub?`)) {
+            if (window.confirm(`Discard your version of "${name}" and take the one from Drive?`)) {
               scenesController.takeTheirs(name).catch(ignore);
             }
           }}
         >
-          Take GitHub's
+          Take Drive's
           <span className="scenes-btn__hint">discard mine</span>
         </button>
         <button
@@ -886,7 +836,7 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
         <option value="default">auto-sync {global ? "on" : "off"} (default)</option>
         <option value="on">always auto-sync</option>
         <option value="off">manual only</option>
-        <option value="local">local only, never on GitHub</option>
+        <option value="local">local only, never in Drive</option>
       </select>
     </label>
   );
@@ -899,13 +849,13 @@ const confirmDelete = (item: SceneListItem) => {
   const lines = [
     `Delete “${name}”?`,
     item.localOnly
-      ? item.onGitHub
-        ? "It is local only: it is deleted in this browser. The older copy on GitHub is not touched."
+      ? item.inDrive
+        ? "It is local only: it is deleted in this browser. The older copy in Drive is not touched."
         : "It only exists in this browser — it will be gone."
-      : item.onGitHub
-      ? "It is deleted here and on GitHub (it stays in the repository's git history)."
+      : item.inDrive
+      ? "It is deleted here and in Drive (it stays in the repository's git history)."
       : "It only exists in this browser — it will be gone.",
-    unpushed && !item.localOnly ? "Its changes that are not on GitHub yet are lost." : null,
+    unpushed && !item.localOnly ? "Its changes that are not in Drive yet are lost." : null,
   ];
   return window.confirm(lines.filter(Boolean).join("\n\n"));
 };
@@ -959,7 +909,7 @@ const versionLabel = (version: SceneVersion) => {
   return label === "Add" ? "Created" : label;
 };
 
-/** the scene's versions on GitHub; one can be looked at and restored */
+/** the scene's versions in Drive; one can be looked at and restored */
 const SceneHistory = ({ item }: { item: SceneListItem }) => {
   const name = item.name!;
   const now = useNow(30000);
@@ -1033,7 +983,7 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
     return <div className="scenes-history__note">Loading history…</div>;
   }
   if (!versions.length) {
-    return <div className="scenes-history__note">No versions on GitHub yet.</div>;
+    return <div className="scenes-history__note">No versions in Drive yet.</div>;
   }
   const shown = all ? versions : versions.slice(0, 8);
   return (
@@ -1067,7 +1017,7 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
                     Restore this version
                   </button>
                 )}
-                {index === 0 && <div className="scenes-history__note">The newest version on GitHub.</div>}
+                {index === 0 && <div className="scenes-history__note">The newest version in Drive.</div>}
               </div>
             )}
           </li>
@@ -1116,16 +1066,16 @@ const Flyover = ({ title, onClose, children }: { title: ReactNode; onClose: () =
   );
 };
 
-/** GitHub: the connection, sync settings and what was synced */
-const GitHubFlyover = ({ onClose }: { onClose: () => void }) => {
+/** Drive: the connection, sync settings and what was synced */
+const DriveFlyover = ({ onClose }: { onClose: () => void }) => {
   const state = useScenes();
   const now = useNow();
   useSyncExternalStore(connection.subscribe, connection.getState);
-  const withGitHub = !IS_ONLINE || connection.isActive();
+  const withDrive = connection.isActive();
   return (
-    <Flyover title="GitHub" onClose={onClose}>
-      {IS_ONLINE ? <GitHubPanel /> : <RepoLink />}
-      {withGitHub && <SyncBar state={state} now={now} />}
+    <Flyover title="Google Drive" onClose={onClose}>
+      <DrivePanel />
+      {withDrive && <SyncBar state={state} now={now} />}
       <ActivityLog activity={state.activity} now={now} hidden={[]} />
       {IS_ONLINE && <KurviqFooter />}
     </Flyover>
@@ -1142,9 +1092,9 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
   const status = currentItem?.status ?? "untitled";
   const sceneAutoSync = scenesController.autoSyncFor(current);
   const empty = !scenesController.getApi()?.getSceneElements().length;
-  // online without GitHub: everything stays in this browser, nothing to publish
+  // not signed in: everything stays in this browser, nothing to publish
   useSyncExternalStore(connection.subscribe, connection.getState);
-  const withGitHub = !IS_ONLINE || connection.isActive();
+  const withDrive = connection.isActive();
 
   const submitName = async (name: string, { localOnly = false }: { localOnly?: boolean } = {}) => {
     if (!prompt) {
@@ -1169,7 +1119,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
       title={
         <>
           {current ?? <em>{UNTITLED_LABEL}</em>}
-          {current !== null && (withGitHub || status !== "local-only") && <StatusBadge status={status} />}
+          {current !== null && (withDrive || status !== "local-only") && <StatusBadge status={status} />}
         </>
       }
       onClose={onClose}
@@ -1177,12 +1127,12 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
       <section className="scenes-current">
         <div className="scenes-current__status">
           {busy === "saving"
-            ? "Pushing to GitHub…"
+            ? "Saving to Google Drive…"
             : busy === "loading"
             ? "Loading…"
             : currentItem?.pendingRename
-            ? `Renamed here — on GitHub it is still “${currentItem.pendingRename}”, renamed there once reachable`
-            : !withGitHub && current !== null
+            ? `Renamed here — in Drive it is still “${currentItem.pendingRename}”, renamed there once reachable`
+            : !withDrive && current !== null
             ? "Saved in this browser"
             : currentStatusText(status, { autoSync: sceneAutoSync, offline: isOffline(state), empty })}
         </div>
@@ -1201,12 +1151,12 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
           />
         ) : (
           <div className="scenes-row">
-            {(withGitHub || current === null) && (
+            {(withDrive || current === null) && (
               <button
                 type="button"
                 className="scenes-btn scenes-btn--primary"
                 disabled={isBusy || !!conflict}
-                title={status === "local-only" ? "Put this scene on GitHub; it is synced from then on" : "Push to GitHub now"}
+                title={status === "local-only" ? "Put this scene in Drive; it is synced from then on" : "Push to Drive now"}
                 onClick={() =>
                   current === null
                     ? setPrompt({ mode: "save" })
@@ -1243,8 +1193,8 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
             </QuickTip>
             <QuickTip
               tip={
-                currentItem.onGitHub
-                  ? "Delete this scene, also on GitHub (its git history keeps the old versions)"
+                currentItem.inDrive
+                  ? "Delete this scene, also in Drive (its git history keeps the old versions)"
                   : "Delete this scene from this browser"
               }
               label={false}
@@ -1258,20 +1208,20 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
                 Delete
               </button>
             </QuickTip>
-            {IS_ONLINE && <SceneSharing item={currentItem} disabled={isBusy} />}
+            <SceneSharing item={currentItem} disabled={isBusy} />
           </div>
         )}
 
         {current !== null && !prompt && (
           <div className="scenes-current__footer">
-            {currentItem && withGitHub && <SceneAutoSync item={currentItem} global={autoSync} />}
-            {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.onGitHub && (
+            {currentItem && withDrive && <SceneAutoSync item={currentItem} global={autoSync} />}
+            {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.inDrive && (
               <button
                 type="button"
                 className="scenes-link"
                 disabled={isBusy}
                 onClick={() => {
-                  if (status === "behind" || window.confirm(`Discard your local changes to "${current}" and load the version from GitHub?`)) {
+                  if (status === "behind" || window.confirm(`Discard your local changes to "${current}" and load the version from Drive?`)) {
                     scenesController.discardLocal(current).catch(ignore);
                   }
                 }}
@@ -1290,13 +1240,13 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
           <div className="scenes-list-header">
             <span>History</span>
           </div>
-          {withGitHub && currentItem.onGitHub && !currentItem.localOnly ? (
+          {withDrive && currentItem.inDrive && !currentItem.localOnly ? (
             <SceneHistory key={current} item={currentItem} />
           ) : (
             <div className="scenes-history__note">
-              {currentItem.localOnly || !withGitHub
-                ? "Only in this browser: versions are kept once it is on GitHub."
-                : "Not on GitHub yet: its versions start with the first save."}
+              {currentItem.localOnly || !withDrive
+                ? "Only in this browser: versions are kept once it is in Drive."
+                : "Not in Drive yet: its versions start with the first save."}
             </div>
           )}
         </section>
@@ -1316,8 +1266,8 @@ export const ScenesSidebar = () => {
       <TemplateChangesBar />
       <PublicSceneOverlay />
       <AddFontOverlay />
-      {IS_ONLINE && <RepoSetupDialog />}
-      {IS_ONLINE && <ReadOnlyGuard />}
+      <DriveDialogs />
+      <ReadOnlyGuard />
       {IS_ONLINE && <UpdateBanner />}
     </>
   );
