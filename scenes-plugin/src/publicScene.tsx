@@ -140,8 +140,14 @@ const parseScene = async (json: string, access: { public?: boolean; canEdit?: bo
   };
 };
 
-/** how often an open shared scene checks for changes (while the tab is visible) */
-const REFRESH_MS = 10_000;
+/**
+ * How often an open shared scene checks for changes (only while the tab is
+ * visible): every 10 s at first and after a change, slower while nothing
+ * changes, up to once a minute (each check is a Worker request: the free plan
+ * has 100,000 a day)
+ */
+const REFRESH_MIN_MS = 10_000;
+const REFRESH_MAX_MS = 60_000;
 
 const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide: startSlide }: Shown) => {
   const bundled = !fileId && !moved;
@@ -230,17 +236,28 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
     }
     let stopped = false;
     let busy = false;
+    let delay = REFRESH_MIN_MS;
+    let timer = 0;
     sharedSceneVersion(fileId).then((v) => (version.current ??= v));
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(check, delay);
+    };
     const check = async () => {
-      if (busy || stopped || document.visibilityState !== "visible") {
+      if (busy || stopped) {
         return;
+      }
+      if (document.visibilityState !== "visible") {
+        return; // a hidden tab doesn't ask; coming back checks right away
       }
       busy = true;
       try {
         const latest = await sharedSceneVersion(fileId);
         if (!latest || latest === version.current) {
+          delay = Math.min(REFRESH_MAX_MS, Math.round(delay * 1.5));
           return;
         }
+        delay = REFRESH_MIN_MS;
         const answer = await readSharedScene(fileId, { version: latest });
         if (stopped || !("scene" in answer)) {
           return;
@@ -254,14 +271,23 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
         // offline for a moment: the next check tries again
       } finally {
         busy = false;
+        if (!stopped) {
+          schedule();
+        }
       }
     };
-    const timer = setInterval(check, REFRESH_MS);
-    document.addEventListener("visibilitychange", check);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        delay = REFRESH_MIN_MS;
+        check();
+      }
+    };
+    schedule();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stopped = true;
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", check);
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [fileId, api, !!scene]);
 
