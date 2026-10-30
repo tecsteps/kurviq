@@ -4,7 +4,9 @@
 //
 //   /api/public/<fileId>   a scene shared "anyone with the link" on Drive,
 //                          read with Kurviq's API key, kept in Cloudflare's
-//                          cache for a minute
+//                          cache for a minute (?v=<version>: that version)
+//   /api/public/<fileId>/version   its current version (Drive's MD5), cached
+//                          for 5 s: open viewers poll it and reload on change
 //   /s/<fileId>/<slug>     the app, with the scene's title for link previews
 //                          (Slack, Teams, …) and the scene preloaded
 //
@@ -31,9 +33,9 @@ const notPublic = () =>
   });
 
 /** a public scene, through the edge cache (stale copies are fine for a minute) */
-const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: ExecutionContext) => {
+const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: ExecutionContext, version?: string) => {
   const cache = caches.default;
-  const key = new Request(`${origin}${apiPath(fileId)}`);
+  const key = new Request(`${origin}${apiPath(fileId)}${version ? `?v=${encodeURIComponent(version)}` : ""}`);
   const hit = await cache.match(key);
   if (hit) {
     return hit;
@@ -64,17 +66,46 @@ const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: 
   return response;
 };
 
-/** /api/public/<fileId> */
+/** a public scene's current version (MD5 of its content), for viewers to notice changes */
+const publicVersion = async (origin: string, fileId: string, env: SharedEnv, ctx: ExecutionContext) => {
+  const cache = caches.default;
+  const key = new Request(`${origin}${apiPath(fileId)}/version`);
+  const hit = await cache.match(key);
+  if (hit) {
+    return hit;
+  }
+  if (!env.GOOGLE_API_KEY) {
+    return notPublic();
+  }
+  const meta = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=md5Checksum,mimeType,name&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`,
+  );
+  const info: any = meta.ok ? await meta.json() : null;
+  const isScene = !!info?.md5Checksum && (info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION));
+  const response = isScene
+    ? new Response(JSON.stringify({ version: info.md5Checksum }), {
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=5" },
+      })
+    : notPublic();
+  ctx.waitUntil(cache.put(key, response.clone()));
+  return response;
+};
+
+/** /api/public/<fileId>, /api/public/<fileId>/version */
 export const handlePublicApi = (request: Request, env: SharedEnv, ctx: ExecutionContext): Promise<Response> | null => {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/public\/([^/]+)$/);
+  const match = url.pathname.match(/^\/api\/public\/([^/]+)(\/version)?$/);
   if (!match) {
     return null;
   }
   if (!FILE_ID_RE.test(match[1]) || request.method !== "GET") {
     return Promise.resolve(new Response("Not found", { status: 404 }));
   }
-  return publicScene(url.origin, match[1], env, ctx);
+  if (match[2]) {
+    return publicVersion(url.origin, match[1], env, ctx);
+  }
+  const version = url.searchParams.get("v");
+  return publicScene(url.origin, match[1], env, ctx, version && /^[a-f0-9]{32}$/.test(version) ? version : undefined);
 };
 
 const escapeHtml = (text: string) =>

@@ -7,15 +7,15 @@
 //    with the link" without sign-in, else with the visitor's own Drive
 //    access (see readSharedScene)
 
-import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import type { BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { IS_ONLINE } from "./api";
 import { scenesController } from "./controller";
-import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId } from "./online/drive";
+import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId, sharedSceneVersion } from "./online/drive";
 import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
 import { getSlides } from "./slides";
@@ -122,6 +122,27 @@ const editShared = async (fileId: string, name: string) => {
   enterSpace(fileId, window.location.pathname.startsWith("/s/") ? window.location.pathname : `/s/${fileId}/${encodeURIComponent(name)}`);
 };
 
+const parseScene = async (json: string, access: { public?: boolean; canEdit?: boolean }): Promise<Scene> => {
+  const data = JSON.parse(json);
+  await registerSceneFonts(data);
+  const elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
+  // backup slides ("skip when presenting") stay out of a presentation
+  const all = getSlides(elements);
+  const slides = all.filter((frame: any) => !frame.customData?.slides?.skip);
+  return {
+    json,
+    elements,
+    files: data.files || {},
+    background: data.appState?.viewBackgroundColor || "#ffffff",
+    slides,
+    numbers: slides.map((frame) => all.indexOf(frame) + 1),
+    ...access,
+  };
+};
+
+/** how often an open shared scene checks for changes (while the tab is visible) */
+const REFRESH_MS = 10_000;
+
 const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide: startSlide }: Shown) => {
   const bundled = !fileId && !moved;
   const [name, setName] = useState(linkName);
@@ -153,24 +174,7 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
         })
       : fetchScene(name).then((json) => ({ json, public: true, canEdit: false }));
     load
-      .then(async ({ json, public: isPublic, canEdit }) => {
-        const data = JSON.parse(json);
-        await registerSceneFonts(data);
-        const elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
-        // backup slides ("skip when presenting") stay out of a presentation
-        const all = getSlides(elements);
-        const slides = all.filter((frame: any) => !frame.customData?.slides?.skip);
-        setScene({
-          json,
-          elements,
-          files: data.files || {},
-          background: data.appState?.viewBackgroundColor || "#ffffff",
-          slides,
-          numbers: slides.map((frame) => all.indexOf(frame) + 1),
-          public: isPublic,
-          canEdit,
-        });
-      })
+      .then(async ({ json, public: isPublic, canEdit }) => setScene(await parseScene(json, { public: isPublic, canEdit })))
       .catch((err) => (err.missing ? setMissing(err.missing) : setError(err.message)));
     root.current?.focus();
   }, [fileId, attempt]);
@@ -178,6 +182,28 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
   // the scene on a read-only canvas; while it is shown it is the deck, so
   // Present runs the editor's own presentation on it
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  // Excalidraw's render throttle is one per page: with the editor and this
+  // canvas both drawing, frames of one of them were dropped (stale after a zoom)
+  useEffect(() => {
+    const before = (window as any).EXCALIDRAW_THROTTLE_RENDER;
+    (window as any).EXCALIDRAW_THROTTLE_RENDER = false;
+    return () => {
+      (window as any).EXCALIDRAW_THROTTLE_RENDER = before;
+    };
+  }, []);
+  // read before the viewer borrows the deck: the editor's own setting
+  const [editorWheel] = useState(() => {
+    const live = deck.getApi()?.getAppState().inputDevice;
+    if (live) {
+      return live;
+    }
+    // the editor isn't up yet (the link was opened directly): its saved settings
+    try {
+      return JSON.parse(localStorage.getItem("excalidraw-state") || "{}").inputDevice as AppState["inputDevice"] | undefined;
+    } catch {
+      return undefined;
+    }
+  });
   const presenting = usePresenter().active;
   useEffect(() => {
     if (!api) {
@@ -195,6 +221,49 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
       giveBack();
     };
   }, [api]);
+
+  // the owner (or anyone allowed) changes it: this view follows, where the visitor looks stays
+  const version = useRef<string | null>(null);
+  useEffect(() => {
+    if (!fileId || !api || !scene) {
+      return;
+    }
+    let stopped = false;
+    let busy = false;
+    sharedSceneVersion(fileId).then((v) => (version.current ??= v));
+    const check = async () => {
+      if (busy || stopped || document.visibilityState !== "visible") {
+        return;
+      }
+      busy = true;
+      try {
+        const latest = await sharedSceneVersion(fileId);
+        if (!latest || latest === version.current) {
+          return;
+        }
+        const answer = await readSharedScene(fileId, { version: latest });
+        if (stopped || !("scene" in answer)) {
+          return;
+        }
+        const next = await parseScene(answer.scene.json, { public: answer.scene.public, canEdit: answer.scene.canEdit });
+        version.current = latest;
+        api.addFiles(Object.values(next.files));
+        api.updateScene({ elements: next.elements, captureUpdate: CaptureUpdateAction.NEVER });
+        setScene(next);
+      } catch {
+        // offline for a moment: the next check tries again
+      } finally {
+        busy = false;
+      }
+    };
+    const timer = setInterval(check, REFRESH_MS);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [fileId, api, !!scene]);
 
   const slideId = (number: number | undefined) => {
     if (!scene || !number) {
@@ -314,7 +383,12 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
             initialData={{
               elements: scene.elements,
               files: scene.files,
-              appState: { viewBackgroundColor: scene.background, viewModeEnabled: true },
+              appState: {
+                viewBackgroundColor: scene.background,
+                viewModeEnabled: true,
+                // the wheel does what it does in the visitor's editor (zoom with a mouse)
+                ...(editorWheel ? { inputDevice: editorWheel } : {}),
+              },
               scrollToContent: true,
             }}
             viewModeEnabled
