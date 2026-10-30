@@ -654,7 +654,9 @@ class ScenesController {
       delete meta.remoteSha;
       delete meta.conflict;
       delete meta.renamedFrom;
-      if (name !== this.meta.current && !keepDirty) {
+      if (keepDirty) {
+        meta.adopt = true;
+      } else if (name !== this.meta.current) {
         const json = await this.localJson(name);
         meta.dirty = !!json && !isEmptyJson(json);
       }
@@ -1258,9 +1260,15 @@ class ScenesController {
           continue;
         }
         const status = this.statusOf(name);
+        const adopt = !!this.meta.scenes[name]?.adopt;
+        if (adopt && status !== "local") {
+          // Drive has it: its copy counts from now on (pulled below, or merged if changed here)
+          delete this.meta.scenes[name].adopt;
+          this.persistMeta();
+        }
         if (status === "behind") {
           await this.exclusive(() => this.pullScene(name));
-        } else if (status === "ahead" || (status === "local" && this.isDirty(name))) {
+        } else if (status === "ahead" || (status === "local" && (this.isDirty(name) || adopt))) {
           if (name === this.meta.current && !this.pushDue()) {
             continue;
           }
@@ -1269,6 +1277,10 @@ class ScenesController {
             continue; // don't publish empty new scenes automatically
           }
           await this.exclusive(() => this.pushScene(name));
+          if (adopt && this.meta.scenes[name]?.baseSha) {
+            delete this.meta.scenes[name].adopt;
+            this.persistMeta();
+          }
         } else if (status === "diverged") {
           await this.exclusive(() => this.mergeScene(name));
         } else if (status === "conflict" && this.conflictOutdated(name)) {

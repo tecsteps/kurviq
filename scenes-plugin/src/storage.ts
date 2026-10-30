@@ -57,6 +57,11 @@ export type SceneMeta = {
   };
   /** pre-sync-engine metadata, resolved on the first remote listing */
   legacy?: boolean;
+  /**
+   * synced before (GitHub) and not in Drive yet: uploaded once even without
+   * local changes (a copy Drive has wins, see resetRemoteState)
+   */
+  adopt?: boolean;
   /** renamed locally, the rename in Drive is still pending (old name) */
   renamedFrom?: string;
   /** legacy field */
