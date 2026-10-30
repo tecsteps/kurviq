@@ -1,4 +1,4 @@
-// Starts the scenes git server and the excalidraw dev server together and
+// Starts the scenes server and the excalidraw dev server together and
 // restarts either one if it crashes (e.g. Vite occasionally dies while
 // restarting after a config change), so agents never lose the scenes server.
 import { spawn } from "node:child_process";

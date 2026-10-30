@@ -19,7 +19,7 @@
 // short-lived access token (1 h) on request (see online/worker/auth.ts). The
 // local install signs in through kurviq.com and keeps the sealed session.
 
-import { createStore, del, entries, get, set } from "idb-keyval";
+import { createStore, del, get, set } from "idb-keyval";
 
 import { isSceneName } from "../../../scenes-mcp/sceneName.mjs";
 import { currentSpace, SPACE_KEY } from "../storage";
@@ -327,24 +327,23 @@ const encodeBytes = (json: string) => new TextEncoder().encode(json);
 // -----------------------------------------------------------------------------
 
 const versionStore = createStore("kurviq-drive-versions", "versions");
+/** per file: the versions kept, newest first (a small index, so the scenes themselves are never read to prune) */
+const versionIndex = createStore("kurviq-drive-version-index", "index");
 /** versions kept per file (the newest; the base of a merge is among them) */
 const KEEP_VERSIONS = 4;
 
-type KeptVersion = { fileId: string; sha: string; json: string; at: number };
-
 const keepVersion = async (fileId: string, sha: string, json: string) => {
   try {
-    await set(`${fileId}:${sha}`, { fileId, sha, json, at: Date.now() } satisfies KeptVersion, versionStore);
-    const mine = (await entries<string, KeptVersion>(versionStore))
-      .filter(([, value]) => value?.fileId === fileId)
-      .sort((a, b) => b[1].at - a[1].at);
-    await Promise.all(mine.slice(KEEP_VERSIONS).map(([key]) => del(key, versionStore)));
+    await set(`${fileId}:${sha}`, json, versionStore);
+    const kept = [sha, ...((await get<string[]>(fileId, versionIndex)) ?? []).filter((other) => other !== sha)];
+    await set(fileId, kept.slice(0, KEEP_VERSIONS), versionIndex);
+    await Promise.all(kept.slice(KEEP_VERSIONS).map((other) => del(`${fileId}:${other}`, versionStore)));
   } catch {}
 };
 
 const keptVersion = async (fileId: string, sha: string) => {
   try {
-    return ((await get<KeptVersion>(`${fileId}:${sha}`, versionStore)) ?? null)?.json ?? null;
+    return (await get<string>(`${fileId}:${sha}`, versionStore)) ?? null;
   } catch {
     return null;
   }
