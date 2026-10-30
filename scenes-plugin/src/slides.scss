@@ -538,7 +538,7 @@ body.slides-presenting {
 
 }
 
-// public scenes (kurviq.com/features): a read-only slide viewer above the editor
+// public and shared scenes (kurviq.com/features, /s/…): a read-only canvas above the editor
 .excalidraw .public-scene {
   position: fixed;
   inset: 0;
@@ -590,95 +590,25 @@ body.slides-presenting {
     margin: 1rem;
   }
 
-  &__stage {
+  // the scene itself: a read-only Excalidraw (zoom and pan like in the editor)
+  &__canvas {
+    position: relative;
     flex: 1;
     min-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-    cursor: pointer;
-  }
 
-  &__slide {
-    width: min(100%, calc((100vh - 9rem) * 16 / 9));
-    aspect-ratio: 16 / 9;
-    background: #fff;
-    border-radius: 6px;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
-    overflow: hidden;
-
-    canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-    }
-
-    // a drawing without slides: as big as it fits
-    &--whole {
-      width: 100%;
-      height: 100%;
-      aspect-ratio: auto;
-      box-shadow: none;
-      background: transparent;
-
-      canvas {
-        object-fit: contain;
-      }
+    > .excalidraw {
+      position: absolute;
+      inset: 0;
     }
   }
 
-  &__nav {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    padding: 0 1rem 1rem;
-  }
-
-  // presenting: nothing but the slide (and a few controls when the mouse moves)
-  &__controls {
-    position: absolute;
-    top: 0.75rem;
-    right: 0.75rem;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.35rem 0.5rem;
-    border-radius: var(--border-radius-lg);
-    background: rgba(0, 0, 0, 0.55);
-    opacity: 0;
-    transition: opacity 0.2s;
-
-    .public-scene__count {
-      color: #fff;
-      min-width: 3.5rem;
-    }
-  }
-
-  &--presenting:hover &__controls,
-  &__controls:focus-within {
-    opacity: 1;
-  }
-
+  // presented: the editor's presentation runs on that canvas, in full
   &--presenting {
     background: #000;
 
     .public-scene__bar,
-    .public-scene__nav,
     .public-scene__error {
       display: none;
-    }
-
-    .public-scene__stage {
-      padding: 0;
-    }
-
-    .public-scene__slide {
-      width: min(100vw, calc(100vh * 16 / 9));
-      border-radius: 0;
-      box-shadow: none;
     }
   }
 
@@ -971,4 +901,9 @@ body.slides-presenting {
     right: 0.75rem;
     width: auto !important;
   }
+}
+
+// a shared scene presented: the presentation's masks and controls above its viewer
+body.slides-presenting .excalidraw .public-scene {
+  z-index: 40;
 }

@@ -7,18 +7,20 @@
 //    with the link" without sign-in, else with the visitor's own Drive
 //    access (see readSharedScene)
 
-import { exportToCanvas, restoreElements } from "@excalidraw/excalidraw";
+import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import type { BinaryFiles } from "@excalidraw/excalidraw/types";
+import type { BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { IS_ONLINE } from "./api";
 import { scenesController } from "./controller";
 import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId } from "./online/drive";
 import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
-import { getSlides, renderSlide } from "./slides";
+import { getSlides } from "./slides";
+import { deck } from "./deck";
+import { presenter, usePresenter } from "./present";
 
 export const PUBLIC_SCENES: Record<string, { title: string; copyName: string }> = IS_ONLINE
   ? { features: { title: "What Kurviq adds to Excalidraw", copyName: "Kurviq features" } }
@@ -92,19 +94,18 @@ const makeCopy = async (base: string, json: string) => {
 // the viewer
 // -----------------------------------------------------------------------------
 
-type Deck = {
+type Scene = {
   json: string;
   elements: any[];
   files: BinaryFiles;
+  background: string;
+  /** the slides a presentation shows (backup slides left out) */
   slides: ReturnType<typeof getSlides>;
   /** each shown slide's number in the deck (as the editor counts, backup slides included): the URL's ?slide */
   numbers: number[];
   public?: boolean;
   canEdit?: boolean;
 };
-
-/** a drawing without slides is shown as one picture of everything */
-const WHOLE = "\u0000whole";
 
 /**
  * Edit a shared scene: one of the visitor's own scenes opens among them,
@@ -125,21 +126,15 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
   const bundled = !fileId && !moved;
   const [name, setName] = useState(linkName);
   const title = bundled ? PUBLIC_SCENES[name].title : name || "A shared scene";
-  const [deck, setDeck] = useState<Deck | null>(null);
+  const [scene, setScene] = useState<Scene | null>(null);
   /** why a shared scene can't be shown (yet) */
   const [missing, setMissing] = useState<Exclude<SharedSceneAnswer, { scene: unknown }> | { moved: true } | null>(
     moved ? { moved: true } : null,
   );
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [index, setIndex] = useState(0);
   const [copying, setCopying] = useState(false);
-  /** slides only (in the window, or fullscreen) */
-  const [presenting, setPresenting] = useState(!!startPresenting);
-  const [fullscreen, setFullscreen] = useState(false);
-  const stage = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
-  const pictures = useRef(new Map<number, HTMLCanvasElement>());
 
   useEffect(() => {
     if (moved) {
@@ -162,19 +157,16 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
         const data = JSON.parse(json);
         await registerSceneFonts(data);
         const elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
-        // backup slides ("skip when presenting") stay out of a shared deck
+        // backup slides ("skip when presenting") stay out of a presentation
         const all = getSlides(elements);
         const slides = all.filter((frame: any) => !frame.customData?.slides?.skip);
-        const numbers = slides.map((frame) => all.indexOf(frame) + 1);
-        // ?slide=N names the deck's N-th slide (or the next one shown, if that's a backup slide)
-        const start = numbers.findIndex((number) => number >= (startSlide ?? 1));
-        setIndex(Math.max(0, start));
-        setDeck({
+        setScene({
           json,
           elements,
           files: data.files || {},
-          slides: slides.length || !elements.length ? slides : [{ id: WHOLE } as any],
-          numbers: slides.length ? numbers : [1],
+          background: data.appState?.viewBackgroundColor || "#ffffff",
+          slides,
+          numbers: slides.map((frame) => all.indexOf(frame) + 1),
           public: isPublic,
           canEdit,
         });
@@ -183,105 +175,72 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
     root.current?.focus();
   }, [fileId, attempt]);
 
-  // the current slide as a picture (cached)
+  // the scene on a read-only canvas; while it is shown it is the deck, so
+  // Present runs the editor's own presentation on it
+  const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  const presenting = usePresenter().active;
   useEffect(() => {
-    if (!deck?.slides[index]) {
+    if (!api) {
       return;
     }
-    let cancelled = false;
-    const cached = pictures.current.get(index);
-    const picture = cached
-      ? Promise.resolve(cached)
-      : deck.slides[index].id === WHOLE
-      ? exportToCanvas({
-          elements: deck.elements,
-          files: deck.files,
-          appState: { exportBackground: true, viewBackgroundColor: "#ffffff" },
-          exportPadding: 40,
-          getDimensions: (w, h) => {
-            const width = Math.min(1920, Math.max(960, Math.round(w)));
-            return { width, height: Math.round((width * h) / w), scale: width / w };
-          },
-        })
-      : renderSlide(deck.elements, deck.files, deck.slides[index], { width: 1920, background: "#ffffff" });
-    picture.then((canvas) => {
-      pictures.current.set(index, canvas);
-      if (!cancelled && stage.current) {
-        stage.current.replaceChildren(canvas);
-      }
-    });
+    const giveBack = deck.borrow(api);
+    // the whole scene in view (as big as it fits)
+    const fit = setTimeout(
+      () => api.setViewport({ target: api.getSceneElements(), fit: "contain", offsets: { top: 48, bottom: 64, left: 48, right: 48 } }),
+      100,
+    );
     return () => {
-      cancelled = true;
+      clearTimeout(fit);
+      presenter.stop();
+      giveBack();
     };
-  }, [deck, index]);
+  }, [api]);
 
-  // leaving fullscreen (Esc) ends presenting
+  const slideId = (number: number | undefined) => {
+    if (!scene || !number) {
+      return undefined;
+    }
+    return scene.slides[scene.numbers.findIndex((n) => n >= number)]?.id;
+  };
+
+  const present = (number?: number) => {
+    if (api && scene?.slides.length) {
+      presenter.start(slideId(number));
+    }
+  };
+
+  // a presentation link starts presenting (fullscreen needs a click: F, or the button)
+  const started = useRef(false);
   useEffect(() => {
-    const onChange = () => {
-      const on = !!document.fullscreenElement;
-      setFullscreen(on);
-      if (!on) {
-        setPresenting(false);
-        root.current?.focus();
-      }
-    };
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
+    if (api && scene && startPresenting && !started.current) {
+      started.current = true;
+      // the canvas has its size and the fonts are in
+      setTimeout(() => present(startSlide), 300);
+    }
+  }, [api, scene]);
 
-  /** fullscreen needs a click or key press: a presentation link starts in the window */
-  const enterFullscreen = () => root.current?.requestFullscreen?.().catch(() => {});
-
-  const present = () => {
-    setPresenting(true);
-    enterFullscreen();
-    root.current?.focus();
-  };
-
-  const stopPresenting = () => {
-    setPresenting(false);
-    document.fullscreenElement && document.exitFullscreen().catch(() => {});
-    root.current?.focus();
-  };
-
-  // the URL says where the deck is (a reload or a copied link starts there)
+  // the URL says whether it is presented (a reload or a copied link does the same)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const number = deck?.numbers[index] ?? startSlide ?? 1;
-    number > 1 ? params.set("slide", String(number)) : params.delete("slide");
+    if (presenting === params.has("present")) {
+      return;
+    }
     presenting ? params.set("present", "") : params.delete("present");
     const query = params.toString().replace(/present=(&|$)/, "present$1");
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-  }, [index, presenting, deck, startSlide]);
-
-  const count = deck?.slides.length ?? 0;
-  const go = (to: number) => setIndex(Math.max(0, Math.min(count - 1, to)));
+  }, [presenting]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     // the editor below must not see these keys
     event.stopPropagation();
+    if (presenter.getState().active) {
+      return; // the presentation has its own keys
+    }
     if (event.key === "Escape") {
-      if (presenting) {
-        stopPresenting();
-      } else {
-        publicScene.close();
-      }
-    } else if ((event.key === "p" || event.key === "F5") && !presenting && deck) {
+      publicScene.close();
+    } else if ((event.key === "p" || event.key === "F5") && scene?.slides.length) {
       event.preventDefault();
       present();
-    } else if (event.key === "f" && presenting) {
-      event.preventDefault();
-      fullscreen ? document.exitFullscreen().catch(() => {}) : enterFullscreen();
-    } else if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key)) {
-      event.preventDefault();
-      go(index + 1);
-    } else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) {
-      event.preventDefault();
-      go(index - 1);
-    } else if (event.key === "Home") {
-      go(0);
-    } else if (event.key === "End") {
-      go(count - 1);
     }
   };
 
@@ -297,18 +256,24 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
     >
       <div className="public-scene__bar">
         <strong className="public-scene__title">{title}</strong>
-        {fileId && deck && (
+        {fileId && scene && (
           <span className="public-scene__meta">
-            {deck.public ? "anyone with the link can view it" : "shared with you in Google Drive"}
+            {scene.public ? "anyone with the link can view it" : "shared with you in Google Drive"}
           </span>
         )}
         <span className="public-scene__spacer" />
-        {deck && count > 0 && (
-          <button type="button" className="slides-btn slides-btn--primary" onClick={present} title="Fullscreen (P); arrow keys or click for the next slide, Esc ends">
+        {scene && scene.slides.length > 0 && (
+          <button
+            type="button"
+            className="slides-btn slides-btn--primary"
+            disabled={!api}
+            onClick={() => present()}
+            title="Present the slides (P); arrow keys or click for the next slide, Esc ends"
+          >
             ▶ Present
           </button>
         )}
-        {fileId && deck?.canEdit && (
+        {fileId && scene?.canEdit && (
           <button
             type="button"
             className="slides-btn"
@@ -321,11 +286,11 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
         <button
           type="button"
           className="slides-btn"
-          disabled={!deck || copying}
+          disabled={!scene || copying}
           title="Add a copy to your scenes, to change or present it"
           onClick={() => {
             setCopying(true);
-            makeCopy(bundled ? PUBLIC_SCENES[name].copyName : name || "Shared scene", deck!.json)
+            makeCopy(bundled ? PUBLIC_SCENES[name].copyName : name || "Shared scene", scene!.json)
               .catch((err) => setError(err.message))
               .finally(() => setCopying(false));
           }}
@@ -342,39 +307,20 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
           <WhyMissing why={missing} fileId={fileId} retry={() => setAttempt((n) => n + 1)} />
         </div>
       )}
-      {presenting && (
-        <div className="public-scene__controls">
-          <span className="public-scene__count">{count ? `${index + 1} / ${count}` : "…"}</span>
-          {!fullscreen && (
-            <button type="button" className="slides-btn" onClick={enterFullscreen} title="Fullscreen (F)">
-              ⛶ Fullscreen
-            </button>
-          )}
-          <button type="button" className="slides-btn" onClick={stopPresenting} title="End the presentation (Esc)">
-            ✕
-          </button>
+      {!missing && scene && (
+        <div className="public-scene__canvas">
+          <Excalidraw
+            onExcalidrawAPI={setApi}
+            initialData={{
+              elements: scene.elements,
+              files: scene.files,
+              appState: { viewBackgroundColor: scene.background, viewModeEnabled: true },
+              scrollToContent: true,
+            }}
+            viewModeEnabled
+            UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, toggleTheme: null } }}
+          />
         </div>
-      )}
-      {!missing && (
-        <>
-          <div className="public-scene__stage" onClick={() => go(index + 1)}>
-            <div
-              ref={stage}
-              className={clsx("public-scene__slide", { "public-scene__slide--whole": deck?.slides[0]?.id === WHOLE })}
-            />
-          </div>
-          {count > 1 && (
-            <div className="public-scene__nav">
-              <button type="button" className="slides-btn" disabled={index === 0} onClick={() => go(index - 1)} aria-label="Previous slide">
-                ‹
-              </button>
-              <span className="public-scene__count">{`${index + 1} / ${count}`}</span>
-              <button type="button" className="slides-btn" disabled={index >= count - 1} onClick={() => go(index + 1)} aria-label="Next slide">
-                ›
-              </button>
-            </div>
-          )}
-        </>
       )}
     </div>
   );
