@@ -599,10 +599,101 @@ class ScenesController {
   // settings
   // ---------------------------------------------------------------------------
 
-  /** new scenes start local only (default) until published */
+  /** signed in with Google and Drive allowed (set by the online UI) */
+  private signedIn = false;
+
+  setSignedIn = (on: boolean) => {
+    this.signedIn = on;
+  };
+
+  /** new scenes: in Drive while signed in (unless the user chose otherwise), in this browser while signed out */
   newScenesLocalOnly() {
-    return this.meta.newLocalOnly ?? true;
+    return !this.signedIn || (this.meta.newLocalOnly ?? false);
   }
+
+  /** a scene made local only by default while signed out: offered for Drive at the next sign-in */
+  private madeSignedOut() {
+    return this.signedIn ? {} : { moveOnSignIn: true };
+  }
+
+  /**
+   * At sign-in: the scenes only in this browser (with content) the user hasn't
+   * decided on yet; `ticked`: made while signed out (not chosen local only)
+   */
+  signInCandidates = async () => {
+    await this.ready;
+    const found: { name: string; ticked: boolean }[] = [];
+    for (const [name, meta] of Object.entries(this.meta.scenes)) {
+      if (name === UNTITLED || !meta.localOnly || meta.keptLocal) {
+        continue;
+      }
+      const json = await this.localJson(name);
+      if (json && !isEmptyJson(json)) {
+        found.push({ name, ticked: !!meta.moveOnSignIn });
+      }
+    }
+    return found.sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  /**
+   * Keep a scene only in this browser and take it out of Drive (its file goes
+   * to Drive's trash: people it was shared with lose access).
+   */
+  keepOnlyHere = async (name: string) => {
+    await this.ready;
+    const status = this.statusOf(name);
+    if (status === "behind" || status === "diverged" || status === "conflict") {
+      throw new Error(`Drive has changes to "${name}" that aren't here yet: sync it first`);
+    }
+    const driveName = this.meta.scenes[name]?.renamedFrom ?? name;
+    const inDrive = !!this.remoteShaOf(driveName);
+    await this.setLocalOnly(name, true);
+    if (inDrive) {
+      await scenesApi.remove(driveName);
+    }
+    const meta = this.sceneMeta(name);
+    meta.baseSha = null;
+    meta.keptLocal = true;
+    delete meta.remoteSha;
+    delete meta.renamedFrom;
+    this.persistMeta();
+    this.refresh();
+    this.log("info", `"${name}" is only in this browser now${inDrive ? " (removed from Google Drive)" : ""}`);
+    this.syncNow({ refresh: true });
+  };
+
+  /** the user puts a scene in Drive (the cloud icon): local only or not, it is uploaded now */
+  putInDrive = async (name: string) => {
+    await this.ready;
+    if (this.isLocalOnly(name)) {
+      await this.setLocalOnly(name, false);
+      return;
+    }
+    const meta = this.sceneMeta(name);
+    if (!meta.baseSha) {
+      meta.adopt = true;
+      this.persistMeta();
+    }
+    if (name === this.meta.current) {
+      this.pushCurrentNow = true;
+    }
+    this.syncNow();
+  };
+
+  /** the user's answer at sign-in: these go to Drive, the others stay here (not asked again) */
+  decideSignIn = async (toDrive: string[], keep: string[]) => {
+    for (const name of keep) {
+      const meta = this.meta.scenes[name];
+      if (meta) {
+        meta.keptLocal = true;
+        delete meta.moveOnSignIn;
+      }
+    }
+    this.persistMeta();
+    for (const name of toDrive) {
+      await this.putInDrive(name).catch((error) => this.log("error", `"${name}" not put in Drive: ${error.message}`));
+    }
+  };
 
   setNewScenesLocalOnly = (on: boolean) => {
     this.meta.newLocalOnly = on;
@@ -647,20 +738,21 @@ class ScenesController {
   /**
    * A browser never signed in with Google: what it knows about the remote
    * side is from GitHub (before 30 Oct 2026), so its scenes aren't "in Drive".
-   * They are only here, and go to Drive at the first sign-in (adopt).
+   * They are only here (local only); the user picks which go to Drive at sign-in.
    */
   forgetGitHubState = async () => {
     await this.ready;
     let changed = false;
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
-      if (name === UNTITLED || (!meta.baseSha && !meta.remoteSha)) {
+      if (name === UNTITLED || (!meta.baseSha && !meta.remoteSha && !meta.adopt)) {
         continue;
       }
       meta.baseSha = null;
       delete meta.remoteSha;
       delete meta.conflict;
       delete meta.renamedFrom;
-      meta.adopt = true;
+      delete meta.adopt;
+      meta.localOnly = true;
       changed = true;
     }
     if (!changed) {
@@ -673,7 +765,12 @@ class ScenesController {
     this.refresh();
   };
 
-  resetRemoteState = async ({ keepDirty = false }: { keepDirty?: boolean } = {}) => {
+  /**
+   * Signed in with a Google account this browser didn't sync with (the first
+   * one, or another): what it knew about Drive is void. Its scenes stay in
+   * this browser (local only) until the user puts them in Drive.
+   */
+  resetRemoteState = async () => {
     await this.ready;
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
       if (name === UNTITLED) {
@@ -683,25 +780,16 @@ class ScenesController {
       delete meta.remoteSha;
       delete meta.conflict;
       delete meta.renamedFrom;
-      if (keepDirty) {
-        meta.adopt = true;
-      } else if (name !== this.meta.current) {
-        const json = await this.localJson(name);
-        meta.dirty = !!json && !isEmptyJson(json);
-      }
+      delete meta.adopt;
+      delete meta.keptLocal;
+      meta.localOnly = true;
     }
     this.meta.pendingDeletes = {};
-    if (!keepDirty) {
-      this.meta.baseline = null;
-    }
+    this.meta.baseline = null;
     this.persistMeta();
     this.setState({ remote: null, conflict: null });
     this.recomputeDirty();
     this.refresh();
-    this.log(
-      "info",
-      keepDirty ? "Your scenes sync with Google Drive now" : "Signed in with another Google account — your scenes sync with its Drive now",
-    );
     this.syncNow({ refresh: true });
   };
 
@@ -738,10 +826,17 @@ class ScenesController {
       if (on && meta.renamedFrom) {
         throw new Error(`The rename of "${name}" is not in Drive yet — try again once it is`);
       }
+      // the user's own choice: not "made while signed out" any more
+      delete meta.moveOnSignIn;
       if (on) {
         meta.localOnly = true;
       } else {
         delete meta.localOnly;
+        delete meta.keptLocal;
+        if (!meta.baseSha) {
+          // not in Drive: uploaded with the next sync even without changes
+          meta.adopt = true;
+        }
       }
       this.persistMeta();
       this.refresh();
@@ -1093,8 +1188,9 @@ class ScenesController {
     });
 
   /** create a new, empty named scene and switch to it */
-  create = (name: string, { localOnly = this.newScenesLocalOnly() }: { localOnly?: boolean } = {}) =>
+  create = (name: string, options?: { localOnly?: boolean }) =>
     this.withBusy("loading", async () => {
+      const localOnly = options?.localOnly ?? this.newScenesLocalOnly();
       this.validateName(name);
       if (this.exists(name)) {
         throw new Error(`A scene named "${name}" already exists`);
@@ -1104,7 +1200,9 @@ class ScenesController {
       this.applyScene(null, name);
       this.meta.current = name;
       this.meta.baseline = null;
-      this.meta.scenes[name] = localOnly ? { baseSha: null, dirty: false, localOnly } : this.claimName(name, false);
+      this.meta.scenes[name] = localOnly
+        ? { baseSha: null, dirty: false, localOnly, ...(options?.localOnly === undefined ? this.madeSignedOut() : {}) }
+        : this.claimName(name, false);
       this.persistMeta();
       await nextFrame();
       this.setState({ current: name });
@@ -1190,7 +1288,7 @@ class ScenesController {
         this.meta.current = targetName;
         this.meta.baseline = null;
         this.meta.scenes[targetName] = keepLocal
-          ? { baseSha: null, dirty: true, localOnly: true }
+          ? { baseSha: null, dirty: true, localOnly: true, ...(localOnly === undefined ? this.madeSignedOut() : {}) }
           : this.claimName(targetName, true);
         api.updateScene({ appState: { name: targetName }, captureUpdate: CaptureUpdateAction.NEVER });
         await setSnapshot(targetName, { json, baseline: null, dirty: true });

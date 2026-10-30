@@ -81,7 +81,7 @@ const googleAnswer = new URLSearchParams(window.location.search).get("google");
 const ACCOUNT_KEY = "kurviq-drive-account";
 
 // after signing in: a short dialog (sync is on / Drive access missing)
-type Setup = null | { step: "done"; published: number } | { step: "nodrive" };
+type Setup = null | { step: "done"; candidates: { name: string; ticked: boolean }[] } | { step: "nodrive" };
 
 let setup: Setup = null;
 const setupListeners = new Set<() => void>();
@@ -100,24 +100,10 @@ const useSetup = () =>
     () => setup,
   );
 
-const localOnlyScenes = () =>
-  scenesController
-    .getState()
-    .list.filter((item) => item.name !== null && item.localOnly)
-    .map((item) => item.name!);
-
-/** signed in just now: new scenes sync, and the scenes kept in this browser go to Drive; returns how many */
+/** signed in just now: the scenes only in this browser the user hasn't decided on (the dialog asks) */
 const activateSync = async () => {
-  scenesController.setNewScenesLocalOnly(false);
-  let published = 0;
-  for (const name of localOnlyScenes()) {
-    await scenesController.setLocalOnly(name, false).then(
-      () => published++,
-      () => {},
-    );
-  }
   scenesController.syncNow({ refresh: true });
-  return published;
+  return scenesController.signInCandidates();
 };
 
 /** back to the user's own scenes, from a shared scene's space */
@@ -172,6 +158,7 @@ export const startDrive = () => {
     if (user === undefined) {
       return;
     }
+    scenesController.setSignedIn(!!user && drive && !sharedFileId);
     if (user && drive && !sharedFileId) {
       let previous: string | null = null;
       try {
@@ -180,9 +167,9 @@ export const startDrive = () => {
       } catch {}
       if (previous !== user.email) {
         // what this browser knew about the remote side was another Drive's
-        // (another account), or GitHub's (the first sign-in in this browser:
-        // scenes without local changes take Drive's copy of them)
-        scenesController.resetRemoteState({ keepDirty: previous === null });
+        // (another account), or GitHub's: its scenes stay here (local only)
+        // until the user picks which go to Drive (the dialog after sign-in)
+        scenesController.resetRemoteState();
       }
     }
     if (afterSignIn) {
@@ -191,7 +178,7 @@ export const startDrive = () => {
       if (user && !drive) {
         setSetup({ step: "nodrive" });
       } else if (user && what === "connected" && !sharedFileId && !/^\/s\//.test(window.location.pathname)) {
-        activateSync().then((published) => setSetup({ step: "done", published }));
+        activateSync().then((candidates) => setSetup({ step: "done", candidates }));
       }
     }
     const key = JSON.stringify([user?.email ?? null, drive]);
@@ -754,11 +741,6 @@ export const SceneSharing = ({ item, disabled }: { item: SceneListItem; disabled
   const name = item.name;
   return (
     <>
-      <QuickTip tip="Who can open this scene: people by email, or anyone with the link" label={false}>
-        <button type="button" className="scenes-link" disabled={disabled} onClick={() => openShareDialog(name)}>
-          Share…
-        </button>
-      </QuickTip>
       <CopyLink
         link={item.fileId ? sceneLink(item.fileId, name) : null}
         label="Copy link"
@@ -797,6 +779,60 @@ export const ReadOnlyGuard = () => {
       Read only: {readOnly}
     </div>
   ) : null;
+};
+
+/** after signing in: which of the scenes only in this browser go to Drive (nothing goes without a tick) */
+const SignInChoice = ({ candidates, onDone }: { candidates: { name: string; ticked: boolean }[]; onDone: () => void }) => {
+  const [ticked, setTicked] = useState(() => new Set(candidates.filter((entry) => entry.ticked).map((entry) => entry.name)));
+  const [busy, setBusy] = useState(false);
+  const toggle = (name: string) =>
+    setTicked((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(name)) {
+        next.add(name);
+      }
+      return next;
+    });
+  const decide = async (toDrive: string[]) => {
+    setBusy(true);
+    await scenesController.decideSignIn(
+      toDrive,
+      candidates.map((entry) => entry.name).filter((name) => !toDrive.includes(name)),
+    );
+    onDone();
+  };
+  return (
+    <>
+      <p>
+        {candidates.length === 1 ? "This scene is" : `These ${candidates.length} scenes are`} only in this browser. Tick
+        the ones to put in your Google Drive:
+      </p>
+      <ul className="kq-choice">
+        {candidates.map(({ name }) => (
+          <li key={name}>
+            <label>
+              <input type="checkbox" checked={ticked.has(name)} disabled={busy} onChange={() => toggle(name)} />
+              <span>{name}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <p className="kq-muted">The others stay in this browser only. You can put one in Drive later with its cloud icon.</p>
+      <div className="scenes-row">
+        <button
+          type="button"
+          className="scenes-btn scenes-btn--primary"
+          disabled={busy || ticked.size === 0}
+          onClick={() => decide([...ticked])}
+        >
+          {ticked.size ? `Put ${ticked.size} in Drive` : "Put in Drive"}
+        </button>
+        <button type="button" className="scenes-btn" disabled={busy} onClick={() => decide([])}>
+          Keep all in this browser
+        </button>
+      </div>
+    </>
+  );
 };
 
 /** after signing in (rendered next to the editor, see index.tsx), and the share dialog */
@@ -851,20 +887,18 @@ export const DriveDialogs = () => {
           of your Google Drive now.
         </p>
         <p className="kq-muted">
-          {[
-            current.published
-              ? `${current.published} scene${current.published === 1 ? "" : "s"} from this browser ${current.published === 1 ? "goes" : "go"} there now.`
-              : "",
-            "Every change is saved there a few seconds after you stop drawing. Share a scene with Share… in the scene list.",
-          ]
-            .filter(Boolean)
-            .join(" ")}
+          New scenes go there, and every change is saved a few seconds after you stop drawing. The cloud icon next to a
+          scene moves it in or out of Drive, the lock shares it.
         </p>
-        <div className="scenes-row">
-          <button type="button" className="scenes-btn scenes-btn--primary" onClick={close}>
-            Start drawing
-          </button>
-        </div>
+        {current.candidates.length > 0 ? (
+          <SignInChoice candidates={current.candidates} onDone={close} />
+        ) : (
+          <div className="scenes-row">
+            <button type="button" className="scenes-btn scenes-btn--primary" onClick={close}>
+              Start drawing
+            </button>
+          </div>
+        )}
       </>
     );
   return (

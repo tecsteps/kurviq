@@ -28,7 +28,7 @@ import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar } from "./slidesUI";
-import { connection, enterSpace, sharedFileId, sharedWithMe } from "./online/drive";
+import { connectGoogle, connection, enterSpace, sharedFileId, sharedWithMe } from "./online/drive";
 import type { SharedWithMe } from "./online/drive";
 import {
   ConnectDriveOffer,
@@ -40,6 +40,7 @@ import {
   ReadOnlyGuard,
   SceneSharing,
   UpdateBanner,
+  openShareDialog,
   startDrive,
 } from "./online/ui";
 
@@ -163,21 +164,63 @@ const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> 
 // (private / public): two small icons with tooltips, in the list and the pill
 
 
-const PlaceIcon = ({ kind, title }: { kind: keyof typeof ICON_PATHS; title: string }) => (
-  <QuickTip tip={title} className={`scenes-place scenes-place--${kind}`}>
+const PlaceIcon = ({ kind, title, onClick }: { kind: keyof typeof ICON_PATHS; title: string; onClick?: () => void }) => {
+  const svg = (
     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       {ICON_PATHS[kind]}
     </svg>
-  </QuickTip>
-);
+  );
+  return (
+    <QuickTip tip={title} className={clsx(`scenes-place scenes-place--${kind}`, { "scenes-place--action": onClick })}>
+      {onClick ? (
+        <button
+          type="button"
+          aria-label={title}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClick();
+          }}
+        >
+          {svg}
+        </button>
+      ) : (
+        svg
+      )}
+    </QuickTip>
+  );
+};
+
+/** the cloud / laptop icon: take a scene out of Drive, or put it there */
+const toggleDrive = async (name: string, inDrive: boolean, signedIn: boolean) => {
+  try {
+    if (inDrive) {
+      if (
+        window.confirm(
+          `Keep “${name}” only in this browser?\n\nIt is removed from your Google Drive (moved to its trash, restorable there for 30 days). People you shared it with lose access, and it stops syncing to your other devices.`,
+        )
+      ) {
+        await scenesController.keepOnlyHere(name);
+      }
+    } else if (!signedIn) {
+      connectGoogle();
+    } else {
+      await scenesController.putInDrive(name);
+    }
+  } catch (error: any) {
+    window.alert(error.message);
+  }
+};
 
 const ScenePlace = ({
   item,
   owner,
+  actions,
 }: {
   item: Pick<SceneListItem, "name" | "inDrive" | "localOnly" | "public" | "status">;
   /** a scene someone shared: whose */
   owner?: string;
+  /** clickable: the cloud / laptop moves it in or out of Drive, the lock shares it */
+  actions?: boolean;
 }) => {
   const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
   const inDrive = item.name !== null && !item.localOnly && item.inDrive;
@@ -192,11 +235,22 @@ const ScenePlace = ({
           item.name === null
             ? "Only in this browser: not saved yet"
             : item.localOnly
-            ? "Only in this browser: kept local on purpose, never synced"
+            ? "Only in this browser, not synced"
             : signedIn
             ? "Saved in this browser, not in Google Drive yet"
             : "Only in this browser (not signed in with Google)",
       };
+  const mine = actions && !owner && item.name !== null && IS_ONLINE;
+  const whereAction = mine
+    ? {
+        title: inDrive
+          ? `${where.title}. Click to keep it only in this browser`
+          : signedIn
+          ? `${where.title}. Click to put it in Google Drive`
+          : `${where.title}. Click to sign in with Google and sync it`,
+        onClick: () => toggleDrive(item.name!, inDrive, signedIn),
+      }
+    : {};
   const who =
     item.public && inDrive
       ? { kind: "public" as const, title: "Anyone with the link can view it" }
@@ -208,10 +262,16 @@ const ScenePlace = ({
               : "Private: only you and the people you share it with"
             : "Private: only you, in this browser",
         };
+  const whoAction =
+    mine && inDrive
+      ? { title: `${who.title}. Click to share it`, onClick: () => openShareDialog(item.name!) }
+      : mine
+      ? { title: `${who.title}. To share it, put it in Google Drive first` }
+      : {};
   return (
     <span className="scenes-places">
-      <PlaceIcon {...where} />
-      <PlaceIcon {...who} />
+      <PlaceIcon {...where} {...whereAction} />
+      <PlaceIcon {...who} {...whoAction} />
     </span>
   );
 };
@@ -260,7 +320,10 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
           <QuickTip tip="Local copy, read-only while Drive is checked" className="scenes-pill__status" label={false}>
             checking…
           </QuickTip>
-        ) : busy === "saving" || state.sync.running ? (
+        ) : (busy === "saving" || state.sync.running) &&
+          // a local-only scene never syncs, and nothing syncs while signed out
+          !currentItem?.localOnly &&
+          !state.sync.notConnected ? (
           <span className="scenes-pill__status">syncing…</span>
         ) : (
           // "local" / "local-only": the browser icon says it
@@ -529,7 +592,7 @@ const SceneSwitcher = ({
               )}
               <span className="scenes-switcher__places">
                 {item ? (
-                  <ScenePlace item={item} />
+                  <ScenePlace item={item} actions />
                 ) : (
                   <ScenePlace
                     item={{ name: entry.name, inDrive: true, localOnly: false, public: false, status: "synced" }}
@@ -831,7 +894,7 @@ const ConflictBox = ({ name, clashes }: { name: string; clashes: number }) => {
 const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean }) => {
   const name = item.name!;
   const override = scenesController.sceneAutoSyncOverride(name);
-  const value = item.localOnly ? "local" : override === undefined ? "default" : override ? "on" : "off";
+  const value = override === undefined ? "default" : override ? "on" : "off";
   return (
     <label className="scenes-scene-sync">
       This scene:
@@ -840,12 +903,7 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
         onChange={async (event) => {
           const next = event.target.value;
           try {
-            if (next === "local") {
-              await scenesController.setLocalOnly(name, true);
-              return;
-            }
             scenesController.setSceneAutoSync(name, next === "default" ? undefined : next === "on");
-            await scenesController.setLocalOnly(name, false);
           } catch (error: any) {
             window.alert(error.message);
           }
@@ -855,7 +913,6 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
         <option value="default">auto-sync {global ? "on" : "off"} (default)</option>
         <option value="on">always auto-sync</option>
         <option value="off">manual only</option>
-        <option value="local">local only, never in Drive</option>
       </select>
     </label>
   );
@@ -1139,6 +1196,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
         <>
           {current ?? <em>{UNTITLED_LABEL}</em>}
           {current !== null && (withDrive || status !== "local-only") && <StatusBadge status={status} />}
+          {currentItem && current !== null && <ScenePlace item={currentItem} actions />}
         </>
       }
       onClose={onClose}
@@ -1233,7 +1291,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
 
         {current !== null && !prompt && (
           <div className="scenes-current__footer">
-            {currentItem && withDrive && <SceneAutoSync item={currentItem} global={autoSync} />}
+            {currentItem && withDrive && !currentItem.localOnly && <SceneAutoSync item={currentItem} global={autoSync} />}
             {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.inDrive && (
               <button
                 type="button"

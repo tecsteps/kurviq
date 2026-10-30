@@ -58,10 +58,14 @@ export type SceneMeta = {
   /** pre-sync-engine metadata, resolved on the first remote listing */
   legacy?: boolean;
   /**
-   * synced before (GitHub) and not in Drive yet: uploaded once even without
-   * local changes (a copy Drive has wins, see resetRemoteState)
+   * put in Drive by the user (no longer local only) and not there yet:
+   * uploaded once even without local changes (a copy Drive has wins)
    */
   adopt?: boolean;
+  /** made while signed out: offered (ticked) for Drive at the next sign-in */
+  moveOnSignIn?: boolean;
+  /** the user kept it in this browser when asked at sign-in: not offered again */
+  keptLocal?: boolean;
   /** renamed locally, the rename in Drive is still pending (old name) */
   renamedFrom?: string;
   /** legacy field */
@@ -75,7 +79,7 @@ export type ScenesMeta = {
   baseline: number | null;
   /** global auto-sync switch (default on) */
   autoSync: boolean;
-  /** new scenes start local only (default on) */
+  /** while signed in: new scenes start local only (default off: they go to Drive) */
   newLocalOnly?: boolean;
   /** same element changed on both sides: newest edit wins (default) or ask */
   clashes?: "newest" | "ask";
