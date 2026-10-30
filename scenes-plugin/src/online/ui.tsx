@@ -150,6 +150,15 @@ export const startDrive = () => {
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   }
 
+  // never signed in with Google here: the scenes' sync state is GitHub's, not Drive's
+  let knownAccount: string | null = "";
+  try {
+    knownAccount = localStorage.getItem(ACCOUNT_KEY);
+  } catch {}
+  if (knownAccount === null && !sharedFileId) {
+    scenesController.forgetGitHubState().catch((error) => console.error("[scenes] forgetting GitHub's sync state", error));
+  }
+
   // only the tab that went to Google acts on its answer (a link with ?google=connected does nothing)
   let asked = false;
   try {

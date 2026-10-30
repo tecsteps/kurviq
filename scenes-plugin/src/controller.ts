@@ -644,6 +644,35 @@ class ScenesController {
    * here, so it is saved to (or merged with) the new Drive — nothing local is
    * lost or overwritten.
    */
+  /**
+   * A browser never signed in with Google: what it knows about the remote
+   * side is from GitHub (before 30 Oct 2026), so its scenes aren't "in Drive".
+   * They are only here, and go to Drive at the first sign-in (adopt).
+   */
+  forgetGitHubState = async () => {
+    await this.ready;
+    let changed = false;
+    for (const [name, meta] of Object.entries(this.meta.scenes)) {
+      if (name === UNTITLED || (!meta.baseSha && !meta.remoteSha)) {
+        continue;
+      }
+      meta.baseSha = null;
+      delete meta.remoteSha;
+      delete meta.conflict;
+      delete meta.renamedFrom;
+      meta.adopt = true;
+      changed = true;
+    }
+    if (!changed) {
+      return;
+    }
+    this.meta.pendingDeletes = {};
+    this.persistMeta();
+    this.setState({ remote: null, conflict: null });
+    this.recomputeDirty();
+    this.refresh();
+  };
+
   resetRemoteState = async ({ keepDirty = false }: { keepDirty?: boolean } = {}) => {
     await this.ready;
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
