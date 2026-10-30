@@ -398,6 +398,10 @@ const SceneSwitcher = ({
       .filter((shared) => matchesFilter(shared.name, query, null))
       .map((shared) => ({ owner: shared.owner, name: shared.name, fileId: shared.fileId })),
   ];
+  // the filter stays when another scene is opened: say what it hides, or the scenes look gone
+  const hidden =
+    list.length - list.filter((item) => matchesFilter(item.name, query, current)).length +
+    others.length - others.filter((shared) => matchesFilter(shared.name, query, null)).length;
   const nameOf = (entry: Entry) => (entry.item ? entry.item.name : entry.name);
   // one list, by name (Untitled first), each scene with its space when there are several
   items.sort((a, b) =>
@@ -551,6 +555,21 @@ const SceneSwitcher = ({
           </button>
         )}
         {!count && <div className="scenes-switcher__empty">No scene matches</div>}
+        {hidden > 0 && (
+          <div className="scenes-switcher__empty scenes-switcher__hidden">
+            {hidden === 1 ? "1 more scene" : `${hidden} more scenes`} hidden by the filter ·{" "}
+            <button
+              type="button"
+              className="scenes-link"
+              onClick={() => {
+                setSceneFilter("");
+                setActive(null);
+              }}
+            >
+              Show all
+            </button>
+          </div>
+        )}
       </div>
       <button type="button" className="scenes-switcher__manage" onClick={onDrive}>
         <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Google Drive…
