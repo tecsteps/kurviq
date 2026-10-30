@@ -150,7 +150,7 @@ const ago = (iso: string | number | null, now: number) => {
 
 const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> = {
   synced: { icon: "✓", label: "Synced", tone: "ok" },
-  ahead: { icon: "↑", label: "Not pushed", tone: "warn" },
+  ahead: { icon: "↑", label: "Not in Drive yet", tone: "warn" },
   behind: { icon: "↓", label: "Newer in Drive", tone: "info" },
   diverged: { icon: "⇅", label: "Changed on both sides", tone: "warn" },
   conflict: { icon: "!", label: "Conflict", tone: "danger" },
@@ -656,7 +656,7 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
           Auto-sync
           <span className="scenes-switch__hint">
             {autoSync
-              ? `push after ${IDLE_PUSH_MS / 1000}s idle, pull & merge automatically`
+              ? `saved to Drive ${IDLE_PUSH_MS / 1000}s after you stop drawing, changes from others merged in`
               : "only when you click Save / Sync now"}
           </span>
         </span>
@@ -674,10 +674,10 @@ const currentStatusText = (
       return "Same as in Drive";
     case "ahead":
       return offline
-        ? "Local changes — will be pushed when Drive is reachable"
+        ? "Changes not in Drive yet — saved there when Drive is reachable"
         : autoSync
-        ? `Local changes — pushed automatically after ${IDLE_PUSH_MS / 1000}s without edits`
-        : "Local changes — not pushed (auto-sync is off for this scene)";
+        ? `Changes not in Drive yet — saved there ${IDLE_PUSH_MS / 1000}s after you stop drawing`
+        : "Changes not in Drive yet (auto-sync is off for this scene: Save puts them there)";
     case "behind":
       return autoSync ? "Newer version in Drive — updating…" : "A newer version is in Drive";
     case "diverged":
@@ -690,7 +690,7 @@ const currentStatusText = (
       return empty
         ? "New, empty scene — only in this browser"
         : autoSync
-        ? "Only in this browser — pushed automatically after a short pause"
+        ? "Only in this browser — saved to Drive after a short pause"
         : "Only in this browser — Save to put it in Drive";
     case "local-only":
       return "Local only — stays in this browser, never synced to Drive. Publish puts it in Drive.";
@@ -853,7 +853,7 @@ const confirmDelete = (item: SceneListItem) => {
         ? "It is local only: it is deleted in this browser. The older copy in Drive is not touched."
         : "It only exists in this browser — it will be gone."
       : item.inDrive
-      ? "It is deleted here and in Drive (it stays in the repository's git history)."
+      ? "It is deleted here and moved to the trash of your Google Drive (restorable there for 30 days)."
       : "It only exists in this browser — it will be gone.",
     unpushed && !item.localOnly ? "Its changes that are not in Drive yet are lost." : null,
   ];
@@ -1194,7 +1194,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
             <QuickTip
               tip={
                 currentItem.inDrive
-                  ? "Delete this scene, also in Drive (its git history keeps the old versions)"
+                  ? "Delete this scene, also in Drive (it goes to Drive's trash)"
                   : "Delete this scene from this browser"
               }
               label={false}

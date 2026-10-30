@@ -208,7 +208,7 @@ const folderUrl = () => {
 };
 
 const SignInButton = ({ label = "Sign in with Google" }: { label?: string }) => (
-  <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => connectGoogle()}>
+  <button type="button" className="scenes-btn kq-google-btn" onClick={() => connectGoogle()}>
     <span className="kq-icon">{GoogleIcon}</span> {label}
   </button>
 );
@@ -617,13 +617,18 @@ const ShareDialog = ({ name }: { name: string }) => {
                 const isMe = person.emailAddress?.toLowerCase() === me;
                 return (
                   <li key={person.id}>
+                    <span className="kq-share__avatar" aria-hidden="true">
+                      {(person.displayName || person.emailAddress || "?").charAt(0).toUpperCase()}
+                    </span>
                     <span className="kq-share__who">
-                      <strong>{person.displayName || person.emailAddress}</strong>
-                      {isMe && " (you)"}
-                      {person.displayName && person.emailAddress && <span className="kq-muted"> {person.emailAddress}</span>}
+                      <span className="kq-share__name">
+                        {person.displayName || person.emailAddress}
+                        {isMe && " (you)"}
+                      </span>
+                      {person.displayName && person.emailAddress && <span className="kq-muted">{person.emailAddress}</span>}
                     </span>
                     {person.role === "owner" || isMe ? (
-                      <span className="kq-muted">{ROLE_LABEL[person.role] ?? person.role}</span>
+                      <span className="kq-muted kq-share__role">{ROLE_LABEL[person.role] ?? person.role}</span>
                     ) : (
                       <select
                         value={person.role === "writer" ? "writer" : "reader"}
@@ -740,9 +745,11 @@ export const SceneSharing = ({ item, disabled }: { item: SceneListItem; disabled
   const name = item.name;
   return (
     <>
-      <button type="button" className="scenes-link" disabled={disabled} onClick={() => openShareDialog(name)}>
-        Share…
-      </button>
+      <QuickTip tip="Who can open this scene: people by email, or anyone with the link" label={false}>
+        <button type="button" className="scenes-link" disabled={disabled} onClick={() => openShareDialog(name)}>
+          Share…
+        </button>
+      </QuickTip>
       <CopyLink
         link={item.fileId ? sceneLink(item.fileId, name) : null}
         label="Copy link"

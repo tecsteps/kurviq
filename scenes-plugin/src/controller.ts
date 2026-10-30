@@ -1385,7 +1385,7 @@ class ScenesController {
     const isCurrent = name === this.meta.current;
     if (isCurrent && this.requireApi().getAppState().name !== name) {
       // the canvas shows another scene's drawing: never push it under this name
-      const message = `Not pushed: this tab's canvas belongs to "${this.requireApi().getAppState().name}", not "${name}". Reload the tab.`;
+      const message = `Not saved to Drive: this tab's canvas belongs to "${this.requireApi().getAppState().name}", not "${name}". Reload the tab.`;
       this.log("error", message);
       if (manual) {
         throw new Error(message);
