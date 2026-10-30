@@ -198,6 +198,141 @@
   }
 }
 
+// Google's colored logo on a light, outlined button (Excalidraw's own buttons), not on the violet
+.excalidraw button.scenes-btn.kq-google-btn {
+  height: 2.25rem;
+  gap: 0.5rem;
+  border: 1px solid var(--default-border-color);
+  background: var(--island-bg-color);
+  color: var(--text-primary-color);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+
+  &:hover {
+    background: var(--button-hover-bg, var(--color-surface-high));
+  }
+
+  &:active {
+    border-color: var(--color-primary);
+  }
+}
+
+// the Share dialog: Excalidraw's inputs (outlined, rounded), a people list like Drive's
+.excalidraw .kq-share {
+  input,
+  select {
+    box-sizing: border-box;
+    height: 2.25rem;
+    border: 1px solid var(--default-border-color);
+    border-radius: var(--border-radius-lg, 0.5rem);
+    background: var(--input-bg-color, var(--island-bg-color));
+    color: var(--text-primary-color);
+    font-family: inherit;
+    font-size: 0.85rem;
+
+    &:focus {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 1px var(--color-primary);
+    }
+  }
+
+  input {
+    padding: 0 0.75rem;
+  }
+
+  select {
+    padding: 0 0.5rem;
+    cursor: pointer;
+  }
+
+  .kq-field {
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .scenes-row {
+    align-items: center;
+    gap: 0.5rem;
+  }
+}
+
+.excalidraw .kq-share__add {
+  display: flex;
+  gap: 0.5rem;
+
+  input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .scenes-btn {
+    height: 2.25rem;
+  }
+}
+
+.excalidraw .kq-share__people {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.3rem 0;
+  }
+
+  select {
+    height: 2rem;
+    border-color: transparent;
+    background: transparent;
+
+    &:hover {
+      background: var(--button-hover-bg, var(--color-surface-high));
+    }
+  }
+}
+
+.excalidraw .kq-share__avatar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--color-primary-light, var(--color-surface-high));
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.excalidraw .kq-share__who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+
+  .kq-muted {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.excalidraw .kq-share__name {
+  font-weight: 600;
+}
+
+.excalidraw .kq-share__role {
+  padding-right: 0.5rem;
+}
+
 .excalidraw .kq-welcome {
   display: flex;
   flex-direction: column;

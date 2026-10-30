@@ -1,6 +1,6 @@
 {
   "//": "Public values of Kurviq's Google Cloud project (none of them secret): the web OAuth client, the browser API key (Picker, public files) and the project number (the Picker's app id). Secrets live in Cloudflare (GOOGLE_CLIENT_SECRET, COOKIE_KEY, GOOGLE_API_KEY).",
-  "clientId": "",
-  "browserApiKey": "",
-  "projectNumber": ""
+  "clientId": "80673250181-2ova7ut86v856cf774n0t7hjaun9g3lu.apps.googleusercontent.com",
+  "browserApiKey": "AIzaSyC81_IlKOIqwEL1tzKcXcTE2c1fWFUHtCI",
+  "projectNumber": "80673250181"
 }

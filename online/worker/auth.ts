@@ -27,6 +27,8 @@ export type AuthEnv = {
   GOOGLE_CLIENT_SECRET: string;
   /** base64 of 32 random bytes: encrypts the cookies */
   COOKIE_KEY: string;
+  /** wrangler dev only (.dev.vars): this server's real address; wrangler dev gives the Worker the first route's (kurviq.com) */
+  DEV_ORIGIN?: string;
 };
 
 const clientId = (env: AuthEnv) => env.GOOGLE_CLIENT_ID || google.clientId;
@@ -155,6 +157,9 @@ const exchange = async (env: AuthEnv, params: Record<string, string>): Promise<T
     return res.json();
   }
   const body: any = await res.json().catch(() => ({}));
+  if (res.status < 500) {
+    console.warn(`[auth] Google's token endpoint: ${body.error} (${body.error_description ?? ""}) redirect_uri=${params.redirect_uri ?? "-"}`);
+  }
   return { error: res.status >= 500 ? `http_${res.status}` : String(body.error || `http_${res.status}`) };
 };
 
@@ -264,15 +269,17 @@ const json = (status: number, body: unknown, cookies: string[] = [], corsOrigin?
   return new Response(JSON.stringify(body), { status, headers });
 };
 
-type Flow = { state: string; back: string; local: boolean; consent: boolean };
+/** `redirect`: Google's redirect URI of this flow, sent again with the code */
+type Flow = { state: string; back: string; local: boolean; consent: boolean; redirect: string };
 
-const startFlow = async (request: Request, env: AuthEnv, back: string, local: boolean, consent: boolean, hint?: string) => {
+const startFlow = async (request: Request, env: AuthEnv, back: string, local: boolean, consent: boolean, hint?: string, redirectUri?: string) => {
   const url = new URL(request.url);
+  const callback = redirectUri ?? `${env.DEV_ORIGIN || url.origin}/auth/callback`;
   const state = b64url(crypto.getRandomValues(new Uint8Array(18)));
-  const sealed = await seal(env, { state, back, local, consent } satisfies Flow, STATE_COOKIE);
+  const sealed = await seal(env, { state, back, local, consent, redirect: callback } satisfies Flow, STATE_COOKIE);
   const target = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   target.searchParams.set("client_id", clientId(env));
-  target.searchParams.set("redirect_uri", `${url.origin}/auth/callback`);
+  target.searchParams.set("redirect_uri", callback);
   target.searchParams.set("response_type", "code");
   target.searchParams.set("scope", SCOPES.join(" "));
   target.searchParams.set("access_type", "offline");
@@ -284,7 +291,8 @@ const startFlow = async (request: Request, env: AuthEnv, back: string, local: bo
   if (hint) {
     target.searchParams.set("login_hint", hint);
   }
-  return redirect(target.toString(), [cookie(request, STATE_COOKIE, sealed, 900)]);
+  // an hour: Google's pages (account, consent, two-step login) can take a while
+  return redirect(target.toString(), [cookie(request, STATE_COOKIE, sealed, 3600)]);
 };
 
 /** back to the page that asked: this site (cookie) or the local install (sealed session in the fragment) */
@@ -348,22 +356,27 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
   if (url.pathname === "/auth/callback" && request.method === "GET") {
     const flow = await unseal<Flow>(env, readCookie(request, STATE_COOKIE), STATE_COOKIE);
     if (!flow || flow.state !== url.searchParams.get("state")) {
+      console.warn(`[auth] sign-in failed: ${flow ? "state does not match" : "no sign-in started in this browser (state cookie missing)"}`);
       return redirect("/?google=failed", [cookie(request, STATE_COOKIE, "", 0)]);
     }
     const code = url.searchParams.get("code");
     if (url.searchParams.get("error") || !code) {
+      console.warn(`[auth] sign-in cancelled: ${url.searchParams.get("error") ?? "no code"}`);
       return finish(request, env, flow, "cancelled");
     }
-    const answer = await exchange(env, { grant_type: "authorization_code", code, redirect_uri: `${url.origin}/auth/callback` });
+    const answer = await exchange(env, { grant_type: "authorization_code", code, redirect_uri: flow.redirect });
     const user = userOf(answer.id_token);
     if (!answer.access_token || !user) {
+      // (only `wrangler tail` sees this: no request logs are kept)
+      console.warn(`[auth] sign-in failed: ${answer.error ?? (answer.access_token ? "no email in the ID token" : "no token")}`);
       return finish(request, env, flow, "failed");
     }
     if (!answer.refresh_token) {
       // allowed before (another browser has the refresh token): ask for consent once more
       if (!flow.consent) {
-        return startFlow(request, env, flow.back, flow.local, true, user.email);
+        return startFlow(request, env, flow.back, flow.local, true, user.email, flow.redirect);
       }
+      console.warn("[auth] sign-in failed: no refresh token, even after consent");
       return finish(request, env, flow, "failed");
     }
     const session: Session = {

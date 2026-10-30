@@ -1,6 +1,6 @@
 // Writes .dev.vars (secrets for `wrangler dev`) from the project's .env /
 // .env.local: KURVIQ_GOOGLE_CLIENT_SECRET and KURVIQ_GOOGLE_API_KEY, plus a
-// cookie key made once.
+// cookie key made once and this server's address (DEV_ORIGIN).
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -28,6 +28,8 @@ if (!env.KURVIQ_GOOGLE_CLIENT_SECRET) {
 writeFileSync(
   target,
   `GOOGLE_CLIENT_SECRET=${env.KURVIQ_GOOGLE_CLIENT_SECRET || ""}\nCOOKIE_KEY=${cookieKey}\n` +
+    // the redirect URI registered at Google for wrangler dev (port 8787)
+    `DEV_ORIGIN=http://localhost:8787\n` +
     (env.KURVIQ_GOOGLE_API_KEY ? `GOOGLE_API_KEY=${env.KURVIQ_GOOGLE_API_KEY}\n` : ""),
   { mode: 0o600 },
 );
