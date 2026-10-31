@@ -515,6 +515,16 @@ const SceneSwitcher = ({
     }
   };
 
+  // the pen of another scene opens it, then its manage panel (one click instead of open, reopen the menu, pen)
+  const manage = (name: string | null) => {
+    if (name === current) {
+      onManageScene();
+      return;
+    }
+    onClose();
+    scenesController.open(name).then(onManageScene, ignore);
+  };
+
   const onKeyDown = (event: React.KeyboardEvent) => {
     // keep Excalidraw's own shortcuts out of the way while typing here
     event.stopPropagation();
@@ -591,13 +601,17 @@ const SceneSwitcher = ({
                   <StatusBadge status={item.status} compact />
                 )}
               </button>
-              {isCurrent && (
-                <QuickTip tip="Manage this scene: save, rename, share, history" className="scenes-switcher__pen-tip" label={false}>
+              {item && (
+                <QuickTip
+                  tip={isCurrent ? "Manage this scene: save, rename, share, history" : "Open this scene and manage it: save, rename, share, history"}
+                  className={clsx("scenes-switcher__pen-tip", { "scenes-switcher__pen-tip--other": !isCurrent })}
+                  label={false}
+                >
                   <button
                     type="button"
                     className="scenes-switcher__pen"
                     aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`}
-                    onClick={onManageScene}
+                    onClick={() => manage(item.name)}
                   >
                     <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                       <path d="M13.5 3.5l3 3L7 16H4v-3z" />

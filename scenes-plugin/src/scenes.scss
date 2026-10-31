@@ -248,6 +248,22 @@
     display: inline-flex;
   }
 
+  // other scenes: the pen shows on the highlighted row (mouse or arrow keys) and on focus; always on touch screens
+  .scenes-switcher__pen-tip--other {
+    visibility: hidden;
+  }
+
+  .scenes-switcher__row--active .scenes-switcher__pen-tip--other,
+  .scenes-switcher__row:focus-within .scenes-switcher__pen-tip--other {
+    visibility: visible;
+  }
+
+  @media (hover: none) {
+    .scenes-switcher__pen-tip--other {
+      visibility: visible;
+    }
+  }
+
   // a small button, so it reads as an action (not as one of the place icons)
   .scenes-switcher__pen {
     display: grid;
