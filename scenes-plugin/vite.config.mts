@@ -665,7 +665,11 @@ const kurviqOnline = () => ({
       }
     }
     // security headers for every page and asset (Cloudflare applies _headers
-    // to what the Worker serves from ASSETS)
+    // to what the Worker serves from ASSETS and to the assets it serves itself).
+    // Excalidraw's font subsetting (SVG / PDF export) runs in a worker whose
+    // Emscripten code builds functions with new Function: only that worker gets
+    // 'unsafe-eval' (a thread of its own, it only ever sees font files); the
+    // page keeps its strict policy
     writeFileSync(path.join(out, "_headers"), securityHeaders(readFileSync(path.join(out, "index.html"), "utf8")));
   },
 });
@@ -717,6 +721,10 @@ const securityHeaders = (html: string) => {
 
 /assets/*
   Access-Control-Allow-Origin: *
+
+/assets/subset-worker.chunk-*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data:
 `;
 };
 
