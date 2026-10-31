@@ -20,8 +20,10 @@
 // rotate, so tabs refreshing at the same moment don't hurt each other.
 
 import google from "../google.json";
+import { googleUrls } from "./google";
+import type { GoogleEnv } from "./google";
 
-export type AuthEnv = {
+export type AuthEnv = GoogleEnv & {
   /** default: online/google.json */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -145,7 +147,7 @@ type TokenAnswer = {
 const exchange = async (env: AuthEnv, params: Record<string, string>): Promise<TokenAnswer> => {
   let res: Response;
   try {
-    res = await fetch("https://oauth2.googleapis.com/token", {
+    res = await fetch(googleUrls(env).token, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: clientId(env), client_secret: env.GOOGLE_CLIENT_SECRET, ...params }),
@@ -277,7 +279,7 @@ const startFlow = async (request: Request, env: AuthEnv, back: string, local: bo
   const callback = redirectUri ?? `${env.DEV_ORIGIN || url.origin}/auth/callback`;
   const state = b64url(crypto.getRandomValues(new Uint8Array(18)));
   const sealed = await seal(env, { state, back, local, consent, redirect: callback } satisfies Flow, STATE_COOKIE);
-  const target = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  const target = new URL(googleUrls(env, url.origin).authorize);
   target.searchParams.set("client_id", clientId(env));
   target.searchParams.set("redirect_uri", callback);
   target.searchParams.set("response_type", "code");

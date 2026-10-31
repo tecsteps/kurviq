@@ -30,8 +30,10 @@ import { md5 } from "./md5";
 
 import type { ApiError, RemoteInfo, RemoteScene, SceneVersion } from "../api";
 
-const API = "https://www.googleapis.com/drive/v3";
-const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+/** Google's Drive API; a dev build for the fake Google (online/worker/fakeGoogle.ts) sets VITE_APP_GOOGLE_API_BASE */
+const GOOGLE_BASE = (import.meta.env.VITE_APP_GOOGLE_API_BASE || "").replace(/\/$/, "");
+export const API = GOOGLE_BASE ? `${GOOGLE_BASE}/drive/v3` : "https://www.googleapis.com/drive/v3";
+const UPLOAD = GOOGLE_BASE ? `${GOOGLE_BASE}/upload/drive/v3` : "https://www.googleapis.com/upload/drive/v3";
 export const SCENE_MIME = "application/vnd.excalidraw+json";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const EXTENSION = ".excalidraw";

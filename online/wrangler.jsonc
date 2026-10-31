@@ -22,15 +22,28 @@
     "run_worker_first": ["/*", "!/assets/*", "!/fonts/*"]
   },
   "durable_objects": {
-    "bindings": [{ "name": "PAIRING", "class_name": "Pairing" }]
+    "bindings": [
+      { "name": "PAIRING", "class_name": "Pairing" },
+      // live sync (docs/live-sync): one per Drive scene, one per account
+      { "name": "SCENE", "class_name": "SceneRoom" },
+      { "name": "ACCOUNT", "class_name": "AccountGuard" },
+      // the fake Google for local tests (only used with FAKE_GOOGLE=1)
+      { "name": "FAKE_GOOGLE_STORE", "class_name": "FakeGoogle" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Pairing"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Pairing"] },
+    { "tag": "v2", "new_sqlite_classes": ["SceneRoom", "AccountGuard", "FakeGoogle"] }
+  ],
   // bug reports and change requests (worker/feedback.ts)
   "d1_databases": [
     { "binding": "FEEDBACK", "database_name": "kurviq-feedback", "database_id": "b0ab0f4a-ee15-4287-baaa-5043937f5952" }
   ],
   "vars": {
-    "CANONICAL_HOST": "kurviq.com"
+    "CANONICAL_HOST": "kurviq.com",
+    // live sync: "off", "all", or the accounts (emails) that pilot it; scenes
+    // already marked kurviqSync stay live for everyone (docs/live-sync/PROTOCOL.md)
+    "LIVE_SYNC": "fabian.wesner@gmail.com"
   },
   "routes": [
     { "pattern": "kurviq.com", "custom_domain": true },

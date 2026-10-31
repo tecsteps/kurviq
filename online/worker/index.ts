@@ -35,6 +35,9 @@ import type { AuthEnv } from "./auth";
 import type { SharedEnv } from "./shared";
 
 export { Pairing } from "./pairing";
+export { SceneRoom } from "./scene";
+export { AccountGuard } from "./account";
+export { FakeGoogle } from "./fakeGoogle";
 
 type Env = AuthEnv & SharedEnv & FeedbackEnv & {
   ASSETS: Fetcher;

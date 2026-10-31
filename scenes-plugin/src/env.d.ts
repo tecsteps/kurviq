@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   VITE_APP_SCENES_TARGET: string;
   /** online: the commit the build is made from */
   VITE_APP_KURVIQ_BUILD: string;
+  /** "/fake-google" in a dev build for the fake Google (KURVIQ_FAKE_GOOGLE=1), else "" (real Google) */
+  VITE_APP_GOOGLE_API_BASE: string;
 }
 
 declare module "*.woff2" {
