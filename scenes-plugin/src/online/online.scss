@@ -691,3 +691,12 @@
     margin: 0;
   }
 }
+
+// the share dialog: "Share in Google Drive" (the reliable way) above the email field
+.kq-share__drive {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  font-size: 14px;
+}

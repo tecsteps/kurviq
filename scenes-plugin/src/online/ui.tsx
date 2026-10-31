@@ -550,6 +550,16 @@ const ShareDialog = ({ name }: { name: string }) => {
       .catch((err) => setError(err.message));
   }, [name]);
 
+  // back from sharing in Drive's own window: show who has access now
+  useEffect(() => {
+    if (!fileId) {
+      return;
+    }
+    const onFocus = () => reload(fileId).catch(() => {});
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [fileId]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeShareDialog();
     window.addEventListener("keydown", onKey);
@@ -601,6 +611,25 @@ const ShareDialog = ({ name }: { name: string }) => {
         {!permissions && !error && <p className="kq-muted">Saving it to Google Drive and asking who has access…</p>}
         {permissions && (
           <>
+            <div className="kq-share__drive">
+              <button
+                type="button"
+                className="scenes-btn scenes-btn--primary"
+                onClick={() =>
+                  window.open(
+                    `https://drive.google.com/file/d/${fileId}/view`,
+                    "kurviq-drive-share",
+                    "popup,width=1100,height=780",
+                  )
+                }
+              >
+                Share in Google Drive
+              </button>
+              <span className="kq-muted">
+                Opens the file in Drive: click <strong>Share</strong> at the top right. Google delivers these invitations
+                reliably.
+              </span>
+            </div>
             <div className="kq-share__add">
               <input
                 type="email"
@@ -619,22 +648,23 @@ const ShareDialog = ({ name }: { name: string }) => {
                 <option value="writer">Can edit</option>
                 <option value="reader">Can view</option>
               </select>
-              <button type="button" className="scenes-btn scenes-btn--primary" disabled={busy || !email.trim()} onClick={add}>
+              <button type="button" className="scenes-btn" disabled={busy || !email.trim()} onClick={add}>
                 Share
               </button>
             </div>
             {sharedWith ? (
               <div className="kq-share__sent">
                 <p>
-                  Shared with {sharedWith}. Google emails them; if they don't see it, it may be in their Drive's{" "}
-                  <strong>Spam</strong> folder. To be sure, send them the link yourself:
+                  Shared with {sharedWith}. Google often puts invitations sent from Kurviq into their Drive's{" "}
+                  <strong>Spam</strong> folder, without an email. Send them the link yourself:
                 </p>
                 <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />
               </div>
             ) : (
               <p className="kq-muted">
-                Google emails them. People without a Google account create one for their address (no Gmail needed). In
-                Kurviq they find it under <strong>Shared with you…</strong> in the scene list, or with the link.
+                Or add them here: quick, but Google often files these invitations as spam (no email), so send them the
+                link too. In Kurviq they find it under <strong>Shared with you…</strong> in the scene list, or with the
+                link. People without a Google account create one for their address (no Gmail needed).
               </p>
             )}
             <ul className="kq-share__people">
