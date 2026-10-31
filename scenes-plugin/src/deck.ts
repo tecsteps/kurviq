@@ -2,7 +2,8 @@
 // sync, sets the template's body text style as the editor's defaults, and offers
 // the deck (slides, template, transition, thumbnails) as a store for the UI.
 
-import { CaptureUpdateAction, Fonts } from "@excalidraw/excalidraw";
+import { DEFAULT_ELEMENT_PROPS, DEFAULT_FONT_SIZE } from "@excalidraw/common";
+import { CaptureUpdateAction, FONT_FAMILY, Fonts } from "@excalidraw/excalidraw";
 
 import { scenesController } from "./controller";
 import {
@@ -70,6 +71,8 @@ class Deck {
   private lastTemplateKey = 0;
   /** the body text style last made the editor's default */
   private lastBodyKey = "";
+  /** the scene whose new-text style was set to Excalidraw's default (once per scene opened) */
+  private defaultStyleFor: string | null = null;
   /** headline and eyebrow being added to an older template */
   private addingTitles = false;
   /** the scene whose template headline / eyebrow were measured again (once per scene) */
@@ -219,10 +222,23 @@ class Deck {
     const bodyKey = body ? `${this.deckName()}:${JSON.stringify(body)}` : "";
     if (bodyKey && bodyKey !== this.lastBodyKey && this.api) {
       this.lastBodyKey = bodyKey;
+      this.defaultStyleFor = null;
       const api = this.api;
       setTimeout(() =>
         api.updateScene({
           appState: { currentItemFontFamily: body!.fontFamily as any, currentItemFontSize: body!.fontSize, currentItemStrokeColor: body!.strokeColor },
+          captureUpdate: CaptureUpdateAction.NEVER,
+        }),
+      );
+    } else if (!bodyKey && this.defaultStyleFor !== this.deckName() && this.api) {
+      // a scene without a deck style (opened, or after a reload: Excalidraw keeps the last style):
+      // new text starts as Excalidraw's default, not the last deck's
+      this.defaultStyleFor = this.deckName();
+      this.lastBodyKey = "";
+      const api = this.api;
+      setTimeout(() =>
+        api.updateScene({
+          appState: { currentItemFontFamily: FONT_FAMILY.Excalifont, currentItemFontSize: DEFAULT_FONT_SIZE, currentItemStrokeColor: DEFAULT_ELEMENT_PROPS.strokeColor },
           captureUpdate: CaptureUpdateAction.NEVER,
         }),
       );
