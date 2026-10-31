@@ -316,72 +316,79 @@ export const reapplyChain = (oldBase: El, newBase: El, chain: El[]) => {
 };
 
 // -----------------------------------------------------------------------------
-// undo: who produced the value a property has now
+// undo and redo: only what still holds the value the user's step produced
 // -----------------------------------------------------------------------------
 
-type Author = "user" | "remote";
+type Step = { before: string; after: string };
 
 /**
- * Per element and property, the values it had and who set them (the last
- * few). Undo and redo may change a property only while its current value is
- * one the user produced; a value an undo brings back keeps its author, so the
- * next undo step knows it was someone else's.
+ * Per element and property, the user's own steps (before -> after), in order,
+ * mirroring the editor's undo and redo stacks. A history step that turns a
+ * property back to a step's `before` is that step's undo: allowed only while
+ * the property still has the value the step produced (else someone else
+ * changed it since). One that turns it to a redone step's `after` is its redo:
+ * allowed only while the property still has the value the undo produced.
+ * Values are compared by content, never looked up by who set an equal value
+ * last (a value like `isDeleted: false` comes and goes from both sides).
  */
-export class ValueAuthors {
-  private values = new Map<string, Map<string, { v: string; a: Author }[]>>();
+export class HistorySteps {
+  private undo = new Map<string, Step[]>();
+  private redo = new Map<string, Step[]>();
 
-  constructor(private readonly keep = 20) {}
+  constructor(private readonly keep = 500) {}
 
-  private list(id: string, key: string) {
-    let byKey = this.values.get(id);
-    if (!byKey) {
-      byKey = new Map();
-      this.values.set(id, byKey);
-    }
-    let list = byKey.get(key);
+  private key = (id: string, prop: string) => `${id}\u0000${prop}`;
+
+  private stack(map: Map<string, Step[]>, key: string) {
+    let list = map.get(key);
     if (!list) {
       list = [];
-      byKey.set(key, list);
+      map.set(key, list);
     }
     return list;
   }
 
-  set(id: string, key: string, value: unknown, author: Author) {
-    const list = this.list(id, key);
-    list.push({ v: JSON.stringify(value ?? null), a: author });
+  /** the user changed a property (not by undo / redo): a step of its own; redo of it is gone */
+  userStep(id: string, prop: string, before: unknown, after: unknown) {
+    const key = this.key(id, prop);
+    const list = this.stack(this.undo, key);
+    list.push({ before: JSON.stringify(before ?? null), after: JSON.stringify(after ?? null) });
     if (list.length > this.keep) {
       list.splice(0, list.length - this.keep);
     }
-  }
-
-  /** who set this value last (unknown: the user, e.g. the scene as it was loaded) */
-  authorOf(id: string, key: string, value: unknown): Author {
-    const v = JSON.stringify(value ?? null);
-    const list = this.values.get(id)?.get(key) ?? [];
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].v === v) {
-        return list[i].a;
-      }
-    }
-    return "user";
+    this.redo.delete(key);
   }
 
   /**
-   * A history step changes `keys` of an element from `before` to `after`:
-   * the keys it may change (the current value is the user's), the others
-   * stay. Allowed values are recorded with the author they had before.
+   * A history step changes `props` of an element from `before` to `after`:
+   * the props it may change, the others stay as they are (someone else's value)
    */
-  historyStep(id: string, before: Record<string, any>, after: Record<string, any>, keys: string[]) {
+  historyStep(id: string, before: Record<string, any>, after: Record<string, any>, props: string[]) {
     const allowed: string[] = [];
     const skipped: string[] = [];
-    for (const key of keys) {
-      if (this.authorOf(id, key, before[key]) === "remote") {
-        skipped.push(key);
+    for (const prop of props) {
+      const key = this.key(id, prop);
+      const [from, to] = [JSON.stringify(before[prop] ?? null), JSON.stringify(after[prop] ?? null)];
+      const undos = this.stack(this.undo, key);
+      const redos = this.stack(this.redo, key);
+      const lastUndo = undos[undos.length - 1];
+      const lastRedo = redos[redos.length - 1];
+      if (lastUndo && to === lastUndo.before) {
+        // the undo of the user's last step of it
+        undos.pop();
+        redos.push(lastUndo);
+        (from === lastUndo.after ? allowed : skipped).push(prop);
+      } else if (lastRedo && to === lastRedo.after) {
+        // the redo of a step the user undid
+        redos.pop();
+        undos.push(lastRedo);
+        (from === lastRedo.before ? allowed : skipped).push(prop);
       } else {
-        allowed.push(key);
-        this.set(id, key, after[key], this.authorOf(id, key, after[key]));
+        // no step of the user's known for it (e.g. from before this session): left to the editor
+        allowed.push(prop);
       }
     }
     return { allowed, skipped };
   }
 }
+

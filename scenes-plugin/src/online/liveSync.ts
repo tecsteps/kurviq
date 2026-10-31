@@ -37,7 +37,7 @@ import { authPost, connection, driveScenes, liveSocketUrl, signOutListeners } fr
 import { createReceiver, sendMessage } from "./frames";
 import { decodeEvent, encodeEvent, importSceneKey } from "./liveCrypto";
 import {
-  ValueAuthors,
+  HistorySteps,
   byIndex,
   changedKeys,
   contentEqual,
@@ -374,12 +374,8 @@ export class LiveScene {
   private draft = new Map<string, Draft>();
   private batches: QueuedBatch[] = [];
   private inFlight = new Map<number, Flight>();
-  /**
-   * who set the values properties have (undo changes only the user's own); per property the last
-   * 1000 values (completed gestures, not drag frames): more steps of one property than that are
-   * beyond what an undo in practice reaches back to
-   */
-  private authors = new ValueAuthors(1000);
+  /** the user's own steps per property (undo and redo change only what still holds their value) */
+  private steps = new HistorySteps();
   /** an element's state when its current gesture began */
   private stepStart = new Map<string, El>();
   private lastCanvas = new Map<string, El>();
@@ -1702,9 +1698,6 @@ export class LiveScene {
         }
         this.setConfirmed(el.id, el, "ev");
         this.traced(`ev${batch.seq}${batch.origin === "user" ? "" : batch.origin}`, el);
-        for (const key of changedKeys(previous, el) ?? Object.keys(el)) {
-          this.authors.set(el.id, key, el[key], "remote");
-        }
         if (toCanvas && !pending.has(el.id) && !gesture.has(el.id)) {
           toApply.push(el);
           this.synced.set(el.id, { stamp: stampOf(el), el });
@@ -1829,7 +1822,7 @@ export class LiveScene {
       if (this.undoing && before) {
         // undo / redo reverse only what still holds the user's value (each
         // step on its own: a value an undo brings back keeps its author)
-        const step = this.authors.historyStep(el.id, before, el, keys);
+        const step = this.steps.historyStep(el.id, before, el, keys);
         if (step.skipped.length) {
           el = { ...el, version: el.version + 1 };
           for (const key of step.skipped) {
@@ -1840,8 +1833,9 @@ export class LiveScene {
         }
       } else if (!gesture.has(el.id)) {
         // a gesture's frames are no steps of their own: its end is (one history entry)
-        for (const key of changedKeys(this.stepStart.get(el.id) ?? before, el) ?? []) {
-          this.authors.set(el.id, key, el[key], "user");
+        const from = this.stepStart.get(el.id) ?? before;
+        for (const key of changedKeys(from, el) ?? []) {
+          this.steps.userStep(el.id, key, from?.[key], el[key]);
         }
         this.stepStart.delete(el.id);
       } else if (!this.stepStart.has(el.id) && before) {
