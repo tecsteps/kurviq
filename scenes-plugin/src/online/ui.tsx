@@ -29,6 +29,7 @@ import {
   removeAccess,
   setLinkAccess,
   shareLink,
+  showDriveShareDialog,
   sharedFileId,
 } from "./drive";
 import { pairing } from "./pairing";
@@ -615,19 +616,37 @@ const ShareDialog = ({ name }: { name: string }) => {
               <button
                 type="button"
                 className="scenes-btn scenes-btn--primary"
-                onClick={() =>
-                  window.open(
-                    `https://drive.google.com/file/d/${fileId}/view`,
-                    "kurviq-drive-share",
-                    "popup,width=1100,height=780",
-                  )
-                }
+                onClick={() => {
+                  showDriveShareDialog(fileId!).catch((err) => setError(err.message));
+                  // Google's dialog says nothing when it closes: ask Drive who has access for a while
+                  const until = Date.now() + 5 * 60_000;
+                  const poll = window.setInterval(() => {
+                    if (Date.now() > until || !document.querySelector(".kq-share")) {
+                      window.clearInterval(poll);
+                    } else {
+                      reload(fileId!).catch(() => {});
+                    }
+                  }, 4000);
+                }}
               >
                 Share in Google Drive
               </button>
               <span className="kq-muted">
-                Opens the file in Drive: click <strong>Share</strong> at the top right. Google delivers these invitations
-                reliably.
+                Google's own share dialog: its invitations arrive reliably. Asks you to sign in or shows an error? Your
+                browser blocks Google's cookies here:{" "}
+                <a
+                  className="scenes-link"
+                  href={`https://drive.google.com/file/d/${fileId}/view`}
+                  target="kurviq-drive-share"
+                  rel="noopener"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    window.open(`https://drive.google.com/file/d/${fileId}/view`, "kurviq-drive-share", "popup,width=1100,height=780");
+                  }}
+                >
+                  open it in Drive
+                </a>{" "}
+                and use <strong>Share</strong> at the top right.
               </span>
             </div>
             <div className="kq-share__add">

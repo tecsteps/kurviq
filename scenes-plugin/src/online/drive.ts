@@ -1214,21 +1214,54 @@ export const readSharedScene = async (fileId: string, { version }: { version?: s
 // (drive.file); with a file id it shows just that one file
 // -----------------------------------------------------------------------------
 
-let pickerScript: Promise<void> | null = null;
+let gapiScript: Promise<void> | null = null;
+const gapiModules = new Map<string, Promise<void>>();
 
-const loadPicker = () => {
-  pickerScript ??= new Promise<void>((resolve, reject) => {
+/** a module of Google's api.js ("picker", "drive-share"), loaded once */
+const loadGapi = (module: string, what: string) => {
+  gapiScript ??= new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
     script.src = "https://apis.google.com/js/api.js";
     script.async = true;
-    script.onload = () => (window as any).gapi.load("picker", { callback: () => resolve(), onerror: () => reject(new Error("Google Picker could not be loaded")) });
+    script.onload = () => resolve();
     script.onerror = () => {
-      pickerScript = null;
-      reject(offlineError("Google Picker could not be loaded"));
+      gapiScript = null;
+      reject(offlineError(`${what} could not be loaded`));
     };
     document.head.appendChild(script);
   });
-  return pickerScript;
+  let loaded = gapiModules.get(module);
+  if (!loaded) {
+    loaded = gapiScript.then(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          (window as any).gapi.load(module, { callback: () => resolve(), onerror: () => reject(new Error(`${what} could not be loaded`)) }),
+        ),
+    );
+    loaded.catch(() => gapiModules.delete(module));
+    gapiModules.set(module, loaded);
+  }
+  return loaded;
+};
+
+const loadPicker = () => loadGapi("picker", "Google Picker");
+
+/**
+ * Drive's own share dialog over the page (Google's ShareClient): invitations
+ * sent from it are Google's normal ones (shares through the API land in the
+ * recipient's Drive spam). Needs third-party cookies and the browser signed in
+ * to Google with the same account; there is no "closed" event.
+ */
+export const showDriveShareDialog = async (fileId: string) => {
+  const value = await getToken();
+  if (!value) {
+    throw notConnectedError();
+  }
+  await loadGapi("drive-share", "Google's share dialog");
+  const client = new (window as any).gapi.drive.share.ShareClient();
+  client.setOAuthToken(value);
+  client.setItemIds([fileId]);
+  client.showSettingsDialog();
 };
 
 export const pickerAvailable = () => !!google.browserApiKey && !!google.projectNumber;

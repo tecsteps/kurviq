@@ -699,4 +699,9 @@
   gap: 12px;
   margin-bottom: 14px;
   font-size: 14px;
+
+  > button {
+    flex: none;
+    white-space: nowrap;
+  }
 }
