@@ -1018,10 +1018,15 @@ export const linkAccessOf = (permissions: Permission[]): LinkAccess => {
   return anyone ? (anyone.role === "writer" ? "writer" : "reader") : "restricted";
 };
 
-/** share with a person (Google mails them; the mail carries Kurviq's link in the message) */
-export const addPerson = async (fileId: string, email: string, role: "reader" | "writer", message: string) => {
+/**
+ * share with a person: Google mails them its own invitation. No message of
+ * ours: a link to kurviq.com in it ("open it here: …") put shares into the
+ * recipient's Drive spam; Google's mail opens the file in Drive ("Open with
+ * Kurviq"), and Kurviq lists it under "Shared with you…"
+ */
+export const addPerson = async (fileId: string, email: string, role: "reader" | "writer") => {
   const res = await drive(
-    `/files/${fileId}/permissions?sendNotificationEmail=true&emailMessage=${encodeURIComponent(message)}&supportsAllDrives=true&fields=id`,
+    `/files/${fileId}/permissions?sendNotificationEmail=true&supportsAllDrives=true&fields=id`,
     { method: "POST", body: { type: "user", role, emailAddress: email.trim() } },
   );
   if (res.status !== 200) {
