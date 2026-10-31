@@ -13,7 +13,10 @@
 // Scenes shared only with people are never fetched here: the visitor's
 // browser reads them from Drive with the visitor's own sign-in.
 
-export type SharedEnv = {
+import { googleUrls } from "./google";
+import type { GoogleEnv } from "./google";
+
+export type SharedEnv = GoogleEnv & {
   /** API key (Drive API only) for files shared "anyone with the link" */
   GOOGLE_API_KEY?: string;
 };
@@ -43,7 +46,7 @@ const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: 
   if (!env.GOOGLE_API_KEY) {
     return notPublic();
   }
-  const drive = `https://www.googleapis.com/drive/v3/files/${fileId}`;
+  const drive = `${googleUrls(env).api}/files/${fileId}`;
   const meta = await fetch(`${drive}?fields=name,mimeType,size&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`);
   const info: any = meta.ok ? await meta.json() : null;
   const isScene = !!info && (info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION)) && Number(info.size || 0) <= MAX_BYTES;
@@ -53,7 +56,8 @@ const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: 
     ? new Response(upstream.body, {
         headers: {
           "Content-Type": "application/json; charset=utf-8",
-          "Cache-Control": "public, max-age=60, stale-while-revalidate=600",
+          // a minute, no stale copies: changes and turning off public sharing show within about 2 minutes
+          "Cache-Control": "public, max-age=60",
           // someone else's content: data only, never a page
           "X-Content-Type-Options": "nosniff",
           "Content-Security-Policy": "default-src 'none'; sandbox",
@@ -78,7 +82,7 @@ const publicVersion = async (origin: string, fileId: string, env: SharedEnv, ctx
     return notPublic();
   }
   const meta = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=md5Checksum,mimeType,name&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`,
+    `${googleUrls(env).api}/files/${fileId}?fields=md5Checksum,mimeType,name&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`,
   );
   const info: any = meta.ok ? await meta.json() : null;
   const isScene = !!info?.md5Checksum && (info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION));

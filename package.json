@@ -12,6 +12,7 @@
     "setup:domain": "herd proxy draw http://localhost:3001",
     "build:online": "cd excalidraw/excalidraw-app && SCENES_TARGET=online ../node_modules/.bin/vite build --config ../../scenes-plugin/vite.config.mts",
     "dev:online": "npm run build:online && cd online && npm run dev",
+    "build:online:fake": "KURVIQ_FAKE_GOOGLE=1 npm run build:online",
     "deploy:online": "npm run build:online && cd online && npm run deploy"
   }
 }

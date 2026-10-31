@@ -846,6 +846,8 @@ export default async (configEnv: { mode: string; command: string }) => {
       "import.meta.env.VITE_APP_KURVIQ_AUTH_URL": JSON.stringify(
         online ? "" : (env.KURVIQ_AUTH_URL || "https://kurviq.com").replace(/\/$/, ""),
       ),
+      // a dev build against the fake Google of `wrangler dev` (FAKE_GOOGLE=1): "/fake-google"
+      "import.meta.env.VITE_APP_GOOGLE_API_BASE": JSON.stringify(process.env.KURVIQ_FAKE_GOOGLE ? "/fake-google" : ""),
       "import.meta.env.VITE_APP_SCENES_SERVER_URL": JSON.stringify(
         env.SCENES_SERVER_URL || "http://localhost:3101",
       ),
