@@ -67,18 +67,17 @@ install:
   stored), and the image's bytes never go through the model.
 
 - **Share a scene:** **Share…** (the pen on the open scene, or the Slides
-  sidebar). **Share in Google Drive** (recommended) shows Drive's own share
-  dialog over Kurviq (Google's ShareClient; needs third-party cookies and the
-  browser signed in to Google with the same account; otherwise "open it in
-  Drive" opens the file in a small window with Drive's Share button). Its
-  invitations are Google's normal ones (shares made through the Drive API by Kurviq land in the
-  recipient's Drive spam, even after Google's brand verification); back in
-  Kurviq the dialog lists the new people. Or add people by email (Can view / Can edit; Google emails them its
-  own invitation, without a link of ours: a kurviq.com link in the message
-  sent shares into the recipient's Drive spam; the dialog then offers the
-  link to send yourself), set **General access** ("Only people added here",
+  sidebar). **Share in Google Drive** shows Drive's own share dialog over
+  Kurviq (Google's ShareClient; needs third-party cookies and the browser
+  signed in to Google with the same account; otherwise "open it in Drive"
+  opens the file in a small window with Drive's Share button): add people
+  there, and Google sends its normal invitation. Kurviq doesn't invite people
+  through the Drive API: those invitations landed in the recipient's Drive
+  spam, even after Google's brand verification. Kurviq's dialog lists who has
+  access (refreshed while Google's dialog is open), changes or removes it,
+  sets **General access** ("Only people added here",
   "Anyone with the link can view", "Anyone with the link can edit"; editing
-  still needs a Google account), change or remove access, **Copy link**,
+  still needs a Google account), and has **Copy link**,
   **Copy presentation link**, **Open in Drive**. There are no teams or
   spaces: sharing is per scene, and Drive's permissions are the only truth
   (sharing a file in Drive itself works the same). Links: your own scenes

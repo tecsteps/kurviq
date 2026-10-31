@@ -17,7 +17,6 @@ import { QuickTip } from "../quickTip";
 import {
   CONNECTING_KEY,
   FOLDER_NAME,
-  addPerson,
   changeRole,
   checkConnection,
   connectGoogle,
@@ -532,10 +531,6 @@ const ShareDialog = ({ name }: { name: string }) => {
   const [permissions, setPermissions] = useState<Permission[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  /** the last person added: the hint on finding it (Google may put the share into their spam) */
-  const [sharedWith, setSharedWith] = useState<string | null>(null);
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"reader" | "writer">("writer");
   const me = connection.getState().user?.email?.toLowerCase();
   const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
 
@@ -587,18 +582,6 @@ const ShareDialog = ({ name }: { name: string }) => {
   const people = (permissions ?? []).filter((permission) => permission.type !== "anyone");
   const access = permissions ? linkAccessOf(permissions) : "restricted";
   const link = fileId ? sceneLink(fileId, name) : null;
-  const add = () => {
-    const address = email.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
-      setError("Please enter an email address");
-      return;
-    }
-    run(async () => {
-      await addPerson(fileId!, address, role);
-      setEmail("");
-      setSharedWith(address);
-    });
-  };
 
   return (
     <div className="kq-overlay" onClick={(event) => event.target === event.currentTarget && closeShareDialog()}>
@@ -649,43 +632,11 @@ const ShareDialog = ({ name }: { name: string }) => {
                 and use <strong>Share</strong> at the top right.
               </span>
             </div>
-            <div className="kq-share__add">
-              <input
-                type="email"
-                placeholder="Add people by email"
-                value={email}
-                disabled={busy}
-                onChange={(event) => setEmail(event.target.value)}
-                onKeyDown={(event) => {
-                  event.stopPropagation();
-                  if (event.key === "Enter") {
-                    add();
-                  }
-                }}
-              />
-              <select value={role} disabled={busy} onChange={(event) => setRole(event.target.value as "reader" | "writer")}>
-                <option value="writer">Can edit</option>
-                <option value="reader">Can view</option>
-              </select>
-              <button type="button" className="scenes-btn" disabled={busy || !email.trim()} onClick={add}>
-                Share
-              </button>
-            </div>
-            {sharedWith ? (
-              <div className="kq-share__sent">
-                <p>
-                  Shared with {sharedWith}. Google often puts invitations sent from Kurviq into their Drive's{" "}
-                  <strong>Spam</strong> folder, without an email. Send them the link yourself:
-                </p>
-                <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />
-              </div>
-            ) : (
-              <p className="kq-muted">
-                Or add them here: quick, but Google often files these invitations as spam (no email), so send them the
-                link too. In Kurviq they find it under <strong>Shared with you…</strong> in the scene list, or with the
-                link. People without a Google account create one for their address (no Gmail needed).
-              </p>
-            )}
+            <p className="kq-muted">
+              Google emails them an invitation. In Kurviq they find the scene under <strong>Shared with you…</strong> in
+              the scene list, or with the link. People without a Google account create one for their address (no Gmail
+              needed).
+            </p>
             <ul className="kq-share__people">
               {people.map((person) => {
                 const isMe = person.emailAddress?.toLowerCase() === me;
