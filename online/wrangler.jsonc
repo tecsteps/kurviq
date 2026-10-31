@@ -15,9 +15,11 @@
     "directory": "dist/app",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    // the Worker sees every request: it serves its own routes and redirects
-    // www to kurviq.com (one origin = one browser storage); the rest are assets
-    "run_worker_first": true
+    // the Worker sees the pages: it serves its own routes and redirects www
+    // to kurviq.com (one origin = one browser storage). The app's files
+    // (/assets, /fonts: most requests of a page load) are served without it,
+    // so they don't count as Worker requests; their headers come from _headers
+    "run_worker_first": ["/*", "!/assets/*", "!/fonts/*"]
   },
   "durable_objects": {
     "bindings": [{ "name": "PAIRING", "class_name": "Pairing" }]

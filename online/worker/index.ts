@@ -13,7 +13,9 @@
 //   /api/fonts/…     fonts from Google Fonts for "Add font", cached (./fonts.ts)
 //   /s/<fileId>/…    a shared scene: the app, titled for link previews (./shared.ts)
 //   /drive/open      Drive's "Open with Kurviq": to /s/<fileId>
-//   everything else  the app (static assets, built by `npm run build:online`)
+//   everything else  the app (static assets, built by `npm run build:online`);
+//                    /assets/* and /fonts/* don't reach the Worker at all
+//                    (wrangler.jsonc run_worker_first)
 
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
@@ -392,19 +394,6 @@ export default {
     const page = await handleSharedPage(request, env, env.ASSETS, ctx);
     if (page) {
       return page;
-    }
-    // Excalidraw's font subsetting (SVG / PDF export) runs in a worker whose
-    // Emscripten code builds functions with new Function: only that worker gets
-    // 'unsafe-eval' (a thread of its own, it only ever sees font files); the
-    // page keeps its strict policy
-    if (/^\/assets\/subset-worker\.chunk-[\w-]+\.js$/.test(url.pathname)) {
-      const asset = await env.ASSETS.fetch(request);
-      const response = new Response(asset.body, asset);
-      response.headers.set(
-        "Content-Security-Policy",
-        "default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data:",
-      );
-      return response;
     }
     return env.ASSETS.fetch(request);
   },
