@@ -10,8 +10,18 @@ export type GoogleEnv = {
 
 const fake = (env: GoogleEnv, origin: string) => `${env.DEV_ORIGIN || origin}/fake-google`;
 
+/** a local address (the fake Google is only ever reached on one; never on kurviq.com, whatever the env says) */
+const isLocal = (origin: string | undefined) => {
+  try {
+    const { hostname } = new URL(origin || "");
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost");
+  } catch {
+    return false;
+  }
+};
+
 export const googleUrls = (env: GoogleEnv, origin = "http://localhost:8787") =>
-  env.FAKE_GOOGLE === "1"
+  env.FAKE_GOOGLE === "1" && isLocal(env.DEV_ORIGIN)
     ? {
         authorize: `${fake(env, origin)}/oauth/authorize`,
         token: `${fake(env, origin)}/oauth/token`,

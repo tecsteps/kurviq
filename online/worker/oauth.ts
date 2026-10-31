@@ -293,6 +293,7 @@ const authorizePage = async (url: URL, env: AuthEnv) => {
 <ul><li>read, draw and edit your scenes</li><li>create, rename and delete scenes</li></ul>
 <div id="ready" hidden>
   <div class="row"><button id="allow" class="primary" type="button">Allow</button><button id="deny" type="button">Cancel</button></div>
+  <p class="note">By allowing it you accept Kurviq's <a href="/terms" target="_blank" rel="noopener">terms of use</a>; see also <a href="/privacy" target="_blank" rel="noopener">privacy</a>.</p>
 </div>
 <div id="nokey" hidden>
   <p class="note">Agent access isn't turned on in this browser. <strong>Do you use Kurviq in another browser?</strong> Open this page there instead: copy its address into that browser.</p>

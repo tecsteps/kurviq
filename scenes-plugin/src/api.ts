@@ -13,6 +13,8 @@ export type RemoteScene = {
   public?: boolean;
   /** the scene's Google Drive file */
   fileId?: string;
+  /** saves through its Durable Object (appProperties.kurviqSync): never written directly */
+  live?: boolean;
 };
 
 /** a version of a scene in Drive's revisions (newest first in lists) */

@@ -14,13 +14,14 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { IS_ONLINE } from "./api";
-import { scenesController } from "./controller";
+import { OPENING_KEY, scenesController } from "./controller";
 import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId, sharedSceneVersion } from "./online/drive";
 import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
 import { getSlides } from "./slides";
 import { deck } from "./deck";
 import { presenter, usePresenter } from "./present";
+import { liveSync } from "./online/liveSync";
 
 export const PUBLIC_SCENES: Record<string, { title: string; copyName: string }> = IS_ONLINE
   ? { features: { title: "What Kurviq adds to Excalidraw", copyName: "Kurviq features" } }
@@ -119,6 +120,10 @@ const editShared = async (fileId: string, name: string) => {
     return;
   }
   await scenesController.leaveForReload();
+  try {
+    // its name for the pill while the scene loads after the reload
+    sessionStorage.setItem(OPENING_KEY, JSON.stringify({ fileId, name }));
+  } catch {}
   enterSpace(fileId, window.location.pathname.startsWith("/s/") ? window.location.pathname : `/s/${fileId}/${encodeURIComponent(name)}`);
 };
 
@@ -229,6 +234,17 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
     };
   }, [api]);
 
+  // signed in with access: the scene's changes come live through its Durable Object (read
+  // only, nothing is ever sent); polling the saved file below is the fallback while not connected
+  const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
+  useEffect(() => {
+    if (!fileId || !api || !scene || !signedIn) {
+      return;
+    }
+    liveSync.attachViewer(api, fileId, name);
+    return () => liveSync.detachViewer();
+  }, [fileId, api, !!scene, signedIn]);
+
   // the owner (or anyone allowed) changes it: this view follows, where the visitor looks stays
   const version = useRef<string | null>(null);
   useEffect(() => {
@@ -254,6 +270,16 @@ const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide
       }
       if (away()) {
         paused = true;
+        return;
+      }
+      if (liveSync.viewerLive(fileId)) {
+        // live: the canvas is ahead of the saved file; only its version is noted, so that after a
+        // disconnect only saves newer than the live view are applied (never an older one over it)
+        step = 0;
+        busy = true;
+        version.current = (await sharedSceneVersion(fileId).catch(() => null)) ?? version.current;
+        busy = false;
+        schedule();
         return;
       }
       busy = true;

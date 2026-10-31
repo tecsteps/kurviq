@@ -83,7 +83,8 @@ const validFont = (font: any): font is CustomFont =>
   typeof font.family === "string" &&
   FAMILY_RE.test(font.family) &&
   !BUILT_IN.has(font.family.toLowerCase()) &&
-  font.id === fontIdFor(font.family) &&
+  // its number from its name, or another custom number live sync gave it (two fonts had the same one)
+  isCustomFontId(font.id) &&
   Array.isArray(font.faces) &&
   font.faces.length > 0 &&
   font.faces.length <= 8 &&
@@ -112,13 +113,22 @@ const measureMetrics = (family: string) => {
 const loading = new Map<number, Promise<void>>();
 
 /** make a font usable in this page (once) */
-export const registerFont = (font: CustomFont): Promise<void> => {
-  if (!validFont(font)) {
+export const registerFont = (input: CustomFont, { replace = false }: { replace?: boolean } = {}): Promise<void> => {
+  if (!validFont(input)) {
     return Promise.reject(new Error("Not a usable font"));
   }
+  // under a number not its name's (live sync reassigned it): registered under its own name "<family> <number>",
+  // so it never takes the name of the font that has its original number
+  const font = input.id === fontIdFor(input.family) ? input : fontWithId({ ...input, id: fontIdFor(input.family) }, input.id);
   const existing = registered.get(font.id);
-  if (existing) {
+  if (existing && !(replace && JSON.stringify(existing.faces) !== JSON.stringify(font.faces))) {
     return loading.get(font.id) ?? Promise.resolve();
+  }
+  if (existing) {
+    // another font had this number in this browser: the scene's own wins (its text is measured with it)
+    delete (FONT_FAMILY as Record<string, number>)[existing.family];
+    registered.delete(font.id);
+    loading.delete(font.id);
   }
   registered.set(font.id, font);
   const done = (async () => {
@@ -148,6 +158,14 @@ export const registerFont = (font: CustomFont): Promise<void> => {
   return done;
 };
 
+/**
+ * A font under the number live sync assigned it (its own clashed with
+ * another font's in the scene): a copy named "<family> <number>", so the two
+ * never share a name or a number on the canvas, in the font picker or in files.
+ */
+export const fontWithId = (font: CustomFont, id: number): CustomFont =>
+  id === font.id ? font : { ...font, family: `${font.family.replace(/ \d+$/, "").slice(0, 52)} ${id}`, id };
+
 // -----------------------------------------------------------------------------
 // the browser's font library
 // -----------------------------------------------------------------------------
@@ -165,9 +183,9 @@ tabs?.addEventListener("message", (event) => {
 });
 
 /** register a font and keep it for this browser's other scenes (and its other tabs) */
-export const addFont = async (font: CustomFont) => {
+export const addFont = async (font: CustomFont, options: { replace?: boolean } = {}) => {
   const known = registered.has(font.id);
-  await registerFont(font);
+  await registerFont(font, options);
   await set(font.family.toLowerCase(), font, library).catch(() => {});
   if (!known) {
     tabs?.postMessage(font.family.toLowerCase());

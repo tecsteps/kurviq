@@ -23,6 +23,7 @@ const target = path.join(HERE, ".dev.vars");
 const old = existsSync(target) ? readFileSync(target, "utf8") : "";
 const cookieKey = old.match(/^COOKIE_KEY=(.+)$/m)?.[1] || randomBytes(32).toString("base64");
 const tokenKey = old.match(/^TOKEN_KEY=(.+)$/m)?.[1] || randomBytes(32).toString("base64");
+const pseudonymKey = old.match(/^PSEUDONYM_KEY=(.+)$/m)?.[1] || randomBytes(32).toString("base64");
 /** KURVIQ_FAKE_GOOGLE=1: the fake Google with test accounts (worker/fakeGoogle.ts), live sync for all */
 const fakeGoogle = process.env.KURVIQ_FAKE_GOOGLE === "1";
 if (!env.KURVIQ_GOOGLE_CLIENT_SECRET) {
@@ -30,10 +31,10 @@ if (!env.KURVIQ_GOOGLE_CLIENT_SECRET) {
 }
 writeFileSync(
   target,
-  `GOOGLE_CLIENT_SECRET=${fakeGoogle ? "fake-secret" : env.KURVIQ_GOOGLE_CLIENT_SECRET || ""}\nCOOKIE_KEY=${cookieKey}\nTOKEN_KEY=${tokenKey}\n` +
+  `GOOGLE_CLIENT_SECRET=${fakeGoogle ? "fake-secret" : env.KURVIQ_GOOGLE_CLIENT_SECRET || ""}\nCOOKIE_KEY=${cookieKey}\nTOKEN_KEY=${tokenKey}\nPSEUDONYM_KEY=${pseudonymKey}\n` +
     (fakeGoogle ? "FAKE_GOOGLE=1\nLIVE_SYNC=all\nGOOGLE_API_KEY=fake-api-key\n" : "") +
-    // the redirect URI registered at Google for wrangler dev (port 8787)
-    `DEV_ORIGIN=http://localhost:8787\n` +
+    // the redirect URI registered at Google for wrangler dev (port 8787; another one only for the fake Google: KURVIQ_DEV_PORT)
+    `DEV_ORIGIN=http://localhost:${process.env.KURVIQ_DEV_PORT || 8787}\n` +
     (!fakeGoogle && env.KURVIQ_GOOGLE_API_KEY ? `GOOGLE_API_KEY=${env.KURVIQ_GOOGLE_API_KEY}\n` : ""),
   { mode: 0o600 },
 );

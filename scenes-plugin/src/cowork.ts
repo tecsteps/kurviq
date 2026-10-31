@@ -29,6 +29,7 @@ import { scenesApi } from "./api";
 import { applyMarkdownUpdate } from "./richText/agent";
 import {
   addTitleBlock,
+  followDeckOrder,
   getSlides,
   placeOnSlides,
   resetTemplateChanges,
@@ -39,6 +40,7 @@ import {
 } from "./slides";
 import { scenesController, withSceneName } from "./controller";
 import { getAgentBaseline, getCheckpoint, setAgentBaseline, setCheckpoint } from "./storage";
+import { liveDifference } from "./online/liveMerge";
 
 import type { ApiError } from "./api";
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
@@ -568,6 +570,8 @@ const applyEdits = async (
   elements = layoutAfterEdit(elements, textUpdated, reshaped);
   const moved = moveLayers(elements, moves.filter((move) => !missing.includes(move.id)));
   elements = moved.elements;
+  // a slide placed in the deck by number lands there on the canvas too (if the slides were Kurviq's grid)
+  elements = followDeckOrder(input, elements);
 
   return {
     elements,
@@ -704,18 +708,31 @@ export const editOpenScene = async (
   if (command.files && Object.keys(command.files).length) {
     api.addFiles(Object.values(command.files));
   }
+  // what the edit is made on, as copies: the user may go on drawing while it is converted, and the
+  // editor changes its element objects in place (the comparison base must not move with them)
+  const readState = api.getSceneElementsIncludingDeleted().map((el) => ({ ...el }));
   const { elements, ...edit } = await applyEdits(
-    api.getSceneElementsIncludingDeleted(),
+    readState,
     command,
     convert,
     scene ?? "Untitled",
   );
 
   const images = repairImages(elements, api.getFiles());
-  api.updateScene({
-    elements: images.elements,
-    captureUpdate: CaptureUpdateAction.IMMEDIATELY, // user can undo agent edits
-  });
+  const live = scenesController.liveCurrent();
+  if (live) {
+    // a live scene: the agent's change goes out as its own batch (via "agent", with its id)
+    const changes = liveDifference(live.elements(), images.elements.filter((el) => !el.isDeleted), readState as any);
+    if (changes.clashes.length) {
+      throw new Error(`The user changed ${changes.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
+    }
+    await live.agentEdit(changes, Object.values(command.files || {}), command.requestId);
+  } else {
+    api.updateScene({
+      elements: images.elements,
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY, // user can undo agent edits
+    });
+  }
 
   await new Promise((resolve) => setTimeout(resolve, 50));
   const after = requireApi().getSceneElements();
@@ -737,6 +754,15 @@ export const editSceneOnDrive = async (
   command: SceneEditCommand,
   convert: (elements: any[]) => Promise<any[]>,
 ) => {
+  const live = await scenesController.liveSessionFor(command.name).catch((error) => {
+    if (error?.notLive) {
+      return null;
+    }
+    throw error;
+  });
+  if (live) {
+    return editLiveScene(live, command, convert);
+  }
   for (let attempt = 1; ; attempt++) {
     const latest = await scenesApi.load(command.name);
     const data = JSON.parse(latest.json);
@@ -763,6 +789,34 @@ export const editSceneOnDrive = async (
       }
     }
   }
+};
+
+/**
+ * A live scene (saved through its Durable Object): the edit is applied to
+ * its live state in this tab (the canvas if it is open) and sent as the
+ * agent's change; it never writes Drive directly.
+ */
+const editLiveScene = async (
+  live: NonNullable<Awaited<ReturnType<typeof scenesController.liveSessionFor>>>,
+  command: SceneEditCommand,
+  convert: (elements: any[]) => Promise<any[]>,
+) => {
+  const data = JSON.parse(live.sceneJson());
+  await registerSceneFonts(data);
+  const readState = restoreElements(data.elements || [], null, { repairBindings: true });
+  const edit = await applyEdits(readState, command, convert, command.name);
+  const files = { ...(data.files || {}), ...(command.files || {}) };
+  const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
+  const elements = images.elements;
+  // against what the edit was made on: what the user did meanwhile stays
+  const changed = liveDifference(live.elements(), elements, readState as any);
+  if (changed.clashes.length) {
+    throw new Error(`The user changed ${changed.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
+  }
+  await live.agentEdit(changed, Object.values(command.files || {}), command.requestId);
+  const json = withSceneName(withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements), command.name);
+  const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
+  return { ...edit, ...images.info, ...sceneSize(json, elements), elements, sha: revision, commit: revision, changed: changed.length > 0 };
 };
 
 // -----------------------------------------------------------------------------

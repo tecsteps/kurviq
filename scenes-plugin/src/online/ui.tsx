@@ -32,6 +32,7 @@ import {
   sharedFileId,
 } from "./drive";
 import { pairing } from "./pairing";
+import { liveSync } from "./liveSync";
 
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "../../../scenes-mcp/feedback.mjs";
 import type { SceneListItem } from "../controller";
@@ -204,9 +205,19 @@ const folderUrl = () => {
 };
 
 const SignInButton = ({ label = "Sign in with Google" }: { label?: string }) => (
-  <button type="button" className="scenes-btn kq-google-btn" onClick={() => connectGoogle()}>
-    <span className="kq-icon">{GoogleIcon}</span> {label}
-  </button>
+  <>
+    <button type="button" className="scenes-btn kq-google-btn" onClick={() => connectGoogle()}>
+      <span className="kq-icon">{GoogleIcon}</span> {label}
+    </button>
+    {/* the terms become part of the agreement where the server starts working for you (§305(2) BGB) */}
+    <span className="kq-terms-note">
+      By signing in you accept the{" "}
+      <a href="/terms" target="_blank" rel="noopener">
+        terms
+      </a>
+      .
+    </span>
+  </>
 );
 
 /** in the scene dropdown: offer Google while not signed in */
@@ -304,9 +315,18 @@ export const WelcomeConnectDrive = () => {
     return null;
   }
   return (
-    <WelcomeScreen.Center.MenuItem onSelect={() => connectGoogle()} icon={GoogleIcon} shortcut={null}>
-      Sign in with Google to sync
-    </WelcomeScreen.Center.MenuItem>
+    <>
+      <WelcomeScreen.Center.MenuItem onSelect={() => connectGoogle()} icon={GoogleIcon} shortcut={null}>
+        Sign in with Google to sync
+      </WelcomeScreen.Center.MenuItem>
+      <span className="kq-terms-note kq-terms-note--welcome">
+        By signing in you accept the{" "}
+        <a href="/terms" target="_blank" rel="noopener">
+          terms
+        </a>
+        .
+      </span>
+    </>
   );
 };
 
@@ -781,6 +801,159 @@ export const ReadOnlyGuard = () => {
   ) : null;
 };
 
+/** what the engine or the scene's server reports, in words (null: nothing to show) */
+const liveProblem = (error: string | null) => {
+  if (!error) {
+    return null;
+  }
+  const known: Record<string, string> = {
+    "drive-full": "The owner's Google Drive is full: changes stay on Kurviq's server until there is room.",
+    "rate-limited": "Google Drive asked to slow down: saving continues in a moment.",
+    "google-unreachable": "Google is not reachable: changes stay on Kurviq's server and are saved later.",
+    "key-changed": "The scene's key in Drive was changed: changes can't be saved until that is sorted out.",
+    "key-missing": "The scene's key is missing in Drive: changes can't be saved until that is sorted out.",
+    "key-busy": "The scene is being set up for live saving…",
+    "key-invalid": "The scene's key could not be read: changes stay in this browser.",
+    "pins-full": "Drive's limit of kept versions is reached: no more milestones are kept.",
+    "no-key-yet": "Live changes start once an editor opens this scene.",
+    "signed-out": "Sign in again to keep saving: your changes stay in this browser.",
+    "sign-in-again": "Sign in again to keep saving: your changes stay in this browser.",
+    "signed-out-everywhere": "You were signed out everywhere: sign in again to keep saving.",
+    "access-unknown": "Kurviq can't check your access to this scene in Drive right now: saving waits until it can.",
+    "audit-failed": "A save to Drive could not be checked afterwards: Kurviq keeps the changes and tries again.",
+    "audit-pins-full": "Drive's limit of kept versions is reached: the record of who saved what can't be kept as a version.",
+    "outside-too-big": "Someone changed this scene outside Kurviq and the result is too big to merge: changes stay on Kurviq's server.",
+    "font-full": "This scene has no free font number left: text with a new font can't be saved (use a font the scene already has).",
+    "too-many-tabs": "This scene is open in too many tabs of yours: close some of them (your changes wait in this browser meanwhile).",
+    "too-many-connections": "Kurviq's server can't take another connection to this scene right now: close other tabs with it, it tries again shortly.",
+  };
+  if (error.startsWith("invalid:")) {
+    return "A change could not be saved (not a valid drawing): the rest keeps saving.";
+  }
+  if (error === "no-access" || error.startsWith("seed-")) {
+    return null; // shown elsewhere (the Picker), or passing
+  }
+  return known[error] ?? error;
+};
+
+/**
+ * Live sync of the open scene: what the user has to see or decide — the
+ * scene went to the trash or access ended, someone won a collision over
+ * their change ("restore yours?"), changes of an author that can't be saved
+ * as theirs, notes (offline copies, undo left something alone), and who
+ * else is here.
+ */
+export const LiveBanner = () => {
+  useSyncExternalStore(liveSync.subscribe, liveSync.getVersion);
+  useSyncExternalStore(scenesController.subscribe, scenesController.getState);
+  const scene = scenesController.liveCurrent();
+  if (!scene) {
+    return null;
+  }
+  const info = scene.info();
+  const others = info.presence.filter((entry) => entry.pseudonym !== scene.pseudonym());
+  const lifecycle =
+    info.lifecycle === "trashed"
+      ? "This scene is in Drive's trash: it isn't saved any more. Save as… keeps your version as a new scene."
+      : info.lifecycle === "deleted"
+      ? "This scene was deleted for good in Drive. Save as… keeps your version as a new scene."
+      : info.lifecycle === "access"
+      ? "You no longer have access to this scene in Drive: your changes stay in this browser."
+      : info.lifecycle === "local" || info.lifecycle === "closing"
+      ? "This scene was taken out of Drive."
+      : null;
+  const decidable = info.role === "edit" ? info.blocked.filter((author) => author.decidable) : [];
+  const items: ReactNode[] = [];
+  if (lifecycle) {
+    items.push(<div key="lifecycle" className="kq-live__item kq-live__item--danger">{lifecycle}</div>);
+  }
+  if (info.stage === "unsaved") {
+    items.push(
+      <div key="unsaved" className="kq-live__item kq-live__item--danger">
+        This browser could not store your latest changes.
+        <button type="button" className="scenes-link" onClick={() => scenesController.exportCurrent()}>
+          Export the scene
+        </button>
+      </div>,
+    );
+  }
+  const problem = liveProblem(info.error);
+  if (problem) {
+    const signIn = info.error === "signed-out" || info.error === "sign-in-again" || info.error === "signed-out-everywhere";
+    items.push(
+      <div key="error" className="kq-live__item kq-live__item--danger">
+        {problem}
+        {signIn && (
+          <button type="button" className="scenes-link" onClick={() => connectGoogle()}>
+            Sign in again
+          </button>
+        )}
+      </div>,
+    );
+  }
+  if (info.waitingForKey) {
+    items.push(<div key="key" className="kq-live__item">Your changes wait in this browser until the scene is ready on Kurviq's server…</div>);
+  }
+  for (const loser of info.losers) {
+    items.push(
+      <div key={`lost-${loser.id}`} className="kq-live__item">
+        {loser.by ?? "Someone"} changed this at the same time.
+        <button type="button" className="scenes-link" onClick={() => scene.restoreLoser(loser.id)}>
+          Restore yours?
+        </button>
+        <button type="button" className="scenes-link" onClick={() => scene.dismissLoser(loser.id)}>
+          Keep theirs
+        </button>
+      </div>,
+    );
+  }
+  for (const author of decidable) {
+    // an author who lost access to the scene: their changes can only be discarded (or go after 7 days)
+    const acceptable = author.acceptable !== false;
+    items.push(
+      <div key={`blocked-${author.pseudonym}`} className="kq-live__item">
+        {author.name ?? "Someone"}'s changes could not be saved
+        {acceptable ? "." : " (they no longer have access): they can be discarded now, and are discarded after 7 days."}
+        {acceptable && (
+          <button type="button" className="scenes-link" onClick={() => scene.decide(author.pseudonym, "accept")}>
+            Accept them as yours
+          </button>
+        )}
+        <button
+          type="button"
+          className="scenes-link scenes-link--danger"
+          onClick={() => window.confirm(`Discard ${author.name ?? "these"} changes for good?`) && scene.decide(author.pseudonym, "discard")}
+        >
+          Discard
+        </button>
+      </div>,
+    );
+  }
+  for (const note of info.notes) {
+    items.push(
+      <div key={`note-${note.at}`} className="kq-live__item">
+        {note.text}
+        <button type="button" className="scenes-link" aria-label="Dismiss" onClick={() => scene.dismissNote(note.at)}>
+          OK
+        </button>
+      </div>,
+    );
+  }
+  if (!items.length && !others.length) {
+    return null;
+  }
+  return (
+    <div className="kq-live" role="status">
+      {items}
+      {others.length > 0 && (
+        <div className="kq-live__presence">
+          Also here: {[...new Set(others.map((entry) => entry.name ?? "someone"))].join(", ")}
+        </div>
+      )}
+    </div>
+  );
+};
+
 /** after signing in: which of the scenes only in this browser go to Drive (nothing goes without a tick) */
 const SignInChoice = ({ candidates, onDone }: { candidates: { name: string; ticked: boolean }[]; onDone: () => void }) => {
   const [ticked, setTicked] = useState(() => new Set(candidates.filter((entry) => entry.ticked).map((entry) => entry.name)));
@@ -887,7 +1060,7 @@ export const DriveDialogs = () => {
           of your Google Drive now.
         </p>
         <p className="kq-muted">
-          New scenes go there, and every change is saved a few seconds after you stop drawing. The cloud icon next to a
+          New scenes go there, and your changes are saved by themselves as you draw. The cloud icon next to a
           scene moves it in or out of Drive, the lock shares it.
         </p>
         {current.candidates.length > 0 ? (
@@ -1174,6 +1347,9 @@ export const KurviqLegalLinks = () => (
     <a href="/privacy" target="_blank" rel="noopener">
       Privacy
     </a>
+    <a href="/terms" target="_blank" rel="noopener">
+      Terms
+    </a>
   </span>
 );
 
@@ -1202,6 +1378,10 @@ export const KurviqFooter = () => (
     ·{" "}
     <a href="/privacy" target="_blank" rel="noopener">
       privacy
+    </a>{" "}
+    ·{" "}
+    <a href="/terms" target="_blank" rel="noopener">
+      terms
     </a>
   </footer>
 );

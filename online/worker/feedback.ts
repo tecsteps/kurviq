@@ -33,10 +33,20 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS feedback (
 let schemaReady = false;
 
 /** a sender, as a keyed hash: reports can be counted per sender, nobody can be identified */
-export const senderHash = async (env: FeedbackEnv, value: string) => {
-  const data = new TextEncoder().encode(`feedback:${env.COOKIE_KEY}:${value}`);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
-  return [...digest.slice(0, 12)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+export const senderHash = async (env: FeedbackEnv, value: string) => keyedHash(env.COOKIE_KEY, `feedback:${value}`);
+
+/**
+ * HMAC-SHA256 with a key derived from the server secret for this purpose
+ * (not the secret itself), shortened to 24 hex characters: counts per sender,
+ * identifies nobody
+ */
+export const keyedHash = async (secret64: string, value: string) => {
+  const raw = Uint8Array.from(atob(secret64), (char) => char.charCodeAt(0));
+  const master = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const derived = await crypto.subtle.sign("HMAC", master, new TextEncoder().encode("kurviq-sender-hash"));
+  const key = await crypto.subtle.importKey("raw", derived, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
+  return [...mac.slice(0, 12)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
 /** store a report, or say why not: { id } | { error, status } */

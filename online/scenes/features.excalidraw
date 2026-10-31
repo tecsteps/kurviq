@@ -1,7 +1,7 @@
 {
   "type": "excalidraw",
   "version": 2,
-  "source": "excalidraw-scenes-mcp",
+  "source": "http://localhost:8787",
   "elements": [
     {
       "id": "tpl_logo~slide2",
@@ -20,21 +20,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ZZ",
+      "index": "b070V",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 1538372706,
+      "version": 4,
+      "versionNonce": 1714612304,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 3441973069
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -62,21 +79,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "Za",
+      "index": "b071",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 951827134,
+      "version": 4,
+      "versionNonce": 2030732464,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 326300743
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -108,21 +146,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "Zb",
+      "index": "b072",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 234936354,
+      "version": 4,
+      "versionNonce": 1448173136,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 86094711
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "2 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "2 / 10",
@@ -154,21 +213,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "Zc",
+      "index": "b072V",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 1899082494,
+      "version": 4,
+      "versionNonce": 2025221808,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 3092926477
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -196,21 +272,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "Zd",
+      "index": "b073",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 976585698,
+      "version": 4,
+      "versionNonce": 1731269712,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 4272221447
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -242,21 +339,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "Ze",
+      "index": "b074",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 1354670910,
+      "version": 4,
+      "versionNonce": 794106032,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 2321582385
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "3 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "3 / 10",
@@ -288,21 +406,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide4",
-      "index": "Zf",
+      "index": "b074V",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 442415010,
+      "version": 4,
+      "versionNonce": 1856637520,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 244926168
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -330,21 +465,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide4",
-      "index": "Zg",
+      "index": "b075",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 1237551998,
+      "version": 4,
+      "versionNonce": 814645936,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 1595378619
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -376,21 +532,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide4",
-      "index": "Zh",
+      "index": "b076",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 1319859042,
+      "version": 4,
+      "versionNonce": 1200898128,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 4002685364
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "4 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "4 / 10",
@@ -422,21 +599,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide5",
-      "index": "Zi",
+      "index": "b076V",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 1518431166,
+      "version": 4,
+      "versionNonce": 1527426224,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 1907443185
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -464,21 +658,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide5",
-      "index": "Zj",
+      "index": "b077",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 426424098,
+      "version": 4,
+      "versionNonce": 835171920,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 2169465195
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -510,21 +725,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide5",
-      "index": "Zk",
+      "index": "b078",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 286868478,
+      "version": 4,
+      "versionNonce": 2020710064,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 2591897664
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "5 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "5 / 10",
@@ -556,21 +792,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide6",
-      "index": "Zl",
+      "index": "b078V",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 453739234,
+      "version": 4,
+      "versionNonce": 840723536,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 3273807537
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -598,21 +851,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide6",
-      "index": "Zm",
+      "index": "b079",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 260838462,
+      "version": 4,
+      "versionNonce": 1567310000,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 3535829547
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -644,21 +918,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide6",
-      "index": "Zn",
+      "index": "b07A",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 236770978,
+      "version": 4,
+      "versionNonce": 1919574608,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 2002347541
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "6 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "6 / 10",
@@ -690,21 +985,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide7",
-      "index": "Zo",
+      "index": "b07AV",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 263904382,
+      "version": 4,
+      "versionNonce": 161458864,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 246222078
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -732,21 +1044,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide7",
-      "index": "Zp",
+      "index": "b07B",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 55423586,
+      "version": 4,
+      "versionNonce": 562665552,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 1596674529
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -778,21 +1111,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide7",
-      "index": "Zq",
+      "index": "b07C",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 1734778046,
+      "version": 4,
+      "versionNonce": 1203164336,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 2069999358
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "7 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "7 / 10",
@@ -824,21 +1178,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide8",
-      "index": "Zr",
+      "index": "b07CV",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 493688354,
+      "version": 4,
+      "versionNonce": 1397886544,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 1908739095
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -866,21 +1237,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide8",
-      "index": "Zs",
+      "index": "b07D",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 204494078,
+      "version": 4,
+      "versionNonce": 1297661616,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 2170761105
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -912,21 +1304,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide8",
-      "index": "Zt",
+      "index": "b07E",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 1298792930,
+      "version": 4,
+      "versionNonce": 1620821072,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 3020268070
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "8 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "8 / 10",
@@ -958,21 +1371,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide9",
-      "index": "Zu",
+      "index": "b07EV",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 395904318,
+      "version": 4,
+      "versionNonce": 1529702576,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 3275103447
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -1000,21 +1430,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide9",
-      "index": "Zv",
+      "index": "b07F",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 240350626,
+      "version": 4,
+      "versionNonce": 1195293264,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 3537125457
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -1046,21 +1497,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide9",
-      "index": "Zw",
+      "index": "b07G",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 1258401150,
+      "version": 4,
+      "versionNonce": 1557975728,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 2127183390
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "9 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "9 / 10",
@@ -1092,21 +1564,38 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide10",
-      "index": "Zx",
+      "index": "b07GV",
       "roundness": null,
       "seed": 2067244898,
-      "version": 2,
-      "versionNonce": 559444322,
+      "version": 4,
+      "versionNonce": 169013328,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_logo",
-          "sig": 247517988
+          "base": {
+            "x": 120,
+            "y": 990,
+            "width": 44,
+            "height": 44,
+            "angle": 0,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "fileId": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+            "rich": null
+          }
         }
       },
       "status": "saved",
@@ -1134,21 +1623,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide10",
-      "index": "Zy",
+      "index": "b07H",
       "roundness": null,
       "seed": 855799742,
-      "version": 2,
-      "versionNonce": 329993662,
+      "version": 4,
+      "versionNonce": 151977136,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_foot",
-          "sig": 1597970439
+          "base": {
+            "x": 180,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "Kurviq · kurviq.com/features",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "Kurviq · kurviq.com/features",
@@ -1180,21 +1690,42 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide10",
-      "index": "Zz",
+      "index": "b07I",
       "roundness": null,
       "seed": 1313893154,
-      "version": 2,
-      "versionNonce": 1237841186,
+      "version": 4,
+      "versionNonce": 284190288,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073557,
+      "updated": 1793463017199,
       "created": 1792690073530,
       "link": null,
       "locked": true,
       "customData": {
         "slides": {
           "copyOf": "tpl_page",
-          "sig": 4029987082
+          "base": {
+            "x": 1800,
+            "y": 996,
+            "angle": 0,
+            "strokeColor": "#757575",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "roundness": null,
+            "link": null,
+            "originalText": "10 / 10",
+            "fontFamily": 5,
+            "fontSize": 24,
+            "textAlign": "right",
+            "verticalAlign": "top",
+            "lineHeight": 1.25,
+            "autoResize": true,
+            "rich": null
+          }
         }
       },
       "text": "10 / 10",
@@ -1226,14 +1757,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": null,
-      "index": "a0",
+      "index": "b07IV",
       "roundness": null,
       "seed": 947910754,
-      "version": 3,
-      "versionNonce": 891194786,
+      "version": 4,
+      "versionNonce": 23848624,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073510,
       "link": null,
       "locked": false,
@@ -1272,14 +1803,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": null,
-      "index": "a1",
+      "index": "b07J",
       "roundness": null,
       "seed": 165918398,
-      "version": 3,
-      "versionNonce": 471078270,
+      "version": 4,
+      "versionNonce": 145693776,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073511,
       "link": null,
       "locked": false,
@@ -1309,14 +1840,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "a2",
+      "index": "b07K",
       "roundness": null,
       "seed": 1080466466,
-      "version": 3,
-      "versionNonce": 1862306146,
+      "version": 4,
+      "versionNonce": 1922797744,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073511,
       "link": null,
       "locked": false,
@@ -1345,14 +1876,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "a3",
+      "index": "b07KV",
       "roundness": null,
       "seed": 1408904958,
-      "version": 3,
-      "versionNonce": 1714468286,
+      "version": 4,
+      "versionNonce": 1126634064,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073511,
       "link": null,
       "locked": false,
@@ -1385,14 +1916,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "a4",
+      "index": "b07L",
       "roundness": null,
       "seed": 591579106,
-      "version": 3,
-      "versionNonce": 1521290530,
+      "version": 4,
+      "versionNonce": 877001392,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073511,
       "link": null,
       "locked": false,
@@ -1425,16 +1956,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "a5",
+      "index": "b07M",
       "roundness": {
         "type": 3
       },
       "seed": 1024958270,
-      "version": 3,
-      "versionNonce": 1011830270,
+      "version": 4,
+      "versionNonce": 389040208,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073511,
       "link": null,
       "locked": false
@@ -1456,14 +1987,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "a6",
+      "index": "b07MV",
       "roundness": null,
       "seed": 2032368546,
-      "version": 3,
-      "versionNonce": 1838356706,
+      "version": 4,
+      "versionNonce": 1762862256,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073511,
       "link": null,
       "locked": false,
@@ -1492,14 +2023,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "a7",
+      "index": "b07N",
       "roundness": null,
       "seed": 966592382,
-      "version": 3,
-      "versionNonce": 997252670,
+      "version": 4,
+      "versionNonce": 1084407376,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -1555,55 +2086,19 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "a8",
+      "index": "b07O",
       "roundness": {
         "type": 3
       },
       "seed": 3651426,
-      "version": 3,
-      "versionNonce": 390180002,
+      "version": 4,
+      "versionNonce": 514526896,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
-    },
-    {
-      "id": "icon7",
-      "type": "image",
-      "x": 486,
-      "y": 386,
-      "width": 52,
-      "height": 52,
-      "angle": 0,
-      "strokeColor": "transparent",
-      "backgroundColor": "transparent",
-      "fillStyle": "solid",
-      "strokeWidth": 2,
-      "strokeStyle": "solid",
-      "roughness": 1,
-      "opacity": 100,
-      "groupIds": [],
-      "frameId": "slide1",
-      "index": "a9",
-      "roundness": null,
-      "seed": 164325310,
-      "version": 3,
-      "versionNonce": 947283582,
-      "isDeleted": false,
-      "boundElements": [],
-      "updated": 1792690073548,
-      "created": 1792690073512,
-      "link": null,
-      "locked": false,
-      "status": "saved",
-      "fileId": "2c42417adbbd922ff480775aa45971b9268ac59d",
-      "scale": [
-        1,
-        1
-      ],
-      "crop": null
     },
     {
       "id": "tile8",
@@ -1611,7 +2106,7 @@
       "x": 486,
       "y": 456,
       "width": 262,
-      "height": 107.234375,
+      "height": 107.2421875,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -1622,14 +2117,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aA",
+      "index": "b07OV",
       "roundness": null,
       "seed": 1489926946,
-      "version": 3,
-      "versionNonce": 2103953506,
+      "version": 6,
+      "versionNonce": 1018117200,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463025442,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -1640,7 +2135,7 @@
             {
               "r": [
                 {
-                  "t": "GitHub sync",
+                  "t": "Drive sync",
                   "b": true,
                   "z": 1.3
                 }
@@ -1649,21 +2144,21 @@
             {
               "r": [
                 {
-                  "t": "Your drawings in your own repository"
+                  "t": "Your drawings in your Google Drive"
                 }
               ]
             }
           ]
         }
       },
-      "text": "GitHub sync\nYour drawings in \nyour own repository",
+      "text": "Drive sync\nYour drawings in \nyour Google Drive",
       "fontSize": 26,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "GitHub sync\nYour drawings in your own repository",
+      "originalText": "Drive sync\nYour drawings in your Google Drive",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -1685,16 +2180,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aB",
+      "index": "b07P",
       "roundness": {
         "type": 3
       },
       "seed": 1036238846,
-      "version": 3,
-      "versionNonce": 1143006910,
+      "version": 4,
+      "versionNonce": 1840625840,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -1716,14 +2211,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aC",
+      "index": "b07Q",
       "roundness": null,
       "seed": 1096206050,
-      "version": 3,
-      "versionNonce": 936668194,
+      "version": 4,
+      "versionNonce": 1008953936,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -1741,7 +2236,7 @@
       "x": 826,
       "y": 456,
       "width": 262,
-      "height": 107.234375,
+      "height": 107.2421875,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -1752,14 +2247,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aD",
+      "index": "b07QV",
       "roundness": null,
       "seed": 965152830,
-      "version": 3,
-      "versionNonce": 789667582,
+      "version": 5,
+      "versionNonce": 433791664,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -1770,7 +2265,7 @@
             {
               "r": [
                 {
-                  "t": "Teams",
+                  "t": "Collaborate",
                   "b": true,
                   "z": 1.3
                 }
@@ -1779,21 +2274,21 @@
             {
               "r": [
                 {
-                  "t": "Organizations share their scenes"
+                  "t": "Share by email, edit together, merged"
                 }
               ]
             }
           ]
         }
       },
-      "text": "Teams\nOrganizations share \ntheir scenes",
+      "text": "Collaborate\nShare by email, edit \ntogether, merged",
       "fontSize": 26,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Teams\nOrganizations share their scenes",
+      "originalText": "Collaborate\nShare by email, edit together, merged",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -1815,16 +2310,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aE",
+      "index": "b07R",
       "roundness": {
         "type": 3
       },
       "seed": 1381997218,
-      "version": 3,
-      "versionNonce": 209098722,
+      "version": 4,
+      "versionNonce": 1591844944,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -1846,14 +2341,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aF",
+      "index": "b07S",
       "roundness": null,
       "seed": 955668606,
-      "version": 3,
-      "versionNonce": 231264062,
+      "version": 4,
+      "versionNonce": 834882736,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -1871,7 +2366,7 @@
       "x": 1166,
       "y": 456,
       "width": 262,
-      "height": 107.234375,
+      "height": 107.2421875,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -1882,14 +2377,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aG",
+      "index": "b07SV",
       "roundness": null,
       "seed": 983037538,
-      "version": 3,
-      "versionNonce": 727534498,
+      "version": 5,
+      "versionNonce": 946411088,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -1909,21 +2404,21 @@
             {
               "r": [
                 {
-                  "t": "Links for your team, or for everyone"
+                  "t": "Links for people you add, or for everyone"
                 }
               ]
             }
           ]
         }
       },
-      "text": "Sharing\nLinks for your team, \nor for everyone",
+      "text": "Sharing\nLinks for people you \nadd, or for everyone",
       "fontSize": 26,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Sharing\nLinks for your team, or for everyone",
+      "originalText": "Sharing\nLinks for people you add, or for everyone",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -1945,16 +2440,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aH",
+      "index": "b07T",
       "roundness": {
         "type": 3
       },
       "seed": 1406310590,
-      "version": 3,
-      "versionNonce": 1017657214,
+      "version": 4,
+      "versionNonce": 789984944,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -1976,14 +2471,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aI",
+      "index": "b07U",
       "roundness": null,
       "seed": 2060376610,
-      "version": 3,
-      "versionNonce": 1790412642,
+      "version": 4,
+      "versionNonce": 496094288,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2012,14 +2507,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aJ",
+      "index": "b07UG",
       "roundness": null,
       "seed": 29151486,
-      "version": 3,
-      "versionNonce": 1676711870,
+      "version": 4,
+      "versionNonce": 377217200,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2075,16 +2570,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aK",
+      "index": "b07UV",
       "roundness": {
         "type": 3
       },
       "seed": 569591266,
-      "version": 3,
-      "versionNonce": 47467298,
+      "version": 4,
+      "versionNonce": 137609808,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -2106,14 +2601,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aL",
+      "index": "b07V",
       "roundness": null,
       "seed": 506855742,
-      "version": 3,
-      "versionNonce": 2076372990,
+      "version": 4,
+      "versionNonce": 396118704,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2142,14 +2637,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aM",
+      "index": "b07VV",
       "roundness": null,
       "seed": 152320418,
-      "version": 3,
-      "versionNonce": 1243780834,
+      "version": 4,
+      "versionNonce": 1999042640,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2205,16 +2700,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aN",
+      "index": "b07W",
       "roundness": {
         "type": 3
       },
       "seed": 1822370174,
-      "version": 3,
-      "versionNonce": 1344290878,
+      "version": 4,
+      "versionNonce": 757036208,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -2236,14 +2731,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aO",
+      "index": "b07X",
       "roundness": null,
       "seed": 257996130,
-      "version": 3,
-      "versionNonce": 1899063970,
+      "version": 4,
+      "versionNonce": 1313042000,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2272,14 +2767,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aP",
+      "index": "b07XV",
       "roundness": null,
       "seed": 473516478,
-      "version": 3,
-      "versionNonce": 82413694,
+      "version": 4,
+      "versionNonce": 1017994928,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2335,16 +2830,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aQ",
+      "index": "b07Y",
       "roundness": {
         "type": 3
       },
       "seed": 1445443874,
-      "version": 3,
-      "versionNonce": 1051706978,
+      "version": 4,
+      "versionNonce": 912335952,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -2366,14 +2861,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aR",
+      "index": "b07Z",
       "roundness": null,
       "seed": 1277518334,
-      "version": 3,
-      "versionNonce": 434096318,
+      "version": 4,
+      "versionNonce": 921569456,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2402,14 +2897,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aS",
+      "index": "b07ZV",
       "roundness": null,
       "seed": 2094548194,
-      "version": 3,
-      "versionNonce": 1265412642,
+      "version": 4,
+      "versionNonce": 2102925904,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2465,16 +2960,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aT",
+      "index": "b07a",
       "roundness": {
         "type": 3
       },
       "seed": 258241086,
-      "version": 3,
-      "versionNonce": 1856241918,
+      "version": 4,
+      "versionNonce": 931754672,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -2496,14 +2991,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aU",
+      "index": "b07b",
       "roundness": null,
       "seed": 1560369314,
-      "version": 3,
-      "versionNonce": 1045894626,
+      "version": 4,
+      "versionNonce": 1979732048,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2532,14 +3027,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aV",
+      "index": "b07bV",
       "roundness": null,
       "seed": 1893169790,
-      "version": 3,
-      "versionNonce": 1186410814,
+      "version": 4,
+      "versionNonce": 623353008,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2595,16 +3090,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aW",
+      "index": "b07c",
       "roundness": {
         "type": 3
       },
       "seed": 1179776098,
-      "version": 3,
-      "versionNonce": 142477730,
+      "version": 4,
+      "versionNonce": 1479657040,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false
@@ -2626,14 +3121,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aX",
+      "index": "b07d",
       "roundness": null,
       "seed": 2000648894,
-      "version": 3,
-      "versionNonce": 1299863934,
+      "version": 4,
+      "versionNonce": 1366329008,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2662,14 +3157,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aY",
+      "index": "b07dV",
       "roundness": null,
       "seed": 983111714,
-      "version": 3,
-      "versionNonce": 554730850,
+      "version": 4,
+      "versionNonce": 549747792,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073512,
       "link": null,
       "locked": false,
@@ -2725,14 +3220,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide1",
-      "index": "aZ",
+      "index": "b07e",
       "roundness": null,
       "seed": 691892990,
-      "version": 3,
-      "versionNonce": 439253438,
+      "version": 4,
+      "versionNonce": 420229296,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073524,
       "link": null,
       "locked": false,
@@ -2765,14 +3260,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": null,
-      "index": "aa",
+      "index": "b07f",
       "roundness": null,
       "seed": 700826594,
-      "version": 3,
-      "versionNonce": 1096648994,
+      "version": 4,
+      "versionNonce": 1905291856,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073524,
       "link": null,
       "locked": false,
@@ -2801,14 +3296,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ab",
+      "index": "b07fV",
       "roundness": null,
       "seed": 290612030,
-      "version": 3,
-      "versionNonce": 871666174,
+      "version": 4,
+      "versionNonce": 60988080,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073524,
       "link": null,
       "locked": false,
@@ -2841,14 +3336,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ac",
+      "index": "b07g",
       "roundness": null,
       "seed": 770111394,
-      "version": 3,
-      "versionNonce": 550769890,
+      "version": 4,
+      "versionNonce": 1903011920,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073524,
       "link": null,
       "locked": false,
@@ -2947,16 +3442,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ad",
+      "index": "b07h",
       "roundness": {
         "type": 3
       },
       "seed": 1105152894,
-      "version": 3,
-      "versionNonce": 365797950,
+      "version": 4,
+      "versionNonce": 1675347120,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073524,
       "link": null,
       "locked": false
@@ -2978,13 +3473,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ae",
+      "index": "b07hV",
       "roundness": {
         "type": 3
       },
       "seed": 1194046306,
-      "version": 3,
-      "versionNonce": 822290594,
+      "version": 4,
+      "versionNonce": 741613136,
       "isDeleted": false,
       "boundElements": [
         {
@@ -2992,7 +3487,7 @@
           "id": "box37-label"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073524,
       "link": null,
       "locked": false
@@ -3014,14 +3509,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "af",
+      "index": "b07i",
       "roundness": null,
       "seed": 1345329570,
-      "version": 4,
-      "versionNonce": 848996990,
+      "version": 5,
+      "versionNonce": 2002759344,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3054,16 +3549,16 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ag",
+      "index": "b07j",
       "roundness": {
         "type": 3
       },
       "seed": 1495608254,
-      "version": 3,
-      "versionNonce": 1503249506,
+      "version": 4,
+      "versionNonce": 1924912208,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073524,
       "link": null,
       "locked": false
@@ -3085,14 +3580,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ah",
+      "index": "b07jV",
       "roundness": null,
       "seed": 400750370,
-      "version": 3,
-      "versionNonce": 2031921854,
+      "version": 4,
+      "versionNonce": 114710704,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -3125,13 +3620,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ai",
+      "index": "b07k",
       "roundness": {
         "type": 3
       },
       "seed": 88409086,
-      "version": 3,
-      "versionNonce": 879159330,
+      "version": 4,
+      "versionNonce": 987548240,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3139,7 +3634,7 @@
           "id": "box40-label"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -3161,14 +3656,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "aj",
+      "index": "b07l",
       "roundness": null,
       "seed": 1207997794,
-      "version": 4,
-      "versionNonce": 1475650302,
+      "version": 5,
+      "versionNonce": 99074736,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3201,13 +3696,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ak",
+      "index": "b07lV",
       "roundness": {
         "type": 3
       },
       "seed": 544981730,
-      "version": 3,
-      "versionNonce": 1230607330,
+      "version": 4,
+      "versionNonce": 2137981008,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3215,7 +3710,7 @@
           "id": "box41-label"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -3237,14 +3732,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "al",
+      "index": "b07m",
       "roundness": null,
       "seed": 801872162,
-      "version": 4,
-      "versionNonce": 1101239102,
+      "version": 5,
+      "versionNonce": 859565232,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3277,13 +3772,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "am",
+      "index": "b07n",
       "roundness": {
         "type": 3
       },
       "seed": 138400830,
-      "version": 3,
-      "versionNonce": 1249953698,
+      "version": 4,
+      "versionNonce": 541750864,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3291,7 +3786,7 @@
           "id": "box42-label"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -3313,14 +3808,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "an",
+      "index": "b07nV",
       "roundness": null,
       "seed": 922756322,
-      "version": 4,
-      "versionNonce": 814381950,
+      "version": 5,
+      "versionNonce": 947574448,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3353,13 +3848,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ao",
+      "index": "b07o",
       "roundness": {
         "type": 3
       },
       "seed": 2072319650,
-      "version": 3,
-      "versionNonce": 1342931810,
+      "version": 4,
+      "versionNonce": 1111960656,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3367,7 +3862,7 @@
           "id": "box43-label"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -3389,14 +3884,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ap",
+      "index": "b07p",
       "roundness": null,
       "seed": 1194145954,
-      "version": 4,
-      "versionNonce": 720001982,
+      "version": 5,
+      "versionNonce": 1246527664,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3429,13 +3924,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "aq",
+      "index": "b07pV",
       "roundness": {
         "type": 3
       },
       "seed": 1006017662,
-      "version": 3,
-      "versionNonce": 340313890,
+      "version": 4,
+      "versionNonce": 792535632,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3447,7 +3942,7 @@
           "id": "arrow44"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -3469,14 +3964,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ar",
+      "index": "b07q",
       "roundness": null,
       "seed": 1073861730,
-      "version": 4,
-      "versionNonce": 1189360638,
+      "version": 5,
+      "versionNonce": 1213786800,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3509,13 +4004,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "as",
+      "index": "b07r",
       "roundness": {
         "type": 3
       },
       "seed": 430830178,
-      "version": 3,
-      "versionNonce": 799511266,
+      "version": 4,
+      "versionNonce": 906254416,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3531,7 +4026,7 @@
           "id": "arrow45"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -3553,14 +4048,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "at",
+      "index": "b07rV",
       "roundness": null,
       "seed": 860682274,
-      "version": 4,
-      "versionNonce": 779682878,
+      "version": 5,
+      "versionNonce": 1565004976,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3593,13 +4088,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "au",
+      "index": "b07s",
       "roundness": {
         "type": 3
       },
       "seed": 371875006,
-      "version": 3,
-      "versionNonce": 1421272738,
+      "version": 4,
+      "versionNonce": 175427152,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3611,7 +4106,7 @@
           "id": "arrow45"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -3633,14 +4128,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "av",
+      "index": "b07t",
       "roundness": null,
       "seed": 553493474,
-      "version": 4,
-      "versionNonce": 596233342,
+      "version": 5,
+      "versionNonce": 516030128,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -3673,14 +4168,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "aw",
+      "index": "b07tV",
       "roundness": null,
       "seed": 2110084642,
-      "version": 3,
-      "versionNonce": 203801186,
+      "version": 4,
+      "versionNonce": 627475536,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -3731,14 +4226,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide2",
-      "index": "ax",
+      "index": "b07u",
       "roundness": null,
       "seed": 746329342,
-      "version": 3,
-      "versionNonce": 64457918,
+      "version": 4,
+      "versionNonce": 762226864,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -3789,31 +4284,31 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": null,
-      "index": "ay",
+      "index": "b07v",
       "roundness": null,
       "seed": 2025472482,
-      "version": 3,
-      "versionNonce": 1891837474,
+      "version": 5,
+      "versionNonce": 615610960,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false,
       "customData": {
         "slides": {
           "order": 2,
-          "notes": "GitHub sync: scenes are files in your repository, merged element by element."
+          "notes": "Google Drive sync: each scene is a file in your Drive, saved by itself and merged element by element."
         }
       },
-      "name": "GitHub sync"
+      "name": "Google Drive sync"
     },
     {
       "id": "title46",
       "type": "text",
       "x": 4440,
       "y": 90,
-      "width": 597.0238647460938,
+      "width": 810.287841796875,
       "height": 90,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -3825,28 +4320,29 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "az",
+      "index": "b07vV",
       "roundness": null,
       "seed": 946652478,
-      "version": 3,
-      "versionNonce": 1292059902,
+      "version": 5,
+      "versionNonce": 1425412784,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false,
-      "text": "Sync with GitHub",
+      "text": "Sync with Google Drive",
       "fontSize": 72,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Sync with GitHub",
+      "originalText": "Sync with Google Drive",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "body47",
@@ -3854,7 +4350,7 @@
       "x": 4440,
       "y": 250,
       "width": 760,
-      "height": 510,
+      "height": 552.5,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -3865,14 +4361,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "b00",
+      "index": "b07w",
       "roundness": null,
       "seed": 1704703394,
-      "version": 3,
-      "versionNonce": 1803424226,
+      "version": 5,
+      "versionNonce": 724414544,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -3883,14 +4379,14 @@
             {
               "r": [
                 {
-                  "t": "Connect GitHub and your scenes are files in your private repository "
+                  "t": "Sign in with Google and every scene is a file in a folder "
                 },
                 {
-                  "t": "kurviq-scenes",
+                  "t": "Kurviq",
                   "c": "#6965db"
                 },
                 {
-                  "t": ": Kurviq creates it for you."
+                  "t": " in your Drive. Kurviq sees only the files it made or you opened with it."
                 }
               ]
             },
@@ -3900,7 +4396,7 @@
             {
               "r": [
                 {
-                  "t": "Saved by itself, a few seconds after you stop drawing"
+                  "t": "Saved by itself, about 10 s after you stop drawing"
                 }
               ],
               "k": "ul"
@@ -3908,7 +4404,7 @@
             {
               "r": [
                 {
-                  "t": "Changes from your other devices and from teammates are "
+                  "t": "Changes from your other devices and from people you share with are "
                 },
                 {
                   "t": "merged element by element",
@@ -3920,7 +4416,7 @@
             {
               "r": [
                 {
-                  "t": "Full history in git, commits made by your own account"
+                  "t": "History: Drive keeps old versions for 30 days"
                 }
               ],
               "k": "ul"
@@ -3928,7 +4424,7 @@
             {
               "r": [
                 {
-                  "t": "Optional: without GitHub, scenes stay in your browser"
+                  "t": "Optional: without Google, scenes stay in your browser"
                 }
               ],
               "k": "ul"
@@ -3936,14 +4432,14 @@
           ]
         }
       },
-      "text": "Connect GitHub and your scenes are files in \nyour private repository kurviq-scenes: Kurviq \ncreates it for you.\n\n• Saved by itself, a few seconds after you \nstop drawing\n• Changes from your other devices and from \nteammates are merged element by element\n• Full history in git, commits made by your \nown account\n• Optional: without GitHub, scenes stay in \nyour browser",
+      "text": "Sign in with Google and every scene is a file \nin a folder Kurviq in your Drive. Kurviq sees \nonly the files it made or you opened with it.\n\n• Saved by itself, about 10 s after you \nstop drawing\n• Changes from your other devices and from \npeople you share with are merged element \nby element\n• History: Drive keeps old versions for 30 \ndays\n• Optional: without Google, scenes stay in \nyour browser",
       "fontSize": 34,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Connect GitHub and your scenes are files in your private repository kurviq-scenes: Kurviq creates it for you.\n\n• Saved by itself, a few seconds after you stop drawing\n• Changes from your other devices and from teammates are merged element by element\n• Full history in git, commits made by your own account\n• Optional: without GitHub, scenes stay in your browser",
+      "originalText": "Sign in with Google and every scene is a file in a folder Kurviq in your Drive. Kurviq sees only the files it made or you opened with it.\n\n• Saved by itself, about 10 s after you stop drawing\n• Changes from your other devices and from people you share with are merged element by element\n• History: Drive keeps old versions for 30 days\n• Optional: without Google, scenes stay in your browser",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -3965,13 +4461,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "b01",
+      "index": "b07x",
       "roundness": {
         "type": 3
       },
       "seed": 459107710,
-      "version": 3,
-      "versionNonce": 546174270,
+      "version": 4,
+      "versionNonce": 738213040,
       "isDeleted": false,
       "boundElements": [
         {
@@ -3983,7 +4479,7 @@
           "id": "arrow49"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -4005,14 +4501,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "b02",
+      "index": "b07xV",
       "roundness": null,
       "seed": 857921442,
-      "version": 4,
-      "versionNonce": 1868924322,
+      "version": 5,
+      "versionNonce": 1085482576,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -4045,13 +4541,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "b03",
+      "index": "b07y",
       "roundness": {
         "type": 3
       },
       "seed": 1704505698,
-      "version": 3,
-      "versionNonce": 1205378430,
+      "version": 4,
+      "versionNonce": 875898544,
       "isDeleted": false,
       "boundElements": [
         {
@@ -4063,7 +4559,7 @@
           "id": "arrow50"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -4085,14 +4581,14 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "b04",
+      "index": "b07z",
       "roundness": null,
       "seed": 2045481826,
-      "version": 4,
-      "versionNonce": 900235618,
+      "version": 5,
+      "versionNonce": 840555600,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073531,
       "link": null,
       "locked": false,
@@ -4125,13 +4621,13 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "b05",
+      "index": "b07zG",
       "roundness": {
         "type": 3
       },
       "seed": 1653542334,
-      "version": 3,
-      "versionNonce": 941899198,
+      "version": 4,
+      "versionNonce": 2050805936,
       "isDeleted": false,
       "boundElements": [
         {
@@ -4147,7 +4643,7 @@
           "id": "arrow50"
         }
       ],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073525,
       "link": null,
       "locked": false
@@ -4155,9 +4651,9 @@
     {
       "id": "gh_repo-label",
       "type": "text",
-      "x": 5842.667068481445,
+      "x": 5836.908065795898,
       "y": 491.25,
-      "width": 224.66586303710938,
+      "width": 236.18386840820312,
       "height": 97.5,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4169,72 +4665,37 @@
       "opacity": 100,
       "groupIds": [],
       "frameId": "slide3",
-      "index": "b06",
+      "index": "b07zV",
       "roundness": null,
       "seed": 665245474,
-      "version": 4,
-      "versionNonce": 2039874850,
+      "version": 7,
+      "versionNonce": 1961560144,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "\n\nyou/kurviq-scenes",
+      "text": "\n\nyour Drive: Kurviq/",
       "fontSize": 26,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "gh_repo",
-      "originalText": "\n\nyou/kurviq-scenes",
+      "originalText": "\n\nyour Drive: Kurviq/",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
-    },
-    {
-      "id": "icon48",
-      "type": "image",
-      "x": 5923,
-      "y": 465,
-      "width": 64,
-      "height": 64,
-      "angle": 0,
-      "strokeColor": "transparent",
-      "backgroundColor": "transparent",
-      "fillStyle": "solid",
-      "strokeWidth": 2,
-      "strokeStyle": "solid",
-      "roughness": 1,
-      "opacity": 100,
-      "groupIds": [],
-      "frameId": "slide3",
-      "index": "b07",
-      "roundness": null,
-      "seed": 469775650,
-      "version": 3,
-      "versionNonce": 378656254,
-      "isDeleted": false,
-      "boundElements": [],
-      "updated": 1792690073548,
-      "created": 1792690073525,
-      "link": null,
-      "locked": false,
-      "status": "saved",
-      "fileId": "2c42417adbbd922ff480775aa45971b9268ac59d",
-      "scale": [
-        1,
-        1
-      ],
-      "crop": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "arrow49",
       "type": "arrow",
-      "x": 5616.9,
-      "y": 370.3,
-      "width": 166.20000000000073,
-      "height": 124.39999999999998,
+      "x": 5616,
+      "y": 369.5125666666663,
+      "width": 168,
+      "height": 125.98786666666683,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -4248,11 +4709,11 @@
       "index": "b08",
       "roundness": null,
       "seed": 1260561918,
-      "version": 3,
-      "versionNonce": 882708706,
+      "version": 4,
+      "versionNonce": 1579268176,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017203,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -4262,8 +4723,8 @@
           0
         ],
         [
-          166.20000000000073,
-          124.39999999999998
+          168,
+          125.98786666666683
         ]
       ],
       "startBinding": {
@@ -4284,15 +4745,16 @@
       },
       "startArrowhead": "arrow",
       "endArrowhead": "arrow",
-      "elbowed": false
+      "elbowed": false,
+      "moveMidPointsWithElement": false
     },
     {
       "id": "arrow50",
       "type": "arrow",
-      "x": 5617.070959725386,
-      "y": 699.9368335240373,
-      "width": 165.85808054922745,
-      "height": 114.8736670480746,
+      "x": 5616,
+      "y": 700.8458999999997,
+      "width": 168,
+      "height": 116.67879999999991,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -4306,11 +4768,11 @@
       "index": "b09",
       "roundness": null,
       "seed": 1782661346,
-      "version": 3,
-      "versionNonce": 1008887358,
+      "version": 4,
+      "versionNonce": 132525648,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017203,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -4320,8 +4782,8 @@
           0
         ],
         [
-          165.85808054922745,
-          -114.8736670480746
+          168,
+          -116.67879999999991
         ]
       ],
       "startBinding": {
@@ -4342,7 +4804,8 @@
       },
       "startArrowhead": "arrow",
       "endArrowhead": "arrow",
-      "elbowed": false
+      "elbowed": false,
+      "moveMidPointsWithElement": false
     },
     {
       "id": "gh_log",
@@ -4382,9 +4845,9 @@
     {
       "id": "gh_log-label",
       "type": "text",
-      "x": 5826.870025634766,
+      "x": 5825.235015869141,
       "y": 743.75,
-      "width": 256.25994873046875,
+      "width": 259.52996826171875,
       "height": 112.5,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4399,25 +4862,26 @@
       "index": "b0B",
       "roundness": null,
       "seed": 1287889634,
-      "version": 4,
-      "versionNonce": 968289918,
+      "version": 6,
+      "versionNonce": 419790416,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "Every change\nbecomes a commit\nin your repo",
+      "text": "Each scene is one\n.excalidraw file,\nimages included",
       "fontSize": 30,
       "baseFontSize": 30,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "gh_log",
-      "originalText": "Every change\nbecomes a commit\nin your repo",
+      "originalText": "Each scene is one\n.excalidraw file,\nimages included",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "slide4",
@@ -4439,28 +4903,28 @@
       "index": "b0C",
       "roundness": null,
       "seed": 2085863038,
-      "version": 3,
-      "versionNonce": 341033058,
+      "version": 4,
+      "versionNonce": 208033360,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073525,
       "link": null,
       "locked": false,
       "customData": {
         "slides": {
           "order": 3,
-          "notes": "Spaces: the personal one and one per GitHub organization; GitHub decides who may read or edit."
+          "notes": "Work together: share a scene by email, as in Google Drive. Editors' changes are merged with yours; viewers watch, present and copy."
         }
       },
-      "name": "Teams"
+      "name": "Work together"
     },
     {
       "id": "title51",
       "type": "text",
       "x": 120,
       "y": 1410,
-      "width": 1127.73583984375,
+      "width": 505.0799255371094,
       "height": 90,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4475,25 +4939,26 @@
       "index": "b0D",
       "roundness": null,
       "seed": 1923870818,
-      "version": 3,
-      "versionNonce": 1544580798,
+      "version": 4,
+      "versionNonce": 344782512,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073525,
       "link": null,
       "locked": false,
-      "text": "Teams: a space per organization",
+      "text": "Work together",
       "fontSize": 72,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Teams: a space per organization",
+      "originalText": "Work together",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "body52",
@@ -4501,7 +4966,7 @@
       "x": 120,
       "y": 1570,
       "width": 760,
-      "height": 382.5,
+      "height": 467.5,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -4515,11 +4980,11 @@
       "index": "b0E",
       "roundness": null,
       "seed": 1385381566,
-      "version": 3,
-      "versionNonce": 2122408994,
+      "version": 4,
+      "versionNonce": 2145848400,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -4530,11 +4995,18 @@
             {
               "r": [
                 {
-                  "t": "Install Kurviq on a GitHub organization and its members share "
+                  "t": "Share a scene with people by email, as in Google Drive: "
                 },
                 {
-                  "t": "your-org/kurviq-scenes",
-                  "c": "#6965db"
+                  "t": "Can edit",
+                  "b": true
+                },
+                {
+                  "t": " or "
+                },
+                {
+                  "t": "Can view",
+                  "b": true
                 },
                 {
                   "t": "."
@@ -4547,7 +5019,7 @@
             {
               "r": [
                 {
-                  "t": "Switch spaces in the Scenes sidebar: your own, or an organization's"
+                  "t": "Google emails them the link; they sign in with their Google account"
                 }
               ],
               "k": "ul"
@@ -4555,11 +5027,7 @@
             {
               "r": [
                 {
-                  "t": "GitHub decides",
-                  "b": true
-                },
-                {
-                  "t": " who may read or edit: no extra accounts, no invitations"
+                  "t": "Their changes are merged with yours element by element"
                 }
               ],
               "k": "ul"
@@ -4567,7 +5035,7 @@
             {
               "r": [
                 {
-                  "t": "Read access: view, present and copy"
+                  "t": "Viewers can watch, present and make a copy"
                 }
               ],
               "k": "ul"
@@ -4575,7 +5043,7 @@
             {
               "r": [
                 {
-                  "t": "Removed on GitHub, removed in Kurviq"
+                  "t": "Drive decides: access removed in Drive is removed in Kurviq"
                 }
               ],
               "k": "ul"
@@ -4583,14 +5051,14 @@
           ]
         }
       },
-      "text": "Install Kurviq on a GitHub organization and \nits members share your-org/kurviq-scenes.\n\n• Switch spaces in the Scenes sidebar: your \nown, or an organization's\n• GitHub decides who may read or edit: no \nextra accounts, no invitations\n• Read access: view, present and copy\n• Removed on GitHub, removed in Kurviq",
+      "text": "Share a scene with people by email, as in \nGoogle Drive: Can edit or Can view.\n\n• Google emails them the link; they sign in \nwith their Google account\n• Their changes are merged with yours \nelement by element\n• Viewers can watch, present and make a \ncopy\n• Drive decides: access removed in Drive is \nremoved in Kurviq",
       "fontSize": 34,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Install Kurviq on a GitHub organization and its members share your-org/kurviq-scenes.\n\n• Switch spaces in the Scenes sidebar: your own, or an organization's\n• GitHub decides who may read or edit: no extra accounts, no invitations\n• Read access: view, present and copy\n• Removed on GitHub, removed in Kurviq",
+      "originalText": "Share a scene with people by email, as in Google Drive: Can edit or Can view.\n\n• Google emails them the link; they sign in with their Google account\n• Their changes are merged with yours element by element\n• Viewers can watch, present and make a copy\n• Drive decides: access removed in Drive is removed in Kurviq",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -4638,9 +5106,9 @@
     {
       "id": "tm_me-label",
       "type": "text",
-      "x": 1019.4240417480469,
+      "x": 1044.638038635254,
       "y": 1667.5,
-      "width": 201.15191650390625,
+      "width": 150.7239227294922,
       "height": 35,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4655,25 +5123,26 @@
       "index": "b0G",
       "roundness": null,
       "seed": 332461730,
-      "version": 4,
-      "versionNonce": 1657049058,
+      "version": 6,
+      "versionNonce": 2120299600,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "Personal space",
+      "text": "A colleague",
       "fontSize": 28,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "tm_me",
-      "originalText": "Personal space",
+      "originalText": "A colleague",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "tm_me_repo",
@@ -4718,9 +5187,9 @@
     {
       "id": "tm_me_repo-label",
       "type": "text",
-      "x": 1556.774055480957,
+      "x": 1526.1330642700195,
       "y": 1652.5,
-      "width": 166.45188903808594,
+      "width": 227.73387145996094,
       "height": 65,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4735,32 +5204,33 @@
       "index": "b0I",
       "roundness": null,
       "seed": 2105397858,
-      "version": 4,
-      "versionNonce": 1965835170,
+      "version": 6,
+      "versionNonce": 1792420432,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "you/\nkurviq-scenes",
+      "text": "Can edit:\nmerged with yours",
       "fontSize": 26,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "tm_me_repo",
-      "originalText": "you/\nkurviq-scenes",
+      "originalText": "Can edit:\nmerged with yours",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "arrow53",
       "type": "arrow",
-      "x": 1288.5,
-      "y": 1685,
-      "width": 183,
+      "x": 1286,
+      "y": 1685.013,
+      "width": 188,
       "height": 0,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4775,11 +5245,11 @@
       "index": "b0J",
       "roundness": null,
       "seed": 1288749026,
-      "version": 3,
-      "versionNonce": 1969536894,
+      "version": 4,
+      "versionNonce": 766239824,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017204,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -4789,7 +5259,7 @@
           0
         ],
         [
-          183,
+          188,
           0
         ]
       ],
@@ -4811,7 +5281,8 @@
       },
       "startArrowhead": "arrow",
       "endArrowhead": "arrow",
-      "elbowed": false
+      "elbowed": false,
+      "moveMidPointsWithElement": false
     },
     {
       "id": "tm_org",
@@ -4856,9 +5327,9 @@
     {
       "id": "tm_org-label",
       "type": "text",
-      "x": 991.0880584716797,
+      "x": 1068.6900253295898,
       "y": 1927.5,
-      "width": 257.8238830566406,
+      "width": 102.61994934082031,
       "height": 35,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4873,25 +5344,26 @@
       "index": "b0L",
       "roundness": null,
       "seed": 479802914,
-      "version": 4,
-      "versionNonce": 1675370430,
+      "version": 6,
+      "versionNonce": 691822672,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "Organization space",
+      "text": "A client",
       "fontSize": 28,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "tm_org",
-      "originalText": "Organization space",
+      "originalText": "A client",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "tm_org_repo",
@@ -4936,9 +5408,9 @@
     {
       "id": "tm_org_repo-label",
       "type": "text",
-      "x": 1556.774055480957,
+      "x": 1510.35107421875,
       "y": 1912.5,
-      "width": 166.45188903808594,
+      "width": 259.2978515625,
       "height": 65,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4953,32 +5425,33 @@
       "index": "b0N",
       "roundness": null,
       "seed": 1376920034,
-      "version": 4,
-      "versionNonce": 83720190,
+      "version": 6,
+      "versionNonce": 1768674896,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "your-org/\nkurviq-scenes",
+      "text": "Can view:\nwatch, present, copy",
       "fontSize": 26,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "tm_org_repo",
-      "originalText": "your-org/\nkurviq-scenes",
+      "originalText": "Can view:\nwatch, present, copy",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "arrow54",
       "type": "arrow",
-      "x": 1288.5,
-      "y": 1945,
-      "width": 183,
+      "x": 1286,
+      "y": 1945.013,
+      "width": 188,
       "height": 0,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4993,11 +5466,11 @@
       "index": "b0O",
       "roundness": null,
       "seed": 1528401790,
-      "version": 3,
-      "versionNonce": 1840549602,
+      "version": 5,
+      "versionNonce": 372076720,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463025442,
       "created": 1792690073525,
       "link": null,
       "locked": false,
@@ -5007,7 +5480,7 @@
           0
         ],
         [
-          183,
+          188,
           0
         ]
       ],
@@ -5028,8 +5501,9 @@
         ]
       },
       "startArrowhead": "arrow",
-      "endArrowhead": "arrow",
-      "elbowed": false
+      "endArrowhead": null,
+      "elbowed": false,
+      "moveMidPointsWithElement": false
     },
     {
       "id": "icon55",
@@ -5144,7 +5618,7 @@
       "type": "text",
       "x": 1270,
       "y": 2065,
-      "width": 485.4638671875,
+      "width": 328.4958801269531,
       "height": 35,
       "angle": 0,
       "strokeColor": "#757575",
@@ -5159,25 +5633,26 @@
       "index": "b0S",
       "roundness": null,
       "seed": 2143176702,
-      "version": 3,
-      "versionNonce": 807648866,
+      "version": 5,
+      "versionNonce": 1109602896,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463025442,
       "created": 1792690073526,
       "link": null,
       "locked": false,
-      "text": "members: write → edit, read → view",
+      "text": "access as set in Share…",
       "fontSize": 28,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "members: write → edit, read → view",
+      "originalText": "access as set in Share…",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "slide5",
@@ -5199,18 +5674,18 @@
       "index": "b0T",
       "roundness": null,
       "seed": 405323490,
-      "version": 3,
-      "versionNonce": 600264894,
+      "version": 4,
+      "versionNonce": 429960784,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073526,
       "link": null,
       "locked": false,
       "customData": {
         "slides": {
           "order": 4,
-          "notes": "Links: private scenes for everyone who may read them on GitHub, public scenes for everyone."
+          "notes": "Share a link: Share… → Copy link. Private (people you add) or anyone with the link, no sign-in needed."
         }
       },
       "name": "Share a link"
@@ -5261,7 +5736,7 @@
       "x": 2280,
       "y": 1570,
       "width": 780,
-      "height": 425,
+      "height": 382.5,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -5275,11 +5750,11 @@
       "index": "b0V",
       "roundness": null,
       "seed": 1815253666,
-      "version": 3,
-      "versionNonce": 1650100478,
+      "version": 4,
+      "versionNonce": 1355030192,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073526,
       "link": null,
       "locked": false,
@@ -5290,21 +5765,21 @@
             {
               "r": [
                 {
-                  "t": "Every scene has a link like "
+                  "t": "Every scene has a link: "
                 },
                 {
-                  "t": "kurviq.com/@you/roadmap",
-                  "c": "#6965db"
+                  "t": "Share…",
+                  "b": true
                 },
                 {
-                  "t": ": "
+                  "t": " → "
                 },
                 {
                   "t": "Copy link",
                   "b": true
                 },
                 {
-                  "t": " in the Scenes sidebar."
+                  "t": "."
                 }
               ]
             },
@@ -5314,11 +5789,18 @@
             {
               "r": [
                 {
-                  "t": "Teammates",
-                  "b": true
+                  "t": "Your own scenes: "
                 },
                 {
-                  "t": " open it, sign in with GitHub, and see it if they may read the repository"
+                  "t": "kurviq.com/roadmap",
+                  "c": "#6965db"
+                },
+                {
+                  "t": "; shared ones: "
+                },
+                {
+                  "t": "kurviq.com/s/…/roadmap",
+                  "c": "#6965db"
                 }
               ],
               "k": "ul"
@@ -5326,18 +5808,23 @@
             {
               "r": [
                 {
-                  "t": "Make public:",
+                  "t": "Anyone with the link",
                   "b": true
                 },
                 {
-                  "t": " it moves to "
+                  "t": ": everyone can view it, no sign-in"
+                }
+              ],
+              "k": "ul"
+            },
+            {
+              "r": [
+                {
+                  "t": "Copy presentation link",
+                  "b": true
                 },
                 {
-                  "t": "you/kurviq-public",
-                  "c": "#6965db"
-                },
-                {
-                  "t": "; everyone can view it, no sign-up"
+                  "t": " opens it presenting"
                 }
               ],
               "k": "ul"
@@ -5357,14 +5844,14 @@
           ]
         }
       },
-      "text": "Every scene has a link like \nkurviq.com/@you/roadmap: Copy link in the \nScenes sidebar.\n\n• Teammates open it, sign in with GitHub, \nand see it if they may read the repository\n• Make public: it moves to you/kurviq-public; \neveryone can view it, no sign-up\n• Make a copy puts any shared scene into \nyour own scenes",
+      "text": "Every scene has a link: Share… → Copy link.\n\n• Your own scenes: kurviq.com/roadmap; \nshared ones: kurviq.com/s/…/roadmap\n• Anyone with the link: everyone can view it, \nno sign-in\n• Copy presentation link opens it presenting\n• Make a copy puts any shared scene into \nyour own scenes",
       "fontSize": 34,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Every scene has a link like kurviq.com/@you/roadmap: Copy link in the Scenes sidebar.\n\n• Teammates open it, sign in with GitHub, and see it if they may read the repository\n• Make public: it moves to you/kurviq-public; everyone can view it, no sign-up\n• Make a copy puts any shared scene into your own scenes",
+      "originalText": "Every scene has a link: Share… → Copy link.\n\n• Your own scenes: kurviq.com/roadmap; shared ones: kurviq.com/s/…/roadmap\n• Anyone with the link: everyone can view it, no sign-in\n• Copy presentation link opens it presenting\n• Make a copy puts any shared scene into your own scenes",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -5416,9 +5903,9 @@
     {
       "id": "sh_link-label",
       "type": "text",
-      "x": 3340.9600830078125,
+      "x": 3326.1760864257812,
       "y": 1605,
-      "width": 398.079833984375,
+      "width": 427.6478271484375,
       "height": 40,
       "angle": 0,
       "strokeColor": "#6965db",
@@ -5433,25 +5920,26 @@
       "index": "b0X",
       "roundness": null,
       "seed": 150443426,
-      "version": 4,
-      "versionNonce": 308066622,
+      "version": 6,
+      "versionNonce": 540838992,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "kurviq.com/@you/roadmap",
+      "text": "kurviq.com/s/1Fy…/roadmap",
       "fontSize": 32,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "sh_link",
-      "originalText": "kurviq.com/@you/roadmap",
+      "originalText": "kurviq.com/s/1Fy…/roadmap",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "sh_team",
@@ -5496,9 +5984,9 @@
     {
       "id": "sh_team-label",
       "type": "text",
-      "x": 3242.715019226074,
+      "x": 3206.4450149536133,
       "y": 1860,
-      "width": 144.56996154785156,
+      "width": 217.10997009277344,
       "height": 150,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -5513,25 +6001,26 @@
       "index": "b0Z",
       "roundness": null,
       "seed": 1920504162,
-      "version": 4,
-      "versionNonce": 456057214,
+      "version": 6,
+      "versionNonce": 1736868432,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017199,
       "created": 1792690073532,
       "link": null,
       "locked": false,
-      "text": "\n\nPrivate:\nyour team",
+      "text": "\n\nPrivate:\npeople you add",
       "fontSize": 30,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "sh_team",
-      "originalText": "\n\nPrivate:\nyour team",
+      "originalText": "\n\nPrivate:\npeople you add",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "icon61",
@@ -5688,10 +6177,10 @@
     {
       "id": "arrow63",
       "type": "arrow",
-      "x": 3368.6582579150113,
-      "y": 1677.9782686447068,
-      "width": 50.31651583002258,
-      "height": 134.04346271058648,
+      "x": 3369.9114299999997,
+      "y": 1675.5,
+      "width": 52.593989999999394,
+      "height": 138.5,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -5705,11 +6194,11 @@
       "index": "b0e",
       "roundness": null,
       "seed": 1678327266,
-      "version": 3,
-      "versionNonce": 418254050,
+      "version": 4,
+      "versionNonce": 698028112,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017206,
       "created": 1792690073526,
       "link": null,
       "locked": false,
@@ -5719,8 +6208,8 @@
           0
         ],
         [
-          -50.31651583002258,
-          134.04346271058648
+          -52.593989999999394,
+          138.5
         ]
       ],
       "startBinding": {
@@ -5741,15 +6230,16 @@
       },
       "startArrowhead": null,
       "endArrowhead": "arrow",
-      "elbowed": false
+      "elbowed": false,
+      "moveMidPointsWithElement": false
     },
     {
       "id": "arrow64",
       "type": "arrow",
-      "x": 3711.3417420849887,
-      "y": 1677.9782686447068,
-      "width": 50.31651583002258,
-      "height": 134.04346271058648,
+      "x": 3710.0914300000004,
+      "y": 1675.5,
+      "width": 52.66600999999946,
+      "height": 138.5,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -5763,11 +6253,11 @@
       "index": "b0f",
       "roundness": null,
       "seed": 714836286,
-      "version": 3,
-      "versionNonce": 1047472702,
+      "version": 4,
+      "versionNonce": 1249150544,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017206,
       "created": 1792690073526,
       "link": null,
       "locked": false,
@@ -5777,8 +6267,8 @@
           0
         ],
         [
-          50.31651583002258,
-          134.04346271058648
+          52.66600999999946,
+          138.5
         ]
       ],
       "startBinding": {
@@ -5799,14 +6289,15 @@
       },
       "startArrowhead": null,
       "endArrowhead": "arrow",
-      "elbowed": false
+      "elbowed": false,
+      "moveMidPointsWithElement": false
     },
     {
       "id": "text65",
       "type": "text",
       "x": 3120,
       "y": 2090,
-      "width": 257.5298767089844,
+      "width": 325.28582763671875,
       "height": 32.5,
       "angle": 0,
       "strokeColor": "#757575",
@@ -5821,25 +6312,26 @@
       "index": "b0g",
       "roundness": null,
       "seed": 95105442,
-      "version": 3,
-      "versionNonce": 52306082,
+      "version": 4,
+      "versionNonce": 40196688,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073526,
       "link": null,
       "locked": false,
-      "text": "access as on GitHub",
+      "text": "access as in Google Drive",
       "fontSize": 26,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "access as on GitHub",
+      "originalText": "access as in Google Drive",
       "autoResize": true,
       "lineHeight": 1.25,
-      "labelPosition": null
+      "labelPosition": null,
+      "customData": {}
     },
     {
       "id": "text66",
@@ -8429,11 +8921,11 @@
       "index": "b1a",
       "roundness": null,
       "seed": 979405858,
-      "version": 3,
-      "versionNonce": 2035022242,
+      "version": 4,
+      "versionNonce": 1156592304,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073529,
       "link": null,
       "locked": false,
@@ -8453,21 +8945,21 @@
             {
               "r": [
                 {
-                  "t": "npm start: the same app on your machine, scenes in any git repo, agents via a local MCP server."
+                  "t": "npm start: the same app on your machine, synced with your Drive, agents via a local MCP server."
                 }
               ]
             }
           ]
         }
       },
-      "text": "Runs locally too\nnpm start: the same \napp on your machine, \nscenes in any git repo, \nagents via a local MCP \nserver.",
+      "text": "Runs locally too\nnpm start: the same \napp on your machine, \nsynced with your \nDrive, agents via a \nlocal MCP server.",
       "fontSize": 30,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Runs locally too\nnpm start: the same app on your machine, scenes in any git repo, agents via a local MCP server.",
+      "originalText": "Runs locally too\nnpm start: the same app on your machine, synced with your Drive, agents via a local MCP server.",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -8568,11 +9060,11 @@
       "index": "b1d",
       "roundness": null,
       "seed": 768782142,
-      "version": 3,
-      "versionNonce": 768969150,
+      "version": 4,
+      "versionNonce": 1734709328,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1792690073548,
+      "updated": 1793463017171,
       "created": 1792690073530,
       "link": null,
       "locked": false,
@@ -8583,7 +9075,7 @@
             {
               "r": [
                 {
-                  "t": "No account, no ads, no tracking"
+                  "t": "No account needed, no ads, no tracking"
                 }
               ],
               "k": "ul"
@@ -8591,14 +9083,7 @@
             {
               "r": [
                 {
-                  "t": "Your drawings stay in your browser, or go to "
-                },
-                {
-                  "t": "your",
-                  "b": true
-                },
-                {
-                  "t": " GitHub repository"
+                  "t": "Your drawings stay in your browser, or go to your Google Drive"
                 }
               ],
               "k": "ul"
@@ -8633,14 +9118,14 @@
           ]
         }
       },
-      "text": "• No account, no ads, no tracking\n• Your drawings stay in your browser, or go to your \nGitHub repository\n• MIT licensed: github.com/tecsteps/kurviq\n• Built on the excellent Excalidraw (unofficial, not \naffiliated)",
+      "text": "• No account needed, no ads, no tracking\n• Your drawings stay in your browser, or go to your \nGoogle Drive\n• MIT licensed: github.com/tecsteps/kurviq\n• Built on the excellent Excalidraw (unofficial, not \naffiliated)",
       "fontSize": 34,
       "baseFontSize": null,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "• No account, no ads, no tracking\n• Your drawings stay in your browser, or go to your GitHub repository\n• MIT licensed: github.com/tecsteps/kurviq\n• Built on the excellent Excalidraw (unofficial, not affiliated)",
+      "originalText": "• No account needed, no ads, no tracking\n• Your drawings stay in your browser, or go to your Google Drive\n• MIT licensed: github.com/tecsteps/kurviq\n• Built on the excellent Excalidraw (unofficial, not affiliated)",
       "autoResize": false,
       "lineHeight": 1.25,
       "labelPosition": null
@@ -8876,6 +9361,78 @@
       "autoResize": true,
       "lineHeight": 1.25,
       "labelPosition": null
+    },
+    {
+      "id": "icon7d",
+      "type": "image",
+      "x": 486,
+      "y": 386,
+      "width": 52,
+      "height": 52,
+      "angle": 0,
+      "strokeColor": "transparent",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": "slide1",
+      "index": "b1k",
+      "roundness": null,
+      "seed": 1471569072,
+      "version": 3,
+      "versionNonce": 1711125072,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1793463017197,
+      "created": 1793463017197,
+      "link": null,
+      "locked": false,
+      "status": "saved",
+      "fileId": "4f3e946926e4d83d119137879d4b4a14a23f599c",
+      "scale": [
+        1,
+        1
+      ],
+      "crop": null
+    },
+    {
+      "id": "icon48d",
+      "type": "image",
+      "x": 5923,
+      "y": 465,
+      "width": 64,
+      "height": 64,
+      "angle": 0,
+      "strokeColor": "transparent",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": "slide3",
+      "index": "b1l",
+      "roundness": null,
+      "seed": 1794049616,
+      "version": 3,
+      "versionNonce": 1202281136,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1793463017197,
+      "created": 1793463017197,
+      "link": null,
+      "locked": false,
+      "status": "saved",
+      "fileId": "4f3e946926e4d83d119137879d4b4a14a23f599c",
+      "scale": [
+        1,
+        1
+      ],
+      "crop": null
     }
   ],
   "appState": {
@@ -8884,46 +9441,10 @@
     "name": "kurviq-features"
   },
   "files": {
-    "075c46bbbbd1657ff584991364e5eb0072d1a23e": {
-      "id": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
+    "4d6555b91fb2727a0e7183377296ca950b82f3f0": {
+      "id": "4d6555b91fb2727a0e7183377296ca950b82f3f0",
       "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDY0IDY0Ij4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzY5NjVkYiIvPgogIDxwYXRoIGQ9Ik0yMCAxNWMtMSAxMS0xIDIzIDAgMzQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI1LjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik00NSAxNUMzNCAyMiAyNyAyOCAyMS41IDMyLjUgMzEgMzcgMzkgNDIgNDYgNDkuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZTBkZmZmIiBzdHJva2Utd2lkdGg9IjUuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
-      "created": 1792690071960
-    },
-    "a5618380aabd5dba5c99eb2b12958398d5843155": {
-      "id": "a5618380aabd5dba5c99eb2b12958398d5843155",
-      "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1maWxlcyIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjNjk2NWRiIgogIHN0cm9rZS13aWR0aD0iMiIKICBzdHJva2UtbGluZWNhcD0icm91bmQiCiAgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIKPgogIDxwYXRoIGQ9Ik0xNSAyaC00YTIgMiAwIDAgMC0yIDJ2MTFhMiAyIDAgMCAwIDIgMmg4YTIgMiAwIDAgMCAyLTJWOCIgLz4KICA8cGF0aCBkPSJNMTYuNzA2IDIuNzA2QTIuNCAyLjQgMCAwIDAgMTUgMnY1YTEgMSAwIDAgMCAxIDFoNWEyLjQgMi40IDAgMCAwLS43MDYtMS43MDZ6IiAvPgogIDxwYXRoIGQ9Ik01IDdhMiAyIDAgMCAwLTIgMnYxMWEyIDIgMCAwIDAgMiAyaDhhMiAyIDAgMCAwIDEuNzMyLTEiIC8+Cjwvc3ZnPgo=",
-      "created": 1792690071959
-    },
-    "2c42417adbbd922ff480775aa45971b9268ac59d": {
-      "id": "2c42417adbbd922ff480775aa45971b9268ac59d",
-      "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIGZpbGw9IiMxZTFlMWUiIHJvbGU9ImltZyIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjx0aXRsZT5HaXRIdWI8L3RpdGxlPjxwYXRoIGQ9Ik0xMiAuMjk3Yy02LjYzIDAtMTIgNS4zNzMtMTIgMTIgMCA1LjMwMyAzLjQzOCA5LjggOC4yMDUgMTEuMzg1LjYuMTEzLjgyLS4yNTguODItLjU3NyAwLS4yODUtLjAxLTEuMDQtLjAxNS0yLjA0LTMuMzM4LjcyNC00LjA0Mi0xLjYxLTQuMDQyLTEuNjFDNC40MjIgMTguMDcgMy42MzMgMTcuNyAzLjYzMyAxNy43Yy0xLjA4Ny0uNzQ0LjA4NC0uNzI5LjA4NC0uNzI5IDEuMjA1LjA4NCAxLjgzOCAxLjIzNiAxLjgzOCAxLjIzNiAxLjA3IDEuODM1IDIuODA5IDEuMzA1IDMuNDk1Ljk5OC4xMDgtLjc3Ni40MTctMS4zMDUuNzYtMS42MDUtMi42NjUtLjMtNS40NjYtMS4zMzItNS40NjYtNS45MyAwLTEuMzEuNDY1LTIuMzggMS4yMzUtMy4yMi0uMTM1LS4zMDMtLjU0LTEuNTIzLjEwNS0zLjE3NiAwIDAgMS4wMDUtLjMyMiAzLjMgMS4yMy45Ni0uMjY3IDEuOTgtLjM5OSAzLS40MDUgMS4wMi4wMDYgMi4wNC4xMzggMyAuNDA1IDIuMjgtMS41NTIgMy4yODUtMS4yMyAzLjI4NS0xLjIzLjY0NSAxLjY1My4yNCAyLjg3My4xMiAzLjE3Ni43NjUuODQgMS4yMyAxLjkxIDEuMjMgMy4yMiAwIDQuNjEtMi44MDUgNS42MjUtNS40NzUgNS45Mi40Mi4zNi44MSAxLjA5Ni44MSAyLjIyIDAgMS42MDYtLjAxNSAyLjg5Ni0uMDE1IDMuMjg2IDAgLjMxNS4yMS42OS44MjUuNTdDMjAuNTY1IDIyLjA5MiAyNCAxNy41OTIgMjQgMTIuMjk3YzAtNi42MjctNS4zNzMtMTItMTItMTIiLz48L3N2Zz4=",
-      "created": 1792690071959
-    },
-    "ebd08ab21a71f6191096c187071750f348a21948": {
-      "id": "ebd08ab21a71f6191096c187071750f348a21948",
-      "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1ib3QiCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzY5NjVkYiIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNMTIgOFY0SDgiIC8+CiAgPHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjEyIiB4PSI0IiB5PSI4IiByeD0iMiIgLz4KICA8cGF0aCBkPSJNMiAxNGgyIiAvPgogIDxwYXRoIGQ9Ik0yMCAxNGgyIiAvPgogIDxwYXRoIGQ9Ik0xNSAxM3YyIiAvPgogIDxwYXRoIGQ9Ik05IDEzdjIiIC8+Cjwvc3ZnPgo=",
-      "created": 1792690071959
-    },
-    "5c8bdd1a90f0cbcca177576eec4721f24aca50ce": {
-      "id": "5c8bdd1a90f0cbcca177576eec4721f24aca50ce",
-      "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1wcmVzZW50YXRpb24iCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzY5NjVkYiIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNMiAzaDIwIiAvPgogIDxwYXRoIGQ9Ik0yMSAzdjExYTIgMiAwIDAgMS0yIDJINWEyIDIgMCAwIDEtMi0yVjMiIC8+CiAgPHBhdGggZD0ibTcgMjEgNS01IDUgNSIgLz4KPC9zdmc+Cg==",
-      "created": 1792690071959
-    },
-    "56b904601d5b632dfd64af01b67eed6599bc8c1f": {
-      "id": "56b904601d5b632dfd64af01b67eed6599bc8c1f",
-      "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS10eXBlIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTEyIDR2MTYiIC8+CiAgPHBhdGggZD0iTTQgN1Y1YTEgMSAwIDAgMSAxLTFoMTRhMSAxIDAgMCAxIDEgMXYyIiAvPgogIDxwYXRoIGQ9Ik05IDIwaDYiIC8+Cjwvc3ZnPgo=",
-      "created": 1792690071959
-    },
-    "ce8ae3bf4791928aa0e52aadcedb652e54f58a1c": {
-      "id": "ce8ae3bf4791928aa0e52aadcedb652e54f58a1c",
-      "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1maWxlLWRvd24iCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzY5NjVkYiIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNNiAyMmEyIDIgMCAwIDEtMi0yVjRhMiAyIDAgMCAxIDItMmg4YTIuNCAyLjQgMCAwIDEgMS43MDQuNzA2bDMuNTg4IDMuNTg4QTIuNCAyLjQgMCAwIDEgMjAgOHYxMmEyIDIgMCAwIDEtMiAyeiIgLz4KICA8cGF0aCBkPSJNMTQgMnY1YTEgMSAwIDAgMCAxIDFoNSIgLz4KICA8cGF0aCBkPSJNMTIgMTh2LTYiIC8+CiAgPHBhdGggZD0ibTkgMTUgMyAzIDMtMyIgLz4KPC9zdmc+Cg==",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1sb2NrIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiMxOTAwNjQiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHJlY3Qgd2lkdGg9IjE4IiBoZWlnaHQ9IjExIiB4PSIzIiB5PSIxMSIgcng9IjIiIHJ5PSIyIiAvPgogIDxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIgLz4KPC9zdmc+Cg==",
       "created": 1792690071959
     },
     "cd69c7db266b442d8afd0262144cf39da096d3fa": {
@@ -8932,10 +9453,22 @@
       "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1zaGllbGQtY2hlY2siCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzY5NjVkYiIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNMjAgMTNjMCA1LTMuNSA3LjUtNy42NiA4Ljk1YTEgMSAwIDAgMS0uNjctLjAxQzcuNSAyMC41IDQgMTggNCAxM1Y2YTEgMSAwIDAgMSAxLTFjMiAwIDQuNS0xLjIgNi4yNC0yLjcyYTEuMTcgMS4xNyAwIDAgMSAxLjUyIDBDMTQuNTEgMy44MSAxNyA1IDE5IDVhMSAxIDAgMCAxIDEgMXoiIC8+CiAgPHBhdGggZD0ibTkgMTIgMiAyIDQtNCIgLz4KPC9zdmc+Cg==",
       "created": 1792690071959
     },
-    "8931e83fe1bf38052f955b1e933fc4a1846f9338": {
-      "id": "8931e83fe1bf38052f955b1e933fc4a1846f9338",
+    "a5618380aabd5dba5c99eb2b12958398d5843155": {
+      "id": "a5618380aabd5dba5c99eb2b12958398d5843155",
       "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1jb2RlIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0ibTE2IDE4IDYtNi02LTYiIC8+CiAgPHBhdGggZD0ibTggNi02IDYgNiA2IiAvPgo8L3N2Zz4K",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1maWxlcyIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjNjk2NWRiIgogIHN0cm9rZS13aWR0aD0iMiIKICBzdHJva2UtbGluZWNhcD0icm91bmQiCiAgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIKPgogIDxwYXRoIGQ9Ik0xNSAyaC00YTIgMiAwIDAgMC0yIDJ2MTFhMiAyIDAgMCAwIDIgMmg4YTIgMiAwIDAgMCAyLTJWOCIgLz4KICA8cGF0aCBkPSJNMTYuNzA2IDIuNzA2QTIuNCAyLjQgMCAwIDAgMTUgMnY1YTEgMSAwIDAgMCAxIDFoNWEyLjQgMi40IDAgMCAwLS43MDYtMS43MDZ6IiAvPgogIDxwYXRoIGQ9Ik01IDdhMiAyIDAgMCAwLTIgMnYxMWEyIDIgMCAwIDAgMiAyaDhhMiAyIDAgMCAwIDEuNzMyLTEiIC8+Cjwvc3ZnPgo=",
+      "created": 1792690071959
+    },
+    "4f3e946926e4d83d119137879d4b4a14a23f599c": {
+      "id": "4f3e946926e4d83d119137879d4b4a14a23f599c",
+      "mimeType": "image/svg+xml",
+      "dataURL": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIGZpbGw9IiM2OTY1ZGIiIHJvbGU9ImltZyIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjx0aXRsZT5Hb29nbGUgRHJpdmU8L3RpdGxlPjxwYXRoIGQ9Ik0xMi4wMSAxLjQ4NWMtMi4wODIgMC0zLjc1NC4wMi0zLjc0My4wNDcuMDEuMDIgMS43MDggMy4wMDEgMy43NzQgNi42MmwzLjc2IDYuNTc0aDMuNzZjMi4wODEgMCAzLjc1My0uMDIgMy43NDItLjA0Ny0uMDA1LS4wMi0xLjcwOC0zLjAwMS0zLjc3NS02LjYybC0zLjc2LTYuNTc0em0tNC43NiAxLjczYTc4OS44MjggNzg5Ljg2MSAwIDAgMC0zLjYzIDYuMzE5TDAgMTUuODY4bDEuODkgMy4yOTggMS44ODUgMy4yOTcgMy42Mi02LjMzNSAzLjYxOC02LjMzLTEuODgtMy4yODdDOC4xIDQuNzA0IDcuMjU1IDMuMjIgNy4yNSAzLjIxNHptMi4yNTkgMTIuNjUzLS4yMDMuMzQ4Yy0uMTE0LjE5OC0uOTYgMS42NzItMS44OCAzLjI4N2E0MjMuOTMgNDIzLjk0OCAwIDAgMS0xLjY5OCAyLjk3Yy0uMDEuMDI2IDMuMjQuMDQyIDcuMjIyLjA0Mmg3LjI0NGwxLjc5Ni0zLjE1N2MuOTkyLTEuNzM0IDEuODUtMy4yMyAxLjkwNi0zLjMyM2wuMTA0LS4xNjdoLTcuMjQ5eiIvPjwvc3ZnPg==",
+      "created": 1793463017135
+    },
+    "56b904601d5b632dfd64af01b67eed6599bc8c1f": {
+      "id": "56b904601d5b632dfd64af01b67eed6599bc8c1f",
+      "mimeType": "image/svg+xml",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS10eXBlIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTEyIDR2MTYiIC8+CiAgPHBhdGggZD0iTTQgN1Y1YTEgMSAwIDAgMSAxLTFoMTRhMSAxIDAgMCAxIDEgMXYyIiAvPgogIDxwYXRoIGQ9Ik05IDIwaDYiIC8+Cjwvc3ZnPgo=",
       "created": 1792690071959
     },
     "9ddd9d24ed8a08304fc8cb93f8e792cb6069303e": {
@@ -8944,17 +9477,17 @@
       "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1ib3QiCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzE5MDA2NCIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNMTIgOFY0SDgiIC8+CiAgPHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjEyIiB4PSI0IiB5PSI4IiByeD0iMiIgLz4KICA8cGF0aCBkPSJNMiAxNGgyIiAvPgogIDxwYXRoIGQ9Ik0yMCAxNGgyIiAvPgogIDxwYXRoIGQ9Ik0xNSAxM3YyIiAvPgogIDxwYXRoIGQ9Ik05IDEzdjIiIC8+Cjwvc3ZnPgo=",
       "created": 1792690071959
     },
-    "aed18791a1ab98ffc0f2ab71d64487b0b7839dfb": {
-      "id": "aed18791a1ab98ffc0f2ab71d64487b0b7839dfb",
+    "ebd08ab21a71f6191096c187071750f348a21948": {
+      "id": "ebd08ab21a71f6191096c187071750f348a21948",
       "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1zcXVhcmUtZGFzaGVkIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTUgM2EyIDIgMCAwIDAtMiAyIiAvPgogIDxwYXRoIGQ9Ik0xOSAzYTIgMiAwIDAgMSAyIDIiIC8+CiAgPHBhdGggZD0iTTIxIDE5YTIgMiAwIDAgMS0yIDIiIC8+CiAgPHBhdGggZD0iTTUgMjFhMiAyIDAgMCAxLTItMiIgLz4KICA8cGF0aCBkPSJNOSAzaDEiIC8+CiAgPHBhdGggZD0iTTkgMjFoMSIgLz4KICA8cGF0aCBkPSJNMTQgM2gxIiAvPgogIDxwYXRoIGQ9Ik0xNCAyMWgxIiAvPgogIDxwYXRoIGQ9Ik0zIDl2MSIgLz4KICA8cGF0aCBkPSJNMjEgOXYxIiAvPgogIDxwYXRoIGQ9Ik0zIDE0djEiIC8+CiAgPHBhdGggZD0iTTIxIDE0djEiIC8+Cjwvc3ZnPgo=",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1ib3QiCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzY5NjVkYiIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNMTIgOFY0SDgiIC8+CiAgPHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjEyIiB4PSI0IiB5PSI4IiByeD0iMiIgLz4KICA8cGF0aCBkPSJNMiAxNGgyIiAvPgogIDxwYXRoIGQ9Ik0yMCAxNGgyIiAvPgogIDxwYXRoIGQ9Ik0xNSAxM3YyIiAvPgogIDxwYXRoIGQ9Ik05IDEzdjIiIC8+Cjwvc3ZnPgo=",
       "created": 1792690071959
     },
-    "9cdd56fe9159a8bd8b552705cb6f3f8eadc2c910": {
-      "id": "9cdd56fe9159a8bd8b552705cb6f3f8eadc2c910",
+    "075c46bbbbd1657ff584991364e5eb0072d1a23e": {
+      "id": "075c46bbbbd1657ff584991364e5eb0072d1a23e",
       "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1oYXJkLWRyaXZlIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTEwIDE2aC4wMSIgLz4KICA8cGF0aCBkPSJNMi4yMTIgMTEuNTc3YTIgMiAwIDAgMC0uMjEyLjg5NlYxOGEyIDIgMCAwIDAgMiAyaDE2YTIgMiAwIDAgMCAyLTJ2LTUuNTI3YTIgMiAwIDAgMC0uMjEyLS44OTZMMTguNTUgNS4xMUEyIDIgMCAwIDAgMTYuNzYgNEg3LjI0YTIgMiAwIDAgMC0xLjc5IDEuMTF6IiAvPgogIDxwYXRoIGQ9Ik0yMS45NDYgMTIuMDEzSDIuMDU0IiAvPgogIDxwYXRoIGQ9Ik02IDE2aC4wMSIgLz4KPC9zdmc+Cg==",
-      "created": 1792690071959
+      "dataURL": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDY0IDY0Ij4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzY5NjVkYiIvPgogIDxwYXRoIGQ9Ik0yMCAxNWMtMSAxMS0xIDIzIDAgMzQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI1LjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik00NSAxNUMzNCAyMiAyNyAyOCAyMS41IDMyLjUgMzEgMzcgMzkgNDIgNDYgNDkuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZTBkZmZmIiBzdHJva2Utd2lkdGg9IjUuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "created": 1792690071960
     },
     "1558c81243c7002aa94b49598f2492319ee23101": {
       "id": "1558c81243c7002aa94b49598f2492319ee23101",
@@ -8962,22 +9495,16 @@
       "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS11c2VycyIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjNjk2NWRiIgogIHN0cm9rZS13aWR0aD0iMiIKICBzdHJva2UtbGluZWNhcD0icm91bmQiCiAgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIKPgogIDxwYXRoIGQ9Ik0xNiAyMXYtMmE0IDQgMCAwIDAtNC00SDZhNCA0IDAgMCAwLTQgNHYyIiAvPgogIDxwYXRoIGQ9Ik0xNiAzLjEyOGE0IDQgMCAwIDEgMCA3Ljc0NCIgLz4KICA8cGF0aCBkPSJNMjIgMjF2LTJhNCA0IDAgMCAwLTMtMy44NyIgLz4KICA8Y2lyY2xlIGN4PSI5IiBjeT0iNyIgcj0iNCIgLz4KPC9zdmc+Cg==",
       "created": 1792690071959
     },
-    "435d2722196dc0f525d3770ef6719f3e39288185": {
-      "id": "435d2722196dc0f525d3770ef6719f3e39288185",
+    "5c8bdd1a90f0cbcca177576eec4721f24aca50ce": {
+      "id": "5c8bdd1a90f0cbcca177576eec4721f24aca50ce",
       "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1zaGFyZS0yIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPGNpcmNsZSBjeD0iMTgiIGN5PSI1IiByPSIzIiAvPgogIDxjaXJjbGUgY3g9IjYiIGN5PSIxMiIgcj0iMyIgLz4KICA8Y2lyY2xlIGN4PSIxOCIgY3k9IjE5IiByPSIzIiAvPgogIDxsaW5lIHgxPSI4LjU5IiB4Mj0iMTUuNDIiIHkxPSIxMy41MSIgeTI9IjE3LjQ5IiAvPgogIDxsaW5lIHgxPSIxNS40MSIgeDI9IjguNTkiIHkxPSI2LjUxIiB5Mj0iMTAuNDkiIC8+Cjwvc3ZnPgo=",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1wcmVzZW50YXRpb24iCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzY5NjVkYiIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNMiAzaDIwIiAvPgogIDxwYXRoIGQ9Ik0yMSAzdjExYTIgMiAwIDAgMS0yIDJINWEyIDIgMCAwIDEtMi0yVjMiIC8+CiAgPHBhdGggZD0ibTcgMjEgNS01IDUgNSIgLz4KPC9zdmc+Cg==",
       "created": 1792690071959
     },
-    "e2fbbece5ab11063ec65b09f09f88d3ba2f0ffd4": {
-      "id": "e2fbbece5ab11063ec65b09f09f88d3ba2f0ffd4",
+    "8931e83fe1bf38052f955b1e933fc4a1846f9338": {
+      "id": "8931e83fe1bf38052f955b1e933fc4a1846f9338",
       "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS11c2VyIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiMxOTAwNjQiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiIC8+CiAgPGNpcmNsZSBjeD0iMTIiIGN5PSI3IiByPSI0IiAvPgo8L3N2Zz4K",
-      "created": 1792690071959
-    },
-    "4d6555b91fb2727a0e7183377296ca950b82f3f0": {
-      "id": "4d6555b91fb2727a0e7183377296ca950b82f3f0",
-      "mimeType": "image/svg+xml",
-      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1sb2NrIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiMxOTAwNjQiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHJlY3Qgd2lkdGg9IjE4IiBoZWlnaHQ9IjExIiB4PSIzIiB5PSIxMSIgcng9IjIiIHJ5PSIyIiAvPgogIDxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIgLz4KPC9zdmc+Cg==",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1jb2RlIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0ibTE2IDE4IDYtNi02LTYiIC8+CiAgPHBhdGggZD0ibTggNi02IDYgNiA2IiAvPgo8L3N2Zz4K",
       "created": 1792690071959
     },
     "c9c1fe6b1b9b8b24b99ebcb0bea23a1ec34f6a64": {
@@ -8986,10 +9513,40 @@
       "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1nbG9iZSIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjMTkwMDY0IgogIHN0cm9rZS13aWR0aD0iMiIKICBzdHJva2UtbGluZWNhcD0icm91bmQiCiAgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIKPgogIDxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIiAvPgogIDxwYXRoIGQ9Ik0xMiAyYTE0LjUgMTQuNSAwIDAgMCAwIDIwIDE0LjUgMTQuNSAwIDAgMCAwLTIwIiAvPgogIDxwYXRoIGQ9Ik0yIDEyaDIwIiAvPgo8L3N2Zz4K",
       "created": 1792690071959
     },
+    "435d2722196dc0f525d3770ef6719f3e39288185": {
+      "id": "435d2722196dc0f525d3770ef6719f3e39288185",
+      "mimeType": "image/svg+xml",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1zaGFyZS0yIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPGNpcmNsZSBjeD0iMTgiIGN5PSI1IiByPSIzIiAvPgogIDxjaXJjbGUgY3g9IjYiIGN5PSIxMiIgcj0iMyIgLz4KICA8Y2lyY2xlIGN4PSIxOCIgY3k9IjE5IiByPSIzIiAvPgogIDxsaW5lIHgxPSI4LjU5IiB4Mj0iMTUuNDIiIHkxPSIxMy41MSIgeTI9IjE3LjQ5IiAvPgogIDxsaW5lIHgxPSIxNS40MSIgeDI9IjguNTkiIHkxPSI2LjUxIiB5Mj0iMTAuNDkiIC8+Cjwvc3ZnPgo=",
+      "created": 1792690071959
+    },
+    "9cdd56fe9159a8bd8b552705cb6f3f8eadc2c910": {
+      "id": "9cdd56fe9159a8bd8b552705cb6f3f8eadc2c910",
+      "mimeType": "image/svg+xml",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1oYXJkLWRyaXZlIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTEwIDE2aC4wMSIgLz4KICA8cGF0aCBkPSJNMi4yMTIgMTEuNTc3YTIgMiAwIDAgMC0uMjEyLjg5NlYxOGEyIDIgMCAwIDAgMiAyaDE2YTIgMiAwIDAgMCAyLTJ2LTUuNTI3YTIgMiAwIDAgMC0uMjEyLS44OTZMMTguNTUgNS4xMUEyIDIgMCAwIDAgMTYuNzYgNEg3LjI0YTIgMiAwIDAgMC0xLjc5IDEuMTF6IiAvPgogIDxwYXRoIGQ9Ik0yMS45NDYgMTIuMDEzSDIuMDU0IiAvPgogIDxwYXRoIGQ9Ik02IDE2aC4wMSIgLz4KPC9zdmc+Cg==",
+      "created": 1792690071959
+    },
+    "e2fbbece5ab11063ec65b09f09f88d3ba2f0ffd4": {
+      "id": "e2fbbece5ab11063ec65b09f09f88d3ba2f0ffd4",
+      "mimeType": "image/svg+xml",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS11c2VyIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiMxOTAwNjQiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiIC8+CiAgPGNpcmNsZSBjeD0iMTIiIGN5PSI3IiByPSI0IiAvPgo8L3N2Zz4K",
+      "created": 1792690071959
+    },
+    "aed18791a1ab98ffc0f2ab71d64487b0b7839dfb": {
+      "id": "aed18791a1ab98ffc0f2ab71d64487b0b7839dfb",
+      "mimeType": "image/svg+xml",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1zcXVhcmUtZGFzaGVkIgogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjQiCiAgaGVpZ2h0PSIyNCIKICB2aWV3Qm94PSIwIDAgMjQgMjQiCiAgZmlsbD0ibm9uZSIKICBzdHJva2U9IiM2OTY1ZGIiCiAgc3Ryb2tlLXdpZHRoPSIyIgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTUgM2EyIDIgMCAwIDAtMiAyIiAvPgogIDxwYXRoIGQ9Ik0xOSAzYTIgMiAwIDAgMSAyIDIiIC8+CiAgPHBhdGggZD0iTTIxIDE5YTIgMiAwIDAgMS0yIDIiIC8+CiAgPHBhdGggZD0iTTUgMjFhMiAyIDAgMCAxLTItMiIgLz4KICA8cGF0aCBkPSJNOSAzaDEiIC8+CiAgPHBhdGggZD0iTTkgMjFoMSIgLz4KICA8cGF0aCBkPSJNMTQgM2gxIiAvPgogIDxwYXRoIGQ9Ik0xNCAyMWgxIiAvPgogIDxwYXRoIGQ9Ik0zIDl2MSIgLz4KICA8cGF0aCBkPSJNMjEgOXYxIiAvPgogIDxwYXRoIGQ9Ik0zIDE0djEiIC8+CiAgPHBhdGggZD0iTTIxIDE0djEiIC8+Cjwvc3ZnPgo=",
+      "created": 1792690071959
+    },
     "4562eac9e2c8e7d7f66f12fbc69fa614232804c7": {
       "id": "4562eac9e2c8e7d7f66f12fbc69fa614232804c7",
       "mimeType": "image/svg+xml",
       "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1jYXNlLXNlbnNpdGl2ZSIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjNjk2NWRiIgogIHN0cm9rZS13aWR0aD0iMiIKICBzdHJva2UtbGluZWNhcD0icm91bmQiCiAgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIKPgogIDxwYXRoIGQ9Im0yIDE2IDQuMDM5LTkuNjlhLjUuNSAwIDAgMSAuOTIzIDBMMTEgMTYiIC8+CiAgPHBhdGggZD0iTTIyIDl2NyIgLz4KICA8cGF0aCBkPSJNMy4zMDQgMTNoNi4zOTIiIC8+CiAgPGNpcmNsZSBjeD0iMTguNSIgY3k9IjEyLjUiIHI9IjMuNSIgLz4KPC9zdmc+Cg==",
+      "created": 1792690071959
+    },
+    "ce8ae3bf4791928aa0e52aadcedb652e54f58a1c": {
+      "id": "ce8ae3bf4791928aa0e52aadcedb652e54f58a1c",
+      "mimeType": "image/svg+xml",
+      "dataURL": "data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjYxLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1maWxlLWRvd24iCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzY5NjVkYiIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNNiAyMmEyIDIgMCAwIDEtMi0yVjRhMiAyIDAgMCAxIDItMmg4YTIuNCAyLjQgMCAwIDEgMS43MDQuNzA2bDMuNTg4IDMuNTg4QTIuNCAyLjQgMCAwIDEgMjAgOHYxMmEyIDIgMCAwIDEtMiAyeiIgLz4KICA8cGF0aCBkPSJNMTQgMnY1YTEgMSAwIDAgMCAxIDFoNSIgLz4KICA8cGF0aCBkPSJNMTIgMTh2LTYiIC8+CiAgPHBhdGggZD0ibTkgMTUgMyAzIDMtMyIgLz4KPC9zdmc+Cg==",
       "created": 1792690071959
     }
   }

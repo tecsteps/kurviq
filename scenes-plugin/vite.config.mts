@@ -451,7 +451,7 @@ const KURVIQ_STATIC = `<style>.kq-static{opacity:0;animation:kq-static-show .3s 
       <p>Sign in with Google to keep your scenes in your Google Drive, on all your devices. Share a scene with people or by link, like a Google Doc; changes are merged element by element.</p>
       <h2 style="font-size:1.1rem;color:#1f1d3a">AI agents draw with you</h2>
       <p>Connect Claude, Codex, Cursor or any MCP client to Kurviq and it reads, draws and edits your scenes while you work. Agents: see <a href="/llms.txt">llms.txt</a>.</p>
-      <p><a href="https://github.com/tecsteps/kurviq">Open source (MIT)</a> · unofficial, not affiliated with Excalidraw · <a href="/third-party-licenses.txt">licenses</a> · <a href="/imprint">imprint</a> · <a href="/privacy">privacy</a></p>
+      <p><a href="https://github.com/tecsteps/kurviq">Open source (MIT)</a> · unofficial, not affiliated with Excalidraw · <a href="/third-party-licenses.txt">licenses</a> · <a href="/imprint">imprint</a> · <a href="/privacy">privacy</a> · <a href="/terms">terms</a></p>
     </main></div>`;
 
 /** branded files written over upstream's (Excalidraw-branded) ones in the build */
@@ -609,7 +609,7 @@ const kurviqOnline = () => ({
     });
     // imprint and privacy notice: plain pages around the app
     const layout = readFileSync(path.join(ONLINE_DIR, "pages/_layout.html"), "utf8");
-    for (const [page, title, lang] of [["imprint", "Imprint / Impressum", "en"], ["privacy", "Privacy / Datenschutz", "en"]]) {
+    for (const [page, title, lang] of [["imprint", "Imprint / Impressum", "en"], ["privacy", "Privacy / Datenschutz", "en"], ["terms", "Terms of Use / Nutzungsbedingungen", "en"], ["contact", "Contact / Kontakt", "en"]]) {
       this.emitFile({
         type: "asset",
         fileName: `${page}.html`,
@@ -744,12 +744,46 @@ const kurviqPwa = () =>
     // icons the page itself uses (tab, header): there offline too
     includeAssets: ["kurviq.svg", "favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png"],
     workbox: {
-      navigateFallbackDenylist: [/^\/auth\//, /^\/drive\//, /^\/oauth\//, /^\/\.well-known\//, /^\/mcp(\/|$)/, /^\/live\//, /^\/llms\.txt$/, /^\/(imprint|privacy)(\.html)?$/, /\.txt$/],
-      globIgnores: ["fonts.css", "**/locales/**", "service-worker.js", "**/*.chunk-*.js", "**/CodeMirrorEditor-*.js"],
+      // page loads (the app's HTML: /, /<scene>, /s/…, /features) network first, see runtimeCaching
+      navigateFallback: null,
+      // no navigation preload: it also fires for navigations the service worker leaves alone (/auth/callback,
+      // the plain pages), which then reach the Worker twice (a sign-in code would be used twice)
+      navigationPreload: false,
+      // the precache must not answer page loads itself ("/" is not index.html; the plain pages are not
+      // precached at all, they always come from the network); index.html stays precached as the offline shell
+      directoryIndex: null,
+      globIgnores: ["fonts.css", "**/locales/**", "service-worker.js", "**/*.chunk-*.js", "**/CodeMirrorEditor-*.js", "imprint.html", "privacy.html", "terms.html", "contact.html"],
       // only this site's own files, matched by path (a pattern on the whole URL
       // would also catch API requests that happen to contain "woff2");
       // new cache names, so entries of the old, too broad rules are never served
       runtimeCaching: [
+        // page loads: from the network (a new deploy shows on the next load; the
+        // Worker sees every page load for its statistics), the precached app
+        // shell when offline or after 3 s without an answer. Nothing is cached
+        // per page (an old page could point to files of an old deploy). The
+        // Worker's own routes and the plain pages are not handled here at all.
+        // (Serialized into sw.js: the function may not use outside variables.)
+        {
+          urlPattern: ({ request, url, sameOrigin }) =>
+            sameOrigin &&
+            request.mode === "navigate" &&
+            ![/^\/auth\//, /^\/drive\//, /^\/oauth\//, /^\/\.well-known\//, /^\/mcp(\/|$)/, /^\/live\//, /^\/scene\//, /^\/api\//, /^\/llms\.txt$/, /^\/(imprint|privacy|terms|contact)(\.html)?$/, /\.txt$/].some((re) => re.test(url.pathname)),
+          handler: "NetworkFirst",
+          options: {
+            cacheName: "kurviq-pages",
+            networkTimeoutSeconds: 3,
+            // never stored (no status is "cacheable"): the fallback is the precached shell
+            cacheableResponse: { statuses: [599] },
+            plugins: [
+              {
+                // offline, or no answer within 3 s: the precached app shell (stored with a ?__WB_REVISION__)
+                cachedResponseWillBeUsed: async ({ cachedResponse }: { cachedResponse?: Response }) =>
+                  cachedResponse || (await caches.match(new URL("/index.html", self.location.href).href, { ignoreSearch: true })) || undefined,
+              },
+            ],
+            precacheFallback: { fallbackURL: "index.html" },
+          },
+        },
         {
           urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.endsWith(".woff2"),
           handler: "CacheFirst",
@@ -776,7 +810,8 @@ const kurviqPwa = () =>
           options: { cacheName: "kurviq-chunk", expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 90 } },
         },
       ],
-      maximumFileSizeToCacheInBytes: 2.3 * 1024 ** 2,
+      // the main bundle must be precached (offline start); it is about 2.3 MiB
+      maximumFileSizeToCacheInBytes: 3 * 1024 ** 2,
     },
     manifest: {
       short_name: "Kurviq",

@@ -26,6 +26,7 @@ import { currentSpace, SPACE_KEY } from "../storage";
 
 import google from "../../../online/google.json";
 
+import { LIVE_MARKER } from "./liveProtocol";
 import { md5 } from "./md5";
 
 import type { ApiError, RemoteInfo, RemoteScene, SceneVersion } from "../api";
@@ -52,7 +53,8 @@ export const sharedFileId = currentSpace.startsWith("f:") ? currentSpace.slice(2
 // connection: who is signed in (cookie, via the Worker)
 // -----------------------------------------------------------------------------
 
-export type GoogleUser = { email: string; name: string | null; avatarUrl: string | null };
+/** sub: Google's stable account id (live sync keys its queues by it; older Workers don't send it) */
+export type GoogleUser = { email: string; name: string | null; avatarUrl: string | null; sub?: string };
 
 export type ConnectionState = {
   /** null = not signed in, undefined = not checked yet */
@@ -98,21 +100,32 @@ const localSession = () => {
   }
 };
 
-/** the local install, back from signing in: #kurviq-google=connected&session=… */
+/** the local install's sign-in: the state it sent along (sessionStorage), to recognise its answer */
+const LOCAL_STATE_KEY = "kurviq-google-state";
+
+/** the local install, back from signing in: #kurviq-google=connected&kurviq-state=…&session=… */
 const takeLocalSession = () => {
   if (!IS_LOCAL_INSTALL || !window.location.hash.includes("kurviq-google=")) {
     return;
   }
   const params = new URLSearchParams(window.location.hash.slice(1));
   const session = params.get("session");
+  // only the answer to this browser tab's own sign-in counts (its state): a link carrying someone
+  // else's session (login CSRF) is dropped
+  let expected: string | null = null;
   try {
-    if (session) {
+    expected = sessionStorage.getItem(LOCAL_STATE_KEY);
+    sessionStorage.removeItem(LOCAL_STATE_KEY);
+  } catch {}
+  const ours = !!expected && params.get("kurviq-state") === expected;
+  try {
+    if (session && ours) {
       localStorage.setItem(LOCAL_SESSION_KEY, session);
     }
   } catch {}
   const url = new URL(window.location.href);
   url.hash = "";
-  url.searchParams.set("google", params.get("kurviq-google") || "failed");
+  url.searchParams.set("google", ours ? params.get("kurviq-google") || "failed" : "failed");
   window.history.replaceState(window.history.state, "", url.toString());
 };
 takeLocalSession();
@@ -202,16 +215,28 @@ export const connectGoogle = ({ consent = false }: { consent?: boolean } = {}) =
     // the answer (?google=connected) only counts in the tab that asked
     sessionStorage.setItem(CONNECTING_KEY, String(Date.now()));
   } catch {}
-  window.location.href = `${AUTH_BASE}/auth/login?return=${encodeURIComponent(back)}${consent ? "&consent=1" : ""}`;
+  let state = "";
+  if (IS_LOCAL_INSTALL) {
+    // a random state the answer has to carry back (16-128 of A-Za-z0-9_-)
+    state = [...crypto.getRandomValues(new Uint8Array(24))].map((byte) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"[byte % 64]).join("");
+    try {
+      sessionStorage.setItem(LOCAL_STATE_KEY, state);
+    } catch {}
+  }
+  window.location.href = `${AUTH_BASE}/auth/login?return=${encodeURIComponent(back)}${state ? `&state=${state}` : ""}${consent ? "&consent=1" : ""}`;
 };
 
 /** the other tabs of this browser hear about a sign-out */
 const tabsChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("kurviq-google") : null;
 
+/** signed out on purpose (this tab or another one): live sync closes its connections */
+export const signOutListeners = new Set<() => void>();
+
 const forgetConnection = () => {
   token = null;
   forgetListing();
   setConnection({ user: null, drive: false });
+  signOutListeners.forEach((listener) => listener());
 };
 tabsChannel?.addEventListener("message", (event) => event.data === "disconnected" && forgetConnection());
 
@@ -231,6 +256,50 @@ export const disconnectGoogle = async () => {
   }
   forgetConnection();
   tabsChannel?.postMessage("disconnected");
+};
+
+/**
+ * A POST to Kurviq's Worker with this browser's sign-in: the cookie, or the
+ * local install's sealed session in the body (never in a URL). Live sync's
+ * tickets, access-proof renewals and reconcile tokens use it.
+ */
+export const authPost = async (path: string, body: Record<string, unknown> = {}) => {
+  const session = IS_LOCAL_INSTALL ? localSession() : null;
+  if (IS_LOCAL_INSTALL && !session) {
+    throw notConnectedError();
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${AUTH_BASE}${path}`, {
+      method: "POST",
+      credentials: IS_LOCAL_INSTALL ? "omit" : "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(session ? { ...body, session } : body),
+    });
+  } catch {
+    throw offlineError("Kurviq server not reachable");
+  }
+  const answer = await res.json().catch(() => ({}));
+  if (IS_LOCAL_INSTALL && typeof answer.session === "string") {
+    // the local install's sealed session, renewed on use
+    try {
+      localStorage.setItem(LOCAL_SESSION_KEY, answer.session);
+    } catch {}
+  }
+  if (!res.ok) {
+    throw Object.assign(new Error(answer.error || `Kurviq server error (${res.status})`), {
+      status: res.status,
+      code: answer.code,
+      offline: res.status === 503 || res.status >= 500,
+    }) as ApiError & { code?: string };
+  }
+  return answer;
+};
+
+/** the WebSocket of a scene's Durable Object (on kurviq.com also for the local install) */
+export const liveSocketUrl = (fileId: string, ticket: string) => {
+  const base = IS_LOCAL_INSTALL ? AUTH_BASE : window.location.origin;
+  return `${base.replace(/^http/, "ws")}/scene/${encodeURIComponent(fileId)}/live?ticket=${encodeURIComponent(ticket)}`;
 };
 
 // -----------------------------------------------------------------------------
@@ -269,7 +338,7 @@ const drive = async (
     const isJson = body !== undefined && !(typeof body === "string" || body instanceof Blob || body instanceof Uint8Array);
     let res: Response;
     try {
-      res = await fetch(url.startsWith("https://") ? url : `${API}${url}`, {
+      res = await fetch(url.startsWith("https://") || url.startsWith(UPLOAD) ? url : `${API}${url}`, {
         method,
         cache: "no-store",
         headers: {
@@ -617,6 +686,28 @@ const markAgentVersion = async (file: DriveFile, revision: string) => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// live sync: scenes marked appProperties.kurviqSync are written only through
+// their Durable Object (online/liveSync.ts registers these)
+// -----------------------------------------------------------------------------
+
+export const isLiveFile = (file: { appProperties?: Record<string, string> }) => file.appProperties?.kurviqSync === LIVE_MARKER;
+
+export type LiveWrite = { fileId: string; name: string; json: string; baseSha?: string; source?: string };
+let liveWriter: ((write: LiveWrite) => Promise<{ sha: string; commit: string | null; changed: boolean }>) | null = null;
+let liveRenamer: ((rename: { fileId: string; from: string; to: string }) => Promise<void>) | null = null;
+let liveRemover: ((remove: { fileId: string; name: string }) => Promise<void>) | null = null;
+
+export const setLiveWriters = (writers: {
+  write: NonNullable<typeof liveWriter>;
+  rename: NonNullable<typeof liveRenamer>;
+  remove: NonNullable<typeof liveRemover>;
+}) => {
+  liveWriter = writers.write;
+  liveRenamer = writers.rename;
+  liveRemover = writers.remove;
+};
+
 export const driveScenes = {
   remoteInfo: (): RemoteInfo => ({ ...remote, readOnly }),
 
@@ -636,6 +727,7 @@ export const driveScenes = {
               updatedAt: file.modifiedTime ?? null,
               public: !!file.permissionIds?.includes("anyoneWithLink"),
               fileId: file.id,
+              ...(isLiveFile(file) ? { live: true } : {}),
             }))
             .sort((a, b) => a.name.localeCompare(b.name))
         : [];
@@ -688,6 +780,14 @@ export const driveScenes = {
     requireWritable();
     const sha = md5(encodeBytes(json));
     const file = await locate(name);
+    if (file && isLiveFile(file)) {
+      // the scene saves through its Durable Object: never a second writer
+      // (CONCEPT "Old app versions"); agents' writes go through live sync
+      if (!liveWriter) {
+        throw httpError(409, `"${name}" is saved through live sync: it can't be written to Drive directly`);
+      }
+      return liveWriter({ fileId: file.id, name, json, baseSha, source });
+    }
     checkBase(name, file?.md5Checksum, baseSha);
     if (file && file.md5Checksum === sha) {
       return { sha, commit: null, changed: false };
@@ -745,6 +845,15 @@ export const driveScenes = {
     if (sharedFileId) {
       throw httpError(403, `"${name}" belongs to ${ownerName(file)}: only they can delete it`);
     }
+    if (isLiveFile(file)) {
+      // its Durable Object stops saving first (and confirms), then the file goes to the trash
+      if (!liveRemover) {
+        throw httpError(409, `"${name}" is saved through live sync: delete it in Kurviq`);
+      }
+      await liveRemover({ fileId: file.id, name });
+      forgetListing();
+      return { sha: null };
+    }
     checkBase(name, file.md5Checksum, baseSha ?? undefined);
     const res = await drive(`/files/${file.id}?fields=id`, { method: "PATCH", body: { trashed: true } });
     if (res.status !== 200) {
@@ -769,6 +878,15 @@ export const driveScenes = {
     }
     if (current.files.has(to)) {
       throw httpError(409, `A scene named "${to}" already exists in Google Drive`, { exists: true });
+    }
+    if (isLiveFile(file)) {
+      // a rename of a live scene is an event like any other (the DO renames the file)
+      if (!liveRenamer) {
+        throw httpError(409, `"${from}" is saved through live sync: rename it in Kurviq`);
+      }
+      await liveRenamer({ fileId: file.id, from, to });
+      forgetListing();
+      return { sha: file.md5Checksum ?? "", commit: null };
     }
     const res = await drive(`/files/${file.id}?fields=id&supportsAllDrives=true`, {
       method: "PATCH",
@@ -829,6 +947,36 @@ export const driveScenes = {
       return null;
     }
     return { sha: res.data.md5Checksum as string, commit: revision, at: res.data.modifiedTime ?? file.appProperties?.agentAt ?? null };
+  },
+
+  /** a scene that saves through live sync: its file id (null: Drive is written directly, or unknown) */
+  liveFileOf: async (name: string) => {
+    const file = await locate(name, false).catch(() => null);
+    return file && isLiveFile(file) ? file.id : null;
+  },
+
+  /** a version of a file by its MD5: kept in this browser, else the current one if it is that version */
+  loadFileVersion: async (fileId: string, sha: string): Promise<string | null> => {
+    const kept = await keptVersion(fileId, sha);
+    if (kept !== null) {
+      return kept;
+    }
+    const res = await download(fileId);
+    if (res.status !== 200) {
+      return null;
+    }
+    const actual = md5(encodeBytes(res.text));
+    await keepVersion(fileId, actual, res.text);
+    return actual === sha ? res.text : null;
+  },
+
+  /** move a file to Drive's trash (the live scene's DO was told first) */
+  trashFile: async (fileId: string) => {
+    const res = await drive(`/files/${fileId}?fields=id&supportsAllDrives=true`, { method: "PATCH", body: { trashed: true } });
+    if (res.status !== 200 && res.status !== 404) {
+      fail(res, "Moving the scene to Drive's trash failed");
+    }
+    forgetListing();
   },
 
   /** the Drive file of a scene of this space (for sharing) */

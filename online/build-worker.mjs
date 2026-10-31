@@ -37,7 +37,7 @@ const result = await build({
     "node:fs/promises": path.join(HERE, "worker/shims/fs-promises.js"),
   },
   // provided by the Workers runtime (nodejs_compat)
-  external: ["cloudflare:workers", "node:*"],
+  external: ["cloudflare:workers", "cloudflare:email", "node:*"],
   // the upstream tools locate their files with these (no file system here)
   define: {
     "import.meta.filename": JSON.stringify("/bundle/server.js"),

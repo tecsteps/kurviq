@@ -28,14 +28,17 @@
       { "name": "SCENE", "class_name": "SceneRoom" },
       { "name": "ACCOUNT", "class_name": "AccountGuard" },
       // the fake Google for local tests (only used with FAKE_GOOGLE=1)
-      { "name": "FAKE_GOOGLE_STORE", "class_name": "FakeGoogle" }
+      { "name": "FAKE_GOOGLE_STORE", "class_name": "FakeGoogle" },
+      // usage statistics: anonymous counters per hour, written to D1 (worker/stats.ts, CLAUDE.md)
+      { "name": "STATS", "class_name": "Stats" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Pairing"] },
-    { "tag": "v2", "new_sqlite_classes": ["SceneRoom", "AccountGuard", "FakeGoogle"] }
+    { "tag": "v2", "new_sqlite_classes": ["SceneRoom", "AccountGuard", "FakeGoogle"] },
+    { "tag": "v3", "new_sqlite_classes": ["Stats"] }
   ],
-  // bug reports and change requests (worker/feedback.ts)
+  // bug reports and change requests (worker/feedback.ts), usage statistics (stats_hourly, stats_daily: worker/stats.ts)
   "d1_databases": [
     { "binding": "FEEDBACK", "database_name": "kurviq-feedback", "database_id": "b0ab0f4a-ee15-4287-baaa-5043937f5952" }
   ],
@@ -43,8 +46,19 @@
     "CANONICAL_HOST": "kurviq.com",
     // live sync: "off", "all", or the accounts (emails) that pilot it; scenes
     // already marked kurviqSync stay live for everyone (docs/live-sync/PROTOCOL.md)
-    "LIVE_SYNC": "fabian.wesner@gmail.com"
+    "LIVE_SYNC": "fabian.wesner@gmail.com",
+    // usage statistics (worker/stats.ts): "on", anything else = off; off in wrangler dev unless STATS_DEV=1
+    "STATS_ENABLED": "on"
   },
+  // hourly: retention (worker/retention.ts) — feedback deleted after 2 years, contact messages after 1 year,
+  // their sender hashes blanked after 1 day
+  "triggers": { "crons": ["17 * * * *"] },
+  // the contact form's email to the operator (worker/contact.ts), sent from contact@kurviq.com. Email
+  // Routing on kurviq.com is enabled with fabian.wesner@tecsteps.com as the verified destination
+  // (set up 2026-10-31; no routing rules). Without the binding, messages are only stored in D1.
+  "send_email": [
+    { "name": "CONTACT_EMAIL", "destination_address": "fabian.wesner@tecsteps.com" }
+  ],
   "routes": [
     { "pattern": "kurviq.com", "custom_domain": true },
     { "pattern": "www.kurviq.com", "custom_domain": true }

@@ -1,147 +1,200 @@
 <h1>Privacy <span class="muted">/ Datenschutz</span></h1>
-<p class="muted">Last updated / Stand: 30 October 2026 · <a href="#de">Deutsche Fassung unten</a></p>
+<p class="muted">Last updated / Stand: 31 October 2026 · <a href="#de">Deutsche Fassung unten</a></p>
 
-<p><strong>In short:</strong> Kurviq has no accounts, no analytics and no tracking. Your drawings stay in your browser. Kurviq's
-server stores nothing about you, except feedback you choose to send. Data only goes elsewhere when you choose it: Google,
-if you sign in with Google, and your AI agent, if you give it your agent link.</p>
+<p><strong>In short:</strong> Kurviq has no user accounts and no tracking. Your drawings are stored in your browser and, if you
+sign in with Google, in your own Google Drive; on their way there they pass through our server, encrypted. We count usage only
+as totals. Details below.</p>
 
 <h2>Controller</h2>
 <address>Tecsteps GmbH, Breitscheidstr. 42, 16321 Bernau bei Berlin, Germany<br />
-Email: <a href="mailto:fabian.wesner@tecsteps.com">fabian.wesner@tecsteps.com</a> (see <a href="/imprint">imprint</a>)</address>
+Email: <a href="mailto:fabian.wesner@tecsteps.com">fabian.wesner@tecsteps.com</a> · <a href="/contact">contact form</a> ·
+<a href="/imprint">imprint</a></address>
 
 <h2>Hosting (Cloudflare)</h2>
-<p>Kurviq runs on Cloudflare (Cloudflare, Inc., 101 Townsend St, San Francisco, CA 94107, USA). To deliver the website,
-Cloudflare necessarily processes your IP address and technical request data (e.g. browser, requested page, time). We do not
-keep request logs. Cloudflare may process data in the USA; Cloudflare is certified under the EU-U.S. Data Privacy Framework.
-Legal basis: Art. 6(1)(f) GDPR (our legitimate interest in a secure, working website).</p>
+<p>Kurviq runs on Cloudflare (Cloudflare, Inc., USA). To deliver the website, Cloudflare processes your IP address and technical
+request data. Cloudflare is our processor (Art. 28 GDPR) and also processes some network and security data for its own
+purposes. Transfers to the USA rely on the EU-U.S. Data Privacy Framework (Art. 45 GDPR) and Cloudflare's standard contractual
+clauses. We keep no request logs. Legal basis: Art. 6(1)(f) GDPR (a secure, working website).</p>
 
-<h2>Your drawings and settings</h2>
-<p>Scenes, settings and (if you create one) your agent link are stored in your browser (localStorage, IndexedDB). They are
-not sent to us. You can delete them at any time by clearing this site's data in your browser. Kurviq loads no third-party
-fonts or images and no third-party scripts except Google's Picker (see below); your browser only talks to kurviq.com (and to
-Google, see below).</p>
+<h2>In your browser</h2>
+<p>Scenes, settings and your sign-in state are stored in your browser (localStorage, sessionStorage, IndexedDB, the service
+worker's cache). This is strictly necessary for the app (§25(2) No. 2 TDDDG); you can delete it by clearing this site's data.
+Local scenes stay there unless you put them in Google Drive or connect an agent. Embedded content in a scene (for example YouTube
+or Figma), linked images, the shared libraries and fallback fonts are loaded by your browser directly from their providers, whose
+privacy policies apply.</p>
 
 <h2>Google sign-in and Google Drive (optional)</h2>
-<p>Only if you click "Sign in with Google": you are sent to Google (Google Ireland Limited, Gordon House, Barrow Street,
-Dublin 4, Ireland; Google LLC is certified under the EU-U.S. Data Privacy Framework) to sign in and allow Kurviq. Kurviq asks
-for your name, email address and profile picture and for access to Drive files it creates or that you open with it
-(<code>drive.file</code>), nothing else in your Drive. Kurviq then sets an encrypted, httpOnly cookie <code>kq_google</code>
-with Google's refresh token and your account details, so you stay signed in in this browser (up to 400 days), plus a
-short-lived cookie <code>kq_oauth_state</code> (15 minutes) that protects the sign-in. Both are technically necessary for the
-feature you asked for; no consent banner is needed. Kurviq's server trades the cookie for access tokens valid for one hour;
-your browser then reads and writes your scenes directly with Google Drive's API (www.googleapis.com), as files in a folder
-"Kurviq" in your Drive. Kurviq's server sees the access tokens in transit and stores nothing. The local install of Kurviq
-signs in the same way through kurviq.com and keeps the sealed sign-in in its own browser storage instead of a cookie. Legal
-basis: Art. 6(1)(b) GDPR (providing the feature you request). To end it: "Sign out" in Kurviq forgets the sign-in in this
-browser; to remove Kurviq's access altogether, go to <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
-Your scenes in Drive are yours and stay there until you delete them. Google's privacy policy applies to your Google
-account.</p>
+<p>When you sign in with Google (Google Ireland Limited; Google is responsible for your account itself), Kurviq gets your name,
+email address, profile picture and account id, and access only to Drive files it creates or that you open with it
+(<code>drive.file</code>; <code>drive.install</code> adds "Open with Kurviq" in Drive). Two cookies are set, both strictly
+necessary (§25(2) No. 2 TDDDG): <code>kq_google</code>, encrypted, holds Google's sign-in so you stay signed in (400 days, renewed
+on use; the local install keeps it in its browser storage for 90 days instead), and <code>kq_oauth_state</code> protects the
+sign-in (1 hour). Our server only issues one-hour access tokens and stores none, except for live sync (below). Legal basis: Art.
+6(1)(b) GDPR. "Sign out" ends it in this browser; <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>
+removes Kurviq's access altogether.</p>
+
+<h2>Live sync of scenes in Drive</h2>
+<p>When you edit a scene stored in Google Drive, every change goes to our server (a Cloudflare Durable Object for that scene),
+which passes it to the others who have the scene open and saves the scene to the Drive file about once a minute, with your
+Google access. Legal basis: Art. 6(1)(b) GDPR.</p>
+<ul>
+<li>Drawing content, images, fonts, settings and the scene name are encrypted in your browser with a key that is stored only on
+the Drive file; our database cannot read them. The server stores in readable form only what it needs to keep everyone's copy
+consistent: element ids, types, versions, connections, groups and frames, the ids of images and fonts, your Google account id
+and pseudonym, and times. While it saves, it decrypts the scene in memory. Your display name is kept only while you are connected
+and is shown to the others who have the scene open, as is theirs to you.</li>
+<li>So that your changes reach Drive after you close the tab, the server keeps your Google refresh token, encrypted with a key
+outside the database: until your changes are in Drive, at most 4 hours after your last connection. While you are connected, it
+checks your access every 10 minutes and Google notifies it of changes to the file. When you sign out and Google does not
+confirm right away that Kurviq's access is revoked, the server keeps the encrypted token only to retry the revocation, until
+Google confirms it, at most 30 days.</li>
+<li>Retention: unsaved changes until they are in Drive (usually within a minute; changes that cannot be saved under their
+author's name at most 90 days), the encrypted copy of the scene until 10 minutes after the last person left, technical records
+(tab ids, counters, save records) 30 days, records of "sign out everywhere" 400 days. Cloudflare can restore deleted data for up
+to 30 days.</li>
+<li>Each element in the Drive file records its last author as a pseudonym that differs from scene to scene.</li>
+</ul>
 
 <h2>Shared and public scenes (optional)</h2>
-<p>Sharing is done with Google Drive's permissions: when you add people in "Share…", Google stores who has access and emails
-them the link. A shared scene's link (<code>kurviq.com/s/&lt;file id&gt;/&lt;name&gt;</code>) contains the Drive file's id and
-the scene name. Viewers read it with their own Google sign-in, directly from Google; Kurviq's server is not involved. To let
-Kurviq open a file shared with you, Kurviq may show Google's Picker, a script loaded from apis.google.com. When you set a
-scene to "Anyone with the link", Kurviq's server reads it from Drive for viewers who are not signed in and Cloudflare keeps a
-copy in its cache for about a minute; nothing else is stored. Make it private again in "Share…" (or in Drive).</p>
+<p>Sharing uses Google Drive's permissions; Google stores who has access and emails the link (kurviq.com/s/&lt;file id&gt;/&lt;name&gt;).
+People you share with load the scene from Google with their own sign-in and, for live-synced scenes, connect to our server as
+above. To open a file shared with you, Kurviq may show Google's Picker (a script from Google LLC, USA). For scenes shared with
+"Anyone with the link", our server reads the file for viewers and Cloudflare caches it for one minute.</p>
 
 <h2>Fonts from Google Fonts (optional)</h2>
-<p>When you add a font from Google Fonts, Kurviq's server fetches it from Google (and Cloudflare caches it for a day); your
-browser only talks to kurviq.com, so Google doesn't see you. The font is stored in the scenes that use it.</p>
+<p>When you add a Google font, our server fetches it from Google (cached by Cloudflare for a day), so Google doesn't see you.</p>
 
 <h2>AI agents (optional)</h2>
-<p>Only if you create an agent link (MCP button) and give it to an AI agent: the agent's requests and your open Kurviq tab's
-answers (e.g. drawing content and images) pass through Kurviq's server on Cloudflare in transit. They are not stored. What
-the agent's provider does with the data is governed by that provider's terms. You can replace or switch off the link at any
-time.</p>
+<p>Only if you connect an agent (MCP button) and allow it in Kurviq: the agent signs in with Kurviq (one-hour access tokens,
+renewable for up to 90 days) and its requests and your Kurviq tab's answers (for example drawing content and images) pass through
+our server, without being stored. What the agent's provider does with the data is governed by its terms. "Sign out all agents"
+ends every agent's access.</p>
 
-<h2>Feedback (optional)</h2>
-<p>Only if you send a bug report or change request (Feedback link, or your AI agent sends one for you): Kurviq stores its
-kind, title and description, the name of the scene you had open, the time, and a keyed hash of your IP address (or of the
-agent link), used only to limit how many reports one sender can send per hour; the IP address itself is not stored. The
-reports are stored in a database at Cloudflare and read by us to decide what to build. Please don't put personal data in
-them. Legal basis: Art. 6(1)(f) GDPR (improving Kurviq). Write to us to have a report deleted.</p>
+<h2>Feedback and contact form (optional)</h2>
+<p>Feedback reports (bug reports, change requests, also sent by your agent) are stored with the scene name you had open and the
+time, and deleted after 2 years. Contact form messages are stored with your name (optional), email address and message, emailed
+to us, and deleted after 1 year. For both, a keyed hash of your IP address is kept for about a day to limit how many messages one
+sender can send. Legal basis: Art. 6(1)(f) GDPR (improving Kurviq) and Art. 6(1)(b) GDPR (answering you). Please don't put
+personal data into reports.</p>
+
+<h2>Usage statistics</h2>
+<p>From the page requests your browser makes anyway, our server counts totals per hour: page views by page type, country (from
+Cloudflare) and device class, and how often features are used (sign-ins, live connections, public scene views, agent tool calls
+by name, feedback and contact messages). Nothing is stored in or read from your browser for this. To estimate unique visitors per
+day, your IP address and browser string are turned into a one-way hash with a key that exists for one day only and added to a
+counter that cannot be reversed; at the end of the day only the estimated number remains. We store no IP addresses, identifiers or
+scene data for statistics, only the totals. Legal basis: Art. 6(1)(f) GDPR (understanding how Kurviq is used).</p>
+
+<h2>Right to object</h2>
+<p><strong>Where we process data on the basis of Art. 6(1)(f) GDPR (hosting, feedback, statistics), you can object at any time on
+grounds relating to your particular situation (Art. 21 GDPR); write to us.</strong></p>
 
 <h2>Your rights</h2>
-<p>You have the right to access, rectification, erasure, restriction of processing, data portability and objection
-(Art. 15–21 GDPR), and the right to lodge a complaint with a supervisory authority, e.g. the Landesbeauftragte für den
-Datenschutz und für das Recht auf Akteneinsicht Brandenburg. As Kurviq's server stores no personal data, most of this is in
-your hands: clear the site data in your browser, sign out of Google in Kurviq and remove Kurviq's access in your Google
-account. For anything else, write to us.</p>
+<p>You have the right to access, rectification, erasure, restriction, data portability and objection (Art. 15–21 GDPR), and to
+lodge a complaint with a supervisory authority, e.g. the Landesbeauftragte für den Datenschutz und für das Recht auf Akteneinsicht
+Brandenburg. You don't have to provide any data; without your IP address the website cannot be delivered, without Google sign-in
+the Drive features are unavailable. There is no automated decision-making.</p>
 
 <hr id="de" />
 
 <h1>Datenschutz</h1>
 
-<p><strong>Kurz gesagt:</strong> Kurviq hat keine Konten, keine Analyse und kein Tracking. Deine Zeichnungen bleiben in deinem
-Browser. Kurviqs Server speichert nichts über dich, außer Feedback, das du selbst sendest. Daten gehen nur dorthin, wo du es
-willst: zu Google, wenn du dich mit Google anmeldest, und zu deinem KI-Agenten, wenn du ihm deinen Agent-Link gibst.</p>
+<p><strong>Kurz gesagt:</strong> Kurviq hat keine Benutzerkonten und kein Tracking. Deine Zeichnungen liegen in deinem Browser und,
+wenn du dich mit Google anmeldest, in deinem eigenen Google Drive; auf dem Weg dorthin laufen sie verschlüsselt über unseren Server.
+Nutzung zählen wir nur als Summen. Einzelheiten unten.</p>
 
 <h2>Verantwortlicher</h2>
 <address>Tecsteps GmbH, Breitscheidstr. 42, 16321 Bernau bei Berlin<br />
-E-Mail: <a href="mailto:fabian.wesner@tecsteps.com">fabian.wesner@tecsteps.com</a> (siehe <a href="/imprint">Impressum</a>)</address>
+E-Mail: <a href="mailto:fabian.wesner@tecsteps.com">fabian.wesner@tecsteps.com</a> · <a href="/contact">Kontaktformular</a> ·
+<a href="/imprint">Impressum</a></address>
 
 <h2>Hosting (Cloudflare)</h2>
-<p>Kurviq läuft bei Cloudflare (Cloudflare, Inc., 101 Townsend St, San Francisco, CA 94107, USA). Um die Website
-auszuliefern, verarbeitet Cloudflare zwangsläufig deine IP-Adresse und technische Anfragedaten (z. B. Browser, aufgerufene
-Seite, Zeitpunkt). Wir speichern keine Zugriffsprotokolle. Cloudflare kann Daten in den USA verarbeiten; Cloudflare ist nach
-dem EU-US Data Privacy Framework zertifiziert. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an einer
-sicheren, funktionierenden Website).</p>
+<p>Kurviq läuft bei Cloudflare (Cloudflare, Inc., USA). Um die Website auszuliefern, verarbeitet Cloudflare deine IP-Adresse und
+technische Anfragedaten. Cloudflare ist unser Auftragsverarbeiter (Art. 28 DSGVO) und verarbeitet einige Netzwerk- und
+Sicherheitsdaten auch für eigene Zwecke. Übermittlungen in die USA stützen sich auf das EU-US Data Privacy Framework (Art. 45 DSGVO)
+und die Standardvertragsklauseln von Cloudflare. Wir speichern keine Zugriffsprotokolle. Rechtsgrundlage: Art. 6 Abs. 1 lit. f
+DSGVO (eine sichere, funktionierende Website).</p>
 
-<h2>Deine Zeichnungen und Einstellungen</h2>
-<p>Szenen, Einstellungen und (falls erstellt) dein Agent-Link werden in deinem Browser gespeichert (localStorage, IndexedDB)
-und nicht an uns übertragen. Du kannst sie jederzeit löschen, indem du die Websitedaten dieser Seite in deinem Browser
-löschst. Kurviq lädt keine Schriften oder Bilder von Dritten und keine Skripte von Dritten außer Googles Picker (siehe
-unten); dein Browser spricht nur mit kurviq.com (und mit Google, siehe unten).</p>
+<h2>In deinem Browser</h2>
+<p>Szenen, Einstellungen und dein Anmeldestatus werden in deinem Browser gespeichert (localStorage, sessionStorage, IndexedDB,
+Service-Worker-Cache). Das ist für die App unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG); du kannst es löschen, indem du die
+Websitedaten dieser Seite löschst. Lokale Szenen bleiben dort, solange du sie nicht in Google Drive legst oder einen Agenten
+verbindest. Eingebettete Inhalte in einer Szene (zum Beispiel YouTube oder Figma), verlinkte Bilder, die gemeinsamen Bibliotheken
+und Ersatzschriften lädt dein Browser direkt von deren Anbietern; dort gelten deren Datenschutzerklärungen.</p>
 
 <h2>Anmeldung mit Google und Google Drive (optional)</h2>
-<p>Nur wenn du auf „Sign in with Google" klickst: Du wirst zu Google geleitet (Google Ireland Limited, Gordon House, Barrow
-Street, Dublin 4, Irland; Google LLC ist nach dem EU-US Data Privacy Framework zertifiziert), meldest dich dort an und
-erlaubst Kurviq den Zugriff. Kurviq fragt nach Name, E-Mail-Adresse und Profilbild sowie nach Zugriff auf die Drive-Dateien,
-die es selbst anlegt oder die du damit öffnest (<code>drive.file</code>), sonst nichts in deinem Drive. Kurviq setzt dann ein
-verschlüsseltes httpOnly-Cookie <code>kq_google</code> mit Googles Refresh-Token und deinen Kontodaten, damit du in diesem
-Browser angemeldet bleibst (bis zu 400 Tage), sowie ein kurzlebiges Cookie <code>kq_oauth_state</code> (15 Minuten), das die
-Anmeldung absichert. Beide sind für die von dir gewünschte Funktion technisch notwendig; eine Einwilligung ist nicht
-erforderlich. Kurviqs Server tauscht das Cookie gegen Zugangstokens, die eine Stunde gelten; dein Browser liest und schreibt
-deine Szenen dann direkt über die API von Google Drive (www.googleapis.com), als Dateien in einem Ordner „Kurviq" in deinem
-Drive. Kurviqs Server sieht die Zugangstokens auf dem Weg und speichert nichts. Die lokale Installation von Kurviq meldet
-sich genauso über kurviq.com an und bewahrt die versiegelte Anmeldung statt in einem Cookie im eigenen Browserspeicher auf.
-Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO (Bereitstellung der angefragten Funktion). Beenden: „Sign out" in Kurviq vergisst
-die Anmeldung in diesem Browser; Kurviqs Zugriff ganz entfernen kannst du unter
-<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Deine Szenen in Drive gehören dir
-und bleiben dort, bis du sie löschst. Für dein Google-Konto gilt die Datenschutzerklärung von Google.</p>
+<p>Wenn du dich mit Google anmeldest (Google Ireland Limited; für dein Konto selbst ist Google verantwortlich), erhält Kurviq deinen
+Namen, deine E-Mail-Adresse, dein Profilbild und deine Konto-ID sowie Zugriff nur auf Drive-Dateien, die es selbst anlegt oder die
+du damit öffnest (<code>drive.file</code>; <code>drive.install</code> ergänzt „Öffnen mit Kurviq" in Drive). Zwei Cookies werden
+gesetzt, beide unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG): <code>kq_google</code>, verschlüsselt, enthält die Anmeldung bei
+Google, damit du angemeldet bleibst (400 Tage, bei Nutzung verlängert; die lokale Installation bewahrt sie stattdessen 90 Tage im
+Browserspeicher auf), und <code>kq_oauth_state</code> sichert die Anmeldung ab (1 Stunde). Unser Server stellt nur einstündige
+Zugangstokens aus und speichert keine, außer für die Live-Synchronisierung (unten). Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.
+„Sign out" beendet die Anmeldung in diesem Browser; unter
+<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> entfernst du Kurviqs Zugriff ganz.</p>
+
+<h2>Live-Synchronisierung von Szenen in Drive</h2>
+<p>Wenn du eine Szene in Google Drive bearbeitest, geht jede Änderung an unseren Server (ein Cloudflare Durable Object für diese
+Szene); er gibt sie an die anderen weiter, die die Szene geöffnet haben, und speichert die Szene etwa einmal pro Minute mit deinem
+Google-Zugriff in die Drive-Datei. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.</p>
+<ul>
+<li>Inhalt, Bilder, Schriften, Einstellungen und der Name der Szene werden in deinem Browser mit einem Schlüssel verschlüsselt, der
+nur an der Drive-Datei liegt; unsere Datenbank kann sie nicht lesen. Lesbar speichert der Server nur, was er braucht, damit alle
+Kopien übereinstimmen: Element-IDs, -Arten, Versionen, Verbindungen, Gruppen und Rahmen, die IDs von Bildern und Schriften, deine
+Google-Konto-ID und dein Pseudonym sowie Zeitpunkte. Beim Speichern entschlüsselt er die Szene im Arbeitsspeicher. Deinen
+Anzeigenamen behält er nur, solange du verbunden bist, und zeigt ihn den anderen, die die Szene geöffnet haben, so wie ihre dir.</li>
+<li>Damit deine Änderungen auch nach dem Schließen des Tabs in Drive ankommen, bewahrt der Server dein Google-Refresh-Token auf,
+verschlüsselt mit einem Schlüssel außerhalb der Datenbank: bis deine Änderungen in Drive sind, höchstens 4 Stunden nach deiner
+letzten Verbindung. Solange du verbunden bist, prüft er alle 10 Minuten deinen Zugriff, und Google meldet ihm Änderungen an der
+Datei. Wenn du dich abmeldest und Google den Widerruf von Kurviqs Zugriff nicht sofort bestätigt, behält der Server das
+verschlüsselte Token nur, um den Widerruf zu wiederholen, bis Google ihn bestätigt, höchstens 30 Tage.</li>
+<li>Speicherdauer: ungespeicherte Änderungen, bis sie in Drive sind (meist innerhalb einer Minute; Änderungen, die nicht unter dem
+Namen ihres Urhebers gespeichert werden können, höchstens 90 Tage), die verschlüsselte Kopie der Szene bis 10 Minuten nachdem die
+letzte Person gegangen ist, technische Daten (Tab-IDs, Zähler, Speicherprotokolle) 30 Tage, Vermerke zu „Sign out everywhere" 400
+Tage. Cloudflare kann gelöschte Daten bis zu 30 Tage lang wiederherstellen.</li>
+<li>Jedes Element in der Drive-Datei vermerkt seinen letzten Bearbeiter als Pseudonym, das in jeder Szene anders ist.</li>
+</ul>
 
 <h2>Geteilte und öffentliche Szenen (optional)</h2>
-<p>Geteilt wird mit den Berechtigungen von Google Drive: Fügst du in „Share…" Personen hinzu, speichert Google, wer Zugriff
-hat, und schickt ihnen den Link per E-Mail. Der Link einer geteilten Szene (<code>kurviq.com/s/&lt;datei-id&gt;/&lt;name&gt;</code>)
-enthält die ID der Drive-Datei und den Namen der Szene. Betrachter lesen sie mit ihrer eigenen Google-Anmeldung direkt bei
-Google; Kurviqs Server ist daran nicht beteiligt. Damit Kurviq eine mit dir geteilte Datei öffnen darf, zeigt Kurviq unter
-Umständen Googles Picker, ein Skript, das von apis.google.com geladen wird. Stellst du eine Szene auf „Anyone with the link",
-liest Kurviqs Server sie für nicht angemeldete Betrachter aus Drive, und Cloudflare hält etwa eine Minute lang eine Kopie im
-Cache; sonst wird nichts gespeichert. Wieder privat machst du sie in „Share…" (oder in Drive).</p>
+<p>Geteilt wird mit den Berechtigungen von Google Drive; Google speichert, wer Zugriff hat, und verschickt den Link
+(kurviq.com/s/&lt;datei-id&gt;/&lt;name&gt;). Personen, mit denen du teilst, laden die Szene mit ihrer eigenen Anmeldung von Google
+und verbinden sich bei live synchronisierten Szenen wie oben mit unserem Server. Um eine mit dir geteilte Datei zu öffnen, zeigt
+Kurviq eventuell Googles Picker (ein Skript der Google LLC, USA). Bei Szenen für „Anyone with the link" liest unser Server die Datei
+für Betrachter, und Cloudflare hält sie eine Minute im Cache.</p>
 
 <h2>Schriften von Google Fonts (optional)</h2>
-<p>Fügst du eine Schrift von Google Fonts hinzu, lädt Kurviqs Server sie bei Google (Cloudflare hält sie einen Tag im Cache);
-dein Browser spricht nur mit kurviq.com, Google sieht dich also nicht. Die Schrift wird in den Szenen gespeichert, die sie
-nutzen.</p>
+<p>Fügst du eine Google-Schrift hinzu, holt unser Server sie bei Google (Cloudflare hält sie einen Tag im Cache); Google sieht dich
+dabei nicht.</p>
 
 <h2>KI-Agenten (optional)</h2>
-<p>Nur wenn du einen Agent-Link erstellst (MCP-Button) und ihn einem KI-Agenten gibst: Die Anfragen des Agenten und die
-Antworten deines offenen Kurviq-Tabs (z. B. Zeichnungsinhalte und Bilder) laufen auf dem Weg durch Kurviqs Server bei
-Cloudflare. Sie werden nicht gespeichert. Was der Anbieter des Agenten mit den Daten macht, regeln dessen Bedingungen. Du
-kannst den Link jederzeit ersetzen oder abschalten.</p>
+<p>Nur wenn du einen Agenten verbindest (MCP-Button) und ihn in Kurviq erlaubst: Der Agent meldet sich bei Kurviq an (einstündige
+Zugangstokens, bis zu 90 Tage erneuerbar), und seine Anfragen sowie die Antworten deines Kurviq-Tabs (zum Beispiel Zeichnungsinhalte
+und Bilder) laufen über unseren Server, ohne gespeichert zu werden. Was der Anbieter des Agenten mit den Daten macht, regeln dessen
+Bedingungen. „Sign out all agents" beendet den Zugriff aller Agenten.</p>
 
-<h2>Feedback (optional)</h2>
-<p>Nur wenn du einen Fehlerbericht oder Änderungswunsch sendest (Link „Feedback“, oder dein KI-Agent sendet ihn für dich):
-Kurviq speichert Art, Titel und Beschreibung, den Namen der offenen Szene, den Zeitpunkt und einen verschlüsselten Hash deiner
-IP-Adresse (bzw. des Agent-Links), der nur dazu dient, die Zahl der Berichte pro Absender und Stunde zu begrenzen; die
-IP-Adresse selbst wird nicht gespeichert. Die Berichte liegen in einer Datenbank bei Cloudflare; wir lesen sie, um zu
-entscheiden, was wir bauen. Bitte keine personenbezogenen Daten hineinschreiben. Rechtsgrundlage: Art. 6 Abs. 1 lit. f
-DSGVO (Verbesserung von Kurviq). Schreib uns, wenn ein Bericht gelöscht werden soll.</p>
+<h2>Feedback und Kontaktformular (optional)</h2>
+<p>Feedback (Fehlerberichte, Änderungswünsche, auch von deinem Agenten gesendet) wird mit dem Namen der geöffneten Szene und dem
+Zeitpunkt gespeichert und nach 2 Jahren gelöscht. Nachrichten über das Kontaktformular werden mit deinem Namen (optional), deiner
+E-Mail-Adresse und der Nachricht gespeichert, uns per E-Mail zugestellt und nach 1 Jahr gelöscht. Für beides bleibt etwa einen Tag
+lang ein mit geheimem Schlüssel gebildeter Hash deiner IP-Adresse, um zu begrenzen, wie viele Nachrichten jemand senden kann.
+Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (Kurviq verbessern) und Art. 6 Abs. 1 lit. b DSGVO (dir antworten). Bitte schreib keine
+personenbezogenen Daten in Berichte.</p>
+
+<h2>Nutzungsstatistik</h2>
+<p>Aus den Seitenanfragen, die dein Browser ohnehin stellt, zählt unser Server Summen pro Stunde: Seitenaufrufe nach Seitenart, Land
+(von Cloudflare) und Geräteart sowie wie oft Funktionen genutzt werden (Anmeldungen, Live-Verbindungen, Aufrufe öffentlicher Szenen,
+Agenten-Aufrufe nach Werkzeugname, Feedback und Kontaktnachrichten). Dafür wird nichts in deinem Browser gespeichert oder ausgelesen.
+Um eindeutige Besucher pro Tag zu schätzen, werden deine IP-Adresse und Browserkennung mit einem Schlüssel, der nur einen Tag
+existiert, zu einem Einweg-Hash verrechnet und in einen nicht umkehrbaren Zähler eingetragen; am Tagesende bleibt nur die geschätzte
+Zahl. Für die Statistik speichern wir keine IP-Adressen, Kennungen oder Szenendaten, nur die Summen. Rechtsgrundlage: Art. 6 Abs. 1
+lit. f DSGVO (verstehen, wie Kurviq genutzt wird).</p>
+
+<h2>Widerspruchsrecht</h2>
+<p><strong>Soweit wir Daten auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO verarbeiten (Hosting, Feedback, Statistik), kannst du dem
+aus Gründen, die sich aus deiner besonderen Situation ergeben, jederzeit widersprechen (Art. 21 DSGVO); schreib uns.</strong></p>
 
 <h2>Deine Rechte</h2>
-<p>Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit und Widerspruch
-(Art. 15–21 DSGVO) sowie das Recht auf Beschwerde bei einer Aufsichtsbehörde, z. B. der Landesbeauftragten für den
-Datenschutz und für das Recht auf Akteneinsicht Brandenburg. Da Kurviqs Server keine personenbezogenen Daten speichert, liegt
-das meiste in deiner Hand: Websitedaten im Browser löschen, dich in Kurviq von Google abmelden und Kurviqs Zugriff in deinem
-Google-Konto entfernen. Für alles andere schreib uns.</p>
+<p>Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO)
+sowie auf Beschwerde bei einer Aufsichtsbehörde, z. B. der Landesbeauftragten für den Datenschutz und für das Recht auf
+Akteneinsicht Brandenburg. Du musst keine Daten bereitstellen; ohne deine IP-Adresse kann die Website nicht ausgeliefert werden, ohne
+Google-Anmeldung stehen die Drive-Funktionen nicht zur Verfügung. Es gibt keine automatisierte Entscheidungsfindung.</p>

@@ -671,6 +671,33 @@ const layOut = (elements: readonly ExcalidrawElement[], at?: { x: number; y: num
   });
 };
 
+/** the slides lie where layOut puts them: Kurviq's grid, in deck order */
+export const isDeckGrid = (elements: readonly ExcalidrawElement[]) => {
+  const slides = getSlides(elements);
+  if (slides.length < 2) {
+    return true;
+  }
+  const start = origin(slides)!;
+  const cellWidth = Math.max(...slides.map((s) => s.width)) + SLIDE_GAP;
+  const cellHeight = Math.max(...slides.map((s) => s.height)) + SLIDE_GAP;
+  return slides.every(
+    (slide, index) =>
+      Math.abs(slide.x - (start.x + (index % SLIDE_COLUMNS) * cellWidth)) < 1 &&
+      Math.abs(slide.y - (start.y + Math.floor(index / SLIDE_COLUMNS) * cellHeight)) < 1,
+  );
+};
+
+/**
+ * After a change from outside the slide list (an agent's edit): if the slides
+ * were Kurviq's grid in deck order, the canvas follows the new order, as it
+ * does for the list's own actions; a hand-made arrangement stays as it is.
+ */
+export const followDeckOrder = (before: readonly ExcalidrawElement[], after: readonly ExcalidrawElement[]) =>
+  isDeckGrid(before) && !isDeckGrid(after) ? layOut(after, origin(getSlides(before))) : [...after];
+
+/** the canvas as the grid in deck order ("Arrange in deck order") */
+export const arrangeInDeckOrder = (api: ExcalidrawImperativeAPI) => update(api, layOut(api.getSceneElementsIncludingDeleted()));
+
 /** reorder: `ids` is the full new order; the canvas follows */
 export const setSlideOrder = (api: ExcalidrawImperativeAPI, ids: string[]) =>
   update(api, layOut(withOrder(api.getSceneElementsIncludingDeleted(), ids)));

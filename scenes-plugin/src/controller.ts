@@ -22,6 +22,9 @@ import { hashElementsVersion, hashString } from "@excalidraw/element";
 
 import { mergeFontLists, registerSceneFonts, withFonts } from "./fonts";
 import { scenesApi } from "./api";
+import { connection, driveScenes, listPermissions, setLiveWriters, sharedFileId } from "./online/drive";
+import { liveDifference } from "./online/liveMerge";
+import { liveSync } from "./online/liveSync";
 import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
 import { changedFields, live, mergeElements, MERGE_VERSION, newestWins } from "./merge";
 import type { ClashChoice } from "./merge";
@@ -30,15 +33,18 @@ import {
   UNTITLED,
   deleteAgentBaseline,
   deleteSnapshot,
+  getCheckpoint,
   getSnapshot,
   loadMeta,
   moveAgentBaseline,
   saveMeta,
+  setCheckpoint,
   setSnapshot,
 } from "./storage";
 
 import type { ApiError, RemoteScene, SceneVersion } from "./api";
 import type { SceneMeta, ScenesMeta } from "./storage";
+import type { LiveScene, LiveStage } from "./online/liveSync";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type {
   AppState,
@@ -63,7 +69,25 @@ export type SyncStatus =
   /** kept only in this browser on purpose: never synced */
   | "local-only"
   /** not named yet */
-  | "untitled";
+  | "untitled"
+  /** live sync: the latest change is being stored in this browser */
+  | "live-saving"
+  /** live sync (the scene's Durable Object saves it): the latest change is in this browser only */
+  | "live-browser"
+  /** …on Kurviq's server, not in Drive yet */
+  | "live-server"
+  /** …in Drive */
+  | "live-drive"
+  /** …nowhere: this browser could not store it (export it) */
+  | "live-unsaved";
+
+const LIVE_STATUS: Record<LiveStage, SyncStatus> = {
+  saving: "live-saving",
+  browser: "live-browser",
+  server: "live-server",
+  drive: "live-drive",
+  unsaved: "live-unsaved",
+};
 
 export type SceneListItem = {
   /** null = untitled draft */
@@ -81,6 +105,8 @@ export type SceneListItem = {
   public?: boolean;
   /** its Google Drive file */
   fileId?: string;
+  /** saves through live sync */
+  live?: boolean;
 };
 
 export type Activity = {
@@ -117,6 +143,8 @@ export type ScenesState = {
   conflict: { clashes: string[] } | null;
   /** the open scene is a local copy being checked against Drive (read-only) */
   checking: boolean;
+  /** a scene being opened (e.g. named by the link): shown while it loads instead of "Untitled" */
+  opening: string | null;
 };
 
 /** push the active scene after this long without changes */
@@ -125,6 +153,34 @@ export const IDLE_PUSH_MS = 10_000;
 export const POLL_MS = 60_000;
 /** a just-opened local copy is read-only at most this long while Drive is asked */
 const CHECK_LOCK_MS = 3_000;
+
+/**
+ * Live sync runs wherever scenes are in Drive: kurviq.com and the local
+ * install (which signs in through kurviq.com with its sealed session), not
+ * in the local install's hidden renderer tab.
+ */
+const LIVE_CAPABLE = typeof window !== "undefined" && !new URLSearchParams(window.location.search).has("scenes-renderer");
+
+/** the scene "Edit" in the shared-link viewer opens after the reload (its exact name) */
+export const OPENING_KEY = "kurviq-opening";
+
+/**
+ * A shared scene's space opened with "Edit" in the viewer: the name the pill shows while the
+ * scene loads, instead of "Untitled" (the link's path only has a readable slug of it)
+ */
+const linkedScene = (current: string | null) => {
+  if (!sharedFileId || typeof window === "undefined") {
+    return null;
+  }
+  let name: string | null = null;
+  try {
+    const raw = sessionStorage.getItem(OPENING_KEY);
+    sessionStorage.removeItem(OPENING_KEY);
+    const handed = raw ? (JSON.parse(raw) as { fileId?: string; name?: string }) : null;
+    name = handed?.fileId === sharedFileId && typeof handed.name === "string" ? handed.name : null;
+  } catch {}
+  return name && name !== current && isSceneName(name) ? name : null;
+};
 
 const sceneHash = (
   elements: readonly ExcalidrawElement[],
@@ -186,6 +242,7 @@ class ScenesController {
   private meta: ScenesMeta = loadMeta();
   private listeners = new Set<() => void>();
   private lastVersionKey = "";
+  private lastLiveKey = "";
   private lastChangeAt = 0;
   private pushCurrentNow = false;
   private timers: number[] = [];
@@ -210,10 +267,30 @@ class ScenesController {
     activity: [],
     conflict: null,
     checking: false,
+    opening: linkedScene(this.meta.current),
   };
 
   constructor() {
     this.state.list = this.buildList();
+    if (LIVE_CAPABLE) {
+      liveSync.setHost({
+        renamed: (fileId, to) => this.liveRenamed(fileId, to),
+        lifecycle: (fileId, state) => this.liveLifecycle(fileId, state),
+        saveCopy: (name, json) => this.saveLiveCopy(name, json),
+        changed: () => this.liveChanged(),
+      });
+      // agents' writes to a live scene go through its Durable Object, never to Drive directly
+      setLiveWriters({
+        write: (write) => this.liveWrite(write.fileId, write.name, write.json, write.baseSha, write.source),
+        // straight to the live session: called from inside controller operations (a pending
+        // rename of a file that became live), so never through the controller's queue again
+        rename: async ({ fileId, from, to }) => {
+          const session = await liveSync.session(fileId, from);
+          session.rename(to);
+        },
+        remove: ({ fileId, name }) => this.liveTrash(fileId, name),
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -231,6 +308,9 @@ class ScenesController {
 
   private setState(patch: Partial<ScenesState>) {
     this.state = { ...this.state, ...patch };
+    if (this.state.opening !== null && this.state.current === this.state.opening) {
+      this.state.opening = null; // it is open
+    }
     this.state.list = this.buildList();
     const current = this.meta.current;
     const conflict = current !== null ? this.meta.scenes[current]?.conflict : undefined;
@@ -298,7 +378,9 @@ class ScenesController {
     const waitForLoad = () =>
       api.getAppState().isLoading
         ? setTimeout(waitForLoad, 100)
-        : this.adoptInitialCanvas().finally(() => this.readyDeferred.resolve());
+        : this.adoptInitialCanvas()
+            .then(() => this.connectInitial())
+            .finally(() => this.readyDeferred.resolve());
     waitForLoad();
     this.unsubscribeChange?.();
     this.api = api;
@@ -309,6 +391,9 @@ class ScenesController {
     window.addEventListener("online", this.onOnline);
     window.addEventListener("storage", this.onStorage);
     document.addEventListener("visibilitychange", this.onVisibility);
+    if (LIVE_CAPABLE) {
+      liveSync.start();
+    }
     this.onSceneChange(api.getSceneElementsIncludingDeleted(), api.getAppState());
   }
 
@@ -329,6 +414,11 @@ class ScenesController {
     } catch (error) {
       console.error("[scenes] could not load the current scene", error);
     }
+  }
+
+  /** the restored canvas is the current scene: a live one connects now */
+  private async connectInitial() {
+    this.connectLive();
   }
 
   /** start polling / auto-sync (not in the hidden renderer tab) */
@@ -366,6 +456,9 @@ class ScenesController {
     window.removeEventListener("online", this.onOnline);
     window.removeEventListener("storage", this.onStorage);
     document.removeEventListener("visibilitychange", this.onVisibility);
+    if (LIVE_CAPABLE) {
+      liveSync.detachCanvas();
+    }
   }
 
   /** other tabs may have changed scene metadata; this tab keeps its own scene */
@@ -397,6 +490,9 @@ class ScenesController {
 
   /** leaving the tab: push right away instead of waiting for idle */
   private onVisibility = () => {
+    if (document.visibilityState === "hidden") {
+      liveSync.current()?.flush();
+    }
     if (document.visibilityState === "hidden" && this.state.dirty) {
       this.pushCurrentNow = true;
       this.syncNow();
@@ -415,6 +511,24 @@ class ScenesController {
     }
     // cheap check first, onChange fires on every pointer move
     const versionKey = `${hashElementsVersion(elements)}:${appState.viewBackgroundColor}`;
+    if (LIVE_CAPABLE && liveSync.current() && liveSync.current()!.fileId === this.fileIdOf(this.meta.current)) {
+      // live sync diffs the canvas when something changed or a gesture started / ended
+      const liveKey = [
+        versionKey,
+        appState.gridSize,
+        appState.gridModeEnabled,
+        appState.selectedElementsAreBeingDragged,
+        appState.isResizing,
+        appState.isRotating,
+        appState.editingTextElement?.id,
+        appState.newElement?.id,
+        appState.multiElement?.id,
+      ].join(":");
+      if (liveKey !== this.lastLiveKey) {
+        this.lastLiveKey = liveKey;
+        liveSync.onCanvasChange();
+      }
+    }
     if (versionKey === this.lastVersionKey) {
       return;
     }
@@ -493,6 +607,14 @@ class ScenesController {
         hidden.add(meta.renamedFrom);
       }
     }
+    // a live scene renamed here: Drive's file keeps the old name until the scene's next save
+    const liveNames = new Map(Object.entries(this.meta.scenes).flatMap(([name, meta]) => (meta.live ? [[meta.live.fileId, name]] : [])));
+    for (const scene of this.state.remote ?? []) {
+      const name = scene.fileId ? liveNames.get(scene.fileId) : undefined;
+      if (name !== undefined && name !== scene.name) {
+        hidden.add(scene.name);
+      }
+    }
     return hidden;
   }
 
@@ -507,6 +629,9 @@ class ScenesController {
     const meta = this.meta.scenes[name];
     if (meta?.localOnly) {
       return "local-only";
+    }
+    if (this.isLive(name)) {
+      return LIVE_STATUS[liveSync.stageOf(this.fileIdOf(name)) ?? "drive"];
     }
     if (meta?.conflict) {
       return "conflict";
@@ -567,6 +692,7 @@ class ScenesController {
           ...(meta?.renamedFrom ? { pendingRename: meta.renamedFrom } : {}),
           ...(remote?.public ? { public: true } : {}),
           ...(remote?.fileId ? { fileId: remote.fileId } : {}),
+          ...(this.isLive(name) ? { live: true, inDrive: true } : {}),
         };
       });
     if (this.state.current === null || this.meta.scenes[UNTITLED]) {
@@ -585,7 +711,7 @@ class ScenesController {
   /** number of scenes with changes waiting to be pushed */
   pendingCount() {
     return this.state.list.filter((item) =>
-      ["ahead", "diverged", "conflict"].includes(item.status) ||
+      ["ahead", "diverged", "conflict", "live-saving", "live-browser", "live-unsaved"].includes(item.status) ||
       (item.status === "local" && item.name !== null && item.dirty),
     ).length;
   }
@@ -603,7 +729,11 @@ class ScenesController {
   private signedIn = false;
 
   setSignedIn = (on: boolean) => {
+    const changed = this.signedIn !== on;
     this.signedIn = on;
+    if (changed) {
+      this.ready.then(() => this.connectLive());
+    }
   };
 
   /** new scenes: in Drive while signed in (unless the user chose otherwise), in this browser while signed out */
@@ -641,6 +771,9 @@ class ScenesController {
    */
   keepOnlyHere = async (name: string) => {
     await this.ready;
+    if (this.isLive(name)) {
+      return this.keepOnlyHereLive(name);
+    }
     const status = this.statusOf(name);
     if (status === "behind" || status === "diverged" || status === "conflict") {
       throw new Error(`Drive has changes to "${name}" that aren't here yet: sync it first`);
@@ -661,6 +794,91 @@ class ScenesController {
     this.log("info", `"${name}" is only in this browser now${inDrive ? " (removed from Google Drive)" : ""}`);
     this.syncNow({ refresh: true });
   };
+
+  /**
+   * "Keep only here" for a live scene, by the closing handshake: refused for
+   * a shared scene (or others' unsaved changes: the DO says so); the DO
+   * closes the scene and hands over its final state, which is stored here
+   * with every image and font before the DO deletes it and the file goes to
+   * Drive's trash.
+   */
+  private async keepOnlyHereLive(name: string) {
+    const fileId = this.fileIdOf(name);
+    if (!fileId) {
+      throw new Error(`"${name}" is not in Drive`);
+    }
+    const session = await liveSync.session(fileId, name);
+    // the Worker checks with Drive that it is yours and shared with nobody; the DO that nobody else works on it
+    const answer = await session.keepLocal().catch((error) => {
+      session.resumeEditing();
+      throw error;
+    });
+    if (!answer.ok) {
+      session.resumeEditing(); // refused: the scene goes on as before
+      throw Object.assign(
+        new Error(
+          answer.reason === "shared"
+            ? `"${name}" is shared with others (or not yours): it can't be taken out of Drive. "Keep a local copy" makes a copy only in this browser instead.`
+            : answer.reason === "connected"
+            ? `"${name}" is open somewhere else right now: close it there first, or keep a local copy`
+            : answer.reason === "others-pending"
+            ? `Someone else's changes to "${name}" aren't in Drive yet: try again in a minute, or keep a local copy`
+            : answer.reason === "offline"
+            ? "Kurviq's server is not reachable: try again online"
+            : answer.reason === "unsent"
+            ? `Your latest changes to "${name}" aren't on Kurviq's server yet: try again in a moment`
+            : `"${name}" can't be taken out of Drive now (${answer.reason})`,
+        ),
+        { keepLocalCopy: answer.reason !== "offline" && answer.reason !== "unsent" },
+      );
+    }
+    // the final state is stored here (read back) before the DO may delete it
+    session.stopEditing();
+    await this.exclusive(async () => {
+      const json = withSceneName(answer.json, name);
+      // complete: every picture and font the scene uses is in it
+      const data = JSON.parse(json);
+      const fonts = new Set((data.kurviqFonts || []).map((font: any) => font.id));
+      const incomplete = (data.elements || []).some(
+        (el: any) =>
+          !el.isDeleted &&
+          ((el.type === "image" && el.fileId && !data.files?.[el.fileId]?.dataURL) || (el.fontFamily >= 2000 && el.fontFamily < 9000 && !fonts.has(el.fontFamily))),
+      );
+      if (incomplete) {
+        throw new Error(`Not every picture or font of "${name}" is in this browser yet: it stays in Drive (open it, wait until everything shows, try again)`);
+      }
+      // stored in IndexedDB and read back, also for the open scene (the canvas alone is not durable)
+      await setSnapshot(name, { json, baseline: null, dirty: true });
+      if ((await getSnapshot(name))?.json !== json) {
+        throw new Error(`"${name}" could not be stored in this browser: it stays in Drive`);
+      }
+      // only now the scene is this browser's (nothing was deleted anywhere yet)
+      const meta = this.sceneMeta(name);
+      meta.localOnly = true;
+      meta.keptLocal = true;
+      meta.baseSha = null;
+      delete meta.remoteSha;
+      delete meta.live;
+      if (name === this.meta.current) {
+        this.applyScene(json, name, { keepView: true });
+      }
+      this.persistMeta();
+    }).catch((error) => {
+      session.resumeEditing(); // the DO's closing runs out; the scene stays in Drive
+      throw error;
+    });
+    session.keepLocalDone();
+    // the DO closes the scene ("local") once it deleted its content
+    await session.waitFor(() => session.lifecycle === "local" || session.stopped, 15_000, "").catch(() => {});
+    if (liveSync.current() === session) {
+      liveSync.detachCanvas();
+    }
+    await session.forgetAll();
+    await driveScenes.trashFile(fileId).catch((error) => this.log("error", `"${name}" stays in Drive's folder: ${error.message}`));
+    this.forgetRemoteFile(fileId);
+    this.refresh();
+    this.log("info", `"${name}" is only in this browser now (removed from Google Drive)`);
+  }
 
   /** the user puts a scene in Drive (the cloud icon): local only or not, it is uploaded now */
   putInDrive = async (name: string) => {
@@ -782,6 +1000,7 @@ class ScenesController {
       delete meta.renamedFrom;
       delete meta.adopt;
       delete meta.keptLocal;
+      delete meta.live;
       meta.localOnly = true;
     }
     this.meta.pendingDeletes = {};
@@ -826,6 +1045,9 @@ class ScenesController {
       if (on && meta.renamedFrom) {
         throw new Error(`The rename of "${name}" is not in Drive yet — try again once it is`);
       }
+      if (on && this.isLive(name)) {
+        throw new Error(`"${name}" saves live: use "Keep only here" (the cloud icon) to take it out of Drive`);
+      }
       // the user's own choice: not "made while signed out" any more
       delete meta.moveOnSignIn;
       if (on) {
@@ -856,6 +1078,286 @@ class ScenesController {
     });
 
   // ---------------------------------------------------------------------------
+  // live sync: a Drive scene whose ticket said "enabled" saves only through
+  // its Durable Object (online/liveSync.ts). The controller then never
+  // pushes, pulls or merges it (no second writer); its local snapshot stays
+  // as the offline copy. Scenes are named here, live sync knows file ids.
+  // ---------------------------------------------------------------------------
+
+  /** the Drive file of a scene (its shared space's file, the listing's, or the one live sync knows) */
+  fileIdOf(name: string | null) {
+    if (name === null) {
+      return undefined;
+    }
+    const driveName = this.meta.scenes[name]?.renamedFrom ?? name;
+    return (
+      this.meta.scenes[name]?.live?.fileId ??
+      this.state.remote?.find((scene) => scene.name === driveName)?.fileId ??
+      (sharedFileId && !this.meta.scenes[name]?.localOnly ? sharedFileId : undefined)
+    );
+  }
+
+  /**
+   * Saves through live sync (never pushed / pulled / merged here): the
+   * ticket said so (remembered), the Drive file is marked, or the open
+   * scene's ticket is still being asked for (nothing writes it meanwhile;
+   * "disabled" brings today's sync back at once).
+   */
+  isLive(name: string | null) {
+    if (!LIVE_CAPABLE || name === null || this.meta.scenes[name]?.localOnly) {
+      return false;
+    }
+    const driveName = this.meta.scenes[name]?.renamedFrom ?? name;
+    if (this.meta.scenes[name]?.live || this.state.remote?.find((scene) => scene.name === driveName)?.live) {
+      return true;
+    }
+    const scene = liveSync.current();
+    return name === this.meta.current && !!scene && scene.fileId === this.fileIdOf(name) && scene.enabled !== false;
+  }
+
+  /** a live scene's file id (for the agent's requests through this tab), else null */
+  liveFileId(name: string) {
+    return this.isLive(name) ? this.fileIdOf(name) ?? null : null;
+  }
+
+  /** the open scene's live connection, if it is live */
+  liveCurrent(): LiveScene | null {
+    const scene = liveSync.current();
+    return scene && scene.fileId === this.fileIdOf(this.meta.current) && this.isLive(this.meta.current) ? scene : null;
+  }
+
+  /** the open scene is a Drive scene: connect it to its Durable Object (or disconnect) */
+  private connectLive() {
+    if (!LIVE_CAPABLE || !this.api) {
+      return;
+    }
+    const name = this.meta.current;
+    const fileId = this.fileIdOf(name);
+    // signed in with Drive (also in a shared scene's space, where "signedIn" is about new scenes)
+    if (name === null || !fileId || !connection.isActive() || this.isLocalOnly(name) || this.meta.scenes[name]?.renamedFrom) {
+      liveSync.detachCanvas();
+      return;
+    }
+    const connected = liveSync.current();
+    const driveName = this.meta.scenes[name]?.renamedFrom ?? name;
+    const marked = !!this.state.remote?.find((scene) => scene.name === driveName)?.live;
+    // the same scene: kept, unless it stopped for a reason a new try may fix (a new sign-in, or
+    // the file became live meanwhile, e.g. access granted with the Picker)
+    if (connected?.fileId === fileId && (!connected.stopped || (connected.enabled === false && !marked))) {
+      return;
+    }
+    this.lastLiveKey = "";
+    const baseSha = this.meta.scenes[name]?.baseSha;
+    liveSync.attachCanvas(this.api, fileId, name, async () => {
+      // the Drive version the local copy is based on: its changes are found against it
+      if (!baseSha) {
+        return null;
+      }
+      const json = await driveScenes.loadFileVersion(fileId, baseSha).catch(() => null);
+      return json ? restoreElements(JSON.parse(json).elements, null, { repairBindings: true }) : null;
+    });
+  }
+
+  /** the engine's state changed: the ticket's answer decides whether a scene is live */
+  private liveChanged() {
+    const scene = liveSync.current();
+    const name = this.meta.current;
+    if (scene && name !== null && scene.fileId === this.fileIdOf(name)) {
+      const meta = this.sceneMeta(name);
+      if (scene.enabled === true && !meta.localOnly && meta.live?.fileId !== scene.fileId) {
+        meta.live = { fileId: scene.fileId };
+        delete meta.adopt;
+        this.persistMeta();
+        this.log("info", `"${name}" saves live through Kurviq's server now`);
+      } else if (scene.enabled === false && meta.live) {
+        delete meta.live;
+        this.persistMeta();
+      }
+    }
+    this.refresh();
+  }
+
+  /**
+   * Delete a live scene: the file goes to Drive's trash, its Durable Object
+   * is told (it checks Drive and stops saving), and the browser's queue of it
+   * is let go (the user deleted it).
+   */
+  private liveTrash = async (fileId: string, name: string) => {
+    const session = await liveSync.session(fileId, name).catch(() => null);
+    if (!session) {
+      throw new Error(`"${name}" can't be deleted while Kurviq's server is not reachable: try again online`);
+    }
+    // Drive's trash first (the DO believes only Drive), then the DO hears of it and stops saving
+    await driveScenes.trashFile(fileId);
+    await session.trash();
+    await session.forgetAll();
+    this.forgetRemoteFile(fileId);
+  };
+
+  /** a live scene left Drive: the listing's entry of its file goes (it may still carry an older name) */
+  private forgetRemoteFile(fileId: string) {
+    if (this.state.remote) {
+      this.setState({ remote: this.state.remote.filter((scene) => scene.fileId !== fileId) });
+    }
+  }
+
+  private sceneOfFile(fileId: string) {
+    return (
+      Object.entries(this.meta.scenes).find(([, meta]) => meta.live?.fileId === fileId)?.[0] ??
+      this.state.remote?.find((scene) => scene.fileId === fileId)?.name ??
+      null
+    );
+  }
+
+  private liveRenamed(fileId: string, to: string) {
+    const from = this.sceneOfFile(fileId);
+    if (from && from !== to && isSceneName(to)) {
+      this.followRemoteRename(from, to, this.remoteShaOf(from) ?? null).catch(() => {});
+    }
+  }
+
+  private liveLifecycle(fileId: string, state: string) {
+    const name = this.sceneOfFile(fileId) ?? "this scene";
+    const text =
+      state === "trashed"
+        ? `"${name}" is in Drive's trash: it isn't saved any more (Save as… keeps your version as a new scene)`
+        : state === "deleted"
+        ? `"${name}" was deleted for good in Drive (Save as… keeps your version as a new scene)`
+        : state === "access"
+        ? `You no longer have access to "${name}" in Drive: your changes stay in this browser`
+        : state === "local"
+        ? `"${name}" is kept only in a browser now`
+        : `"${name}": ${state}`;
+    this.log("error", text);
+  }
+
+  /** an offline copy / local copy: a new local-only scene under a free name */
+  private async saveLiveCopy(name: string, json: string) {
+    let free = name;
+    for (let i = 2; this.exists(free); i++) {
+      free = `${name} ${i}`;
+    }
+    await this.createLocalOnly(free, json);
+    // read back: the live engine drops the original changes only once the copy is really stored
+    const stored = await getSnapshot(free);
+    if (!stored || stored.json !== withSceneName(json, free)) {
+      throw new Error(`The copy "${free}" could not be stored in this browser`);
+    }
+    return free;
+  }
+
+  /**
+   * An agent (or a whole-scene save) writes a live scene: the difference to
+   * the live state goes through the scene's Durable Object as the agent's change.
+   */
+  liveWrite = async (fileId: string, name: string, json: string, baseSha?: string, source?: string) => {
+    const session = await liveSync.session(fileId, name);
+    const conflict = (clashes?: string[]) =>
+      Object.assign(new Error(`"${name}" was changed in the meantime`), { status: 409, remoteSha: session.revision(), ...(clashes ? { clashes } : {}) });
+    if (baseSha === "none" && session.elements().some((el) => !el.isDeleted)) {
+      throw conflict();
+    }
+    // the exact document the writer read: only its own changes against that count (others' stay)
+    let base: any = null;
+    if (baseSha && baseSha !== "none") {
+      const stored = baseSha.startsWith("live-") ? await this.liveRevision(fileId, baseSha) : null;
+      if (!stored) {
+        throw conflict(); // a version this browser doesn't know: read the scene again
+      }
+      base = JSON.parse(stored);
+    }
+    const data = JSON.parse(json);
+    await registerSceneFonts(data);
+    const next = restoreElements(data.elements || [], null, { repairBindings: true });
+    const changed = liveDifference(session.elements(), next, base ? restoreElements(base.elements || [], null, { repairBindings: true }) : null);
+    if (changed.clashes.length) {
+      throw conflict(changed.clashes);
+    }
+    const files = Object.values(data.files || {}) as BinaryFileData[];
+    // scene settings (background, grid): those the writer changed against what it read, on top of the current ones
+    const settingsOf = (appState: any) => {
+      const restored = restoreAppState(appState, null);
+      return {
+        viewBackgroundColor: restored.viewBackgroundColor,
+        gridSize: restored.gridSize,
+        gridStep: restored.gridStep,
+        gridModeEnabled: restored.gridModeEnabled,
+      } as Record<string, unknown>;
+    };
+    const current = session.settings() as Record<string, unknown>;
+    let settings: Record<string, unknown> | null = null;
+    if (data.appState) {
+      const wanted = settingsOf(data.appState);
+      const read = base ? settingsOf(base.appState) : current;
+      const mine = Object.keys(wanted).filter((key) => JSON.stringify(wanted[key]) !== JSON.stringify(read[key]));
+      if (mine.length) {
+        settings = { ...current };
+        for (const key of mine) {
+          settings[key] = wanted[key];
+        }
+      }
+    }
+    await session.agentEdit(changed, files, undefined, settings as any);
+    const after = await this.rememberLiveSnapshot(session, { agent: !!source?.startsWith("agent") });
+    return { sha: after, commit: after, changed: changed.length > 0 || !!settings };
+  };
+
+  /** the session's current document under its exact revision id (agents name it as their base) */
+  rememberLiveSnapshot = async (session: LiveScene, { agent = false } = {}) => {
+    const { revision, json } = session.snapshot();
+    await this.rememberLiveRevision(session.fileId, revision, json, { agent });
+    return revision;
+  };
+
+  /**
+   * Revisions of a live scene for agents ("live-<seq>"): the content as it
+   * was, kept in this browser (Drive gets it a minute later). The agent's
+   * last edit counts as its baseline until then, so read_scene never reports
+   * the agent's own edit as the user's.
+   */
+  rememberLiveRevision = async (fileId: string, revision: string, json: string, { agent = false } = {}) => {
+    await setCheckpoint(`live-rev:${fileId}:${revision}`, json).catch(() => {});
+    if (agent) {
+      await setCheckpoint(`live-agent:${fileId}`, { sha: revision, commit: revision, at: new Date().toISOString() }).catch(() => {});
+    }
+  };
+
+  liveRevision = async (fileId: string, revision: string) => ((await getCheckpoint(`live-rev:${fileId}:${revision}`).catch(() => null)) as string | null) ?? null;
+
+  liveAgentVersion = async (fileId: string) =>
+    ((await getCheckpoint(`live-agent:${fileId}`).catch(() => null)) as { sha: string; commit: string; at: string } | null) ?? null;
+
+  /** a live scene's session (the canvas if open, else headless) for agents; null: not live */
+  liveSessionFor = async (name: string) => {
+    const fileId = this.liveFileId(name) ?? (LIVE_CAPABLE ? await driveScenes.liveFileOf(name).catch(() => null) : null);
+    if (!fileId) {
+      return null;
+    }
+    return liveSync.session(fileId, name);
+  };
+
+  /**
+   * "Keep a local copy" (a shared scene, or others' unsaved changes): a new
+   * local-only scene, complete with every image and font it uses; the
+   * shared scene is not touched.
+   */
+  keepLocalCopy = async (name: string) => {
+    await this.ready;
+    const json = await this.localJson(name);
+    if (json === null) {
+      throw new Error(`"${name}" was never opened in this browser`);
+    }
+    const data = JSON.parse(json);
+    const missing = (data.elements || []).filter((el: any) => !el.isDeleted && el.type === "image" && el.fileId && !data.files?.[el.fileId]?.dataURL);
+    if (missing.length) {
+      throw new Error(`${missing.length} picture(s) of "${name}" aren't in this browser yet: open the scene and wait until they show, then try again`);
+    }
+    const copy = await this.saveLiveCopy(`${name} (local copy)`, json);
+    this.log("info", `"${name}" is kept as "${copy}" in this browser (the shared scene stays as it is)`);
+    return copy;
+  };
+
+  // ---------------------------------------------------------------------------
   // local content
   // ---------------------------------------------------------------------------
 
@@ -876,6 +1378,17 @@ class ScenesController {
       isEmpty: elements.length === 0,
     };
   }
+
+  /** the open scene as a file download (when the browser can't store it) */
+  exportCurrent = () => {
+    const { json } = this.serializeCurrent();
+    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${this.meta.current ?? "Untitled"}.excalidraw`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
 
   /** current content of a scene: the canvas if active, else its snapshot */
   private async localJson(name: string): Promise<string | null> {
@@ -987,18 +1500,24 @@ class ScenesController {
    * (a push can hang for seconds on a bad connection) — those re-check
    * afterwards whether the scene is still the open one. Opens run one at a time.
    */
-  open = (name: string | null) => {
+  open = (name: string | null, { missingIsFine = false }: { missingIsFine?: boolean } = {}) => {
+    if (name !== null && name !== this.meta.current) {
+      this.setState({ opening: name });
+    }
     const run = this.openChain.then(async () => {
       await this.ready;
       this.setState({ busy: "loading", error: null });
       try {
         return await this.openInner(name);
       } catch (error: any) {
-        console.error(error);
-        this.setState({ error: error.message });
+        // "not found" while opening-or-creating is the cue to create it, no error
+        if (!(missingIsFine && error?.status === 404)) {
+          console.error(error);
+          this.setState({ error: error.message });
+        }
         throw error;
       } finally {
-        this.setState({ busy: null });
+        this.setState({ busy: null, ...(this.state.opening === name ? { opening: null } : {}) });
       }
     });
     this.openChain = run.catch(() => {});
@@ -1045,8 +1564,8 @@ class ScenesController {
     scenesApi
       .load(name)
       .then(async (latest) => {
-        if (this.openToken !== token || this.meta.current !== name || this.isDirty(name)) {
-          return; // switched on, or edited after the unlock: sync takes it from here
+        if (this.openToken !== token || this.meta.current !== name || this.isDirty(name) || this.isLive(name)) {
+          return; // switched on, or edited after the unlock, or live: sync (or the scene's DO) takes it from here
         }
         const meta = this.sceneMeta(name);
         this.updateRemoteSha(name, latest.sha);
@@ -1077,6 +1596,8 @@ class ScenesController {
       if (stash) {
         await this.stashCurrent();
       }
+      // the canvas is about to show another scene: the previous scene's live connection lets go first
+      liveSync.detachCanvas();
 
       const snapshot = await getSnapshot(name);
       let json: string | null = null;
@@ -1147,9 +1668,10 @@ class ScenesController {
           offsets: { top: vertical + shift, bottom: Math.max(48, vertical - shift), left: horizontal, right: horizontal },
         });
       }
-      if (checkDrive && name !== null) {
+      if (checkDrive && name !== null && !this.isLive(name)) {
         this.checkOpenedScene(name);
       }
+      this.connectLive();
   }
 
   /**
@@ -1161,7 +1683,7 @@ class ScenesController {
       if (this.isLocalOnly(name)) {
         throw new Error(`"${name}" is kept in this browser only: sync it with Google Drive first`);
       }
-      if (this.isDirty(name) || this.statusOf(name) !== "synced") {
+      if (!this.isLive(name) && (this.isDirty(name) || this.statusOf(name) !== "synced")) {
         await this.pushScene(name, { manual: true });
       }
       await this.refreshListing();
@@ -1197,6 +1719,7 @@ class ScenesController {
       }
       await this.stashCurrent();
       await deleteSnapshot(name);
+      liveSync.detachCanvas();
       this.applyScene(null, name);
       this.meta.current = name;
       this.meta.baseline = null;
@@ -1214,13 +1737,25 @@ class ScenesController {
     if (name === this.meta.current) {
       return;
     }
+    // its name from the start (the link names it), not "Untitled" while it loads
+    this.setState({ opening: name });
+    try {
+      await this.openOrCreateInner(name);
+    } finally {
+      if (this.state.opening === name) {
+        this.setState({ opening: null });
+      }
+    }
+  };
+
+  private openOrCreateInner = async (name: string) => {
     // online without Drive: there is nowhere else to look, a new scene right away
     if (!this.exists(name) && this.state.sync.notConnected) {
       await this.create(name);
       return;
     }
     try {
-      await this.open(name);
+      await this.open(name, { missingIsFine: true });
     } catch (error: any) {
       if (error.status !== 404) {
         throw error;
@@ -1290,6 +1825,8 @@ class ScenesController {
         this.meta.scenes[targetName] = keepLocal
           ? { baseSha: null, dirty: true, localOnly: true, ...(localOnly === undefined ? this.madeSignedOut() : {}) }
           : this.claimName(targetName, true);
+        // "save as": the copy is a new scene, the live connection stays with the original
+        liveSync.detachCanvas();
         api.updateScene({ appState: { name: targetName }, captureUpdate: CaptureUpdateAction.NEVER });
         await setSnapshot(targetName, { json, baseline: null, dirty: true });
         this.persistMeta();
@@ -1297,6 +1834,11 @@ class ScenesController {
       }
       if (this.isLocalOnly(targetName)) {
         return { name: targetName, localOnly: true }; // the browser keeps it, nothing to push
+      }
+      if (this.isLive(targetName)) {
+        // saved through its Durable Object: what is collected goes out now
+        await this.liveCurrent()?.flushNow();
+        return { name: targetName, live: true };
       }
       const result = await this.pushScene(targetName, { manual: true });
       if (this.meta.scenes[targetName]?.conflict) {
@@ -1368,7 +1910,7 @@ class ScenesController {
       if (this.state.sync.readOnly) {
         // Drive lets this user read the space, not change it: only pull
         for (const item of this.state.list) {
-          if (item.name !== null && this.statusOf(item.name) === "behind" && !this.isDirty(item.name)) {
+          if (item.name !== null && !this.isLive(item.name) && this.statusOf(item.name) === "behind" && !this.isDirty(item.name)) {
             await this.exclusive(() => this.pullScene(item.name!));
           }
         }
@@ -1383,8 +1925,8 @@ class ScenesController {
 
       for (const item of this.state.list) {
         const name = item.name;
-        if (name === null || !this.autoSyncFor(name)) {
-          continue;
+        if (name === null || !this.autoSyncFor(name) || this.isLive(name)) {
+          continue; // live scenes save through their Durable Object
         }
         const status = this.statusOf(name);
         const adopt = !!this.meta.scenes[name]?.adopt;
@@ -1465,7 +2007,7 @@ class ScenesController {
 
   private maybePushCurrent() {
     const name = this.meta.current;
-    if (name !== null && this.state.dirty && this.autoSyncFor(name) && this.pushDue()) {
+    if (name !== null && this.state.dirty && this.autoSyncFor(name) && !this.isLive(name) && this.pushDue()) {
       this.syncNow();
     }
   }
@@ -1486,12 +2028,16 @@ class ScenesController {
     }
     this.persistMeta();
     this.setState({ remote: scenes });
+    this.connectLive();
   }
 
   /** push local content; on "Drive changed meanwhile" merge instead */
   private async pushScene(name: string, { manual = false } = {}) {
     if (this.isLocalOnly(name)) {
       return null; // never leaves this browser
+    }
+    if (this.isLive(name)) {
+      return null; // its Durable Object saves it: never a second writer
     }
     if (this.state.sync.readOnly) {
       if (manual) {
@@ -1581,6 +2127,10 @@ class ScenesController {
     meta.dirty = false;
     delete meta.conflict;
     this.updateRemoteSha(name, result.sha);
+    if (LIVE_CAPABLE && name === this.meta.current && !this.fileIdOf(name)) {
+      // just created in Drive: its file id (and so live sync) with a fresh listing, not the next poll
+      this.refreshListing().catch(() => {});
+    }
     if (canvas && name === this.meta.current) {
       // what was pushed is the new base; edits made during the push stay dirty
       this.meta.baseline = canvas.hash;
@@ -1606,7 +2156,7 @@ class ScenesController {
 
   /** Drive has a newer version and there are no local changes */
   private async pullScene(name: string) {
-    if (this.statusOf(name) !== "behind") {
+    if (this.isLive(name) || this.statusOf(name) !== "behind") {
       return; // changed meanwhile
     }
     let latest;
@@ -1677,6 +2227,9 @@ class ScenesController {
       choices = {} as Record<string, ClashChoice>,
     } = {},
   ) {
+    if (this.isLive(name)) {
+      return null;
+    }
     const mineJson = await this.localJson(name);
     let theirs;
     try {
@@ -1870,6 +2423,9 @@ class ScenesController {
         this.persistMeta();
         continue;
       }
+      if (meta.live && (name === this.meta.current || liveSync.stageOf(meta.live.fileId) !== null)) {
+        continue; // its Durable Object tells what happened (trashed, deleted), with changes still to keep
+      }
       if (
         name === UNTITLED ||
         meta.localOnly ||
@@ -1958,7 +2514,20 @@ class ScenesController {
         throw new Error(`"${from}" has a conflict — resolve it first`);
       }
       // local-only scenes are renamed here only (a copy in Drive keeps its name)
-      const driveName = meta?.localOnly ? null : meta?.renamedFrom ?? (this.remoteShaOf(from) ? from : null);
+      const liveFile = this.liveFileId(from);
+      // a live scene's rename is an event like any other: its DO renames the file
+      const driveName = meta?.localOnly || liveFile ? null : meta?.renamedFrom ?? (this.remoteShaOf(from) ? from : null);
+      if (liveFile) {
+        const session = from === this.meta.current ? this.liveCurrent() : await liveSync.session(liveFile, from).catch(() => null);
+        if (!session) {
+          throw new Error(`"${from}" can't be renamed while Kurviq's server is not reachable: try again online`);
+        }
+        session.rename(to);
+        const remote = this.state.remote?.find((scene) => scene.name === from);
+        if (remote) {
+          this.setState({ remote: this.state.remote!.map((scene) => (scene === remote ? { ...scene, name: to } : scene)) });
+        }
+      }
       const next: SceneMeta = { ...(meta ?? { baseSha: null, dirty: false }) };
       if (meta?.localOnly && meta.baseSha) {
         next.baseSha = null; // no longer related to the Drive copy
@@ -2026,6 +2595,13 @@ class ScenesController {
         const json = await this.localJson(name);
         return { status: "local-only" as const, autoSync: false, localOnly: true, empty: !json || isEmptyJson(json) };
       }
+      if (this.isLive(name)) {
+        // live: the latest changes are on the server once answered; agents read the live state
+        if (name === this.meta.current) {
+          await this.liveCurrent()?.flushNow();
+        }
+        return { status: this.statusOf(name), autoSync: true, live: true };
+      }
       const autoSync = this.autoSyncFor(name);
       const status = this.statusOf(name);
       if (autoSync && (status === "ahead" || (status === "local" && this.isDirty(name)))) {
@@ -2079,7 +2655,11 @@ class ScenesController {
       // local-only scenes are deleted here only (a copy in Drive stays)
       const driveSha = meta?.localOnly ? null : this.remoteShaOf(name) ?? meta?.conflict?.remoteSha ?? null;
       let queued = false;
-      if (driveSha) {
+      const liveFile = this.liveFileId(name);
+      if (liveFile) {
+        await this.liveTrash(liveFile, driveName);
+        this.updateRemoteSha(driveName, null);
+      } else if (driveSha) {
         try {
           await scenesApi.remove(driveName, driveSha);
           this.updateRemoteSha(driveName, null);
@@ -2096,6 +2676,7 @@ class ScenesController {
         }
       }
       if (name === this.meta.current) {
+        liveSync.detachCanvas();
         // leave it for the untitled draft (without stashing the deleted scene)
         this.setState({ busy: "loading" });
         await this.openInner(null, { stash: false });
@@ -2393,7 +2974,7 @@ class ScenesController {
 
 export const scenesController = new ScenesController();
 
-if (import.meta.env.DEV) {
-  // handy for debugging and end-to-end tests
+if (import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE) {
+  // handy for debugging and end-to-end tests (dev, and builds for the fake Google)
   (window as any).__scenes = scenesController;
 }

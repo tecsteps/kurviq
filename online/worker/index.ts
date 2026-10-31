@@ -1,6 +1,8 @@
 // Kurviq (https://kurviq.com): the Cloudflare Worker.
 //
 //   /auth/*          Sign in with Google (./auth.ts) — stateless, encrypted cookie
+//   /scene/<fileId>/…  live sync of a Drive scene: tickets, WebSocket, proofs (./sceneRoutes.ts, ./scene.ts)
+//   /drive/notify    Drive's push notifications for live scenes
 //   /live/<key>      WebSocket of a Kurviq tab to its agent pairing (./pairing.ts)
 //   /mcp             remote MCP for agents (scenes-mcp/tools.mjs), answered
 //                    through the pairing's open Kurviq tab; agents sign in
@@ -10,6 +12,8 @@
 //   /oauth/*, /.well-known/oauth-*  the sign-in (./oauth.ts)
 //   /llms.txt        how agents use Kurviq
 //   /api/public/…    scenes shared "anyone with the link" on Drive, cached (./shared.ts)
+//   /contact         the contact form (./contact.ts); usage statistics are
+//                    counted from page loads and server events (./stats.ts)
 //   /api/fonts/…     fonts from Google Fonts for "Add font", cached (./fonts.ts)
 //   /s/<fileId>/…    a shared scene: the app, titled for link previews (./shared.ts)
 //   /drive/open      Drive's "Open with Kurviq": to /s/<fileId>
@@ -25,11 +29,19 @@ import type { FeedbackEnv } from "./feedback";
 import { createScenesMcp } from "../../scenes-mcp/tools.mjs";
 
 import llmsTxt from "../llms.txt";
-import { handleAuth } from "./auth";
+import { devGate, handleAuth } from "./auth";
+import { handleFakeGoogle } from "./fakeGoogle";
 import { handleFonts } from "./fonts";
 import { bearerPairing, handleOAuth, pairingName, unauthorized, uploadPairing, uploadToken } from "./oauth";
+import { handleSceneRoutes } from "./sceneRoutes";
+import type { SceneRoutesEnv } from "./sceneRoutes";
 import { handlePublicApi, handleSharedPage } from "./shared";
 import { kurviqSkill } from "./skill";
+import { feedbackStats, handleStatsDev, mcpStats, pageStats, publicReadStats, routeStats } from "./stats";
+import type { StatsEnv } from "./stats";
+import { handleContact } from "./contact";
+import type { ContactEnv } from "./contact";
+import { runRetention } from "./retention";
 
 import type { AuthEnv } from "./auth";
 import type { SharedEnv } from "./shared";
@@ -38,8 +50,9 @@ export { Pairing } from "./pairing";
 export { SceneRoom } from "./scene";
 export { AccountGuard } from "./account";
 export { FakeGoogle } from "./fakeGoogle";
+export { Stats } from "./stats";
 
-type Env = AuthEnv & SharedEnv & FeedbackEnv & {
+type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -91,8 +104,12 @@ const imageType = (bytes: Uint8Array): string | null => {
   if (starts(0xff, 0xd8, 0xff)) return "image/jpeg";
   if (starts(0x47, 0x49, 0x46, 0x38)) return "image/gif";
   if (starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP") return "image/webp";
-  const head = new TextDecoder().decode(bytes.subarray(0, 1024)).trimStart().toLowerCase();
-  if (head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"))) return "image/svg+xml";
+  // SVG: after an optional <?xml …?>, <!DOCTYPE …> and comments (icon sets start with a license comment)
+  const head = new TextDecoder()
+    .decode(bytes.subarray(0, 4096))
+    .toLowerCase()
+    .replace(/^(\s|<\?xml[^>]*\?>|<!doctype[^>]*>|<!--[\s\S]*?-->)*/, "");
+  if (head.startsWith("<svg")) return "image/svg+xml";
   return null;
 };
 
@@ -227,7 +244,7 @@ const toolCalls = async (request: Request): Promise<Array<{ id: unknown; name: s
   }
 };
 
-const handleMcp = async (request: Request, env: Env, access: Access) => {
+const handleMcp = async (request: Request, env: Env, access: Access, ctx: ExecutionContext) => {
   const app = new URL(request.url).origin;
   const stub = pairingStub(env, access);
   const unreachable =
@@ -235,7 +252,9 @@ const handleMcp = async (request: Request, env: Env, access: Access) => {
       ? `Kurviq could not reach the user's browser: no Kurviq tab is open in the browser where the user allowed this agent, or the user signed out all agents since (then sign in again: in Claude Code /mcp → kurviq → Re-authenticate). Ask the user to open ${app} there.`
       : `Kurviq could not reach the user's browser. Ask the user to open ${app} (in the browser this agent link was made in).`;
   // no tab behind this link: nothing runs (and nothing is fetched on its behalf)
-  const calls = (await toolCalls(request)).filter((call) => !WITHOUT_TAB.has(call.name));
+  const allCalls = await toolCalls(request);
+  mcpStats(env, ctx, allCalls.map((call) => call.name));
+  const calls = allCalls.filter((call) => !WITHOUT_TAB.has(call.name));
   if (calls.length) {
     const state = (await (await stub.fetch(toPairing(access, "/api/app/state", {}, app))).json()) as {
       connected?: boolean;
@@ -269,7 +288,13 @@ const handleMcp = async (request: Request, env: Env, access: Access) => {
     serverFetch: (pathname: string, init: RequestInit = {}) => stub.fetch(toPairing(access, pathname, init, app)),
     registerUpstream: (mcp: unknown, store: unknown) => registerTools(mcp as any, "/bundle", store as any),
     // bug reports / change requests from the agent (counted per agent pairing)
-    sendFeedback: async (report: unknown) => saveFeedback(env, report, { source: "agent", sender: await senderHash(env, `pairing:${access.pairing}`) }),
+    sendFeedback: async (report: unknown) => {
+      const saved = await saveFeedback(env, report, { source: "agent", sender: await senderHash(env, `pairing:${access.pairing}`) });
+      if ("id" in saved) {
+        feedbackStats(env, ctx, "agent");
+      }
+      return saved;
+    },
     savePdf: async () => {
       throw new Error("PDF export is not available through the Kurviq MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).");
     },
@@ -286,14 +311,31 @@ const handleMcp = async (request: Request, env: Env, access: Access) => {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // a development configuration (the fake Google) never serves a non-local host
+    if (env.FAKE_GOOGLE === "1" && !devGate(env, request)) {
+      return new Response("Development configuration: only served on localhost", { status: 503 });
+    }
+    // dev only (FAKE_GOOGLE=1, local DEV_ORIGIN): the fake Google of ./fakeGoogle.ts
+    const fakeGoogle = handleFakeGoogle(request, env as Env & { FAKE_GOOGLE_STORE?: DurableObjectNamespace });
+    if (fakeGoogle) {
+      return fakeGoogle;
+    }
     const url = new URL(request.url);
     if (env.CANONICAL_HOST && url.hostname !== env.CANONICAL_HOST && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
       url.hostname = env.CANONICAL_HOST;
       return Response.redirect(url.toString(), 301);
     }
 
+    // live sync (docs/live-sync): tickets, the scene WebSocket, Drive's webhook, sign out everywhere
+    const sceneRoute = await handleSceneRoutes(request, env);
+    if (sceneRoute) {
+      routeStats(request, sceneRoute, env, ctx);
+      return sceneRoute;
+    }
+
     const auth = await handleAuth(request, env);
     if (auth) {
+      routeStats(request, auth, env, ctx);
       return auth;
     }
 
@@ -349,7 +391,7 @@ export default {
           return unauthorized(url.origin, pairing === "invalid");
         }
         const uploadUrl = `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}`;
-        return handleMcp(request, env, { pairing, via: "oauth", uploadUrl });
+        return handleMcp(request, env, { pairing, via: "oauth", uploadUrl }, ctx);
       }
       if (!KEY_RE.test(mcp[1])) {
         return withCors(
@@ -364,12 +406,27 @@ export default {
       const key = mcp[1];
       // its own upload token (like a signed-in agent's), not the link: the link key is full access
       const pairing = await pairingName(key);
-      return handleMcp(request, env, { pairing, via: "link", uploadUrl: `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}` });
+      return handleMcp(request, env, { pairing, via: "link", uploadUrl: `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}` }, ctx);
     }
 
     // bug reports and change requests from Kurviq's pages
     if (url.pathname === "/api/feedback") {
-      return handleFeedback(request, env);
+      const feedback = await handleFeedback(request, env);
+      if (feedback.ok) {
+        feedbackStats(env, ctx, "app");
+      }
+      return feedback;
+    }
+
+    // usage statistics, local tests only (./stats.ts)
+    if (url.pathname === "/api/stats-dev/flush" || url.pathname === "/api/stats-dev/retention") {
+      return handleStatsDev(request, env, () => runRetention(env));
+    }
+
+    // the contact form (./contact.ts)
+    const contact = await handleContact(request, env, ctx);
+    if (contact) {
+      return contact;
     }
 
     if (url.pathname === "/llms.txt") {
@@ -384,6 +441,7 @@ export default {
     }
     const publicApi = handlePublicApi(request, env, ctx);
     if (publicApi) {
+      publicReadStats(request, env, ctx);
       return publicApi;
     }
     // Drive's "Open with Kurviq" (Drive UI integration): state={"ids":[…],"action":"open"}
@@ -396,8 +454,18 @@ export default {
     }
     const page = await handleSharedPage(request, env, env.ASSETS, ctx);
     if (page) {
+      pageStats(request, page, env, ctx);
       return page;
     }
-    return env.ASSETS.fetch(request);
+    // the app (any scene) and the plain pages; page loads are counted (navigations only, ./stats.ts)
+    const asset = await env.ASSETS.fetch(request);
+    pageStats(request, asset, env, ctx);
+    return asset;
+  },
+
+  // hourly (wrangler.jsonc triggers): feedback older than 2 years, contact messages older than 1 year are deleted,
+  // sender hashes older than a day blanked
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runRetention(env));
   },
 };

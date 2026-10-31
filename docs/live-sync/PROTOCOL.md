@@ -167,5 +167,7 @@ pick a test user (alice, bob, carol), a token endpoint, and the Drive v3 subset
 Kurviq uses (files list/get/create/update incl. multipart and media, `alt=media`,
 revisions list/get/update/delete, permissions list/create/update/delete,
 `files.watch`, `channels.stop`, app properties). State lives in the `FakeGoogle`
-DO. The app build reads `VITE_APP_GOOGLE_API_BASE`; the Worker reads
-`GOOGLE_API_BASE`, `GOOGLE_OAUTH_AUTHORIZE`, `GOOGLE_OAUTH_TOKEN`.
+DO. The app build reads `VITE_APP_GOOGLE_API_BASE` (`npm run build:online:fake`); the Worker
+switches all Google endpoints with `FAKE_GOOGLE=1` (`online/worker/google.ts`). Run:
+`cd online && KURVIQ_FAKE_GOOGLE=1 KURVIQ_DEV_PORT=<port> node dev-vars.mjs && node build-worker.mjs && npx wrangler dev --port <port>`.
+Admin API and test accounts: header of `online/worker/fakeGoogle.ts`.
