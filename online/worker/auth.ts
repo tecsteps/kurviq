@@ -31,6 +31,43 @@ export type AuthEnv = GoogleEnv & {
   COOKIE_KEY: string;
   /** wrangler dev only (.dev.vars): this server's real address; wrangler dev gives the Worker the first route's (kurviq.com) */
   DEV_ORIGIN?: string;
+  /**
+   * live sync: base64 of 32 random bytes, seals refresh tokens handed to a
+   * scene's Durable Object (outside the database); TOKEN_KEY_PREVIOUS: the
+   * one before a rotation, still accepted
+   */
+  TOKEN_KEY?: string;
+  TOKEN_KEY_PREVIOUS?: string;
+  /** base64 of 32 random bytes: derives the per-scene pseudonyms (required for live sync) */
+  PSEUDONYM_KEY?: string;
+  /** "sign out everywhere" epochs (./account.ts), checked when a session's account is known */
+  ACCOUNT?: DurableObjectNamespace;
+};
+
+/**
+ * The dev gate: the fake Google, test hooks and DEV_ORIGIN are trusted only
+ * with FAKE_GOOGLE=1, a local DEV_ORIGIN, and (when there is a request) a
+ * request from this machine — never on kurviq.com, whatever the env says
+ */
+export const devGate = (env: { FAKE_GOOGLE?: string; DEV_ORIGIN?: string }, request?: Request) => {
+  if (env.FAKE_GOOGLE !== "1" || !isLocalOrigin(env.DEV_ORIGIN ?? null)) {
+    return false;
+  }
+  if (!request) {
+    return true;
+  }
+  // wrangler dev hands the Worker the first route's host (kurviq.com): the client's address tells instead
+  // (in production it is always the visitor's public address, never a loopback one)
+  const ip = request.headers.get("CF-Connecting-IP") ?? "";
+  const host = new URL(request.url).hostname;
+  return (
+    ip === "::1" ||
+    ip === "127.0.0.1" ||
+    ip === "::ffff:127.0.0.1" ||
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host.endsWith(".localhost")
+  );
 };
 
 const clientId = (env: AuthEnv) => env.GOOGLE_CLIENT_ID || google.clientId;
@@ -41,6 +78,8 @@ const STATE_COOKIE = "kq_oauth_state";
 const LOCAL_SESSION = "kq_google_local";
 /** browsers cap cookies at 400 days; every refresh renews it */
 const SESSION_DAYS = 400;
+/** the local install's sealed session: valid this long after its last renewal (each refresh renews it) */
+const LOCAL_SESSION_DAYS = 90;
 
 export const SCOPES = [
   "openid",
@@ -53,7 +92,7 @@ const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 export type GoogleUser = { email: string; name: string | null; avatarUrl: string | null };
 
-type Session = {
+export type Session = {
   /** access token and when it expires (ms) */
   a: string;
   ae: number;
@@ -62,6 +101,14 @@ type Session = {
   user: GoogleUser;
   /** the user allowed Kurviq's Drive access (Google lets them untick it) */
   drive: boolean;
+  /** Google's stable account id (missing in sessions made before live sync) */
+  sub?: string;
+  /** when this sign-in happened (ms): "sign out everywhere" ends every session issued before */
+  iat?: number;
+  /** the local install's sealed session: valid until (ms), renewed with every refresh */
+  exp?: number;
+  /** the local install's origin it was handed to: refused from any other page */
+  lo?: string;
 };
 
 // -----------------------------------------------------------------------------
@@ -165,21 +212,31 @@ const exchange = async (env: AuthEnv, params: Record<string, string>): Promise<T
   return { error: res.status >= 500 ? `http_${res.status}` : String(body.error || `http_${res.status}`) };
 };
 
-/** who signed in: from the ID token, which came straight from Google's token endpoint (TLS) */
-const userOf = (idToken: string | undefined): GoogleUser | null => {
+const idClaims = (idToken: string | undefined): any => {
   try {
-    const claims = JSON.parse(new TextDecoder().decode(fromB64url(idToken!.split(".")[1])));
-    if (!claims.email) {
-      return null;
-    }
-    return {
-      email: String(claims.email),
-      name: claims.name ? String(claims.name) : null,
-      avatarUrl: claims.picture ? String(claims.picture) : null,
-    };
+    return JSON.parse(new TextDecoder().decode(fromB64url(idToken!.split(".")[1])));
   } catch {
     return null;
   }
+};
+
+/** who signed in: from the ID token, which came straight from Google's token endpoint (TLS) */
+const userOf = (idToken: string | undefined): GoogleUser | null => {
+  const claims = idClaims(idToken);
+  if (!claims?.email) {
+    return null;
+  }
+  return {
+    email: String(claims.email),
+    name: claims.name ? String(claims.name) : null,
+    avatarUrl: claims.picture ? String(claims.picture) : null,
+  };
+};
+
+/** Google's stable account id (the email can change) */
+const subOf = (idToken: string | undefined): string | undefined => {
+  const sub = idClaims(idToken)?.sub;
+  return typeof sub === "string" && /^[\w.-]{1,128}$/.test(sub) ? sub : undefined;
 };
 
 const grantsDrive = (scope: string | undefined) => (scope ?? "").split(" ").includes(DRIVE_SCOPE);
@@ -193,11 +250,15 @@ const refresh = async (env: AuthEnv, session: Session): Promise<Session | "expir
   if (!answer.access_token) {
     return answer.error?.startsWith("http_") ? "unreachable" : "expired";
   }
+  // a refresh brings an ID token when the grant has openid: the sub of
+  // sessions made before live sync comes from there (else a new sign-in)
+  const sub = subOf(answer.id_token);
   return {
     ...session,
     a: answer.access_token,
     ae: Date.now() + (answer.expires_in ?? 3600) * 1000,
     drive: answer.scope ? grantsDrive(answer.scope) : session.drive,
+    sub: session.sub ?? sub,
   };
 };
 
@@ -209,11 +270,135 @@ const tokenAnswer = (session: Session) => ({
 });
 
 // -----------------------------------------------------------------------------
+// live sync: refresh tokens sealed for one scene's Durable Object
+// -----------------------------------------------------------------------------
+
+const tokenKeys = new Map<string, { id: string; key: CryptoKey }>();
+
+/** TOKEN_KEY (or TOKEN_KEY_PREVIOUS) as an AES key, with its id: the first 8 characters of its SHA-256 */
+const tokenKey = async (raw64: string | undefined) => {
+  if (!raw64) {
+    return null;
+  }
+  let entry = tokenKeys.get(raw64);
+  if (!entry) {
+    const raw = Uint8Array.from(atob(raw64), (char) => char.charCodeAt(0));
+    if (raw.length !== 32) {
+      throw new Error("TOKEN_KEY must be base64 of 32 bytes");
+    }
+    const id = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", raw))).slice(0, 8);
+    entry = { id, key: await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]) };
+    tokenKeys.set(raw64, entry);
+  }
+  return entry;
+};
+
+const tokenAad = (fileId: string, sub: string, exp: number, keyId: string) =>
+  new TextEncoder().encode(`kurviq-scene-token:${fileId}:${sub}:${exp}:${keyId}`);
+
+export type SceneToken = { r: string; iat: number; exp: number };
+
+/**
+ * An author's refresh token for one scene's Durable Object:
+ * "<keyId>.<exp>.<iv>.<ciphertext>", bound to the file, the account and the
+ * expiry (the lease): the DO can't use it for another scene or person, or
+ * after it ran out. `iat`: when the session was signed in (sign out everywhere).
+ */
+export const sealSceneToken = async (env: AuthEnv, fileId: string, sub: string, refreshToken: string, iat: number, exp: number) => {
+  const current = await tokenKey(env.TOKEN_KEY);
+  if (!current) {
+    throw new Error("TOKEN_KEY is not set");
+  }
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new TextEncoder().encode(JSON.stringify({ r: refreshToken, iat }));
+  const sealed = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: tokenAad(fileId, sub, exp, current.id) }, current.key, data),
+  );
+  return `${current.id}.${exp}.${b64url(iv)}.${b64url(sealed)}`;
+};
+
+/** the expiry of a sealed scene token, readable without the key (0: not one) */
+export const sceneTokenExpiry = (sealed: string | null | undefined) => Number(String(sealed || "").split(".")[1]) || 0;
+
+export const unsealSceneToken = async (env: AuthEnv, sealed: string, fileId: string, sub: string): Promise<SceneToken | null> => {
+  try {
+    const [keyId, expText, iv, data] = sealed.split(".");
+    const exp = Number(expText);
+    if (!(exp > Date.now())) {
+      return null;
+    }
+    for (const raw of [env.TOKEN_KEY, env.TOKEN_KEY_PREVIOUS]) {
+      const entry = await tokenKey(raw);
+      if (entry?.id === keyId) {
+        const plain = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: fromB64url(iv), additionalData: tokenAad(fileId, sub, exp, keyId) },
+          entry.key,
+          fromB64url(data),
+        );
+        const value = JSON.parse(new TextDecoder().decode(plain));
+        return { r: String(value.r), iat: Number(value.iat) || 0, exp };
+      }
+    }
+  } catch {}
+  return null;
+};
+
+/** a 1-hour access token from a refresh token (the scene DO saving as its author) */
+export const accessFromRefresh = async (env: AuthEnv, refreshToken: string) => {
+  const answer = await exchange(env, { grant_type: "refresh_token", refresh_token: refreshToken });
+  if (!answer.access_token) {
+    return answer.error?.startsWith("http_") ? ("unreachable" as const) : ("expired" as const);
+  }
+  return { token: answer.access_token, expiresAt: Date.now() + (answer.expires_in ?? 3600) * 1000 };
+};
+
+/** Kurviq's grant at Google ends (sign out everywhere) */
+export const revokeAtGoogle = async (env: AuthEnv, refreshToken: string) => {
+  try {
+    const res = await fetch(googleUrls(env).revoke, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: refreshToken }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    return res.ok || res.status === 400; // 400: already revoked
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * A Drive watch channel's secret: derived from the file and channel id with a
+ * server key, so the Worker checks a notification before any scene object is woken
+ */
+export const watchSecret = async (env: AuthEnv, fileId: string, channelId: string) => {
+  const raw = Uint8Array.from(atob(env.COOKIE_KEY), (char) => char.charCodeAt(0));
+  const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-watch:${fileId}|${channelId}`)));
+  return b64url(mac).slice(0, 32);
+};
+
+/**
+ * A person's name in one scene's file: derived from the account id, the
+ * file id and a server secret, so it can't be linked across scenes (not even
+ * by someone who holds both scenes' keys)
+ */
+export const pseudonymOf = async (env: AuthEnv, sub: string, fileId: string) => {
+  if (!env.PSEUDONYM_KEY) {
+    throw new Error("PSEUDONYM_KEY is not set");
+  }
+  const secret = Uint8Array.from(atob(env.PSEUDONYM_KEY), (char) => char.charCodeAt(0));
+  const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-pseudonym:${sub}:${fileId}`)));
+  return `p${b64url(mac).slice(0, 11)}`;
+};
+
+// -----------------------------------------------------------------------------
 // routes
 // -----------------------------------------------------------------------------
 
 /** the local install: localhost, 127.0.0.1, *.localhost and *.test (Herd), any port */
-const isLocalOrigin = (origin: string | null) => {
+export const isLocalOrigin = (origin: string | null) => {
   if (!origin) {
     return false;
   }
@@ -272,13 +457,29 @@ const json = (status: number, body: unknown, cookies: string[] = [], corsOrigin?
 };
 
 /** `redirect`: Google's redirect URI of this flow, sent again with the code */
-type Flow = { state: string; back: string; local: boolean; consent: boolean; redirect: string };
+/**
+ * `pageState`: the local install's own value (?state= on /auth/login), handed
+ * back in the fragment so that page knows the sign-in is the one it started
+ */
+type Flow = { state: string; back: string; local: boolean; consent: boolean; redirect: string; pageState?: string };
 
-const startFlow = async (request: Request, env: AuthEnv, back: string, local: boolean, consent: boolean, hint?: string, redirectUri?: string) => {
+const PAGE_STATE_RE = /^[A-Za-z0-9_-]{16,128}$/;
+
+const startFlow = async (
+  request: Request,
+  env: AuthEnv,
+  back: string,
+  local: boolean,
+  consent: boolean,
+  hint?: string,
+  redirectUri?: string,
+  pageState?: string,
+) => {
   const url = new URL(request.url);
-  const callback = redirectUri ?? `${env.DEV_ORIGIN || url.origin}/auth/callback`;
+  // wrangler dev: its real (local) address; never a configured non-local one
+  const callback = redirectUri ?? `${isLocalOrigin(env.DEV_ORIGIN ?? null) ? env.DEV_ORIGIN : url.origin}/auth/callback`;
   const state = b64url(crypto.getRandomValues(new Uint8Array(18)));
-  const sealed = await seal(env, { state, back, local, consent, redirect: callback } satisfies Flow, STATE_COOKIE);
+  const sealed = await seal(env, { state, back, local, consent, redirect: callback, pageState } satisfies Flow, STATE_COOKIE);
   const target = new URL(googleUrls(env, url.origin).authorize);
   target.searchParams.set("client_id", clientId(env));
   target.searchParams.set("redirect_uri", callback);
@@ -302,8 +503,12 @@ const finish = async (request: Request, env: AuthEnv, flow: Flow, status: string
   const clearState = cookie(request, STATE_COOKIE, "", 0);
   if (flow.local) {
     const fragment = new URLSearchParams({ "kurviq-google": status });
+    if (flow.pageState) {
+      fragment.set("kurviq-state", flow.pageState);
+    }
     if (session) {
-      fragment.set("session", await seal(env, session, LOCAL_SESSION));
+      // bound to the page it goes to: presented from any other origin it is refused
+      fragment.set("session", await sealLocalSession(env, { ...session, lo: new URL(flow.back).origin }));
     }
     return redirect(`${flow.back}#${fragment}`, [clearState]);
   }
@@ -316,10 +521,111 @@ const finish = async (request: Request, env: AuthEnv, flow: Flow, status: string
  */
 const sessionOf = async (request: Request, env: AuthEnv, local: boolean) => {
   if (!local) {
-    return unseal<Session>(env, readCookie(request, SESSION_COOKIE), SESSION_COOKIE);
+    return cookieSession(request, env);
   }
-  const body: any = await request.json().catch(() => ({}));
-  return unseal<Session>(env, typeof body.session === "string" ? body.session : undefined, LOCAL_SESSION);
+  // a sealed session is a few KB: anything bigger is not read
+  const text = await readBody(request, 32 * 1024);
+  let body: any = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {}
+  return localSession(env, body?.session, request.headers.get("Origin"));
+};
+
+/** a request body up to `max` bytes, read as a stream (stops beyond it); "" when bigger */
+const readBody = async (request: Request, max: number) => {
+  if (!request.body) {
+    return "";
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    size += value.length;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return "";
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, at);
+    at += chunk.length;
+  }
+  return new TextDecoder().decode(all);
+};
+
+export const cookieSession = (request: Request, env: AuthEnv) => unseal<Session>(env, readCookie(request, SESSION_COOKIE), SESSION_COOKIE);
+
+/**
+ * Local-install sessions sealed before expiries existed have none: they work
+ * until this date (about 90 days after live sync shipped, 2026-10-31), and get
+ * an expiry with their next refresh; after it they need a new sign-in.
+ */
+const LEGACY_LOCAL_DEADLINE = Date.UTC(2027, 0, 31);
+
+/** the local install's sealed session, unless it ran out or comes from another origin than the one it was handed to */
+export const localSession = async (env: AuthEnv, sealed: unknown, origin: string | null) => {
+  const session = await unseal<Session>(env, typeof sealed === "string" ? sealed : undefined, LOCAL_SESSION);
+  const until = session?.exp ?? LEGACY_LOCAL_DEADLINE;
+  if (!session || until <= Date.now() || (session.lo && session.lo !== origin)) {
+    return null;
+  }
+  return session;
+};
+
+/** renewed: a new expiry; the sign-in time stays what it was (0 if unknown: live sync then asks for a new sign-in) */
+export const sealLocalSession = (env: AuthEnv, session: Session) =>
+  seal(env, { ...session, iat: session.iat ?? 0, exp: Date.now() + LOCAL_SESSION_DAYS * 24 * 3600_000 }, LOCAL_SESSION);
+
+/** an account's "sign out everywhere" epoch (0: never); null: the guard could not be asked or answered nonsense */
+export const accountEpochOf = async (env: AuthEnv, sub: string, init?: RequestInit): Promise<number | null> => {
+  if (!env.ACCOUNT) {
+    return null;
+  }
+  try {
+    const res = await env.ACCOUNT.get(env.ACCOUNT.idFromName(sub)).fetch("https://account/epoch", init);
+    const epoch = res.ok ? ((await res.json()) as any)?.epoch : undefined;
+    return typeof epoch === "number" && Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : null;
+  } catch {
+    return null;
+  }
+};
+
+/** "sign out everywhere" ended this session (its account's epoch is newer than its sign-in); "unknown": couldn't check */
+export const revokedEverywhere = async (env: AuthEnv, session: Session): Promise<boolean | "unknown"> => {
+  if (!session.sub) {
+    return false;
+  }
+  const epoch = await accountEpochOf(env, session.sub);
+  if (epoch === null) {
+    return env.ACCOUNT ? "unknown" : false;
+  }
+  return !!epoch && (session.iat ?? 0) < epoch;
+};
+
+/** Set-Cookie of a renewed session (Kurviq's own pages) */
+export const sessionCookieHeader = (request: Request, env: AuthEnv, session: Session) => sessionCookie(request, env, session);
+
+export const clearSessionCookie = (request: Request) => cookie(request, SESSION_COOKIE, "", 0);
+
+/**
+ * A session whose access token is good for 10 more minutes: as it is, or
+ * refreshed (`renewed`). "unreachable": Google's 5xx or a timeout; "expired":
+ * the grant is gone (revoked, or the password changed).
+ */
+export const freshSession = async (env: AuthEnv, session: Session, needSub = false) => {
+  if (session.ae - Date.now() > 10 * 60_000 && (!needSub || session.sub)) {
+    return { session, renewed: false };
+  }
+  const next = await refresh(env, session);
+  return typeof next === "string" ? next : { session: next, renewed: true };
 };
 
 export const handleAuth = async (request: Request, env: AuthEnv): Promise<Response | null> => {
@@ -352,7 +658,20 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
 
   if (url.pathname === "/auth/login" && request.method === "GET") {
     const { back, local: toLocal } = safeReturn(url.searchParams.get("return"), url.origin);
-    return startFlow(request, env, back, toLocal, url.searchParams.has("consent"), url.searchParams.get("hint") ?? undefined);
+    const pageState = url.searchParams.get("state");
+    if (toLocal && pageState !== null && !PAGE_STATE_RE.test(pageState)) {
+      return json(400, { error: "state: 16 to 128 characters of A-Z a-z 0-9 _ -" });
+    }
+    return startFlow(
+      request,
+      env,
+      back,
+      toLocal,
+      url.searchParams.has("consent"),
+      url.searchParams.get("hint") ?? undefined,
+      undefined,
+      toLocal ? pageState ?? undefined : undefined,
+    );
   }
 
   if (url.pathname === "/auth/callback" && request.method === "GET") {
@@ -376,7 +695,7 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
     if (!answer.refresh_token) {
       // allowed before (another browser has the refresh token): ask for consent once more
       if (!flow.consent) {
-        return startFlow(request, env, flow.back, flow.local, true, user.email, flow.redirect);
+        return startFlow(request, env, flow.back, flow.local, true, user.email, flow.redirect, flow.pageState);
       }
       console.warn("[auth] sign-in failed: no refresh token, even after consent");
       return finish(request, env, flow, "failed");
@@ -387,6 +706,8 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
       r: answer.refresh_token,
       user,
       drive: grantsDrive(answer.scope),
+      sub: subOf(answer.id_token),
+      iat: Date.now(),
     };
     return finish(request, env, flow, session.drive ? "connected" : "nodrive", session);
   }
@@ -400,6 +721,14 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
     if (!session) {
       return json(200, { connected: false }, [], cors);
     }
+    // signed out everywhere since: this session is over too (and if that can't be checked now, no token is handed out)
+    const revoked = await revokedEverywhere(env, session);
+    if (revoked === "unknown") {
+      return json(503, { error: "Sign-in check not available, try again" }, [], cors);
+    }
+    if (revoked) {
+      return json(200, { connected: false, expired: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], cors);
+    }
     if (session.ae - Date.now() > 10 * 60_000) {
       return json(200, tokenAnswer(session), [], cors);
     }
@@ -412,7 +741,7 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
       return json(200, { connected: false, expired: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], cors);
     }
     if (local) {
-      return json(200, { ...tokenAnswer(next), session: await seal(env, next, LOCAL_SESSION) }, [], cors);
+      return json(200, { ...tokenAnswer(next), session: await sealLocalSession(env, next) }, [], cors);
     }
     return json(200, tokenAnswer(next), [await sessionCookie(request, env, next)]);
   }

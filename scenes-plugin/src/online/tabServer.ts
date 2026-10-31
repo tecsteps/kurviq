@@ -35,6 +35,10 @@ const afterAgentWrite = (source?: string) => {
   }
 };
 
+/** a scene that saves through live sync (known here, or marked on its Drive file) */
+const liveFileOf = async (name: string) =>
+  scenesController.liveFileId(name) ?? (await driveScenes.liveFileOf(name).catch(() => null));
+
 const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Promise<TabResponse> => {
   const url = new URL(path, "http://tab");
   const header = (name: string) => headers[name] ?? headers[name.toLowerCase()];
@@ -55,6 +59,11 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
   if (renameMatch && method === "POST") {
     const from = decodeURIComponent(renameMatch[1]);
     const { to } = JSON.parse(body || "{}");
+    if (scenesController.liveFileId(from)) {
+      // live: a name event through the scene's Durable Object
+      await scenesController.rename(from, String(to ?? "").trim());
+      return json(200, { from, to, sha: "", commit: null });
+    }
     const result = await driveScenes.rename(from, String(to ?? "").trim());
     afterAgentWrite(header("X-Scenes-Source"));
     return json(200, { from, to, ...result });
@@ -62,11 +71,52 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
   const agentMatch = url.pathname.match(/^\/api\/scenes\/(.+)\/agent-version$/);
   if (agentMatch && method === "GET") {
     const name = decodeURIComponent(agentMatch[1]);
-    return json(200, { name, version: await driveScenes.agentVersion(name) });
+    const liveFile = await liveFileOf(name);
+    // live: the agent's last edit as this browser keeps it, until Drive has a newer agent version
+    const version = (liveFile ? await scenesController.liveAgentVersion(liveFile) : null) ?? (await driveScenes.agentVersion(name));
+    return json(200, { name, version });
   }
   const match = url.pathname.match(/^\/api\/scenes\/(.+)$/);
   if (match) {
     const name = decodeURIComponent(match[1]);
+    const liveFile = await liveFileOf(name);
+    if (liveFile && method === "GET") {
+      // live: the scene as its Durable Object has it now (Drive is up to a minute behind)
+      const sha = url.searchParams.get("sha");
+      let text: string | null;
+      let revision: string;
+      if (sha?.startsWith("live-")) {
+        text = await scenesController.liveRevision(liveFile, sha);
+        revision = sha;
+      } else if (sha) {
+        const scene = await driveScenes.load(name, sha);
+        text = scene.json;
+        revision = scene.sha;
+      } else {
+        const live = await scenesController.liveSessionFor(name);
+        if (!live) {
+          return json(404, { error: `Scene not found: ${name}` });
+        }
+        await live.flushNow();
+        const snapshot = live.snapshot();
+        text = snapshot.json;
+        revision = snapshot.revision;
+        await scenesController.rememberLiveRevision(liveFile, revision, text);
+      }
+      if (text === null) {
+        return json(404, { error: `Revision ${sha} of "${name}" is not kept in this browser any more` });
+      }
+      const body = url.searchParams.has("lean") ? JSON.stringify(leanScene(JSON.parse(text))) : text;
+      return { status: 200, headers: { "Content-Type": "application/json", "X-Scene-Sha": revision }, body };
+    }
+    if (liveFile && method === "PUT") {
+      const result = await scenesController.liveWrite(liveFile, name, body, header("X-Base-Sha"), header("X-Scenes-Source"));
+      return json(200, { name, ...result });
+    }
+    if (liveFile && method === "DELETE") {
+      await scenesController.remove(name);
+      return json(200, { name, sha: null });
+    }
     if (method === "GET") {
       const scene = await driveScenes.load(name, url.searchParams.get("sha") || undefined);
       // ?lean: without image bytes (the agent's server reads it; this tab keeps the images)

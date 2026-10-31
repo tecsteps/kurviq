@@ -17,6 +17,8 @@ import { slideNotes } from "./notes";
 import { setSlideParam } from "./router";
 import {
   addSlide,
+  arrangeInDeckOrder,
+  isDeckGrid,
   createTemplate,
   deleteSlides,
   duplicateSlides,
@@ -235,8 +237,19 @@ const SlideList = () => {
     setSlideOrder(api(), ids);
   };
 
+  // the canvas no longer shows the slides in deck order (e.g. an agent placed one by number)
+  const editor = deck.getApi();
+  const outOfOrder = !!editor && !isDeckGrid(editor.getSceneElements());
+
   return (
     <ol className="slides-list">
+      {outOfOrder && (
+        <li>
+          <button type="button" className="slides-btn slides-arrange" onClick={() => arrangeInDeckOrder(api())}>
+            Arrange in deck order
+          </button>
+        </li>
+      )}
       <li>
         <button
           type="button"

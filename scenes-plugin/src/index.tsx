@@ -33,6 +33,7 @@ import type { SharedWithMe } from "./online/drive";
 import {
   ConnectDriveOffer,
   DriveDialogs,
+  LiveBanner,
   DriveIcon,
   DrivePanel,
   KurviqFooter,
@@ -158,6 +159,12 @@ const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> 
   local: { icon: "○", label: "Not in Drive yet", tone: "muted" },
   "local-only": { icon: "⌂", label: "Local only", tone: "muted" },
   untitled: { icon: "○", label: "Not saved", tone: "muted" },
+  // live sync: where the latest change is
+  "live-saving": { icon: "…", label: "Saving…", tone: "muted" },
+  "live-browser": { icon: "↑", label: "In this browser", tone: "warn" },
+  "live-server": { icon: "☁", label: "On the server", tone: "info" },
+  "live-drive": { icon: "✓", label: "In Drive", tone: "ok" },
+  "live-unsaved": { icon: "!", label: "Not saved", tone: "danger" },
 };
 
 // where a scene is kept (this browser / a repository) and who can see it
@@ -207,6 +214,13 @@ const toggleDrive = async (name: string, inDrive: boolean, signedIn: boolean) =>
       await scenesController.putInDrive(name);
     }
   } catch (error: any) {
+    // a live scene that is shared (or has others' unsaved changes) stays in Drive: a copy only here instead
+    if (error.keepLocalCopy) {
+      if (window.confirm(`${error.message}\n\nKeep a local copy?`)) {
+        scenesController.keepLocalCopy(name).catch((copyError: any) => window.alert(copyError.message));
+      }
+      return;
+    }
     window.alert(error.message);
   }
 };
@@ -314,12 +328,14 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         onClick={() => setPanel((value) => (value ? null : "switch"))}
       >
         <span className="scenes-pill__icon">{LoadIcon}</span>
-        <span className="scenes-pill__name">{current ?? UNTITLED_LABEL}</span>
+        <span className="scenes-pill__name">{current ?? state.opening ?? UNTITLED_LABEL}</span>
         {currentItem && <ScenePlace item={currentItem} />}
         {state.checking ? (
           <QuickTip tip="Local copy, read-only while Drive is checked" className="scenes-pill__status" label={false}>
             checking…
           </QuickTip>
+        ) : state.opening && current === null ? (
+          <span className="scenes-pill__status">opening…</span>
         ) : (busy === "saving" || state.sync.running) &&
           // a local-only scene never syncs, and nothing syncs while signed out
           !currentItem?.localOnly &&
@@ -327,7 +343,7 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
           <span className="scenes-pill__status">syncing…</span>
         ) : (
           // "local" / "local-only": the browser icon says it
-          !["synced", "local", "local-only"].includes(status) && <StatusBadge status={status} compact />
+          !["synced", "local", "local-only", "live-drive", "live-server", "live-saving"].includes(status) && <StatusBadge status={status} compact />
         )}
         {offline && (
           <QuickTip tip="Offline: you keep working here, it syncs once you are back online" className="scenes-pill__offline" label={false}>
@@ -571,7 +587,7 @@ const SceneSwitcher = ({
                     {entry.owner}
                   </QuickTip>
                 )}
-                {item && !["synced", "local", "local-only", "untitled"].includes(item.status) && (
+                {item && !["synced", "local", "local-only", "untitled", "live-drive", "live-server", "live-saving"].includes(item.status) && (
                   <StatusBadge status={item.status} compact />
                 )}
               </button>
@@ -778,6 +794,18 @@ const currentStatusText = (
       return "Local only — stays in this browser, never synced to Drive. Publish puts it in Drive.";
     case "untitled":
       return empty ? "Empty — draw something, then save it" : "Not saved yet — give it a name";
+    case "live-saving":
+      return "Saving your latest change in this browser…";
+    case "live-browser":
+      return offline
+        ? "Your latest changes are in this browser — sent to Kurviq's server once it is reachable"
+        : "Your latest changes are in this browser, on their way to Kurviq's server";
+    case "live-server":
+      return "Saved on Kurviq's server — in Drive within about a minute";
+    case "live-drive":
+      return "Saved in Drive · changes show live for everyone who has it open";
+    case "live-unsaved":
+      return "This browser could not store your latest changes — export the scene to keep them";
   }
 };
 
@@ -1345,6 +1373,7 @@ export const ScenesSidebar = () => {
       <AddFontOverlay />
       <DriveDialogs />
       <ReadOnlyGuard />
+      <LiveBanner />
       {IS_ONLINE && <UpdateBanner />}
     </>
   );

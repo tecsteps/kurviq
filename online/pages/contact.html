@@ -1,0 +1,41 @@
+<style>
+  form { display: grid; gap: 1rem; margin-top: 1.5rem; }
+  label { display: grid; gap: .3rem; font-weight: 600; }
+  label span.muted { font-weight: 400; }
+  input, textarea { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: .55rem .7rem; }
+  input:focus, textarea:focus { outline: 2px solid var(--link); outline-offset: 1px; border-color: transparent; }
+  textarea { min-height: 12rem; resize: vertical; }
+  button { justify-self: start; font: inherit; font-weight: 600; color: #fff; background: #5b57d1; border: 0; border-radius: 8px; padding: .6rem 1.2rem; cursor: pointer; }
+  button:hover { background: #4a46b8; }
+  .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+  .status { border-radius: 8px; padding: .8rem 1rem; margin: 1.5rem 0 0; }
+  .status.ok { background: color-mix(in srgb, #2f9e44 15%, transparent); }
+  .status.error { background: color-mix(in srgb, #e03131 15%, transparent); }
+</style>
+
+<h1>Contact <span class="muted">/ Kontakt</span></h1>
+
+<p>Write to us here, or by email to <a href="mailto:fabian.wesner@tecsteps.com">fabian.wesner@tecsteps.com</a>.
+We answer by email, usually within a few days.<br />
+<span class="muted">Schreib uns hier oder per E-Mail. Wir antworten per E-Mail, meist innerhalb weniger Tage.</span></p>
+
+<div id="contact-status" hidden></div>
+
+<form id="contact-form" method="post" action="/contact">
+  <label>Name <span class="muted">(optional)</span>
+    <input type="text" name="name" maxlength="100" autocomplete="name" />
+  </label>
+  <label>Email for our reply <span class="muted">/ E-Mail für die Antwort</span>
+    <input type="email" name="email" maxlength="200" autocomplete="email" required />
+  </label>
+  <label>Message <span class="muted">/ Nachricht</span>
+    <textarea name="message" maxlength="5000" required></textarea>
+  </label>
+  <div class="hp" aria-hidden="true">
+    <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+  </div>
+  <button type="submit">Send / Senden</button>
+  <p class="muted">We store your message, name and email address to answer you, and delete them one year after receipt.
+  See the <a href="/privacy">privacy notice</a>.<br />
+  Wir speichern Nachricht, Name und E-Mail-Adresse, um dir zu antworten, und löschen sie ein Jahr nach Eingang.</p>
+</form>

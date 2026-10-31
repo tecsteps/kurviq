@@ -556,7 +556,8 @@ const status = () => {
         `${name}: ${status}${localOnly ? " (only in the user's browser, never synced to Drive)" : scenesController.autoSyncFor(name!) ? "" : " (auto-sync off)"}${pendingRename ? ` (rename in Drive pending, still "${pendingRename}" there)` : ""}`,
       ),
     autoSyncInfo:
-      "The app pushes local changes of a scene to Drive by itself (about 10 s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push.",
+      "The app pushes local changes of a scene to Drive by itself (about 10 s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push. " +
+      "Scenes with a live-… status save live through Kurviq's server (live-browser: the latest change is still in the user's browser; live-server: on the server; live-drive: in Drive): everyone who has them open sees changes within a second, and your edits reach them the same way.",
   };
 };
 

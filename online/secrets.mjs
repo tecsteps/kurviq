@@ -4,6 +4,13 @@
 // `npm run secrets -- GOOGLE_CLIENT_SECRET GOOGLE_API_KEY`: a new COOKIE_KEY
 // signs every browser out of Google (they sign in again with one click) —
 // only make one on purpose.
+//
+// Live sync (docs/live-sync) adds two random keys, set once each:
+//   TOKEN_KEY      encrypts the refresh tokens a scene keeps until its changes
+//                  are in Drive (a new one only makes those pending tokens
+//                  useless: their authors' changes wait for their next visit)
+//   PSEUDONYM_KEY  derives the per-scene author pseudonyms written into Drive
+//                  files (a new one changes every pseudonym: never rotate it)
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -28,6 +35,8 @@ const secrets = {
   GOOGLE_CLIENT_SECRET: env.KURVIQ_GOOGLE_CLIENT_SECRET,
   GOOGLE_API_KEY: env.KURVIQ_GOOGLE_API_KEY,
   COOKIE_KEY: randomBytes(32).toString("base64"),
+  TOKEN_KEY: randomBytes(32).toString("base64"),
+  PSEUDONYM_KEY: randomBytes(32).toString("base64"),
 };
 for (const [name, value] of Object.entries(secrets)) {
   if (only.length && !only.includes(name)) {
