@@ -67,7 +67,11 @@ install:
   stored), and the image's bytes never go through the model.
 
 - **Share a scene:** **Share…** (the pen on the open scene, or the Slides
-  sidebar). Add people by email (Can view / Can edit; Google emails them its
+  sidebar). **Share in Google Drive** (recommended) opens the file in Drive
+  in a small window: Drive's own Share button there sends Google's normal
+  invitation (shares made through the Drive API by Kurviq land in the
+  recipient's Drive spam, even after Google's brand verification); back in
+  Kurviq the dialog lists the new people. Or add people by email (Can view / Can edit; Google emails them its
   own invitation, without a link of ours: a kurviq.com link in the message
   sent shares into the recipient's Drive spam; the dialog then offers the
   link to send yourself), set **General access** ("Only people added here",
