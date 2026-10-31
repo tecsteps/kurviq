@@ -531,6 +531,8 @@ const ShareDialog = ({ name }: { name: string }) => {
   const [permissions, setPermissions] = useState<Permission[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** the last person added: the hint on finding it (Google may put the share into their spam) */
+  const [sharedWith, setSharedWith] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"reader" | "writer">("writer");
   const me = connection.getState().user?.email?.toLowerCase();
@@ -581,13 +583,9 @@ const ShareDialog = ({ name }: { name: string }) => {
       return;
     }
     run(async () => {
-      await addPerson(
-        fileId!,
-        address,
-        role,
-        `I shared "${name}" with you on Kurviq. Open it here: ${link}`,
-      );
+      await addPerson(fileId!, address, role);
       setEmail("");
+      setSharedWith(address);
     });
   };
 
@@ -625,9 +623,20 @@ const ShareDialog = ({ name }: { name: string }) => {
                 Share
               </button>
             </div>
-            <p className="kq-muted">
-              Google emails them a link. People without a Google account create one for their address (no Gmail needed).
-            </p>
+            {sharedWith ? (
+              <div className="kq-share__sent">
+                <p>
+                  Shared with {sharedWith}. Google emails them; if they don't see it, it may be in their Drive's{" "}
+                  <strong>Spam</strong> folder. To be sure, send them the link yourself:
+                </p>
+                <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />
+              </div>
+            ) : (
+              <p className="kq-muted">
+                Google emails them. People without a Google account create one for their address (no Gmail needed). In
+                Kurviq they find it under <strong>Shared with you…</strong> in the scene list, or with the link.
+              </p>
+            )}
             <ul className="kq-share__people">
               {people.map((person) => {
                 const isMe = person.emailAddress?.toLowerCase() === me;

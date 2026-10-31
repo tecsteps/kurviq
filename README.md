@@ -67,8 +67,10 @@ install:
   stored), and the image's bytes never go through the model.
 
 - **Share a scene:** **Share…** (the pen on the open scene, or the Slides
-  sidebar). Add people by email (Can view / Can edit; Google emails them
-  the Kurviq link), set **General access** ("Only people added here",
+  sidebar). Add people by email (Can view / Can edit; Google emails them its
+  own invitation, without a link of ours: a kurviq.com link in the message
+  sent shares into the recipient's Drive spam; the dialog then offers the
+  link to send yourself), set **General access** ("Only people added here",
   "Anyone with the link can view", "Anyone with the link can edit"; editing
   still needs a Google account), change or remove access, **Copy link**,
   **Copy presentation link**, **Open in Drive**. There are no teams or
