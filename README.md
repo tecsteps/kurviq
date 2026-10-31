@@ -85,7 +85,10 @@ install:
   previews). Otherwise Kurviq asks you to **Sign in with Google**. Because
   of `drive.file`, Kurviq may not open a file shared with you until you
   allow it once: **Allow Kurviq to open it** opens Google's Picker with that
-  file selected; click Select. If you can edit, **Edit** opens it in the
+  file selected; click Select. Without the link: **Shared with you…** in the
+  scene list opens the Picker on Drive's "Shared with me" (Kurviq scenes
+  only); the scenes picked there are listed from then on (one picked opens
+  right away), so Google's sharing email isn't needed. If you can edit, **Edit** opens it in the
   editor: your own scene among your scenes, someone else's in a space of its
   own for that one file (the tab reloads into it; **Back to my scenes**
   returns). Scenes shared with you that Kurviq may open are listed in the

@@ -1228,8 +1228,11 @@ const loadPicker = () => {
 
 export const pickerAvailable = () => !!google.browserApiKey && !!google.projectNumber;
 
-/** the picked file ids (empty: cancelled) */
-export const pickFiles = async ({ fileId }: { fileId?: string } = {}): Promise<string[]> => {
+/**
+ * the picked file ids (empty: cancelled). shared: Drive's "Shared with me",
+ * several at once (no email or link needed: picking lets Kurviq open them)
+ */
+export const pickFiles = async ({ fileId, shared }: { fileId?: string; shared?: boolean } = {}): Promise<string[]> => {
   const value = await getToken();
   if (!value) {
     throw notConnectedError();
@@ -1240,16 +1243,25 @@ export const pickFiles = async ({ fileId }: { fileId?: string } = {}): Promise<s
   if (fileId) {
     view.setFileIds(fileId);
   }
+  if (shared) {
+    view.setOwnedByMe(false);
+  }
   return new Promise<string[]>((resolve) => {
-    const picker = new pickerApi.PickerBuilder()
+    const builder = new pickerApi.PickerBuilder();
+    if (shared) {
+      builder.enableFeature(pickerApi.Feature.MULTISELECT_ENABLED);
+    }
+    const picker = builder
       .addView(view)
       .setOAuthToken(value)
       .setDeveloperKey(google.browserApiKey)
       .setAppId(google.projectNumber)
-      .setTitle(fileId ? "Allow Kurviq to open this scene" : "Open a scene from Google Drive")
+      .setTitle(fileId ? "Allow Kurviq to open this scene" : shared ? "Scenes shared with you" : "Open a scene from Google Drive")
       .setCallback((data: any) => {
         const action = data[pickerApi.Response.ACTION];
         if (action === pickerApi.Action.PICKED) {
+          // Kurviq may open them now: list them right away
+          sharedList = null;
           resolve((data[pickerApi.Response.DOCUMENTS] || []).map((doc: any) => String(doc[pickerApi.Document.ID])));
         } else if (action === pickerApi.Action.CANCEL) {
           resolve([]);
