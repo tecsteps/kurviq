@@ -28,7 +28,7 @@ import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar } from "./slidesUI";
-import { connectGoogle, connection, enterSpace, sharedFileId, sharedWithMe } from "./online/drive";
+import { connectGoogle, connection, enterSpace, pickerAvailable, pickFiles, sharedFileId, sharedWithMe } from "./online/drive";
 import type { SharedWithMe } from "./online/drive";
 import {
   ConnectDriveOffer,
@@ -650,6 +650,28 @@ const SceneSwitcher = ({
           </div>
         )}
       </div>
+      {signedIn && pickerAvailable() && (
+        <QuickTip tip="Scenes others shared with you in Google Drive: pick them once and they are listed here (no email or link needed)">
+          <button
+            type="button"
+            className="scenes-switcher__manage"
+            onClick={() => {
+              onClose();
+              pickFiles({ shared: true }).then(async (ids) => {
+                if (ids.length !== 1) {
+                  return;
+                }
+                // one scene picked: open it (several: they are listed from now on)
+                const name = (await sharedWithMe()).find((entry) => entry.fileId === ids[0])?.name ?? "";
+                await scenesController.leaveForReload();
+                enterSpace(ids[0], `/s/${ids[0]}/${encodeURIComponent(name)}`);
+              }, ignore);
+            }}
+          >
+            <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Shared with you…
+          </button>
+        </QuickTip>
+      )}
       <button type="button" className="scenes-switcher__manage" onClick={onDrive}>
         <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Google Drive…
       </button>
