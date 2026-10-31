@@ -10,7 +10,6 @@ import { scenesController } from "./controller";
 import { deck, isDeck } from "./deck";
 import { optimizeImages, pickSlides, printInBrowser, printToPdf, slidesHtml } from "./pdfExport";
 import { IS_ONLINE } from "./api";
-import { SlidesShare } from "./online/ui";
 import { QuickTip } from "./quickTip";
 import { presenter } from "./present";
 import { slideNotes } from "./notes";
@@ -319,9 +318,23 @@ const SlideList = () => {
             <span className="slides-card__thumb">{thumbs[slide.id] ? <img src={thumbs[slide.id]} alt="" /> : null}</span>
             <span className="slides-card__meta">
               <span className="slides-card__title">{slide.title}</span>
-              {slide.steps > 0 && <span className="slides-card__clicks">{slide.steps === 1 ? "1 click" : `${slide.steps} clicks`}</span>}
+
             </span>
           </button>
+          {slide.steps > 0 && (
+            <QuickTip tip="What appears on which click" label={false}>
+              <button
+                type="button"
+                className="slides-card__clicks"
+                onClick={() => {
+                  focusFrame(slide.id);
+                  slidesTab.set("clicks");
+                }}
+              >
+                {slide.steps === 1 ? "1 click" : `${slide.steps} clicks`}
+              </button>
+            </QuickTip>
+          )}
           {slide.id === activeId && (
           <span className="slides-card__actions">
             {templateId && (
@@ -502,7 +515,7 @@ const ClickSteps = () => {
   const chosen = elements.filter((el) => selection.includes(el.id) && el.frameId);
   const onSlide = slide ? elements.filter((el) => el.frameId === slide.id && slideData(el).step) : [];
   if (!slide && !chosen.length) {
-    return null;
+    return <p className="slides-hint">Click a slide (or select something on one) to see what appears on which click.</p>;
   }
 
   // the slide's steps: one entry per outermost group (or element; labels go with their shape)
@@ -712,7 +725,7 @@ const SlidesEmpty = () => (
   </section>
 );
 
-type SlidesTab = "slides" | "style" | "share" | "pdf";
+type SlidesTab = "slides" | "clicks" | "style" | "pdf";
 
 /** the sidebar's tab: kept outside the sidebar, which unmounts when closed; set by the template watcher too */
 const slidesTab = (() => {
@@ -812,6 +825,16 @@ const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boo
     ),
   },
   {
+    tab: "clicks",
+    label: "Clicks",
+    icon: icon(
+      <>
+        <path d="M7.5 3.5l.6 2M3.5 7.5l2 .6M4.6 4.6l1.5 1.5" />
+        <path d="M8.5 8.5l7.5 3-3.2 1.3-1.3 3.2z" />
+      </>,
+    ),
+  },
+  {
     tab: "style",
     label: "Style",
     icon: icon(
@@ -821,14 +844,6 @@ const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boo
         <circle cx="8.9" cy="6.3" r="1.1" fill="currentColor" stroke="none" />
         <circle cx="12.7" cy="6.8" r="1.1" fill="currentColor" stroke="none" />
       </>,
-    ),
-  },
-  {
-    tab: "share",
-    label: "Share",
-    online: true,
-    icon: icon(
-      <path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9m1.3 3.9a3 3 0 0 0-4.2 0l-2.6 2.6a3 3 0 0 0 4.2 4.2l.9-.9" />,
     ),
   },
   {
@@ -890,14 +905,13 @@ export const SlidesSidebar = () => {
             </div>
             {shown === "slides" && (
               <>
-                <ClickSteps />
                 <SlideList />
                 <p className="slides-hint">Drag or ⌥↑ / ⌥↓ to reorder.</p>
                 {active && <SlideDetails id={active} />}
               </>
             )}
             {shown === "style" && <TemplateSection />}
-            {shown === "share" && <SlidesShare />}
+            {shown === "clicks" && <ClickSteps />}
             {shown === "pdf" && <PdfPanel />}
           </>
         )}

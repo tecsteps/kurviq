@@ -207,27 +207,6 @@
     border-top: 1px solid var(--default-border-color);
   }
 
-  .slides-badge {
-    display: inline-flex;
-    align-self: flex-start;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.2rem 0.55rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-
-    &--private {
-      background: var(--color-surface-high, #f1f0ff);
-      color: var(--color-gray-80, var(--text-primary-color));
-    }
-
-    &--public {
-      background: #e6f6ec;
-      color: #1b7a3d;
-    }
-  }
-
   .slides-hint a {
     color: var(--color-primary);
   }
@@ -428,11 +407,24 @@
     gap: 0.35rem;
   }
 
+  // "2 clicks" under the title: opens the Clicks tab for that slide
   .slides-card__clicks {
-    display: block;
-    margin-top: 0.15rem;
+    position: absolute;
+    top: 1.85rem;
+    left: calc(0.35rem + 1.1rem + 6.5rem + 1rem);
+    padding: 0;
+    border: none;
+    background: none;
     color: var(--color-gray-50, #888);
+    font-family: inherit;
     font-size: 0.7rem;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--color-primary);
+      text-decoration: underline;
+    }
   }
 
   .slides-chip {

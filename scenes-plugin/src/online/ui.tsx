@@ -11,7 +11,6 @@ import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 
 import { scenesController } from "../controller";
-import { PlaceSvg } from "../icons";
 import { QuickTip } from "../quickTip";
 
 import {
@@ -712,52 +711,6 @@ const ShareDialog = ({ name }: { name: string }) => {
         {error && <p className="scenes-error">{error}</p>}
       </div>
     </div>
-  );
-};
-
-/** the Slides sidebar's Share tab: who can open the links, the links, Share… */
-export const SlidesShare = () => {
-  const { current, list } = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
-  useConnection();
-  const item = list.find((entry) => entry.name === current);
-  const why = notShareable(item, "presentation");
-  const fileId = item?.fileId ?? null;
-  const name = item?.name ?? null;
-  return (
-    <section className="slides-details">
-      {why ? (
-        <p className="slides-hint">{why}</p>
-      ) : (
-        <>
-          <span className={clsx("slides-badge", item!.public ? "slides-badge--public" : "slides-badge--private")}>
-            <PlaceSvg kind={item!.public ? "public" : "private"} />
-            {item!.public ? "Anyone with the link" : "Private"}
-          </span>
-          <p className="slides-hint">
-            {item!.public
-              ? "Anyone with the link can watch it, no sign-in needed."
-              : "Only people you share it with can open the link, signed in with Google."}
-          </p>
-        </>
-      )}
-      <div className="slides-row">
-        <button
-          type="button"
-          className="slides-btn slides-btn--primary"
-          aria-disabled={!!why || undefined}
-          onClick={() => !why && name && openShareDialog(name)}
-        >
-          Share…
-        </button>
-        <CopyLink
-          className="slides-btn"
-          link={!why && fileId && name ? sceneLink(fileId, name, { present: true }) : null}
-          label="Copy presentation link"
-          icon={LINK_ICON}
-          tip={why ?? (fileId ? "Copies a link that starts presenting (who can open it: Share…)" : "Saving to Drive first: try again in a moment")}
-        />
-      </div>
-    </section>
   );
 };
 
