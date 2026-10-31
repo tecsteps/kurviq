@@ -259,20 +259,6 @@
   }
 }
 
-.excalidraw .kq-share__add {
-  display: flex;
-  gap: 0.5rem;
-
-  input {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .scenes-btn {
-    height: 2.25rem;
-  }
-}
-
 .excalidraw .kq-share__people {
   display: flex;
   flex-direction: column;
@@ -675,24 +661,7 @@
   margin: -0.25rem 0 0.5rem;
 }
 
-// the share dialog, after adding someone: how they find it
-.kq-share__sent {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 8px 0 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--color-surface-low, #f4f4f8);
-  font-size: 14px;
-
-  p {
-    margin: 0;
-  }
-}
-
-// the share dialog: "Share in Google Drive" (the reliable way) above the email field
+// the share dialog: "Share in Google Drive" (Drive's own share dialog over the page)
 .kq-share__drive {
   display: flex;
   align-items: center;
