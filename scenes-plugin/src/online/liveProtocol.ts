@@ -145,7 +145,9 @@ export type RefuseReason =
   | "discarded"
   | "font-id"
   | "invalid"
-  | "old";
+  | "old"
+  /** the scene's Durable Object has no state yet (not seeded): the tab reconnects and seeds or waits (never an offline copy) */
+  | "unseeded";
 
 // ---------------------------------------------------------------------------
 // messages

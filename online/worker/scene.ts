@@ -1977,7 +1977,8 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return this.refuse(ws, counter, "lifecycle", [], lifecycle);
     }
     if (!this.seeded()) {
-      return this.refuse(ws, counter, "old", [], "not seeded");
+      // not "old": nothing is wrong with the batch, the tab reconnects (and seeds, or waits for the seed)
+      return this.refuse(ws, counter, "unseeded", [], "not seeded");
     }
     if (!this.meta("keyId") || att.keyId !== this.meta("keyId")) {
       return this.refuse(ws, counter, "key");

@@ -26,7 +26,6 @@
 //            whole touching group is free of collisions are sent again
 
 import { CaptureUpdateAction, restoreElements, serializeAsJSON } from "@excalidraw/excalidraw";
-import { HistoryDelta } from "@excalidraw/excalidraw/history";
 import { hashString } from "@excalidraw/element";
 import { createStore, get, set } from "idb-keyval";
 
@@ -37,7 +36,6 @@ import { authPost, connection, driveScenes, liveSocketUrl, signOutListeners } fr
 import { createReceiver, sendMessage } from "./frames";
 import { decodeEvent, encodeEvent, importSceneKey } from "./liveCrypto";
 import {
-  HistorySteps,
   byIndex,
   changedKeys,
   contentEqual,
@@ -197,12 +195,10 @@ const canvasSurface = (api: ExcalidrawImperativeAPI, scene: () => LiveScene | nu
     }
     return byIndex([...byId.values()]) as any[];
   };
-  // undo and redo: only properties still holding the user's value (see LiveScene.collect)
-  const unsubscribe = api.onIncrement((increment: any) => {
-    if (increment?.delta instanceof HistoryDelta) {
-      scene()?.markUndo();
-    }
-  });
+  // undo and redo are the editor's own (stock behaviour): changes of others come with
+  // CaptureUpdateAction.NEVER, so they never enter the user's history, and nothing here
+  // rewrites what an undo or redo did
+  void scene;
   // the editor changes element objects in place (dragging, its own index repairs): the engine
   // never shares an object with it, in either direction
   return {
@@ -251,7 +247,7 @@ const canvasSurface = (api: ExcalidrawImperativeAPI, scene: () => LiveScene | nu
       }
       return ids;
     },
-    destroy: () => unsubscribe(),
+    destroy: () => {},
   };
 };
 
@@ -303,7 +299,7 @@ type StoredBase = {
   stamps?: [string, string[]][];
   generation: string | null;
   seq: number;
-  epoch: number;
+  epoch: number | null;
   elements: El[];
   settings: { value: Settings; stamp: Base | null } | null;
   files: string[];
@@ -357,7 +353,8 @@ export class LiveScene {
 
   // the DO's state
   private generation: string | null = null;
-  private epoch = 0;
+  /** the scene's lifecycle epoch, once known (stored state or a welcome): a batch made before carries none */
+  private epoch: number | null = null;
   private seq = 0;
   private confirmed = new Map<string, El>();
   private confirmedSettings: { value: Settings; stamp: Base | null } | null = null;
@@ -374,10 +371,6 @@ export class LiveScene {
   private draft = new Map<string, Draft>();
   private batches: QueuedBatch[] = [];
   private inFlight = new Map<number, Flight>();
-  /** the user's own steps per property (undo and redo change only what still holds their value) */
-  private steps = new HistorySteps();
-  /** an element's state when its current gesture began */
-  private stepStart = new Map<string, El>();
   private lastCanvas = new Map<string, El>();
   /** local edits kept against every incoming change (their recovery copy could not be stored) */
   private protectedIds = new Set<string>();
@@ -452,7 +445,6 @@ export class LiveScene {
     return false;
   }
   private lastGesture = new Set<string>();
-  private undoing = false;
   private agentMark: { command?: string } | null = null;
   /** the local copy's base for the first reconciliation (persisted confirmed state, or the Drive version) */
   private localBase: Map<string, El> | null = null;
@@ -1302,7 +1294,11 @@ export class LiveScene {
     await this.dropSaved();
     // batches that may never be replayed (too old, or from before the scene was restored from the trash)
     const stale = this.batches.filter(
-      (batch) => batch.state === "queued" && (Date.now() - batch.made > REPLAY_HORIZON_MS || (batch.epoch ?? welcome.epoch) < welcome.epoch),
+      (batch) =>
+        batch.state === "queued" &&
+        // too old, or made in an earlier epoch (before a restore from the trash); a batch made before
+        // any epoch was known (e.g. while a new scene was being seeded) is of the current one
+        (Date.now() - batch.made > REPLAY_HORIZON_MS || (!!batch.epoch && batch.epoch < welcome.epoch)), // epochs start at 1: 0 (older app versions) is unknown too
     );
     this.epoch = welcome.epoch;
     this.parked.clear();
@@ -1377,10 +1373,20 @@ export class LiveScene {
     for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
       this.confirmedFonts.set(await fontHash(font), font.id);
     }
-    this.baseLoaded = true;
+    // not "known" yet: until the DO's welcome takes the seed, changes stay on the canvas (the
+    // reconcile after the welcome queues them against the DO's actual state; a refused seed
+    // leaves nothing queued on a state the DO never had)
     this.generation = null;
     this.seq = 0;
     this.seeded = true;
+    // dev and fake-Google builds (tests): the seed's way to the DO as slow as on Cloudflare
+    const lag = this.trace ? Number((window as any).__liveSeedDelayMs) || 0 : 0;
+    if (lag) {
+      await new Promise((resolve) => setTimeout(resolve, lag));
+      if (this.stale()) {
+        return;
+      }
+    }
     // (the file's receipts and attribution the DO reads from Drive itself)
     this.send({ type: "seed", scene: { revision: head.revision, md5: head.md5, events } });
     // the DO answers with a welcome
@@ -1435,11 +1441,9 @@ export class LiveScene {
         continue;
       }
       const theirs = this.confirmed.get(el.id) ?? null;
-      if (theirs && contentEqual(el, theirs)) {
+      if (theirs && contentEqual(el, theirs) && el.index === theirs.index) {
+        // the same: the canvas keeps its element (and the editor's history its objects)
         this.synced.set(el.id, { stamp: stampOf(theirs), el: theirs });
-        if (el.version !== theirs.version || el.versionNonce !== theirs.versionNonce) {
-          toApply.push(theirs);
-        }
         continue;
       }
       const before = base?.get(el.id) ?? null;
@@ -1449,7 +1453,11 @@ export class LiveScene {
       const sameStampAsTheirs =
         !!theirs &&
         ((el.version === theirs.version && el.versionNonce === theirs.versionNonce) || (!before && contentEqual({ ...el, index: theirs.index }, theirs)));
-      const unchangedHere = !base || sameStampAsTheirs || this.isDoStamp(el) || (before ? contentEqual(el, before) : !!el.isDeleted);
+      // an older state, not an unsent edit: its version is not above the DO's (an edit made here
+      // counts up from its base; the canvas copy of this browser can be older than the DO's state,
+      // e.g. written by another tab, with stamps of the editor's own repairs the DO never saw)
+      const olderThanTheirs = !!theirs && !!base && el.version <= theirs.version;
+      const unchangedHere = !base || sameStampAsTheirs || olderThanTheirs || this.isDoStamp(el) || (before ? contentEqual(el, before) : !!el.isDeleted);
       if (unchangedHere) {
         if (theirs) {
           toApply.push(theirs);
@@ -1735,10 +1743,6 @@ export class LiveScene {
   // local changes
   // ---------------------------------------------------------------------------
 
-  /** the next change is an undo / redo (the canvas tells before onChange) */
-  markUndo() {
-    this.undoing = true;
-  }
 
   private pendingIds() {
     // edits whose recovery copy failed stay as they are on the canvas until saved some other way
@@ -1808,39 +1812,12 @@ export class LiveScene {
     }
     const elements = this.surface.elements();
     const gesture = this.surface.gesture();
-    const fixes: El[] = [];
-    let skipped = 0;
-    for (const raw of elements) {
-      const seen = this.known.get(raw.id);
-      if (seen && seen.v === raw.version && seen.n === raw.versionNonce) {
+    for (const el of elements) {
+      const seen = this.known.get(el.id);
+      if (seen && seen.v === el.version && seen.n === el.versionNonce) {
         continue;
       }
-      let el = raw;
       this.known.set(el.id, stampOf(el));
-      const before = this.lastCanvas.get(el.id);
-      const keys = before ? changedKeys(before, el) ?? [] : [];
-      if (this.undoing && before) {
-        // undo / redo reverse only what still holds the user's value (each
-        // step on its own: a value an undo brings back keeps its author)
-        const step = this.steps.historyStep(el.id, before, el, keys);
-        if (step.skipped.length) {
-          el = { ...el, version: el.version + 1 };
-          for (const key of step.skipped) {
-            el[key] = before[key];
-          }
-          fixes.push(el);
-          skipped += step.skipped.length;
-        }
-      } else if (!gesture.has(el.id)) {
-        // a gesture's frames are no steps of their own: its end is (one history entry)
-        const from = this.stepStart.get(el.id) ?? before;
-        for (const key of changedKeys(from, el) ?? []) {
-          this.steps.userStep(el.id, key, from?.[key], el[key]);
-        }
-        this.stepStart.delete(el.id);
-      } else if (!this.stepStart.has(el.id) && before) {
-        this.stepStart.set(el.id, before);
-      }
       this.lastCanvas.set(el.id, el);
       const view = this.viewOf(el.id);
       if (this.trace && el.isDeleted && !(view && sameState(view, el)) && !view) {
@@ -1852,14 +1829,6 @@ export class LiveScene {
       this.addDraft("el", el.id, el, {});
       this.draftAssets(el, true);
     }
-    if (fixes.length) {
-      this.surface.apply({ elements: fixes });
-      for (const el of fixes) {
-        this.known.set(el.id, stampOf(el));
-      }
-      this.note(`Undo left ${skipped === 1 ? "one change" : `${skipped} changes`} as they are: someone else changed ${skipped === 1 ? "it" : "them"} since.`);
-    }
-    this.undoing = false;
     const settings = this.surface.settings();
     const viewSettings = this.viewOf(SETTINGS_KEY);
     if (viewSettings && !sameJson(viewSettings, settings)) {
@@ -2041,7 +2010,7 @@ export class LiveScene {
       ...(drafts[0].command ? { command: drafts[0].command } : {}),
       changes,
       state: "queued",
-      epoch: this.epoch,
+      ...(this.epoch !== null ? { epoch: this.epoch } : {}),
     };
     this.batches.push(batch);
     await this.persist(batch);
@@ -2223,13 +2192,15 @@ export class LiveScene {
           ...(font !== undefined ? { fontFamily: font } : {}),
         };
         this.setConfirmed(change.id, stamped, "ack");
+        // the canvas keeps its own stamp for this state (no re-stamp): it is a state the DO has too
+        this.rememberStamp(change.value);
         this.traced(`ack${ack.seq}${ack.duplicate ? "dup" : ""}`, stamped);
         this.synced.set(key, { stamp, el: stamped });
         const shown = canvas.get(change.id);
-        // re-stamped on the canvas only if it is still what was sent
-        if (shown && shown.version === change.value.version && shown.versionNonce === change.value.versionNonce) {
-          restamp.push({ ...shown, version: stamp.v, versionNonce: stamp.n, ...(repaired ? { index: repaired } : {}) });
-        } else if (shown && repaired) {
+        // the canvas keeps the element as the editor made it (no new stamp: that would put an
+        // object under the editor's history it didn't make); only the DO's index repair, a real
+        // difference, is applied
+        if (shown && repaired && shown.index !== repaired) {
           restamp.push({ ...shown, index: repaired });
         }
       } else if (change.k === "set") {
@@ -2353,7 +2324,7 @@ export class LiveScene {
       this.pump();
       return;
     }
-    if (reason === "old" && refusal.detail === "not seeded") {
+    if (reason === "unseeded" || (reason === "old" && refusal.detail === "not seeded")) {
       this.inFlight.delete(batch.counter);
       this.dropConnection(); // the handshake seeds first
       return;

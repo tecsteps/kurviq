@@ -114,7 +114,7 @@ describe("order, references, whole-scene writes", () => {
   });
 });
 
-import { HistorySteps, contentEqual, reapplyChain } from "../src/online/liveMerge";
+import { contentEqual, reapplyChain } from "../src/online/liveMerge";
 
 describe("content with order", () => {
   it("a layer move or a change under the same stamp is a change; noise is not", () => {
@@ -136,39 +136,6 @@ describe("rebasing a chain of batches", () => {
     expect(next).toMatchObject({ x: 20, strokeColor: "red" });
     expect(next.version).toBeGreaterThan(6);
     void base;
-  });
-});
-
-describe("undo and redo of the user's own steps", () => {
-  it("never overwrites someone else's value", () => {
-    // you x=0→1, remote x=2, you x=2→3, undo twice: the second undo would set 0 over the remote 2
-    const steps = new HistorySteps();
-    steps.userStep("e", "x", 0, 1);
-    steps.userStep("e", "x", 2, 3);
-    expect(steps.historyStep("e", { x: 3 }, { x: 2 }, ["x"])).toEqual({ allowed: ["x"], skipped: [] });
-    expect(steps.historyStep("e", { x: 2 }, { x: 0 }, ["x"])).toEqual({ allowed: [], skipped: ["x"] });
-  });
-
-  it("delete, undo, redo, undo of an element that came from someone else", () => {
-    // the element arrived alive from the DO (no step of the user's); the user deletes it
-    const steps = new HistorySteps();
-    steps.userStep("e", "isDeleted", false, true);
-    expect(steps.historyStep("e", { isDeleted: true }, { isDeleted: false }, ["isDeleted"]).allowed).toEqual(["isDeleted"]);
-    expect(steps.historyStep("e", { isDeleted: false }, { isDeleted: true }, ["isDeleted"]).allowed).toEqual(["isDeleted"]);
-    expect(steps.historyStep("e", { isDeleted: true }, { isDeleted: false }, ["isDeleted"]).allowed).toEqual(["isDeleted"]);
-  });
-
-  it("redo stays off a value someone changed after the undo", () => {
-    const steps = new HistorySteps();
-    steps.userStep("e", "x", 0, 5);
-    expect(steps.historyStep("e", { x: 5 }, { x: 0 }, ["x"]).allowed).toEqual(["x"]);
-    // remote moved it to 7 meanwhile: the redo (0→5) would overwrite it
-    expect(steps.historyStep("e", { x: 7 }, { x: 5 }, ["x"]).skipped).toEqual(["x"]);
-  });
-
-  it("a history step the user's steps don't explain is left to the editor", () => {
-    const steps = new HistorySteps();
-    expect(steps.historyStep("e", { x: 1 }, { x: 0 }, ["x"]).allowed).toEqual(["x"]);
   });
 });
 
