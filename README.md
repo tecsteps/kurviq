@@ -325,7 +325,12 @@ pill) opens the deck:
   lists, colors, links … the same toolbar as text on the canvas). Saved as
   markdown in the slide; the presenter view shows them formatted.
 - **Click steps:** select elements on a slide and pick "Click 1", "Click 2" …
-  under "Selection appears"; they fade in one click at a time.
+  under "Selection appears"; they fade in one click at a time. "Click steps"
+  at the top of the Slides tab lists what appears on which click on the
+  current slide: select it, move a click earlier / later, remove it (shows
+  always), renumber, or show everything at once. Slide cards show the number
+  of clicks. The Slides sidebar is docked, so selecting on the canvas keeps
+  it open (its pin button undocks it).
 - **Template:** one "Template" frame holds what every slide shows: header,
   footer, logo, background, headline and eyebrow. Edit it once; every slide
   follows. Template texts can use `{page}` `{total}` `{title}` `{deck}`

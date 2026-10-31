@@ -340,6 +340,101 @@
     gap: 0.3rem;
   }
 
+  // click steps of the active slide
+  .slides-clicks__list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .slides-clicks__step {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--default-border-color);
+    border-radius: var(--border-radius-md);
+  }
+
+  .slides-clicks__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .slides-clicks__num,
+  .slides-clicks__label {
+    font-weight: 600;
+  }
+
+  .slides-clicks__tools {
+    display: inline-flex;
+    gap: 0.15rem;
+
+    button {
+      min-width: 1.6rem;
+      height: 1.6rem;
+      padding: 0 0.35rem;
+      border: none;
+      border-radius: var(--border-radius-md);
+      background: none;
+      color: var(--text-primary-color);
+      font-family: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+
+      &:hover:not(:disabled) {
+        background: var(--color-surface-high);
+      }
+
+      &:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+    }
+  }
+
+  .slides-clicks__items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .slides-clicks__item {
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0.15rem 0.45rem;
+    border: none;
+    border-radius: var(--border-radius-md);
+    background: var(--color-surface-high);
+    color: var(--text-primary-color);
+    font-family: inherit;
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--color-primary);
+    }
+  }
+
+  .slides-clicks__selection {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .slides-card__clicks {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--color-gray-50, #888);
+    font-size: 0.7rem;
+  }
+
   .slides-chip {
     padding: 0.2rem 0.55rem;
     border: 1px solid var(--default-border-color);

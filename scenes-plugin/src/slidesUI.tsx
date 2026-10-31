@@ -319,6 +319,7 @@ const SlideList = () => {
             <span className="slides-card__thumb">{thumbs[slide.id] ? <img src={thumbs[slide.id]} alt="" /> : null}</span>
             <span className="slides-card__meta">
               <span className="slides-card__title">{slide.title}</span>
+              {slide.steps > 0 && <span className="slides-card__clicks">{slide.steps === 1 ? "1 click" : `${slide.steps} clicks`}</span>}
             </span>
           </button>
           {slide.id === activeId && (
@@ -448,37 +449,170 @@ const SlideDetails = ({ id }: { id: string }) => {
   );
 };
 
-const StepPicker = () => {
-  const { selection } = useDeck();
-  if (!selection.length) {
-    return null;
+type Element = ReturnType<ReturnType<typeof api>["getSceneElements"]>[number];
+
+/** the ids a step goes on: the elements plus their groups and bound labels */
+const withGroups = (elements: readonly Element[], chosen: readonly Element[]) => {
+  const ids = new Set(chosen.map((el) => el.id));
+  const groups = new Set(chosen.flatMap((el) => el.groupIds));
+  return elements
+    .filter((el) => ids.has(el.id) || el.groupIds.some((g) => groups.has(g)) || ((el as any).containerId && ids.has((el as any).containerId)))
+    .map((el) => el.id);
+};
+
+const setSteps = (patch: Map<string, number>) =>
+  patchSlideData(api(), new Map([...patch].map(([id, step]) => [id, { step: step || undefined }])));
+
+/** what an entry in the step list is called: its text, or what it is */
+const describe = (members: readonly Element[], elements: readonly Element[]) => {
+  const ids = new Set(members.map((el) => el.id));
+  const texts = [...members, ...elements.filter((el) => ids.has((el as any).containerId))];
+  const text = texts.map((el) => (el.type === "text" ? (el as any).text : "")).find((t) => t.trim());
+  if (text) {
+    const flat = text.replace(/\s+/g, " ").trim();
+    return flat.length > 32 ? `${flat.slice(0, 31)}…` : flat;
   }
+  if (members.length > 1) {
+    return `Group (${members.length})`;
+  }
+  const el = members[0];
+  return el.type === "image" ? "Picture" : el.type === "freedraw" ? "Drawing" : el.type.charAt(0).toUpperCase() + el.type.slice(1);
+};
+
+/** select elements on the canvas (whole groups as groups) */
+const selectOnCanvas = (members: readonly Element[]) => {
+  const group = members[0]?.groupIds.at(-1);
+  api().updateScene({
+    appState: {
+      selectedElementIds: Object.fromEntries(members.filter((el) => !(el as any).containerId).map((el) => [el.id, true])),
+      selectedGroupIds: group ? { [group]: true } : {},
+    } as any,
+    captureUpdate: CaptureUpdateAction.NEVER,
+  });
+};
+
+/**
+ * Click steps: what appears on which click on the active slide (select, earlier / later, remove),
+ * and the step of the current selection. Above the slide list, so it is in view in a long deck.
+ */
+const ClickSteps = () => {
+  const { selection, activeId, slides } = useDeck();
+  const slide = slides.find((s) => s.id === activeId);
   const elements = api().getSceneElements();
-  const chosen = elements.filter((el) => selection.includes(el.id));
-  if (!chosen.some((el) => el.frameId)) {
+  const chosen = elements.filter((el) => selection.includes(el.id) && el.frameId);
+  const onSlide = slide ? elements.filter((el) => el.frameId === slide.id && slideData(el).step) : [];
+  if (!slide && !chosen.length) {
     return null;
   }
-  const steps = new Set(chosen.map((el) => slideData(el).step ?? 0));
-  const value = steps.size === 1 ? [...steps][0] : -1;
-  const setStep = (step: number) => {
-    // groups and bound labels go along
-    const groups = new Set(chosen.flatMap((el) => el.groupIds));
-    const ids = new Set(
-      elements
-        .filter((el) => selection.includes(el.id) || el.groupIds.some((g) => groups.has(g)) || ((el as any).containerId && selection.includes((el as any).containerId)))
-        .map((el) => el.id),
-    );
-    patchSlideData(api(), new Map([...ids].map((id) => [id, { step: step || undefined }])));
+
+  // the slide's steps: one entry per outermost group (or element; labels go with their shape)
+  const byStep = new Map<number, Element[][]>();
+  const seen = new Map<string, Element[]>();
+  for (const el of onSlide) {
+    if ((el as any).containerId) {
+      continue;
+    }
+    const key = el.groupIds.at(-1) ?? el.id;
+    const step = slideData(el).step!;
+    let members = seen.get(`${step}:${key}`);
+    if (!members) {
+      members = [];
+      seen.set(`${step}:${key}`, members);
+      byStep.set(step, [...(byStep.get(step) ?? []), members]);
+    }
+    members.push(el);
+  }
+  const stepsUsed = [...byStep.keys()].sort((a, b) => a - b);
+  const last = stepsUsed.at(-1) ?? 0;
+
+  // the selection's step (one value, or -1 when mixed)
+  const values = new Set(chosen.map((el) => slideData(el).step ?? 0));
+  const value = values.size === 1 ? [...values][0] : -1;
+  const choices = Math.max(6, last + 1, value + 1);
+
+  const all = (step: number) => (byStep.get(step) ?? []).flat();
+  const swap = (a: number, b: number) => {
+    const patch = new Map<string, number>();
+    withGroups(elements, all(a)).forEach((id) => patch.set(id, b));
+    withGroups(elements, all(b)).forEach((id) => patch.set(id, a));
+    setSteps(patch);
   };
+  const clearAll = () => setSteps(new Map(withGroups(elements, onSlide).map((id) => [id, 0])));
+
   return (
-    <section className="slides-details">
-      <div className="slides-section__title">Selection appears</div>
-      <div className="slides-steps">
-        {[0, 1, 2, 3, 4, 5, 6].map((step) => (
-          <button key={step} type="button" className={clsx("slides-chip", { "slides-chip--on": value === step })} onClick={() => setStep(step)}>
-            {step === 0 ? "Always" : `Click ${step}`}
-          </button>
-        ))}
+    <section className="slides-details slides-clicks">
+      <div className="slides-section__title">{slide ? `Click steps · slide ${slide.index + 1}` : "Click steps"}</div>
+      {slide && !stepsUsed.length && <p className="slides-hint">Everything on this slide shows at once.</p>}
+      {stepsUsed.length > 0 && (
+        <ol className="slides-clicks__list">
+          {stepsUsed.map((step, i) => (
+            <li key={step} className="slides-clicks__step">
+              <div className="slides-clicks__head">
+                <span className="slides-clicks__num">Click {step}</span>
+                <span className="slides-clicks__tools">
+                  <QuickTip tip="Select these on the canvas" label={false}>
+                    <button type="button" aria-label={`Select click ${step}`} onClick={() => selectOnCanvas(all(step))}>
+                      Select
+                    </button>
+                  </QuickTip>
+                  <QuickTip tip="Earlier (swap with the click before)" label={false}>
+                    <button type="button" aria-label={`Click ${step} earlier`} disabled={i === 0 && step === 1} onClick={() => (i > 0 ? swap(step, stepsUsed[i - 1]) : setSteps(new Map(withGroups(elements, all(step)).map((id) => [id, step - 1]))))}>
+                      ↑
+                    </button>
+                  </QuickTip>
+                  <QuickTip tip="Later (swap with the click after)" label={false}>
+                    <button type="button" aria-label={`Click ${step} later`} disabled={i === stepsUsed.length - 1} onClick={() => swap(step, stepsUsed[i + 1])}>
+                      ↓
+                    </button>
+                  </QuickTip>
+                  <QuickTip tip="Always show these (no click)" label={false}>
+                    <button type="button" aria-label={`Remove click ${step}`} onClick={() => setSteps(new Map(withGroups(elements, all(step)).map((id) => [id, 0])))}>
+                      ×
+                    </button>
+                  </QuickTip>
+                </span>
+              </div>
+              <div className="slides-clicks__items">
+                {(byStep.get(step) ?? []).map((members) => (
+                  <button key={members[0].id} type="button" className="slides-clicks__item" title="Select on the canvas" onClick={() => selectOnCanvas(members)}>
+                    {describe(members, elements)}
+                  </button>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      {stepsUsed.length > 1 && stepsUsed.some((step, i) => step !== i + 1) && (
+        <button type="button" className="slides-btn" onClick={() => setSteps(new Map(stepsUsed.flatMap((step, i) => withGroups(elements, all(step)).map((id) => [id, i + 1] as const))))}>
+          Renumber 1, 2, 3…
+        </button>
+      )}
+      {stepsUsed.length > 0 && (
+        <button type="button" className="slides-btn" onClick={clearAll}>
+          Show everything at once
+        </button>
+      )}
+      <div className="slides-clicks__selection">
+        {chosen.length ? (
+          <>
+            <div className="slides-clicks__label">Selection appears</div>
+            <div className="slides-steps">
+              {Array.from({ length: choices + 1 }, (_, step) => (
+                <button
+                  key={step}
+                  type="button"
+                  className={clsx("slides-chip", { "slides-chip--on": value === step })}
+                  onClick={() => setSteps(new Map(withGroups(elements, chosen).map((id) => [id, step])))}
+                >
+                  {step === 0 ? "Always" : `Click ${step}`}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="slides-hint">Select something on a slide to make it appear on a click.</p>
+        )}
       </div>
     </section>
   );
@@ -704,7 +838,25 @@ const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boo
   },
 ];
 
+// docked by default: a click on the canvas (selecting something for "Selection appears") keeps it open;
+// Excalidraw's dock button undocks it (remembered per browser); narrow windows never dock
+const DOCKED_KEY = "kurviq-slides-docked";
+const readDocked = () => {
+  try {
+    return localStorage.getItem(DOCKED_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
+
 export const SlidesSidebar = () => {
+  const [docked, setDocked] = useState(readDocked);
+  const dock = (next: boolean) => {
+    setDocked(next);
+    try {
+      localStorage.setItem(DOCKED_KEY, next ? "1" : "0");
+    } catch {}
+  };
   const state = useDeck();
   const { slides, activeId } = state;
   const tab = useSyncExternalStore(slidesTab.subscribe, slidesTab.get);
@@ -712,7 +864,7 @@ export const SlidesSidebar = () => {
   const tabs = TABS.filter((entry) => !entry.online || IS_ONLINE);
   const shown = tabs.some((entry) => entry.tab === tab) ? tab : "slides";
   return (
-    <Sidebar name={SLIDES_SIDEBAR_NAME} className="slides-sidebar">
+    <Sidebar name={SLIDES_SIDEBAR_NAME} className="slides-sidebar" docked={docked} onDock={dock}>
       <Sidebar.Header>
         <div className="scenes-sidebar__title">Slides</div>
       </Sidebar.Header>
@@ -738,9 +890,9 @@ export const SlidesSidebar = () => {
             </div>
             {shown === "slides" && (
               <>
+                <ClickSteps />
                 <SlideList />
                 <p className="slides-hint">Drag or ⌥↑ / ⌥↓ to reorder.</p>
-                <StepPicker />
                 {active && <SlideDetails id={active} />}
               </>
             )}
