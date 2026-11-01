@@ -696,6 +696,22 @@ export const followDeckOrder = (before: readonly ExcalidrawElement[], after: rea
   isDeckGrid(before) && !isDeckGrid(after) ? layOut(after, origin(getSlides(before))) : [...after];
 
 
+/** where the slides' grid starts (top-left of the slides), or null */
+export const slidesOrigin = (elements: readonly ExcalidrawElement[]) => origin(getSlides(elements));
+
+/** the slides as Kurviq's grid again from `at`: a removed slide leaves no hole */
+export const closeSlideGaps = (api: ExcalidrawImperativeAPI, at: { x: number; y: number } | null) => {
+  const elements = layOut(api.getSceneElementsIncludingDeleted(), at);
+  // the removed slide may still be selected: not any more
+  const deleted = new Set(elements.filter((el) => el.isDeleted).map((el) => el.id));
+  const selected = api.getAppState().selectedElementIds;
+  api.updateScene({
+    elements,
+    appState: { selectedElementIds: Object.fromEntries(Object.entries(selected).filter(([id]) => !deleted.has(id))) as any },
+    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+  });
+};
+
 /** reorder: `ids` is the full new order; the canvas follows */
 export const setSlideOrder = (api: ExcalidrawImperativeAPI, ids: string[]) =>
   update(api, layOut(withOrder(api.getSceneElementsIncludingDeleted(), ids)));

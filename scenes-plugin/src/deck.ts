@@ -10,6 +10,8 @@ import {
   addBodyText,
   addTitleBlock,
   bodyStyle,
+  closeSlideGaps,
+  isDeckGrid,
   needsBodyText,
   needsTitleBlock,
   remeasureTitleBlock,
@@ -18,6 +20,7 @@ import {
   getTransition,
   renderSlide,
   slideData,
+  slidesOrigin,
   slideVersion,
   syncTemplate,
   templateKey,
@@ -68,6 +71,8 @@ class Deck {
   private api: ExcalidrawImperativeAPI | null = null;
   private listeners = new Set<() => void>();
   private lastKey = "";
+  /** the slides at the last change: ids, and whether they were Kurviq's grid (from where) */
+  private lastGrid: { scene: string; ids: string[]; grid: boolean; at: { x: number; y: number } | null } | null = null;
   private lastTemplateKey = 0;
   /** the body text style last made the editor's default */
   private lastBodyKey = "";
@@ -201,11 +206,37 @@ class Deck {
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.rebuild(elements);
+      this.closeGaps(elements);
     }
     if (this.state.slides.length || this.state.templateId) {
       this.scheduleThumbs();
       this.scheduleTemplateSync();
     }
+  }
+
+  /**
+   * A slide removed in any way (Delete on the canvas, an agent, another tab):
+   * if the slides were Kurviq's grid, the others close the hole, as when one is
+   * deleted in the slide list. A hand-made arrangement stays as it is.
+   */
+  private closeGaps(elements: readonly ExcalidrawElement[]) {
+    const ids = getSlides(elements).map((slide) => slide.id);
+    const scene = this.deckName();
+    // another scene opened: nothing was removed
+    const before = this.lastGrid?.scene === scene ? this.lastGrid : null;
+    const grid = isDeckGrid(elements);
+    this.lastGrid = { scene, ids, grid, at: slidesOrigin(elements) };
+    const removed = !!before && ids.length < before.ids.length && ids.every((id) => before.ids.includes(id));
+    if (!before?.grid || !removed || grid || document.body.classList.contains("slides-presenting")) {
+      return;
+    }
+    const api = this.api;
+    // after Excalidraw's own update (not from inside its change event)
+    setTimeout(() => {
+      if (api && api === this.api) {
+        closeSlideGaps(api, before.at);
+      }
+    });
   }
 
   private rebuild(elements: readonly ExcalidrawElement[]) {
