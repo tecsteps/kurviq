@@ -18,7 +18,7 @@ import { OPENING_KEY, scenesController } from "./controller";
 import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId, sharedSceneVersion } from "./online/drive";
 import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
-import { getSlides } from "./slides";
+import { getSlides, getTemplate } from "./slides";
 import { deck } from "./deck";
 import { presenter, usePresenter } from "./present";
 import { liveSync } from "./online/liveSync";
@@ -130,7 +130,13 @@ const editShared = async (fileId: string, name: string) => {
 const parseScene = async (json: string, access: { public?: boolean; canEdit?: boolean }): Promise<Scene> => {
   const data = JSON.parse(json);
   await registerSceneFonts(data);
-  const elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
+  let elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
+  // the template slide is a tool for editing: only who may edit sees it (with what is on it)
+  const template = access.canEdit ? null : getTemplate(elements);
+  if (template) {
+    const gone = new Set(elements.filter((el) => el.id === template.id || el.frameId === template.id).map((el) => el.id));
+    elements = elements.filter((el) => !gone.has(el.id) && !gone.has((el as { containerId?: string }).containerId ?? ""));
+  }
   // backup slides ("skip when presenting") stay out of a presentation
   const all = getSlides(elements);
   const slides = all.filter((frame: any) => !frame.customData?.slides?.skip);

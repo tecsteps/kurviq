@@ -695,8 +695,6 @@ export const isDeckGrid = (elements: readonly ExcalidrawElement[]) => {
 export const followDeckOrder = (before: readonly ExcalidrawElement[], after: readonly ExcalidrawElement[]) =>
   isDeckGrid(before) && !isDeckGrid(after) ? layOut(after, origin(getSlides(before))) : [...after];
 
-/** the canvas as the grid in deck order ("Arrange in deck order") */
-export const arrangeInDeckOrder = (api: ExcalidrawImperativeAPI) => update(api, layOut(api.getSceneElementsIncludingDeleted()));
 
 /** reorder: `ids` is the full new order; the canvas follows */
 export const setSlideOrder = (api: ExcalidrawImperativeAPI, ids: string[]) =>

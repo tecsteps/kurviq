@@ -16,8 +16,6 @@ import { EyeIcon, slideNotes, toggleHidden } from "./notes";
 import { setSlideParam } from "./router";
 import {
   addSlide,
-  arrangeInDeckOrder,
-  isDeckGrid,
   createTemplate,
   deleteSlides,
   duplicateSlides,
@@ -257,10 +255,6 @@ const SlideList = () => {
     setSlideOrder(api(), ids);
   };
 
-  // the canvas no longer shows the slides in deck order (e.g. an agent placed one by number)
-  const editor = deck.getApi();
-  const outOfOrder = !!editor && !isDeckGrid(editor.getSceneElements());
-
   /** dragging a slide near the top / bottom of the sidebar scrolls the list (to drop it further away) */
   const scrollWhileDragging = (event: React.DragEvent) => {
     const body = (event.currentTarget as HTMLElement).closest<HTMLElement>(".slides-body");
@@ -278,13 +272,6 @@ const SlideList = () => {
 
   return (
     <ol className="slides-list" onDragOver={scrollWhileDragging}>
-      {outOfOrder && (
-        <li>
-          <button type="button" className="slides-btn slides-arrange" onClick={() => arrangeInDeckOrder(api())}>
-            Arrange in deck order
-          </button>
-        </li>
-      )}
       <li>
         <button
           type="button"
@@ -937,10 +924,14 @@ const useFollowViewport = () => {
       }
       const zoom = appState.zoom.value;
       const key = `${appState.scrollX}:${appState.scrollY}:${zoom}:${appState.width}:${appState.height}`;
-      if (key === last || Object.values(appState.selectedElementIds).some(Boolean)) {
+      if (key === last) {
         return;
       }
+      // remembered with a selection too: unselecting (clicking away) doesn't make the slide in view active again
       last = key;
+      if (Object.values(appState.selectedElementIds).some(Boolean)) {
+        return;
+      }
       const left = -appState.scrollX;
       const top = -appState.scrollY;
       const width = appState.width / zoom;

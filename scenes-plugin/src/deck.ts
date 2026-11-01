@@ -147,6 +147,7 @@ class Deck {
     if (key === this.lastSelection) {
       return;
     }
+    const hadSelection = !!this.lastSelection;
     this.lastSelection = key;
     const byId = new Map(elements.map((el) => [el.id, el]));
     const chosen = ids.map((id) => byId.get(id)).filter((el): el is ExcalidrawElement => !!el && !el.isDeleted);
@@ -155,7 +156,8 @@ class Deck {
       .querySelector(".excalidraw")
       ?.classList.toggle("kq-slide-frame-selected", chosen.length > 0 && chosen.every((el) => el.type === "frame"));
     const frame = chosen.find((el) => el.type === "frame");
-    const activeId = frame?.id ?? chosen.find((el) => el.frameId)?.frameId ?? this.state.activeId;
+    // clicked away from the slides (nothing on a slide selected any more): no slide is the active one
+    const activeId = frame?.id ?? chosen.find((el) => el.frameId)?.frameId ?? (hadSelection ? null : this.state.activeId);
     this.set({ selection: chosen.filter((el) => el.type !== "frame").map((el) => el.id), activeId });
   }
 
