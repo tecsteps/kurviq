@@ -176,6 +176,19 @@ export const connectRouter = async () => {
     }
   };
 
+  // the browser tab: the open scene's name; the generic title for Untitled (and Kurviq's own public pages)
+  const baseTitle = document.title;
+  const syncTitle = () => {
+    const viewer = publicScene.shown();
+    const name = viewer ? (viewer.fileId ? viewer.name : null) : scenesController.getState().current;
+    const title = name ? `${name} · Kurviq` : baseTitle;
+    if (document.title !== title) {
+      document.title = title;
+    }
+  };
+  scenesController.subscribe(syncTitle);
+  publicScene.subscribe(syncTitle);
+
   const target = sceneFromPath();
   // right away, the editor loads underneath
   if (!showShared() && isPublicScene(target)) {
@@ -202,6 +215,7 @@ export const connectRouter = async () => {
     }
   }
   syncUrl("replace");
+  syncTitle();
   showSlideFromUrl();
 
   // viewer closed: the URL goes back to the current scene (without the viewer's ?present / ?slide)
