@@ -27,8 +27,9 @@
   }
 
   &--deleted {
-    border: 2px dashed rgba(224, 49, 49, 0.7);
-    background: rgba(224, 49, 49, 0.06);
+    // blue like the rest: red read as "something went wrong"
+    border: 2px dashed rgba(34, 139, 230, 0.7);
+    background: rgba(34, 139, 230, 0.06);
   }
 }
 
