@@ -25,6 +25,7 @@
 //            new scene "<name> (offline changes)", and only changes whose
 //            whole touching group is free of collisions are sent again
 
+import { showAgentChange } from "../agentGlow";
 import { CaptureUpdateAction, restoreElements, serializeAsJSON } from "@excalidraw/excalidraw";
 import { hashString } from "@excalidraw/element";
 import { createStore, get, set } from "idb-keyval";
@@ -176,6 +177,8 @@ type Surface = {
   edit(change: { elements: El[]; files?: BinaryFileData[]; settings?: Settings }): void;
   /** ids in a gesture (dragged, resized, being typed in, being drawn) */
   gesture(): Set<string>;
+  /** an agent's change arrived (from another tab / the agent's own): show the user what changed */
+  agentChange?(before: ReadonlyMap<string, El>, after: readonly El[]): void;
   destroy(): void;
 };
 
@@ -227,6 +230,7 @@ const canvasSurface = (api: ExcalidrawImperativeAPI, scene: () => LiveScene | nu
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
     },
+    agentChange: (before, after) => showAgentChange(api, before as any, after as any),
     gesture: () => {
       const state: any = api.getAppState();
       const ids = new Set<string>();
@@ -1735,7 +1739,11 @@ export class LiveScene {
       this.surface.apply({ files });
     }
     if (toCanvas) {
+      const before = batch.via === "agent" && toApply.length ? new Map(this.surface.elements().map((el) => [el.id, el])) : null;
       this.applyToSurface(toApply, settings);
+      if (before) {
+        this.surface.agentChange?.(before, toApply);
+      }
     }
   }
 

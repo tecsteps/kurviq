@@ -1,0 +1,66 @@
+// an agent's edit arriving: soft glow around what it added / changed / deleted (agentGlow.ts)
+
+.kq-agent-glow {
+  position: fixed;
+  inset: 0;
+  z-index: var(--zIndex-canvasButtons, 3);
+  pointer-events: none;
+}
+
+.kq-agent-glow__box {
+  position: fixed;
+  border-radius: 10px;
+  animation: kq-agent-glow 1.8s ease-out forwards;
+
+  &--added,
+  &--changed {
+    box-shadow:
+      0 0 0 1.5px rgba(105, 101, 219, 0.75),
+      0 0 18px 4px rgba(105, 101, 219, 0.28);
+    background: rgba(105, 101, 219, 0.05);
+  }
+
+  &--deleted {
+    border: 1.5px dashed rgba(224, 49, 49, 0.6);
+    background: rgba(224, 49, 49, 0.04);
+  }
+}
+
+.kq-agent-glow__tag {
+  position: fixed;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #6965db;
+  color: #fff;
+  font-family: var(--ui-font, system-ui, sans-serif);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(105, 101, 219, 0.35);
+  animation: kq-agent-glow 1.8s ease-out forwards;
+}
+
+@keyframes kq-agent-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kq-agent-glow__box,
+  .kq-agent-glow__tag {
+    animation-duration: 2.4s;
+    animation-timing-function: linear;
+  }
+}
