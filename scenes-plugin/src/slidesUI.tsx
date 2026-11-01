@@ -295,6 +295,17 @@ const SlideList = () => {
             "slides-card--drag": dragId === slide.id,
           })}
         >
+          {/* drag here to reorder without the camera moving (a click on the card zooms to the slide) */}
+          <span className="slides-card__grip" title="Drag to reorder" aria-hidden>
+            <svg viewBox="0 0 8 14" width="8" height="14" fill="currentColor">
+              <circle cx="2" cy="2" r="1.2" />
+              <circle cx="6" cy="2" r="1.2" />
+              <circle cx="2" cy="7" r="1.2" />
+              <circle cx="6" cy="7" r="1.2" />
+              <circle cx="2" cy="12" r="1.2" />
+              <circle cx="6" cy="12" r="1.2" />
+            </svg>
+          </span>
           <button
             type="button"
             className="slides-card__open"
@@ -321,7 +332,8 @@ const SlideList = () => {
 
             </span>
           </button>
-          {slide.steps > 0 && (
+          {/* not on the active card: its actions take that place (the Clicks tab shows its steps) */}
+          {slide.steps > 0 && slide.id !== activeId && (
             <QuickTip tip="What appears on which click" label={false}>
               <button
                 type="button"

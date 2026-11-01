@@ -146,13 +146,37 @@
     line-height: 1;
   }
 
+  // the drag handle at the card's left edge: reorders without moving the camera
+  .slides-card__grip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.3rem;
+    border-radius: var(--border-radius-md) 0 0 var(--border-radius-md);
+    color: var(--color-gray-40, #aaa);
+    cursor: grab;
+
+    &:hover {
+      background: var(--color-surface-high);
+      color: var(--text-primary-color);
+    }
+
+    &:active {
+      cursor: grabbing;
+    }
+  }
+
   .slides-card__open {
     display: grid;
-    grid-template-columns: 1.1rem 6.5rem 1fr;
+    grid-template-columns: 1.1rem 5.6rem 1fr;
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    padding: 0.35rem;
+    padding: 0.35rem 0.35rem 0.35rem 1.4rem;
     border: none;
     background: none;
     color: var(--text-primary-color);
@@ -411,7 +435,7 @@
   .slides-card__clicks {
     position: absolute;
     top: 1.85rem;
-    left: calc(0.35rem + 1.1rem + 6.5rem + 1rem);
+    left: calc(1.4rem + 1.1rem + 5.6rem + 1rem);
     padding: 0;
     border: none;
     background: none;
@@ -593,7 +617,7 @@ body.slides-presenting {
 .excalidraw .slides-card__actions {
   position: absolute;
   bottom: 0.45rem;
-  left: calc(0.35rem + 1.1rem + 6.5rem + 1rem);
+  left: calc(1.4rem + 1.1rem + 5.6rem + 1rem);
   display: flex;
   gap: 0.15rem;
 
