@@ -392,9 +392,14 @@
   }
 }
 
+// on a background like Excalidraw's toolbars: never mistaken for (or mixed with) drawings behind them
 .excalidraw .kq-legal {
   display: flex;
+  align-items: center;
   gap: 0.75rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--border-radius-lg, 8px);
+  background: var(--island-bg-color);
   font-size: 0.75rem;
   pointer-events: var(--ui-pointerEvents, all);
 

@@ -170,13 +170,14 @@
     }
   }
 
+  // filmstrip: the number beside a full-width thumbnail, the title on a line below it
   .slides-card__open {
     display: grid;
-    grid-template-columns: 1.1rem 5.6rem 1fr;
-    align-items: center;
-    gap: 0.5rem;
+    grid-template-columns: 1.1rem minmax(0, 1fr);
+    align-items: start;
+    gap: 0.3rem 0.45rem;
     width: 100%;
-    padding: 0.35rem 0.35rem 0.35rem 1.4rem;
+    padding: 0.4rem 0.55rem 0.45rem 1.4rem;
     border: none;
     background: none;
     color: var(--text-primary-color);
@@ -186,6 +187,7 @@
   }
 
   .slides-card__num {
+    padding-top: 0.15rem;
     color: var(--color-gray-50);
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
@@ -209,15 +211,22 @@
 
   // the title on top, the card's icons (.slides-card__actions) below it
   .slides-card__meta {
+    grid-column: 2;
     display: flex;
-    flex-direction: column;
-    align-self: stretch;
     min-width: 0;
-    padding-top: 0.2rem;
+    // room for the click count / the active card's icons at the right
+    padding-right: 4.5rem;
+    min-height: 1.6rem;
+    align-items: center;
+  }
+
+  .slides-card--active .slides-card__meta {
+    padding-right: 7rem;
   }
 
   .slides-card__title {
     overflow: hidden;
+    font-size: 0.8rem;
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -434,8 +443,9 @@
   // "2 clicks" under the title: opens the Clicks tab for that slide
   .slides-card__clicks {
     position: absolute;
-    top: 1.85rem;
-    left: calc(1.4rem + 1.1rem + 5.6rem + 1rem);
+    right: 0.6rem;
+    bottom: 0.45rem;
+    line-height: 1.6rem;
     padding: 0;
     border: none;
     background: none;
@@ -613,11 +623,11 @@ body.slides-presenting {
   }
 }
 
-// the icons of a card in the sidebar list, below its title (num + thumb + gaps to the left)
+// the icons of the active card in the sidebar list: right of its title, under the thumbnail
 .excalidraw .slides-card__actions {
   position: absolute;
+  right: 0.4rem;
   bottom: 0.45rem;
-  left: calc(1.4rem + 1.1rem + 5.6rem + 1rem);
   display: flex;
   gap: 0.15rem;
 

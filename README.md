@@ -197,15 +197,15 @@ decision or something only I can do (such as logging in).
    - `curl -s -o /dev/null -w "%{http_code}" localhost:3001` returns 200
      (the first start of the app can take a minute)
 
-6. Register the MCP server under the name "excalidraw", for all projects,
+6. Register the MCP server under the name "kurviq-local", for all projects,
    using the absolute path of scenes-mcp/server.mjs:
-   - Claude Code: `claude mcp add excalidraw --scope user -- node <abs path>/scenes-mcp/server.mjs`
-   - Codex: add [mcp_servers.excalidraw] with command "node" and that path
+   - Claude Code: `claude mcp add kurviq-local --scope user -- node <abs path>/scenes-mcp/server.mjs`
+   - Codex: add [mcp_servers.kurviq-local] with command "node" and that path
      as args to ~/.codex/config.toml
    - Other clients: add it to their MCP JSON config
-     ({"mcpServers":{"excalidraw":{"command":"node","args":["<abs path>"]}}})
+     ({"mcpServers":{"kurviq-local":{"command":"node","args":["<abs path>"]}}})
    For Claude Code also install the skill:
-   `mkdir -p ~/.claude/skills && ln -sfn <abs path>/scenes-mcp/skill/excalidraw-scenes ~/.claude/skills/excalidraw-scenes`
+   `mkdir -p ~/.claude/skills && ln -sfn <abs path>/scenes-mcp/skill/kurviq-scenes ~/.claude/skills/kurviq-scenes`
 
 7. Verify the MCP server end to end. The tools work through the app open in
    a browser: open the app URL in my browser (or ask me to) and keep it

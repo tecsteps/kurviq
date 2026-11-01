@@ -45,13 +45,13 @@ path: `/path/to/kurviq/scenes-mcp/server.mjs`.
 **Claude Code, in every project:**
 
 ```bash
-claude mcp add excalidraw --scope user -- node /path/to/kurviq/scenes-mcp/server.mjs
+claude mcp add kurviq-local --scope user -- node /path/to/kurviq/scenes-mcp/server.mjs
 ```
 
 **Codex** (`~/.codex/config.toml`):
 
 ```toml
-[mcp_servers.excalidraw]
+[mcp_servers.kurviq-local]
 command = "node"
 args = ["/path/to/kurviq/scenes-mcp/server.mjs"]
 ```
@@ -61,7 +61,7 @@ args = ["/path/to/kurviq/scenes-mcp/server.mjs"]
 ```json
 {
   "mcpServers": {
-    "excalidraw": {
+    "kurviq-local": {
       "command": "node",
       "args": ["/path/to/kurviq/scenes-mcp/server.mjs"]
     }
@@ -74,7 +74,7 @@ args = ["/path/to/kurviq/scenes-mcp/server.mjs"]
 ```bash
 claude -p "Draw our login flow and save it as scene 'Login Flow'" \
   --mcp-config /path/to/kurviq/.mcp.json \
-  --allowedTools "mcp__excalidraw__*"
+  --allowedTools "mcp__kurviq-local__*"
 ```
 
 ## How you and the agent work together
@@ -143,14 +143,14 @@ The tools describe themselves, so plain requests work:
 
 **Safety net:** if you changed something since the agent's version, `edit_scene` still applies its edit on top of yours, but the answer starts with a **WARNING** listing your changes plus an image of them, so the agent re-checks.
 
-These rules are built into the MCP server's instructions (sent to every agent that connects) and into the Claude Code skill `excalidraw-scenes` (`scenes-mcp/skill/excalidraw-scenes/SKILL.md`, linked to `~/.claude/skills/`).
+These rules are built into the MCP server's instructions (sent to every agent that connects) and into the Claude Code skill `kurviq-scenes` (`scenes-mcp/skill/kurviq-scenes/SKILL.md`, linked to `~/.claude/skills/`).
 
 ### Slides
 
 Agents can build whole decks: frames are slides (`customData.slides` holds
 order, notes, skip), elements can appear click by click (`step`), and one
 template frame carries header, footer, logo and the deck style. The format
-is in the skill (`scenes-mcp/skill/excalidraw-scenes/SKILL.md`, "Slides").
+is in the skill (`scenes-mcp/skill/kurviq-scenes/SKILL.md`, "Slides").
 Template copies on the slides are made by your app when it opens the deck.
 
 ### Seeing scenes (huge ones too)

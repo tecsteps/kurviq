@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "excalidraw": {
+    "kurviq-local": {
       "command": "node",
       "args": ["scenes-mcp/server.mjs"]
     }

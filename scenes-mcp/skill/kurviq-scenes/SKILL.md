@@ -1,6 +1,6 @@
 ---
-name: excalidraw-scenes
-description: Draw, co-edit, look at and save diagrams in the user's local Kurviq / Excalidraw (scenes synced with Google Drive, MCP server "excalidraw"). Use whenever the user asks to draw or change a diagram/sketch/scene in Excalidraw, wants to co-work on a drawing, asks what is on their canvas, or mentions Excalidraw scenes.
+name: kurviq-scenes
+description: Draw, co-edit, look at and save diagrams in the user's local Kurviq, an Excalidraw app (scenes synced with Google Drive, MCP server "kurviq-local"). Use whenever the user asks to draw or change a diagram/sketch/scene in Excalidraw, wants to co-work on a drawing, asks what is on their canvas, or mentions Excalidraw scenes.
 ---
 
 # Kurviq (local): how to work with the user's drawings
@@ -8,7 +8,7 @@ description: Draw, co-edit, look at and save diagrams in the user's local Kurviq
 The user runs Kurviq, a local Excalidraw app (http://draw.test), with **scenes**
 (named drawings, URL `http://draw.test/<scene>`) kept in their browser and,
 if they signed in with Google, synced with their Google Drive. The MCP
-server `excalidraw` gives you tools for it. The user is often **looking at
+server `kurviq-local` gives you tools for it. The user is often **looking at
 the app while you work** and edits by hand in between.
 
 **You work through the user's open Kurviq tab.** Every tool needs the app

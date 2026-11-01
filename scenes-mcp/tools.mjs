@@ -493,7 +493,7 @@ export const createScenesMcp = ({
       "list_scenes",
       {
         description:
-          "List the scenes in the user's Google Drive (folder Kurviq), the user's local-only scenes (only in their browser, never synced; listed while the app is open), plus which scene is currently open in the user's Excalidraw app and whether it has unsaved changes.",
+          "List the scenes in the user's Google Drive (folder Kurviq), the user's local-only scenes (only in their browser, never synced; listed while the app is open), plus which scene is currently open in the user's Kurviq app and whether it has unsaved changes.",
         annotations: { readOnlyHint: true },
       },
       tool(async () => {
@@ -717,7 +717,7 @@ export const createScenesMcp = ({
       server.registerTool(
         "read_open_scene",
         {
-          description: `Read the scene the user has open in the Excalidraw app RIGHT NOW, including their unsaved manual edits — and find out what the USER changed since an agent last looked.
+          description: `Read the scene the user has open in Kurviq RIGHT NOW, including their unsaved manual edits — and find out what the USER changed since an agent last looked.
     Automatic change tracking: the app remembers (per scene, in the browser) what the canvas looked like after the last read_open_scene / edit_open_scene by any agent. Every call reports "userChanges" relative to that (added / modified with changedFields / deleted) and then moves the baseline to now. You don't need to remember anything — just call this before you edit, and it tells you what the user did in the meantime. With view=true you also get an IMAGE of the user's changes (or of the scene if nothing changed / first look).
     Scene data: summary=true (default above ${SUMMARY_THRESHOLD} elements) gives an overview (bounds, counts, frames, all text labels with positions); region / elementIds give element data for a part; otherwise all elements. changesOnly=true skips the scene data.
     since=<revision> (optional, advanced) diffs against a specific revision instead of the stored baseline.`,
@@ -1387,7 +1387,7 @@ ${EDIT_HELP}
           ...(LOCAL_FILES
             ? { elementsFile: z.string().optional().describe("Absolute path of a JSON file with the elements array (instead of elements)") }
             : { payloadId: PAYLOAD_ID }),
-          open: z.boolean().optional().describe("Switch the user's Excalidraw app to this scene after saving"),
+          open: z.boolean().optional().describe("Switch the user's Kurviq app to this scene after saving"),
           replace: z
             .boolean()
             .optional()
@@ -1596,8 +1596,8 @@ ${EDIT_HELP}
       {
         description:
           MODE === "detached"
-            ? "Switch the USER's Excalidraw app (their browser) to a scene. You don't need this for your own work (read_scene / edit_scene work on any scene): only use it when the user asks you to show them a scene. create=true creates a new empty scene there."
-            : "Switch the user's Excalidraw app (open in the browser) to a scene. Unsaved changes of the previous scene are kept locally in the browser. Set create=true to create a new empty scene with that name instead.",
+            ? "Switch the USER's Kurviq app (their browser) to a scene. You don't need this for your own work (read_scene / edit_scene work on any scene): only use it when the user asks you to show them a scene. create=true creates a new empty scene there."
+            : "Switch the user's Kurviq app (open in the browser) to a scene. Unsaved changes of the previous scene are kept locally in the browser. Set create=true to create a new empty scene with that name instead.",
         inputSchema: {
           name: SCENE_NAME,
           create: z.boolean().optional().describe("Create a new empty, unsaved scene"),
@@ -1622,13 +1622,13 @@ ${EDIT_HELP}
       "app_status",
       {
         description:
-          "Which scene is open in the user's Excalidraw app, whether it has unpushed changes, and every scene the app knows about with its sync status: synced, ahead (not pushed yet), behind (newer in Google Drive), diverged, conflict (needs get_conflict / resolve_conflict), local (not in Google Drive). The app syncs by itself (auto-sync); scenes marked \"auto-sync off\" are pushed only when the user decides. health checks that edits and pictures are answered right now (what the tab is busy with, if not): use it when calls time out.",
+          "Which scene is open in the user's Kurviq app, whether it has unpushed changes, and every scene the app knows about with its sync status: synced, ahead (not pushed yet), behind (newer in Google Drive), diverged, conflict (needs get_conflict / resolve_conflict), local (not in Google Drive). The app syncs by itself (auto-sync); scenes marked \"auto-sync off\" are pushed only when the user decides. health checks that edits and pictures are answered right now (what the tab is busy with, if not): use it when calls time out.",
         annotations: { readOnlyHint: true },
       },
       tool(async () => {
         const state = await callJson("/api/app/state");
         if (!state.connected) {
-          return text({ connected: false, message: "The Excalidraw app is not open in a browser." });
+          return text({ connected: false, message: "Kurviq is not open in a browser." });
         }
         const status = await appCommand({ type: "status" });
         // the health check: a ping through the same queues as edits and pictures
@@ -1833,7 +1833,7 @@ ${EDIT_HELP}
               ...result,
               content: [
                 ...result.content,
-                { type: "text", text: `# This Excalidraw's extras (scenes, formatted text, slides, images)\n\n${SKILL_EXTRAS}` },
+                { type: "text", text: `# Kurviq's extras (scenes, formatted text, slides, images)\n\n${SKILL_EXTRAS}` },
               ],
             };
           }

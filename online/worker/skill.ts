@@ -1,6 +1,6 @@
 // The agent instructions of the Kurviq MCP: the local skill
-// (scenes-mcp/skill/excalidraw-scenes/SKILL.md), with what differs online.
-import localSkill from "../../scenes-mcp/skill/excalidraw-scenes/SKILL.md";
+// (scenes-mcp/skill/kurviq-scenes/SKILL.md), with what differs online.
+import localSkill from "../../scenes-mcp/skill/kurviq-scenes/SKILL.md";
 
 const INTRO = (app: string) => `# Kurviq: how to work with the user's drawings
 
