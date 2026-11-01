@@ -21,6 +21,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { convertInNode, needsConversion } from "./convert.mjs";
 import { markdownOfElement } from "./richText.mjs";
+import { conflictList, resolveConflicts } from "./editConflicts.mjs";
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "./feedback.mjs";
 import { byIds, commonBounds, deckOrder, diffElements, findSlide, inRegion, summarize, templateChangesOf, toRect } from "./inspect.mjs";
 import { readEditFile, resolveImages } from "./media.mjs";
@@ -444,6 +445,38 @@ export const createScenesMcp = ({
   const IMAGES_HELP = `Images and icons: add { "type": "image", "id": "...", "x": 0, "y": 0, "width": 48, plus ONE of "src" (${LOCAL_FILES ? "absolute file path, " : ""}http(s) URL or data URL of a png/jpg/gif/webp/svg), "svg" (inline SVG markup) or "icon" ("lucide:<name>", e.g. "lucide:database", or "simple-icons:<slug>", e.g. "simple-icons:github"; "color" tints it)${LOCAL_FILES ? "" : ', or "fileId" of an image you uploaded (read_me: "Images from your machine")'} }. width or height alone keeps the aspect ratio. At most 20 images fetched per call (src / icon; uploaded fileIds don't count).
   Labels: label { text, strokeColor, fontSize, fontFamily, textAlign, verticalAlign }. The text is dark (#1e1e1e) unless you set strokeColor; the label's id is "<shape id>-label"; a shape grows so that no word of its label is broken.`;
 
+  const FORMAT_HELP = `  - Format a phrase without resending the text (it applies to the text as it is NOW, so the user's edits of it stay): { "id": "t1", "format": { "match": "A company transformation.", "color": "#1565c0", "bold": true } } (id: the text, or the shape whose label it is). bold / italic / underline / strike: true or false (removes); color / highlight / link / size (relative to fontSize): a value or null (removes); occurrence: n (default 1) or "all"; an array formats several phrases. match is exact text without list markers ("\\n" between lines); not found is an error (nothing changed). Not together with text / markdown in the same update. It clashes with the user's text edit only if the phrase is gone.`;
+
+  /** what happens to updates that set a property the user changed since your version */
+  const ON_CONFLICT = z
+    .enum(["reject", "overwrite"])
+    .optional()
+    .describe(
+      'An update that sets a property the USER changed since your version (same element, e.g. its text, position, color), or of an element they deleted: "reject" (default) does not apply that update and lists it in conflicts; "overwrite" applies it on top of theirs and still lists it. Your other updates, adds and deletes apply either way.',
+    );
+
+  /** how to go on after conflicts */
+  const CONFLICT_NOTE = (basedOn) =>
+    `The updates in conflicts set properties the user changed${basedOn ? ` since revision ${basedOn}` : " since an agent last looked"} (theirs = the element as the user left it; for text: its text and markdown). Rejected ones were NOT applied. Rebase: take the user's current version (theirs, or ${basedOn ? "read_scene" : "read_open_scene"}), put your change into it (e.g. format: { match, color } only colors a phrase and keeps their words), and send it again based on the new revision. Use onConflict: "overwrite" only if the user wants your version.`;
+
+  /** the warning when the user changed the scene since the agent's version, naming the collisions */
+  const conflictWarning = (changes, conflicts, onConflict, { checked = true, nothingApplied = false } = {}) => {
+    const head = `WARNING: the user changed this scene since your version (${changes.report.summary}).`;
+    if (!checked) {
+      return `${head} Your edit was applied on top of their changes (without basedOn, clashes on the same element are not checked). Check them below and fix your edit if it clashes.`;
+    }
+    if (!conflicts.length) {
+      return `${head} None of your updates set a property they changed; your edit was applied on top of their changes. Check them below and fix your edit if it clashes.`;
+    }
+    const list = conflictList(conflicts);
+    if (onConflict === "overwrite") {
+      return `${head} ${conflicts.length} of your updates OVERWROTE the user's changes (onConflict: "overwrite"): ${list}. conflicts.theirs has what the user had; the rest of your edit was applied on top.`;
+    }
+    return `${head} ${conflicts.length} of your updates set properties the user changed and were NOT applied (rejected): ${list}. ${
+      nothingApplied ? "Nothing else was in your edit: the scene is unchanged." : "The rest of your edit was applied on top."
+    } See conflicts: rebase on the user's version and send those again.`;
+  };
+
   /** what an edit reports besides added / updated / deleted */
   const EDIT_EXTRAS = ["alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "reset", "titleBlock", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile"];
   const editExtras = (edited) =>
@@ -709,6 +742,7 @@ export const createScenesMcp = ({
       const when = `since an agent last ${baseline.action === "edit" ? "edited" : baseline.action === "save" ? "saved" : "read"} this scene (${baseline.at})`;
       return {
         ...describeChanges(baseline.elements, elements, `by the user (or pulled from Google Drive) ${when}`),
+        base: baseline.elements.filter((el) => !el.isDeleted),
         firstLook: false,
       };
     };
@@ -802,10 +836,11 @@ export const createScenesMcp = ({
         "edit_open_scene",
         {
           description: `Edit the scene open in the user's app, live and in place, merged with the user's own work (never overwrites their other changes) and undoable by the user as one step (Cmd/Ctrl+Z). This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to Google Drive and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
-    Safety net: before applying, it checks whether the USER changed the scene since an agent last read/edited it. If so, your edit is still applied, but the result starts with a WARNING listing the user's changes (plus an image of them). Look at them and adjust if your edit conflicts with what the user did. Calling read_open_scene first avoids surprises.
+    Safety net: before applying, it checks whether the USER changed the scene since an agent last read/edited it. If so, the result starts with a WARNING listing the user's changes (plus an image of them). An update entry that sets a property the user changed on that element (text, position, size, a style, a customData key, a shape's label) or of an element they deleted is NOT applied (onConflict "reject", default) but listed in "conflicts" with their current values; "overwrite" applies it anyway (still listed). The rest of the edit applies. Calling read_open_scene first avoids surprises.
     - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
     - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element. Like in the editor, a moved / resized shape takes its label and bound arrows along, and a moved frame (slide) takes everything on it. A shape's label: { "id": "box", "label": { "text": "…", "fontSize": 28 } } (changes it or adds one; it is re-wrapped and the shape grows to fit).
     - delete: ids to remove (a container's label goes with it).
+  ${FORMAT_HELP}
     - To label an EXISTING shape, add a text element with "containerId": "<shape id>" (it gets centered in the shape).
   ${EDIT_HELP}
     ${BIG_EDITS}
@@ -822,6 +857,7 @@ export const createScenesMcp = ({
               .string()
               .optional()
               .describe("The scene you are co-working on (as returned by read_open_scene): routes the edit to the tab showing it; nothing is applied if no tab shows it"),
+            onConflict: ON_CONFLICT,
             ...EDIT_SOURCE,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
             restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
@@ -836,7 +872,7 @@ export const createScenesMcp = ({
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, upsert, restyle, reset, addTitleBlock, view = true }) => {
+        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, onConflict = "reject", upsert, restyle, reset, addTitleBlock, view = true }) => {
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
           // what did the user do since an agent last looked?
@@ -848,12 +884,34 @@ export const createScenesMcp = ({
           const changes = userChangesSinceAgent(before.agentBaseline, before.elements);
           const revision = newCheckpointId();
 
+          // updates of properties the user changed since an agent last looked: not applied (or overwritten, and listed)
+          const current = (before.elements || []).filter((el) => !el.isDeleted);
+          const checked =
+            !changes.firstLook && changes.count && edit.update.length
+              ? resolveConflicts({ base: changes.base, current, updates: edit.update, onConflict })
+              : { updates: edit.update, conflicts: [] };
+          const { conflicts } = checked;
+          const updates = checked.updates;
+          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock) {
+            return text({
+              warning: conflictWarning(changes, conflicts, onConflict, { nothingApplied: true }),
+              conflicts,
+              conflictNote: CONFLICT_NOTE(null),
+              userChanges: changes.report,
+              scene: sceneLabel(before.scene),
+              addedIds: [],
+              updated: [],
+              deleted: [],
+              note: "Nothing was changed: all your updates clashed with the user's changes.",
+            });
+          }
+
           const edited = await appCommand({
             type: "edit",
             targetScene: before.scene,
             expectScene: expectScene !== undefined ? expectScene : before.scene,
             ...(edit.add.length ? { add: edit.add } : {}),
-            ...(edit.update.length ? { update: edit.update } : {}),
+            ...(updates.length ? { update: updates } : {}),
             ...(edit.delete.length ? { delete: edit.delete } : {}),
             ...(Object.keys(edit.files).length ? { files: edit.files } : {}),
             ...(upsert ? { upsert } : {}),
@@ -868,11 +926,12 @@ export const createScenesMcp = ({
           const warning = changes.firstLook
             ? "You edited without reading this scene first (no earlier agent baseline). Call read_open_scene before editing next time."
             : changes.count
-            ? `WARNING: the user changed this scene since an agent last looked (${changes.report.summary}). Your edit was applied and merged. Check the user's changes below and fix your edit if it conflicts with them.`
+            ? conflictWarning(changes, conflicts, onConflict)
             : null;
 
           const result = text({
             ...(warning ? { warning } : {}),
+            ...(conflicts.length ? { conflicts, conflictNote: CONFLICT_NOTE(null) } : {}),
             ...(changes.count ? { userChanges: changes.report } : {}),
             scene: sceneLabel(info.scene),
             addedIds: info.addedIds,
@@ -948,8 +1007,10 @@ export const createScenesMcp = ({
       if (!base) {
         return { count: 0, changedIds: [], report: null, firstLook: true };
       }
+      const baseElements = (base.elements || []).filter((el) => !el.isDeleted);
       return {
-        ...describeChanges((base.elements || []).filter((el) => !el.isDeleted), current, `by the user (or others) ${label}`),
+        ...describeChanges(baseElements, current, `by the user (or others) ${label}`),
+        base: baseElements,
         firstLook: false,
       };
     };
@@ -979,7 +1040,10 @@ export const createScenesMcp = ({
         md5: revision,
         changes: (elements) =>
           base
-            ? { ...describeChanges((base.elements || []).filter((el) => !el.isDeleted), elements, `by the user ${base.label}`), firstLook: false }
+            ? (() => {
+                const baseElements = (base.elements || []).filter((el) => !el.isDeleted);
+                return { ...describeChanges(baseElements, elements, `by the user ${base.label}`), base: baseElements, firstLook: false };
+              })()
             : { count: 0, changedIds: [], report: null, firstLook: true },
       };
     };
@@ -1052,9 +1116,10 @@ export const createScenesMcp = ({
         "edit_scene",
         {
           description: `Edit a scene: applied in your own headless Excalidraw to the newest version and saved to Google Drive right away (one version per edit). The user's app picks it up within seconds and merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call the scenes server's HTTP API yourself (direct writes are refused).
-  Safety net: the user's app first pushes its unpushed changes of this scene. If the user changed the scene since basedOn (the revision from your last read_scene / edit_scene; default: the last agent edit), your edit is still applied, but the result starts with a WARNING listing their changes (plus an image). Check them and adjust your edit if it clashes.
+  Safety net: the user's app first pushes its unpushed changes of this scene. If the user changed the scene since basedOn (the revision from your last read_scene / edit_scene; default: the last agent edit), the result starts with a WARNING listing their changes (plus an image). With basedOn, an update entry that sets a property the user changed on that element since then (text / markdown, position (x, y, also slide-relative), size, a style like strokeColor or fontSize, a customData key, a shape's label) or of an element they deleted is NOT applied (onConflict "reject", the default): it comes back in "conflicts" ({ id, properties, yours, theirs: their current values, for text their text and markdown, resolution }); rebase it on their version and send it again. onConflict "overwrite" applies it anyway (still listed). The other updates, adds and deletes apply; if nothing is left, nothing is changed.
   - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
-  - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element (labels are text elements with containerId).
+  - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element (labels are text elements with containerId). Send only what you change: resending a whole markdown to color one phrase clashes with the user's edit of that text; use format.
+${FORMAT_HELP}
   - delete: ids to remove (a container's label goes with it).
   - To label an EXISTING shape, add a text element with "containerId": "<shape id>" (it gets centered in the shape).
 ${EDIT_HELP}
@@ -1072,6 +1137,7 @@ ${EDIT_HELP}
             delete: z.array(z.string()).optional(),
             ...EDIT_SOURCE,
             basedOn: z.string().optional().describe("The revision your edit is based on (from read_scene / edit_scene)"),
+            onConflict: ON_CONFLICT,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
             restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
@@ -1090,7 +1156,7 @@ ${EDIT_HELP}
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, upsert, restyle, reset, addTitleBlock, requestId: givenRequestId, view = true }) => {
+        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, onConflict = "reject", upsert, restyle, reset, addTitleBlock, requestId: givenRequestId, view = true }) => {
           const requestId = givenRequestId || `edit-${newCheckpointId()}`;
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
@@ -1103,6 +1169,29 @@ ${EDIT_HELP}
           const beforeElements = (before.file.elements || []).filter((el) => !el.isDeleted);
           const changes = local ? before.changes(beforeElements) : await changesSince(name, beforeElements, basedOn);
 
+          // updates of properties the user changed since basedOn: not applied (or, with overwrite, applied and listed)
+          const checked =
+            basedOn && !changes.firstLook && changes.count && edit.update.length
+              ? resolveConflicts({ base: changes.base, current: beforeElements, updates: edit.update, onConflict })
+              : { updates: edit.update, conflicts: [] };
+          const { conflicts } = checked;
+          const updates = checked.updates;
+          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock) {
+            // nothing left to apply: the scene stays as it is
+            return text({
+              warning: conflictWarning(changes, conflicts, onConflict, { nothingApplied: true }),
+              conflicts,
+              conflictNote: CONFLICT_NOTE(basedOn),
+              userChanges: changes.report,
+              scene: name,
+              addedIds: [],
+              updated: [],
+              deleted: [],
+              revision: before.md5,
+              note: "Nothing was changed: all your updates clashed with the user's changes.",
+            });
+          }
+
           // local-only scenes are edited in the user's app (their only copy)
           const command = {
             type: local ? "local-edit" : "scene-edit",
@@ -1110,7 +1199,7 @@ ${EDIT_HELP}
             name,
             requestId,
             ...(edit.add.length ? { add: edit.add } : {}),
-            ...(edit.update.length ? { update: edit.update } : {}),
+            ...(updates.length ? { update: updates } : {}),
             ...(edit.delete.length ? { delete: edit.delete } : {}),
             ...(Object.keys(edit.files).length ? { files: edit.files } : {}),
             ...(upsert ? { upsert } : {}),
@@ -1152,7 +1241,7 @@ ${EDIT_HELP}
                 ? null
                 : "You edited without reading this scene first. Call read_scene before editing next time."
               : changes.count
-              ? `WARNING: the user changed this scene since your version (${changes.report.summary}). Your edit was applied on top of their changes. Check them below and fix your edit if it clashes.`
+              ? conflictWarning(changes, conflicts, onConflict, { checked: !!basedOn })
               : null,
             usesSlideNumbers && changes.framesChanged
               ? `WARNING: slides were added, deleted or reordered since your version, and your edit names slides by number: check slideNumbers below (which frame each number hit) and use frame ids.`
@@ -1163,6 +1252,7 @@ ${EDIT_HELP}
 
           const result = text({
             ...(warning ? { warning } : {}),
+            ...(conflicts.length ? { conflicts, conflictNote: CONFLICT_NOTE(basedOn) } : {}),
             ...(changes.count ? { userChanges: changes.report } : {}),
             scene: name,
             addedIds: idList(edited.addedIds),

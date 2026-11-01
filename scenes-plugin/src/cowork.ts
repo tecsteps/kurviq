@@ -28,6 +28,8 @@ import { getFontString } from "@excalidraw/common";
 import { registerSceneFonts, withFonts } from "./fonts";
 import { scenesApi } from "./api";
 import { applyMarkdownUpdate } from "./richText/agent";
+import { applyFormat } from "./richText/format";
+import { docFromPlain, isPlainDoc, richDocOf } from "./richText/model";
 import {
   addTitleBlock,
   followDeckOrder,
@@ -343,11 +345,20 @@ const applyEdits = async (
     const updates = placeOnSlides(command.update, elements);
     const labelOf = (id: string) =>
       elements.find((el) => !el.isDeleted && el.type === "text" && (el as any).containerId === id);
-    for (const { id, ...props } of updates.map(takeMove)) {
+    for (const { id, format, ...props } of updates.map(takeMove)) {
       const el = present.get(id);
       if (!el || el.isDeleted) {
         missing.push(id);
         continue;
+      }
+      if (format !== undefined) {
+        const label = (props as any).label;
+        const setsText =
+          ["text", "markdown", "originalText"].some((key) => key in props) ||
+          (typeof label === "string" || (label && typeof label === "object" && ("text" in label || "markdown" in label)));
+        if (setsText) {
+          throw new Error(`${id}: format styles the text as it is; don't combine it with text / markdown in the same update (nothing was changed)`);
+        }
       }
       const { label: rawLabel, ...rest } = applyMarkdownUpdate(el, props as Record<string, any>);
       const label = rawLabel && typeof rawLabel === "object" ? applyMarkdownUpdate(labelOf(id) ?? {}, rawLabel) : rawLabel;
@@ -397,6 +408,24 @@ const applyEdits = async (
         reshaped.add(id);
       }
       patches.set(id, patch);
+      if (format !== undefined) {
+        // a phrase of the CURRENT text (a free text, or a shape's label) styled; the words stay as they are
+        const target = el.type === "text" ? el : labelOf(id);
+        if (!target) {
+          throw new Error(`${id}: format: this ${el.type} has no text (nothing was changed)`);
+        }
+        const pending = patches.get(target.id) || {};
+        const now: any = { ...target, ...pending };
+        const doc = richDocOf(now) ?? docFromPlain(String(now.originalText ?? now.text ?? ""));
+        const next = applyFormat(doc, format as any, target.id === id ? id : `${id} (label ${target.id})`);
+        const { rich: _old, ...rest } = (now.customData || {}) as Record<string, unknown>;
+        patches.set(target.id, { ...pending, customData: isPlainDoc(next) ? rest : { ...rest, rich: next } });
+        // bold / size change the width: measured again (a label's shape grows to fit)
+        textUpdated.add(target.id);
+        if (target.id !== id) {
+          reshaped.add(id);
+        }
+      }
     }
     // a moved frame takes its content along (like dragging it in the editor)
     for (const [id, patch] of [...patches]) {

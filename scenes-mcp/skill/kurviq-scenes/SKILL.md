@@ -31,8 +31,14 @@ browser, and you read and edit them there the same way.
    changed. Use `view_scene` whenever you need to see something; it returns a
    real PNG.
 4. If `edit_scene` answers with a **WARNING**, the user changed the scene
-   since your version. Your edit was applied on top anyway: check their
-   changes (listed + image) and fix your edit if it clashes with them.
+   since your version (`basedOn`). Updates that set a property the user
+   changed on the same element (its text, position, size, a color, a
+   `customData` key) or of an element they deleted are **not applied**: they
+   come back in `conflicts` (`yours` / `theirs`, for text the user's text and
+   `markdown`). Rebase them on the user's version and send them again
+   (`onConflict: "overwrite"` only if the user wants your version). Your
+   other changes were applied on top: check the user's changes (listed +
+   image) and fix your edit if it clashes with them.
 5. **Stick to the scene the user asked for.** If they say "this drawing",
    `app_status` tells you which scene they have open.
 6. **Don't touch the user's view.** `open_scene` (and `open: true`) switches
@@ -73,6 +79,15 @@ you.
   `containerId` = the shape id).
 - `delete`: ids (a shape's label goes with it; a deleted slide frame takes
   everything on it along, template copies included, like in the editor).
+- Conflicts (with `basedOn`): an `update` entry that sets a property the
+  user changed since then is left out and listed in `conflicts` (element id,
+  `properties` such as `text`, `position`, `size`, `strokeColor`,
+  `label.text`, `customData.slides.notes`, `deleted`; `yours`, `theirs`,
+  `resolution: "rejected"`). The other entries, adds and deletes still apply;
+  if nothing is left, nothing is changed. `onConflict: "overwrite"` applies
+  them anyway (listed as `"overwritten"`). Send only what you mean to change:
+  a resent `markdown` to color one word clashes with the user's edit of that
+  text, `format` does not.
 - Layer order: `"zIndex": "front"` / `"back"` (above / below everything else
   on its slide) or `"above"` / `"below": "<element id>"`, in `update` or on
   added elements (e.g. a label added after a picture: `"zIndex": "front"`).
@@ -143,6 +158,15 @@ instead of `text`, e.g. a title, a sentence and bullets in one box:
 - Edit with `update: [{ "id": "t1", "markdown": "…" }]` or
   `{ "id": "<shape>", "label": { "markdown": "…" } }`. A plain `text` update
   drops the formatting.
+- Format part of a text without resending it (the text stays as it is now,
+  including the user's edits): `{ "id": "t1", "format": { "match": "A
+  company transformation.", "color": "#1565c0", "bold": true } }` (`id`: the
+  text, or the shape whose label it is). Keys: `bold`, `italic`, `underline`,
+  `strike` (`false` removes), `color`, `highlight`, `size` (relative), `link`
+  (`null` removes); `occurrence`: n (default 1) or `"all"`; an array formats
+  several phrases. `match` is exact text without list markers (`\n` between
+  lines); not found is an error and nothing is changed. Not together with
+  `text` / `markdown` in the same update.
 - A wrapping text box: `"width": 800, "autoResize": false` (lines wrap at
   800px; `x` is its left edge).
 - Reading a scene shows formatted texts with `markdown` next to `text` (the
