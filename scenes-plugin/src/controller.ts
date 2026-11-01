@@ -161,6 +161,9 @@ const CHECK_LOCK_MS = 3_000;
  */
 const LIVE_CAPABLE = typeof window !== "undefined" && !new URLSearchParams(window.location.search).has("scenes-renderer");
 
+/** what the user does in a tab that makes it the tab in use (its scene is the one "/" opens) */
+const INTERACTIONS = ["pointerdown", "keydown", "wheel"] as const;
+
 /** the scene "Edit" in the shared-link viewer opens after the reload (its exact name) */
 export const OPENING_KEY = "kurviq-opening";
 
@@ -322,8 +325,36 @@ class ScenesController {
     this.setState({});
   }
 
+  /**
+   * The stored `current` is the scene a new tab opens at "/": the scene of the tab the user used
+   * last. Every tab writes the whole metadata (e.g. its background sync), so a tab only writes its
+   * own scene as `current` while it holds the claim: it switched scenes, or the user used it
+   * (pointer, keys) since another tab claimed it. Else it keeps the stored one (another tab's),
+   * so a tab left open in the background doesn't turn "the scene I left" into its own scene (or
+   * into Untitled).
+   */
+  private claimsCurrent = true;
+  private persistedCurrent: string | null = this.meta.current;
+
+  /** the user does something in this tab: it is the one in use */
+  private onInteract = () => {
+    if (!this.claimsCurrent) {
+      this.claimsCurrent = true;
+      this.persistMeta();
+    }
+  };
+
   private persistMeta() {
-    saveMeta(this.meta);
+    if (this.meta.current !== this.persistedCurrent) {
+      this.claimsCurrent = true; // this tab switched scenes (the user, or an agent showing one)
+    }
+    this.persistedCurrent = this.meta.current;
+    const stored = this.claimsCurrent ? null : loadMeta();
+    if (!stored || (stored.current !== null && !this.meta.scenes[stored.current])) {
+      saveMeta(this.meta); // (the other tab's scene is gone: this one's then)
+      return;
+    }
+    saveMeta({ ...this.meta, current: stored.current, baseline: stored.baseline });
   }
 
   private log(kind: Activity["kind"], text: string) {
@@ -391,6 +422,9 @@ class ScenesController {
     window.addEventListener("online", this.onOnline);
     window.addEventListener("storage", this.onStorage);
     document.addEventListener("visibilitychange", this.onVisibility);
+    for (const type of INTERACTIONS) {
+      window.addEventListener(type, this.onInteract, { capture: true, passive: true });
+    }
     if (LIVE_CAPABLE) {
       liveSync.start();
     }
@@ -456,6 +490,9 @@ class ScenesController {
     window.removeEventListener("online", this.onOnline);
     window.removeEventListener("storage", this.onStorage);
     document.removeEventListener("visibilitychange", this.onVisibility);
+    for (const type of INTERACTIONS) {
+      window.removeEventListener(type, this.onInteract, { capture: true });
+    }
     if (LIVE_CAPABLE) {
       liveSync.detachCanvas();
     }
@@ -482,7 +519,11 @@ class ScenesController {
       return;
     }
     const { current, baseline } = this.meta;
-    this.meta = { ...loadMeta(), current, baseline };
+    const stored = loadMeta();
+    if (stored.current !== current) {
+      this.claimsCurrent = false; // another tab is the one in use now
+    }
+    this.meta = { ...stored, current, baseline };
     this.refresh();
   };
 
