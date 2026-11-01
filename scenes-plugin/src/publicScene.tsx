@@ -7,7 +7,7 @@
 //    with the link" without sign-in, else with the visitor's own Drive
 //    access (see readSharedScene)
 
-import { CaptureUpdateAction, Excalidraw, restoreElements } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, Footer, MainMenu, restoreElements } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
@@ -22,6 +22,7 @@ import { getSlides, getTemplate } from "./slides";
 import { deck } from "./deck";
 import { presenter, usePresenter } from "./present";
 import { liveSync } from "./online/liveSync";
+import { KurviqLegalLinks, KurviqSocials } from "./online/ui";
 
 export const PUBLIC_SCENES: Record<string, { title: string; copyName: string }> = IS_ONLINE
   ? { features: { title: "What Kurviq adds to Excalidraw", copyName: "Kurviq features" } }
@@ -390,11 +391,6 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     >
       <div className="public-scene__bar">
         <strong className="public-scene__title">{title}</strong>
-        {fileId && scene && (
-          <span className="public-scene__meta">
-            {scene.public ? "anyone with the link can view it" : "shared with you in Google Drive"}
-          </span>
-        )}
         <span className="public-scene__spacer" />
         {scene && scene.slides.length > 0 && (
           <button
@@ -458,7 +454,20 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
             }}
             viewModeEnabled
             UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, toggleTheme: null } }}
-          />
+          >
+            {/* Kurviq's links, as in the editor's menu (not Excalidraw's X / Discord) */}
+            <MainMenu>
+              <MainMenu.DefaultItems.Help />
+              <MainMenu.Separator />
+              <KurviqSocials />
+            </MainMenu>
+            {/* the editor's legal links, bottom right (kurviq.com only: the local install has no such pages) */}
+            {IS_ONLINE && (
+              <Footer>
+                <KurviqLegalLinks />
+              </Footer>
+            )}
+          </Excalidraw>
         </div>
       )}
     </div>
