@@ -1,6 +1,6 @@
 // "Sign in with Google" without a Kurviq account: Google's OAuth tokens,
 // kept in an encrypted httpOnly cookie of this browser. The Worker stores
-// nothing — the cookie is the only place the refresh token exists (besides
+// nothing: the cookie is the only place the refresh token exists (besides
 // Google).
 //
 //   GET  /auth/login?return=…    sign in with Google (Drive: drive.file only)
@@ -47,7 +47,7 @@ export type AuthEnv = GoogleEnv & {
 /**
  * The dev gate: the fake Google, test hooks and DEV_ORIGIN are trusted only
  * with FAKE_GOOGLE=1, a local DEV_ORIGIN, and (when there is a request) a
- * request from this machine — never on kurviq.com, whatever the env says
+ * request from this machine, never on kurviq.com, whatever the env says
  */
 export const devGate = (env: { FAKE_GOOGLE?: string; DEV_ORIGIN?: string }, request?: Request) => {
   if (env.FAKE_GOOGLE !== "1" || !isLocalOrigin(env.DEV_ORIGIN ?? null)) {

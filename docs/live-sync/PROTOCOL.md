@@ -105,7 +105,7 @@ DO → client:
 
 - `welcome { mode: "events" | "state" | "seed" | "wait", seq, generation, events?, state?: WireScene, keyId, role, lifecycle, presence, pending }`
 - `ack { counter, seq, stamps: Record<id, { v, n }> }`
-- `refused { counter, reason, current: WireEvent[] }` — reasons: `collision`, `reference`, `limit`, `key`, `role`, `lifecycle`, `discarded`, `font-id`, `invalid`
+- `refused { counter, reason, current: WireEvent[] }`, reasons: `collision`, `reference`, `limit`, `key`, `role`, `lifecycle`, `discarded`, `font-id`, `invalid`
 - `events { seq, author, pseudonym, name, tab, via, origin: "user" | "outside" | "repair", events: WireEvent[] }`
 - `saved { revision, md5, receipts: Record<tab, Receipt>, at }`
 - `status { stage, blocked: BlockedAuthor[], error?, lifecycle, presence }`

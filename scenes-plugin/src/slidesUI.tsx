@@ -240,8 +240,23 @@ const SlideList = () => {
   const editor = deck.getApi();
   const outOfOrder = !!editor && !isDeckGrid(editor.getSceneElements());
 
+  /** dragging a slide near the top / bottom of the sidebar scrolls the list (to drop it further away) */
+  const scrollWhileDragging = (event: React.DragEvent) => {
+    const body = (event.currentTarget as HTMLElement).closest<HTMLElement>(".slides-body");
+    if (!dragId || !body) {
+      return;
+    }
+    const { top, bottom } = body.getBoundingClientRect();
+    const edge = Math.min(80, (bottom - top) / 4);
+    if (event.clientY < top + edge) {
+      body.scrollTop -= Math.ceil(((top + edge - event.clientY) / edge) * 24);
+    } else if (event.clientY > bottom - edge) {
+      body.scrollTop += Math.ceil(((event.clientY - (bottom - edge)) / edge) * 24);
+    }
+  };
+
   return (
-    <ol className="slides-list">
+    <ol className="slides-list" onDragOver={scrollWhileDragging}>
       {outOfOrder && (
         <li>
           <button type="button" className="slides-btn slides-arrange" onClick={() => arrangeInDeckOrder(api())}>

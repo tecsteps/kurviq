@@ -1,5 +1,5 @@
 // Kurviq: the scenes server's job, done in the browser with the Google Drive
-// API — list, load, save, rename and delete scenes in the user's Drive, with
+// API: list, load, save, rename and delete scenes in the user's Drive, with
 // the same rules (a save must be based on the version Drive has, agent edits
 // are marked).
 //

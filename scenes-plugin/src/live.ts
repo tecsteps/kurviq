@@ -1,6 +1,6 @@
 // Live channel to the scenes server: lets agents (via the scenes MCP server)
-// drive the editor that is open in the browser — switch scenes, save the
-// open scene, convert MCP-style elements with real font metrics — and keeps
+// drive the editor that is open in the browser (switch scenes, save the
+// open scene, convert MCP-style elements with real font metrics) and keeps
 // the editor in sync when an agent saves a scene.
 
 import {
@@ -256,7 +256,7 @@ const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) 
   // in a deck, new text without its own font / size / color takes the template's body text style (like the app's defaults)
   const body = bodyStyle(input.filter((el) => el && el.version !== undefined));
   const elements = placeOnSlides(input.map(applyMarkdown), input).map((el) => (el && body ? withBodyStyle(el, body) : el));
-  // text is measured during conversion — the fonts (incl. the characters
+  // text is measured during conversion: the fonts (incl. the characters
   // used) must be loaded, otherwise widths are computed with a fallback font
   // and the text gets cut off in the user's browser
   await document.fonts.load("20px Excalifont").catch(() => {});
@@ -279,7 +279,7 @@ const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) 
         : el,
     );
   // elements that are already complete (e.g. from an existing scene) must not
-  // be converted again — that would detach their bound text
+  // be converted again; that would detach their bound text
   const needsConversion = (el: any) =>
     el.label !== undefined || el.version === undefined;
   const rawById = new Map(real.map((el) => [el.id, el]));
@@ -549,7 +549,7 @@ const status = () => {
     busy: [...busy.values()].map(({ what, since }) => `${what} for ${Math.round((Date.now() - since) / 1000)} s`),
     editsRunning: editsRunning(),
     visible: document.visibilityState === "visible",
-    // "name: status" — synced / ahead (not pushed) / behind / diverged / conflict / local
+    // "name: status": synced / ahead (not pushed) / behind / diverged / conflict / local
     scenes: list
       .filter((item) => item.name !== null)
       .map(({ name, status, pendingRename, localOnly }) =>
@@ -603,7 +603,7 @@ const exclusive = <T,>(task: () => Promise<T>) => {
   return run;
 };
 
-/** online: Drive lets the user read this space, not change it — agents can't either */
+/** online: Drive lets the user read this space, not change it; agents can't either */
 const refuseIfReadOnly = (name: string | null | undefined) => {
   const { readOnly } = scenesController.getState().sync;
   if (readOnly && !(name && scenesController.isLocalOnly(name))) {
@@ -862,7 +862,7 @@ const handleCommand = async (event: { id: string; command: Command }, reply: (pa
 };
 
 // -----------------------------------------------------------------------------
-// online (Kurviq): one WebSocket per tab to this browser's pairing — the
+// online (Kurviq): one WebSocket per tab to this browser's pairing; the
 // remote MCP's commands arrive here, results go back the same way
 // -----------------------------------------------------------------------------
 

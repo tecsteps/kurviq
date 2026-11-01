@@ -15,7 +15,7 @@
  *                        localhost and 127.0.0.1 on the app's port)
  *   SCENES_APP_URL       the app's URL (default: http://localhost:3001)
  *
- * Stateless: it keeps no data — only the open browser connections and the
+ * Stateless: it keeps no data, only the open browser connections and the
  * commands waiting for their answer, in memory.
  *
  * No dependencies besides node >= 18.
@@ -220,7 +220,7 @@ const ensureRenderer = async ({ dedicated = false } = {}) => {
   );
   if (!ok) {
     const error = new Error(
-      `Headless renderer did not connect — is the app running at ${APP_URL}?`,
+      `Headless renderer did not connect. Is the app running at ${APP_URL}?`,
     );
     error.status = 504;
     throw error;
@@ -307,7 +307,7 @@ const sendCommand = async (command) => {
   });
   if (!tab) {
     const error = new Error(
-      `The Excalidraw app is not open in a browser — open ${APP_URL}`,
+      `The Excalidraw app is not open in a browser: open ${APP_URL}`,
     );
     error.status = 409;
     throw error;
@@ -476,7 +476,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/app/flush" && req.method === "POST") {
       // before an agent reads/edits a scene: the user's tabs push their
-      // unpushed changes of it (sync only — nothing in the user's UI changes)
+      // unpushed changes of it (sync only; nothing in the user's UI changes)
       const { name } = await readJson(req);
       const showing = [...clients.entries()]
         .filter(([tabId, client]) => client.role !== "renderer" && tabStates.get(tabId)?.current === name)
@@ -523,7 +523,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: settled });
     }
     if (url.pathname === "/api/scenes" || url.pathname.startsWith("/api/scenes/")) {
-      // scenes are written only by the app and the MCP tools — never by
+      // scenes are written only by the app and the MCP tools, never by
       // scripts calling this API directly (that bypasses merging, change
       // tracking and the user's unsaved work)
       if (
@@ -538,7 +538,7 @@ const server = http.createServer(async (req, res) => {
       // the open tab answers (it reads and saves with the user's Google sign-in)
       const tab = activeTabId();
       if (!tab) {
-        throw httpError(409, `Kurviq is not open in a browser — open ${APP_URL}`);
+        throw httpError(409, `Kurviq is not open in a browser: open ${APP_URL}`);
       }
       const headers = {};
       for (const [key, value] of Object.entries(req.headers)) {

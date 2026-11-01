@@ -1,7 +1,7 @@
 // Third-party notices for what Kurviq ships: every package whose code ends up
 // in a bundle (the app, the Worker) with its license text, Excalidraw itself,
 // and the fonts. MIT and the SIL Open Font License require the notices to
-// travel with the copies — the minified bundles lose the comments, so the
+// travel with the copies; the minified bundles lose the comments, so the
 // notices are published next to them (kurviq.com/third-party-licenses.txt).
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -115,18 +115,18 @@ export const thirdPartyNotices = ({ title, files, fonts = false }) => {
   const sections = [];
   if (usesExcalidraw) {
     sections.push(
-      `Excalidraw — MIT\nhttps://github.com/excalidraw/excalidraw\nKurviq is built on Excalidraw (unofficial, not affiliated with Excalidraw).\n\n${readLicenseFiles(EXCALIDRAW).join("\n\n")}`,
+      `Excalidraw (MIT)\nhttps://github.com/excalidraw/excalidraw\nKurviq is built on Excalidraw (unofficial, not affiliated with Excalidraw).\n\n${readLicenseFiles(EXCALIDRAW).join("\n\n")}`,
     );
   }
   if (usesExcalidrawMcp) {
     sections.push(
-      "excalidraw-mcp — MIT\nhttps://github.com/excalidraw/excalidraw-mcp\nCopyright (c) Excalidraw contributors. Licensed under the MIT License (text below, see Excalidraw).",
+      "excalidraw-mcp (MIT)\nhttps://github.com/excalidraw/excalidraw-mcp\nCopyright (c) Excalidraw contributors. Licensed under the MIT License (text below, see Excalidraw).",
     );
   }
   for (const { dir, data } of [...packages.values()].sort((a, b) => a.data.name.localeCompare(b.data.name))) {
     const texts = readLicenseFiles(dir);
     sections.push(
-      `${data.name}${data.version ? ` ${data.version}` : ""} — ${licenseOf(data)}\n${repoOf(data)}\n\n${
+      `${data.name}${data.version ? ` ${data.version}` : ""} (${licenseOf(data)})\n${repoOf(data)}\n\n${
         texts.length ? texts.join("\n\n") : `Licensed under ${licenseOf(data)} (no license file in the package).`
       }`.trim(),
     );

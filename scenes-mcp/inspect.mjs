@@ -1,5 +1,5 @@
 // Cheap, text-only views of (possibly huge) scenes: bounds, overview, region /
-// element filters — so agents can find their way before rendering pixels.
+// element filters, so agents can find their way before rendering pixels.
 
 import { changedFields } from "./elementContent.mjs";
 import { CHANGE_NAMES, changedByHand, deckOrder, isSlideFrame, slideData } from "./slideRules.mjs";

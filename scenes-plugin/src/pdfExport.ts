@@ -21,7 +21,7 @@ const escapeHtml = (text: string) =>
 
 /**
  * Which slides: "all" (skipped ones left out), or numbers (1-based, deck
- * order), frame ids and ranges like "2-4" — given as a list or "1, 3-5".
+ * order), frame ids and ranges like "2-4", given as a list or "1, 3-5".
  */
 export const pickSlides = (
   elements: readonly ExcalidrawElement[],

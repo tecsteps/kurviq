@@ -1,5 +1,5 @@
 // Wraps the upstream excalidraw-app Vite config and injects the scenes plugin
-// at build time — the excalidraw checkout itself stays untouched.
+// at build time; the excalidraw checkout itself stays untouched.
 //
 // Must be run with cwd = excalidraw/excalidraw-app (upstream config resolves
 // its env dir relative to cwd), e.g.:
@@ -58,7 +58,7 @@ const injectScenesPlugin = () => ({
     const fail = (what: string) => {
       throw new Error(
         `[excalidraw-scenes] could not inject into App.tsx: ${what}. ` +
-          `Upstream probably changed — update scenes-plugin/vite.config.mts.`,
+          `Upstream probably changed: update scenes-plugin/vite.config.mts.`,
       );
     };
     if (/\brenderTopLeftUI=/.test(code)) {
@@ -78,7 +78,7 @@ const injectScenesPlugin = () => ({
       fail("anchor `<AppSidebar />` not found");
     }
     // upstream copies the canvas another tab saved last into this tab when
-    // it gets focus — with scenes, that is another scene's drawing (which
+    // it gets focus; with scenes, that is another scene's drawing (which
     // auto-sync would then push under this tab's scene name). Each tab keeps
     // its own scene; changes reach other tabs through the sync.
     const tabSync = "if (isBrowserStorageStateNewer(STORAGE_KEYS.VERSION_DATA_STATE)) {";
@@ -382,9 +382,9 @@ const sceneUrls = () => ({
  * service worker leaves the Worker's routes (/auth, /mcp, /live) alone.
  */
 const SITE = "https://kurviq.com";
-const KURVIQ_TITLE = "Kurviq – free whiteboard with Google Drive sync and AI agents";
+const KURVIQ_TITLE = "Kurviq: free whiteboard with Google Drive sync and AI agents";
 const KURVIQ_DESCRIPTION =
-  "Kurviq is a free online whiteboard built on Excalidraw: hand-drawn diagrams, scenes, slides and formatted text. No account – your drawings stay in your browser. Optionally keep them in your Google Drive, share them with anyone, and let AI agents draw with you via MCP.";
+  "Kurviq is a free online whiteboard built on Excalidraw: hand-drawn diagrams, scenes, slides and formatted text. No account: your drawings stay in your browser. Optionally keep them in your Google Drive, share them with anyone, and let AI agents draw with you via MCP.";
 
 const KURVIQ_META = `<!-- Primary Meta Tags -->
     <meta name="title" content="${KURVIQ_TITLE}" />
@@ -519,7 +519,7 @@ const kurviqOnline = () => ({
       for (const [from, to] of steps) {
         const found = typeof from === "string" ? next.includes(from) : from.test(next);
         if (!found) {
-          throw new Error(`[excalidraw-scenes] kurviq: ${name} changed upstream (${String(from).slice(0, 60)}) — update scenes-plugin/vite.config.mts`);
+          throw new Error(`[excalidraw-scenes] kurviq: ${name} changed upstream (${String(from).slice(0, 60)}): update scenes-plugin/vite.config.mts`);
         }
         next = next.replace(from, to);
       }
@@ -581,11 +581,11 @@ const kurviqOnline = () => ({
       const icons = /<link rel="apple-touch-icon"[^>]*\/>\s*<link rel="icon"[^>]*\/>\s*<link rel="icon"[^>]*\/>/;
       for (const [what, re] of [["meta tags", meta], ["analytics", analytics], ["icons", icons]] as const) {
         if (!re.test(html)) {
-          throw new Error(`[excalidraw-scenes] kurviq: ${what} not found in index.html — update scenes-plugin/vite.config.mts`);
+          throw new Error(`[excalidraw-scenes] kurviq: ${what} not found in index.html: update scenes-plugin/vite.config.mts`);
         }
       }
       if (!html.includes('<div id="root"></div>')) {
-        throw new Error("[excalidraw-scenes] kurviq: #root not found in index.html — update scenes-plugin/vite.config.mts");
+        throw new Error("[excalidraw-scenes] kurviq: #root not found in index.html: update scenes-plugin/vite.config.mts");
       }
       return html
         .replace(/<title>[^<]*<\/title>/, `<title>${KURVIQ_TITLE}</title>`)
@@ -890,7 +890,7 @@ export default async (configEnv: { mode: string; command: string }) => {
     resolve: {
       ...config.resolve,
       // our sources live outside the checkout and have no node_modules of
-      // their own — resolve shared deps from the excalidraw checkout
+      // their own; resolve shared deps from the excalidraw checkout
       dedupe: [
         ...(config.resolve?.dedupe || []),
         "react",

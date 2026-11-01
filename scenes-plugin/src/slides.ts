@@ -71,7 +71,7 @@ export type SlideData = {
   /** older template copies: one signature over the whole element (see legacyOverridden) */
   sig?: number;
   rel?: true;
-  /** removed by the template sync (not by the user) — may come back */
+  /** removed by the template sync (not by the user); may come back */
   removedBy?: "sync";
   /** appears on the n-th click while presenting */
   step?: number;
@@ -753,7 +753,7 @@ export const moveSlides = (api: ExcalidrawImperativeAPI, ids: string[], index: n
 /**
  * Duplicate slides: each copy (frame + its elements, click steps and notes
  * included) goes right after its original in the deck, and next to it on the
- * canvas. Template copies are not duplicated — the template sync puts fresh
+ * canvas. Template copies are not duplicated; the template sync puts fresh
  * ones on the new slide. Returns the new slides' ids.
  */
 export const duplicateSlides = (api: ExcalidrawImperativeAPI, ids: string[]) => {

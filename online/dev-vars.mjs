@@ -27,7 +27,7 @@ const pseudonymKey = old.match(/^PSEUDONYM_KEY=(.+)$/m)?.[1] || randomBytes(32).
 /** KURVIQ_FAKE_GOOGLE=1: the fake Google with test accounts (worker/fakeGoogle.ts), live sync for all */
 const fakeGoogle = process.env.KURVIQ_FAKE_GOOGLE === "1";
 if (!env.KURVIQ_GOOGLE_CLIENT_SECRET) {
-  console.warn("[dev-vars] KURVIQ_GOOGLE_CLIENT_SECRET is not set in .env — Sign in with Google won't work locally");
+  console.warn("[dev-vars] KURVIQ_GOOGLE_CLIENT_SECRET is not set in .env: Sign in with Google won't work locally");
 }
 writeFileSync(
   target,

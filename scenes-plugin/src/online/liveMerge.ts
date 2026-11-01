@@ -1,4 +1,4 @@
-// Live sync: the pure parts of the tab's engine (liveSync.ts) — which
+// Live sync: the pure parts of the tab's engine (liveSync.ts): which
 // properties a change touched, rebasing it onto someone else's newer state,
 // which elements belong together, receipts. No browser or editor APIs, so
 // they are tested on their own (scenes-plugin/test).
@@ -201,8 +201,8 @@ export const withoutDanglingRefs = (el: El, exists: (id: string) => boolean): El
  * A whole new state of the scene (an agent's save) against the live one:
  * the elements that differ, stamped above what the scene has, plus deletions
  * of those it no longer has. With `base` (the state the writer read), only
- * what the writer changed against it counts — elements others added or
- * changed meanwhile stay — and an element both changed is a clash (the
+ * what the writer changed against it counts (elements others added or
+ * changed meanwhile stay), and an element both changed is a clash (the
  * write is refused, like Drive's "changed in the meantime").
  */
 export const liveDifference = (current: readonly El[], next: readonly El[], base?: readonly El[] | null) => {

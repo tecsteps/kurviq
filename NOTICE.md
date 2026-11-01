@@ -1,6 +1,6 @@
 # Notice
 
-Kurviq — Copyright (c) 2026 Fabian Wesner — MIT License, see [LICENSE](LICENSE).
+Kurviq. Copyright (c) 2026 Fabian Wesner. MIT License, see [LICENSE](LICENSE).
 
 Kurviq is built on **[Excalidraw](https://github.com/excalidraw/excalidraw)**
 (MIT License, Copyright (c) 2020 Excalidraw) and uses

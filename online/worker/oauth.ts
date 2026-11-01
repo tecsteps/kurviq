@@ -174,7 +174,7 @@ const page = (title: string, body: string, nonce: string, status = 200) =>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>${escapeHtml(title)} – Kurviq</title>
+<title>${escapeHtml(title)} · Kurviq</title>
 <style>
   :root { color-scheme: light dark; --bg: #f6f6f9; --card: #fff; --text: #1b1b1f; --muted: #6b6b76; --border: #e4e4ea; --primary: #6965db; --primary-text: #fff; }
   @media (prefers-color-scheme: dark) { :root { --bg: #121214; --card: #1e1e22; --text: #ececf1; --muted: #a0a0ab; --border: #33333a; --primary: #a8a5ff; --primary-text: #121214; } }

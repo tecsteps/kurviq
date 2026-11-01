@@ -2,8 +2,8 @@
 // GOOGLE_API_KEY (from KURVIQ_GOOGLE_CLIENT_SECRET / KURVIQ_GOOGLE_API_KEY in
 // ../.env) and a new random COOKIE_KEY. Name the ones to set, e.g.
 // `npm run secrets -- GOOGLE_CLIENT_SECRET GOOGLE_API_KEY`: a new COOKIE_KEY
-// signs every browser out of Google (they sign in again with one click) —
-// only make one on purpose.
+// signs every browser out of Google (they sign in again with one click),
+// so only make one on purpose.
 //
 // Live sync (docs/live-sync) adds two random keys, set once each:
 //   TOKEN_KEY      encrypts the refresh tokens a scene keeps until its changes

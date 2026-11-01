@@ -98,7 +98,7 @@ const imageSize = (bytes, mimeType) => {
 
 /**
  * SVGs without width/height (e.g. simple-icons: viewBox only) get a default
- * size of 300x150 in browsers and render distorted — set it from the viewBox
+ * size of 300x150 in browsers and render distorted: set it from the viewBox
  */
 const sizedSvg = (svg) => {
   const tag = svg.match(/<svg\b[^>]*>/i)?.[0];

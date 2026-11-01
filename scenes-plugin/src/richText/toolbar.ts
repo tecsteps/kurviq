@@ -382,7 +382,7 @@ export const createToolbar = (
     buttons.get("highlight")?.style.setProperty("--rt-bar", marks.h || "transparent");
     const size = buttons.get("size");
     if (size) {
-      size.innerHTML = `<span>${px ?? "–"}</span>${ICONS.chevron}`;
+      size.innerHTML = `<span>${px ?? "-"}</span>${ICONS.chevron}`;
     }
     const font = buttons.get("font");
     if (font && api.font) {

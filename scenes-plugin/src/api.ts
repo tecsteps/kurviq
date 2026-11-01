@@ -52,14 +52,14 @@ export const TAB_ID = Math.random().toString(36).slice(2, 10);
 
 export type ApiError = Error & {
   status: number;
-  /** server or Google Drive not reachable — keep working locally, retry later */
+  /** server or Google Drive not reachable: keep working locally, retry later */
   offline?: boolean;
   remoteMd5?: string | null;
   /** rename: the target name already exists */
   exists?: boolean;
-  /** not signed in with Google (or no Drive access) — work locally */
+  /** not signed in with Google (or no Drive access): work locally */
   notConnected?: boolean;
-  /** a shared scene that may only be viewed — nothing can be saved */
+  /** a shared scene that may only be viewed: nothing can be saved */
   readOnly?: boolean;
 };
 
@@ -118,7 +118,7 @@ export const scenesApi = {
   load: driveScenes.load,
   /**
    * Save to Drive. baseMd5 = the version this content is based on ("none"
-   * for a new scene) — 409 if Drive has something else.
+   * for a new scene); 409 if Drive has something else.
    */
   save: (name: string, json: string, baseMd5: string, source = `app:${TAB_ID}`) => driveScenes.save(name, json, baseMd5, source),
   /** delete in Drive; baseMd5: only if Drive still has that version (else 409) */

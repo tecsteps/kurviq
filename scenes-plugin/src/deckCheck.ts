@@ -1,5 +1,5 @@
 // validate_deck: everything an agent (or a careful human) would look for
-// slide by slide, measured with Excalidraw itself — text that doesn't fit,
+// slide by slide, measured with Excalidraw itself: text that doesn't fit,
 // elements cut off at the slide edge, overlapping text, unreadable colors,
 // click steps that never hide, missing notes.
 

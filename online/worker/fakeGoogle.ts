@@ -1056,7 +1056,7 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
       )
       .join("");
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in – Fake Google</title>
+<title>Sign in · Fake Google</title>
 <style>
 :root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--fg:#1f2328;--muted:#656d76;--line:#d0d7de;--accent:#1a73e8}
 @media (prefers-color-scheme:dark){:root{--bg:#111316;--card:#1b1e23;--fg:#e6e8eb;--muted:#9aa3ad;--line:#30363d;--accent:#8ab4f8}}

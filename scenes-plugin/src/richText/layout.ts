@@ -1,6 +1,6 @@
 // Rich text layout and drawing. The browser lays a doc out (the same HTML and
 // CSS the editor shows), we read where every piece of text landed, and draw
-// those pieces on the canvas and into SVG (as real text) — so what you see
+// those pieces on the canvas and into SVG (as real text), so what you see
 // while editing is what the canvas, the export and the PDF show.
 //
 // ../../vite.config.mts patches Excalidraw's text measuring and drawing to

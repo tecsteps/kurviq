@@ -129,7 +129,7 @@ export const startDrive = () => {
         ? "Sign-in cancelled."
         : answer === "nodrive"
         ? null
-        : "Sign-in failed — please try again.";
+        : "Sign-in failed. Please try again.";
     const params = new URLSearchParams(window.location.search);
     params.delete("google");
     const query = params.toString();
@@ -292,7 +292,7 @@ export const WelcomeHeading = () => {
         rel="noopener noreferrer"
         title="Fabian Wesner on LinkedIn"
       >
-        – Fabian {LinkedInIcon}
+        Fabian {LinkedInIcon}
       </a>
     </div>
   );
@@ -790,7 +790,7 @@ const liveProblem = (error: string | null) => {
 };
 
 /**
- * Live sync of the open scene: what the user has to see or decide — the
+ * Live sync of the open scene: what the user has to see or decide: the
  * scene went to the trash or access ended, someone won a collision over
  * their change ("restore yours?"), changes of an author that can't be saved
  * as theirs, notes (offline copies, undo left something alone), and who

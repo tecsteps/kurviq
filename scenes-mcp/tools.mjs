@@ -44,7 +44,7 @@ const MAX_CHANGE_DETAILS = 25;
  * @param {boolean} [options.livePreview] live mode: mirror create_view into the app
  * @param {string} [options.name] server name
  * @param {boolean} [options.driveOptional] online: the user's app may have no Google Drive connected
- *   (app_status `drive: false`) — new scenes are then local-only
+ *   (app_status `drive: false`): new scenes are then local-only
  */
 export const createScenesMcp = ({
   serverFetch,
@@ -78,7 +78,7 @@ export const createScenesMcp = ({
   const MODE = mode;
 
   // -----------------------------------------------------------------------------
-  // checkpoint store — create_view checkpoints (agent drafts) live in the
+  // checkpoint store: create_view checkpoints (agent drafts) live in the
   // browser (IndexedDB of the app, or of the throwaway headless renderer when
   // no tab is open). This process and the scenes server keep no data at all.
   // -----------------------------------------------------------------------------
@@ -442,7 +442,7 @@ export const createScenesMcp = ({
     : `Big edits: upload the JSON ({ "add", "update", "delete" }) with curl --data-binary @edit.json to the upload address in read_me and pass the payloadId it answers (nothing passes through your context twice).`;
 
   const IMAGES_HELP = `Images and icons: add { "type": "image", "id": "...", "x": 0, "y": 0, "width": 48, plus ONE of "src" (${LOCAL_FILES ? "absolute file path, " : ""}http(s) URL or data URL of a png/jpg/gif/webp/svg), "svg" (inline SVG markup) or "icon" ("lucide:<name>", e.g. "lucide:database", or "simple-icons:<slug>", e.g. "simple-icons:github"; "color" tints it)${LOCAL_FILES ? "" : ', or "fileId" of an image you uploaded (read_me: "Images from your machine")'} }. width or height alone keeps the aspect ratio. At most 20 images fetched per call (src / icon; uploaded fileIds don't count).
-  Labels: label { text, strokeColor, fontSize, fontFamily, textAlign, verticalAlign } — the text is dark (#1e1e1e) unless you set strokeColor; the label's id is "<shape id>-label"; a shape grows so that no word of its label is broken.`;
+  Labels: label { text, strokeColor, fontSize, fontFamily, textAlign, verticalAlign }. The text is dark (#1e1e1e) unless you set strokeColor; the label's id is "<shape id>-label"; a shape grows so that no word of its label is broken.`;
 
   /** what an edit reports besides added / updated / deleted */
   const EDIT_EXTRAS = ["alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "reset", "titleBlock", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile"];
@@ -518,8 +518,8 @@ export const createScenesMcp = ({
     server.registerTool(
       "get_scene",
       {
-        description: `Read a scene as stored in Google Drive (the user's browser may have newer, not yet pushed changes — list_scenes / app_status show the sync status; for the scene open in the app use read_open_scene). Scenes can be huge, so:
-  - summary=true (default for scenes with more than ${SUMMARY_THRESHOLD} elements): overview only — scene bounds, element counts, frames and all text labels with their positions. Use it to find the part you need.
+        description: `Read a scene as stored in Google Drive (the user's browser may have newer, not yet pushed changes; list_scenes / app_status show the sync status; for the scene open in the app use read_open_scene). Scenes can be huge, so:
+  - summary=true (default for scenes with more than ${SUMMARY_THRESHOLD} elements): overview only: scene bounds, element counts, frames and all text labels with their positions. Use it to find the part you need.
   - region or elementIds: only the elements in that area / those elements (+ their labels).
   - otherwise all elements (compact).
   Always returns a checkpointId of the FULL scene. To modify the scene, call create_view with [{"type":"restoreCheckpoint","id":"<checkpointId>"}, ...new elements / {"type":"delete","ids":"..."}] and then save_scene with the checkpointId create_view returns. To LOOK at a scene, use view_scene.`,
@@ -642,13 +642,13 @@ export const createScenesMcp = ({
 
     const sceneLabel = (scene) => scene ?? "Untitled (not saved yet)";
 
-    /** how the open scene syncs — so agents leave pushing to the app */
+    /** how the open scene syncs, so agents leave pushing to the app */
     const syncNote = ({ scene, syncStatus, autoSync }) => {
       if (scene === null) {
         return "Untitled scene, not in Google Drive. Only save it (save_open_scene with a name) if the user asks.";
       }
       if (syncStatus === "conflict") {
-        return `CONFLICT: the user's version and Drive's both changed the same elements. Nothing syncs until it is resolved — get_conflict("${scene}") shows the clashes, resolve_conflict settles them.`;
+        return `CONFLICT: the user's version and Drive's both changed the same elements. Nothing syncs until it is resolved: get_conflict("${scene}") shows the clashes, resolve_conflict settles them.`;
       }
       return autoSync
         ? `status: ${syncStatus}. Auto-sync is on: the app pushes changes (yours and the user's) to Google Drive by itself about 10 s after the last edit. Don't push yourself.`
@@ -717,8 +717,8 @@ export const createScenesMcp = ({
       server.registerTool(
         "read_open_scene",
         {
-          description: `Read the scene the user has open in Kurviq RIGHT NOW, including their unsaved manual edits — and find out what the USER changed since an agent last looked.
-    Automatic change tracking: the app remembers (per scene, in the browser) what the canvas looked like after the last read_open_scene / edit_open_scene by any agent. Every call reports "userChanges" relative to that (added / modified with changedFields / deleted) and then moves the baseline to now. You don't need to remember anything — just call this before you edit, and it tells you what the user did in the meantime. With view=true you also get an IMAGE of the user's changes (or of the scene if nothing changed / first look).
+          description: `Read the scene the user has open in Kurviq RIGHT NOW, including their unsaved manual edits, and find out what the USER changed since an agent last looked.
+    Automatic change tracking: the app remembers (per scene, in the browser) what the canvas looked like after the last read_open_scene / edit_open_scene by any agent. Every call reports "userChanges" relative to that (added / modified with changedFields / deleted) and then moves the baseline to now. You don't need to remember anything: just call this before you edit, and it tells you what the user did in the meantime. With view=true you also get an IMAGE of the user's changes (or of the scene if nothing changed / first look).
     Scene data: summary=true (default above ${SUMMARY_THRESHOLD} elements) gives an overview (bounds, counts, frames, all text labels with positions); region / elementIds give element data for a part; otherwise all elements. changesOnly=true skips the scene data.
     since=<revision> (optional, advanced) diffs against a specific revision instead of the stored baseline.`,
           inputSchema: {
@@ -748,7 +748,7 @@ export const createScenesMcp = ({
           if (scene && open.scene !== scene) {
             // (the app stored nothing for the other scene)
             throw new Error(
-              `"${scene}" is not open in any tab — the user's app shows ${sceneLabel(open.scene)}. Ask the user, or open_scene("${scene}").`,
+              `"${scene}" is not open in any tab; the user's app shows ${sceneLabel(open.scene)}. Ask the user, or open_scene("${scene}").`,
             );
           }
           const elements = open.elements;
@@ -757,7 +757,7 @@ export const createScenesMcp = ({
           if (since) {
             const previous = await store.load(since);
             if (!previous) {
-              throw new Error(`Revision "${since}" not found (expired?) — call without since`);
+              throw new Error(`Revision "${since}" not found (expired?): call without since`);
             }
             changes = { ...describeChanges(previous.elements, elements, `since revision ${since}`), firstLook: false };
           } else {
@@ -770,7 +770,7 @@ export const createScenesMcp = ({
             sync: syncNote(open),
             elementCount: elements.length,
             userChanges: changes.firstLook
-              ? "First time an agent reads this scene — no earlier baseline to compare with. From now on, changes by the user will be reported."
+              ? "First time an agent reads this scene: no earlier baseline to compare with. From now on, changes by the user will be reported."
               : changes.report,
             revision,
             ...(changesOnly ? {} : sceneView(elements, { summary, region, elementIds, textsOffset }, elements.length > SUMMARY_THRESHOLD)),
@@ -801,9 +801,9 @@ export const createScenesMcp = ({
       server.registerTool(
         "edit_open_scene",
         {
-          description: `Edit the scene open in the user's app, live and in place — merged with the user's own work (never overwrites their other changes) and undoable by the user as one step (Cmd/Ctrl+Z). This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to Google Drive and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
-    Safety net: before applying, it checks whether the USER changed the scene since an agent last read/edited it. If so, your edit is still applied, but the result starts with a WARNING listing the user's changes (plus an image of them) — look at them and adjust if your edit conflicts with what the user did. Calling read_open_scene first avoids surprises.
-    - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding — arrows may bind to existing elements). Use new unique ids.
+          description: `Edit the scene open in the user's app, live and in place, merged with the user's own work (never overwrites their other changes) and undoable by the user as one step (Cmd/Ctrl+Z). This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to Google Drive and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
+    Safety net: before applying, it checks whether the USER changed the scene since an agent last read/edited it. If so, your edit is still applied, but the result starts with a WARNING listing the user's changes (plus an image of them). Look at them and adjust if your edit conflicts with what the user did. Calling read_open_scene first avoids surprises.
+    - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
     - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element. Like in the editor, a moved / resized shape takes its label and bound arrows along, and a moved frame (slide) takes everything on it. A shape's label: { "id": "box", "label": { "text": "…", "fontSize": 28 } } (changes it or adds one; it is re-wrapped and the shape grows to fit).
     - delete: ids to remove (a container's label goes with it).
     - To label an EXISTING shape, add a text element with "containerId": "<shape id>" (it gets centered in the shape).
@@ -821,14 +821,14 @@ export const createScenesMcp = ({
             expectScene: z
               .string()
               .optional()
-              .describe("The scene you are co-working on (as returned by read_open_scene) — routes the edit to the tab showing it; nothing is applied if no tab shows it"),
+              .describe("The scene you are co-working on (as returned by read_open_scene): routes the edit to the tab showing it; nothing is applied if no tab shows it"),
             ...EDIT_SOURCE,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
             restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
               .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
               .optional()
-              .describe('Deck: back to the template — slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
+              .describe('Deck: back to the template: slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
             addTitleBlock: z
               .boolean()
               .optional()
@@ -868,7 +868,7 @@ export const createScenesMcp = ({
           const warning = changes.firstLook
             ? "You edited without reading this scene first (no earlier agent baseline). Call read_open_scene before editing next time."
             : changes.count
-            ? `WARNING: the user changed this scene since an agent last looked (${changes.report.summary}). Your edit was applied and merged — check the user's changes below and fix your edit if it conflicts with them.`
+            ? `WARNING: the user changed this scene since an agent last looked (${changes.report.summary}). Your edit was applied and merged. Check the user's changes below and fix your edit if it conflicts with them.`
             : null;
 
           const result = text({
@@ -883,10 +883,10 @@ export const createScenesMcp = ({
             revision,
             note:
               info.scene === null
-                ? "Live in the user's app. The scene is untitled — it reaches Google Drive once it gets a name (save_open_scene with name)."
+                ? "Live in the user's app. The scene is untitled; it reaches Google Drive once it gets a name (save_open_scene with name)."
                 : info.autoSync
-                ? "Live in the user's app, not pushed yet — the app's auto-sync pushes it after 10s without edits (save_open_scene pushes now)."
-                : "Live in the user's app. Auto-sync is OFF for this scene — it is only pushed when the user saves or you call save_open_scene.",
+                ? "Live in the user's app, not pushed yet; the app's auto-sync pushes it after 10s without edits (save_open_scene pushes now)."
+                : "Live in the user's app. Auto-sync is OFF for this scene: it is only pushed when the user saves or you call save_open_scene.",
           });
           if (view) {
             result.content.push(...(await imageOfOpen([...info.addedIds, ...info.updated], info.scene)));
@@ -913,7 +913,7 @@ export const createScenesMcp = ({
       // sha=: for pre-rename tabs; remove after 2027-02
       JSON.parse(await call(`${sceneUrl(name)}?md5=${encodeURIComponent(md5)}&sha=${encodeURIComponent(md5)}${LEAN ? "&lean=1" : ""}`));
 
-    /** user's sync state for this scene, after the flush — so the agent knows what it sees */
+    /** user's sync state for this scene, after the flush, so the agent knows what it sees */
     const userSyncNote = (flushed) => {
       const results = (flushed?.results || []).filter((r) => r && !r.error);
       if (!flushed || !flushed.tabs) {
@@ -935,7 +935,7 @@ export const createScenesMcp = ({
       if (since) {
         base = await loadVersion(name, since).catch(() => null);
         if (!base) {
-          throw new Error(`Revision "${since}" of "${name}" not found — call without since/basedOn`);
+          throw new Error(`Revision "${since}" of "${name}" not found: call without since/basedOn`);
         }
         label = `since revision ${since.slice(0, 7)}`;
       } else {
@@ -1021,7 +1021,7 @@ export const createScenesMcp = ({
             elementCount: elements.length,
             ...fileStats(current.file),
             userChanges: changes.firstLook
-              ? "No earlier agent edit of this scene found — everything is new to you. From your first edit on, the user's changes are reported."
+              ? "No earlier agent edit of this scene found: everything is new to you. From your first edit on, the user's changes are reported."
               : changes.report,
             ...(changesOnly ? {} : sceneView(elements, { summary, region, elementIds, textsOffset, slide, relative }, elements.length > SUMMARY_THRESHOLD)),
           });
@@ -1052,8 +1052,8 @@ export const createScenesMcp = ({
         "edit_scene",
         {
           description: `Edit a scene: applied in your own headless Excalidraw to the newest version and saved to Google Drive right away (one version per edit). The user's app picks it up within seconds and merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call the scenes server's HTTP API yourself (direct writes are refused).
-  Safety net: the user's app first pushes its unpushed changes of this scene. If the user changed the scene since basedOn (the revision from your last read_scene / edit_scene; default: the last agent edit), your edit is still applied, but the result starts with a WARNING listing their changes (plus an image) — check them and adjust your edit if it clashes.
-  - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding — arrows may bind to existing elements). Use new unique ids.
+  Safety net: the user's app first pushes its unpushed changes of this scene. If the user changed the scene since basedOn (the revision from your last read_scene / edit_scene; default: the last agent edit), your edit is still applied, but the result starts with a WARNING listing their changes (plus an image). Check them and adjust your edit if it clashes.
+  - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
   - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element (labels are text elements with containerId).
   - delete: ids to remove (a container's label goes with it).
   - To label an EXISTING shape, add a text element with "containerId": "<shape id>" (it gets centered in the shape).
@@ -1077,7 +1077,7 @@ ${EDIT_HELP}
             reset: z
               .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
               .optional()
-              .describe('Deck: back to the template — slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
+              .describe('Deck: back to the template: slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
             addTitleBlock: z
               .boolean()
               .optional()
@@ -1152,7 +1152,7 @@ ${EDIT_HELP}
                 ? null
                 : "You edited without reading this scene first. Call read_scene before editing next time."
               : changes.count
-              ? `WARNING: the user changed this scene since your version (${changes.report.summary}). Your edit was applied on top of their changes — check them below and fix your edit if it clashes.`
+              ? `WARNING: the user changed this scene since your version (${changes.report.summary}). Your edit was applied on top of their changes. Check them below and fix your edit if it clashes.`
               : null,
             usesSlideNumbers && changes.framesChanged
               ? `WARNING: slides were added, deleted or reordered since your version, and your edit names slides by number: check slideNumbers below (which frame each number hit) and use frame ids.`
@@ -1206,10 +1206,10 @@ ${EDIT_HELP}
     server.registerTool(
       "view_scene",
       {
-        description: `SEE a scene: returns an actual PNG image of it, rendered by Excalidraw itself (no browser automation needed — uses the open app tab or a hidden headless renderer).
+        description: `SEE a scene: returns an actual PNG image of it, rendered by Excalidraw itself (no browser automation needed: uses the open app tab or a hidden headless renderer).
   Source (pick one): name = a saved scene (in the user's app / Google Drive); checkpointId = a create_view/get_scene checkpoint (e.g. to check your drawing before saving); neither = the scene currently open in the user's app, including unsaved edits.
-  Slides: slide = slide number (1-based, deck order) or frame id renders exactly that slide as the audience sees it — with the template's header/footer/logo and filled-in {page}/{total}/{deck}; step = what is visible after that many clicks (default: everything). slides = "all" (or "2-5") renders a contact sheet of the whole deck in one image; add steps=true for every click state.
-  Focus (optional): elementIds = just those elements (+padding, + whatever overlaps that area) — ideal to check the part you worked on; region = a scene-coordinate rectangle. Without focus the whole scene is rendered; for huge scenes render an overview first (get_scene summary=true tells you where things are), then zoom in with region.
+  Slides: slide = slide number (1-based, deck order) or frame id renders exactly that slide as the audience sees it, with the template's header/footer/logo and filled-in {page}/{total}/{deck}; step = what is visible after that many clicks (default: everything). slides = "all" (or "2-5") renders a contact sheet of the whole deck in one image; add steps=true for every click state.
+  Focus (optional): elementIds = just those elements (+padding, + whatever overlaps that area), ideal to check the part you worked on; region = a scene-coordinate rectangle. Without focus the whole scene is rendered; for huge scenes render an overview first (get_scene summary=true tells you where things are), then zoom in with region.
   The result also reports renderedBounds/sceneBounds (scene coordinates) and the scale.`,
         inputSchema: {
           name: SCENE_NAME.optional(),
@@ -1248,7 +1248,7 @@ ${EDIT_HELP}
         } else {
           const state = await callJson("/api/app/state");
           if (!state.connected) {
-            throw new Error("No scene name given and the app is not open — pass name or checkpointId");
+            throw new Error("No scene name given and the app is not open: pass name or checkpointId");
           }
           source = `open scene in the app: ${state.current === null ? "Untitled" : `"${state.current}"`}${state.dirty ? " (unsaved edits)" : ""}`;
         }
@@ -1272,7 +1272,7 @@ ${EDIT_HELP}
     server.registerTool(
       "validate_deck",
       {
-        description: `CHECK a presentation (a scene with slides) the way a careful reviewer would, measured by Excalidraw itself: lists the slides in deck order (number, frame id, title, click steps, notes) and findings per slide — elements cut off at the slide edge, elements lying on a slide without being part of it (frameId missing: left out of presentations/PDFs), labels that don't fit their shape, free text bigger than its own box (the user's browser cuts it off at the box, although view_scene draws it whole), overlapping text, text over images, text too small or too low in contrast, click steps that never hide or have gaps, placeholders outside the template, missing speaker notes, wrong slide size.
+        description: `CHECK a presentation (a scene with slides) the way a careful reviewer would, measured by Excalidraw itself: lists the slides in deck order (number, frame id, title, click steps, notes) and findings per slide: elements cut off at the slide edge, elements lying on a slide without being part of it (frameId missing: left out of presentations/PDFs), labels that don't fit their shape, free text bigger than its own box (the user's browser cuts it off at the box, although view_scene draws it whole), overlapping text, text over images, text too small or too low in contrast, click steps that never hide or have gaps, placeholders outside the template, missing speaker notes, wrong slide size.
   Text on a picture is checked against the picture's colors under it. Intended findings (a decorative circle bleeding off the slide, sticky notes on a mock UI) can be silenced per element: "customData": { "slides": { "ignore": ["clipped", "overlap"] } } (finding kinds, or true for all); on a slide frame for its slide-wide findings (e.g. ["notes"]).
   Run it after building or changing a deck; fix the findings with edit_scene, then look at the slides you changed with view_scene(slide: n).`,
         inputSchema: { name: SCENE_NAME },
@@ -1481,7 +1481,7 @@ ${EDIT_HELP}
         if (open) {
           app = await appCommand({ type: "open", name });
           if (MODE === "live") {
-            // the agent knows this content — later user edits are reported relative to it
+            // the agent knows this content; later user edits are reported relative to it
             await appCommand({ type: "read", targetScene: name, storeBaseline: "save" }).catch(() => null);
           }
         }
@@ -1503,7 +1503,7 @@ ${EDIT_HELP}
     );
 
     // ---------------------------------------------------------------------------
-    // rename / delete / clone — through the app when it is open (keeps its
+    // rename / delete / clone: through the app when it is open (keeps its
     // local copies, unpushed changes and agent baselines consistent and works
     // offline), else directly in Google Drive
     // ---------------------------------------------------------------------------
@@ -1513,7 +1513,7 @@ ${EDIT_HELP}
     const viaDriveNote =
       MODE === "detached"
         ? "Done in Google Drive. The user's app follows within seconds (their unpushed changes were pushed first)."
-        : "The app is not open in a browser, so this was done in Google Drive directly — the app picks it up on its next sync.";
+        : "The app is not open in a browser, so this was done in Google Drive directly; the app picks it up on its next sync.";
 
     server.registerTool(
       "rename_scene",
@@ -1563,7 +1563,7 @@ ${EDIT_HELP}
     server.registerTool(
       "clone_scene",
       {
-        description: `Duplicate a scene under a new name (incl. the user's latest changes). open=true switches the user's app to the copy — only when the user asked to continue in the copy.`,
+        description: `Duplicate a scene under a new name (incl. the user's latest changes). open=true switches the user's app to the copy, only when the user asked to continue in the copy.`,
         inputSchema: {
           name: SCENE_NAME,
           newName: SCENE_NAME,
@@ -1791,7 +1791,7 @@ ${EDIT_HELP}
 
   /**
    * Store handed to the upstream tools: every create_view (and widget edit)
-   * saves a checkpoint — mirror it into the open app so the user can watch the
+   * saves a checkpoint: mirror it into the open app so the user can watch the
    * agent draw. Fire-and-forget: never slows down or fails the drawing.
    */
   const previewingStore = {

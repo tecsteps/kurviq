@@ -74,7 +74,7 @@
   .slides-list {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.1rem;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -170,14 +170,14 @@
     }
   }
 
-  // filmstrip: the number beside a full-width thumbnail, the title on a line below it
+  // compact: number, thumbnail, title (up to two lines) side by side
   .slides-card__open {
     display: grid;
-    grid-template-columns: 1.1rem minmax(0, 1fr);
-    align-items: start;
-    gap: 0.3rem 0.45rem;
+    grid-template-columns: 1rem 6rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.4rem;
     width: 100%;
-    padding: 0.4rem 0.55rem 0.45rem 1.4rem;
+    padding: 0.2rem 0.3rem 0.2rem 1.3rem;
     border: none;
     background: none;
     color: var(--text-primary-color);
@@ -187,7 +187,6 @@
   }
 
   .slides-card__num {
-    padding-top: 0.15rem;
     color: var(--color-gray-50);
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
@@ -210,26 +209,28 @@
   }
 
   // the title on top, the card's icons (.slides-card__actions) below it
+  // the title on top, the click count / the active card's icons below it
   .slides-card__meta {
-    grid-column: 2;
     display: flex;
+    flex-direction: column;
+    align-self: stretch;
     min-width: 0;
-    // room for the click count / the active card's icons at the right
-    padding-right: 4.5rem;
-    min-height: 1.6rem;
-    align-items: center;
-  }
-
-  .slides-card--active .slides-card__meta {
-    padding-right: 7rem;
+    padding-top: 0.1rem;
   }
 
   .slides-card__title {
+    display: -webkit-box;
     overflow: hidden;
     font-size: 0.8rem;
     font-weight: 600;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.25;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  // the active card's icons take the second line
+  .slides-card--active .slides-card__title {
+    -webkit-line-clamp: 1;
   }
 
   .slides-details {
@@ -443,9 +444,8 @@
   // "2 clicks" under the title: opens the Clicks tab for that slide
   .slides-card__clicks {
     position: absolute;
-    right: 0.6rem;
-    bottom: 0.45rem;
-    line-height: 1.6rem;
+    bottom: 0.3rem;
+    left: calc(1.3rem + 1rem + 6rem + 0.8rem);
     padding: 0;
     border: none;
     background: none;
@@ -623,11 +623,11 @@ body.slides-presenting {
   }
 }
 
-// the icons of the active card in the sidebar list: right of its title, under the thumbnail
+// the icons of the active card in the sidebar list: below its title (grip + num + thumb + gaps to the left)
 .excalidraw .slides-card__actions {
   position: absolute;
-  right: 0.4rem;
-  bottom: 0.45rem;
+  bottom: 0.2rem;
+  left: calc(1.3rem + 1rem + 6rem + 0.6rem);
   display: flex;
   gap: 0.15rem;
 
@@ -1027,4 +1027,9 @@ body.slides-presenting {
 // a shared scene presented: the presentation's masks and controls above its viewer
 body.slides-presenting .excalidraw .public-scene {
   z-index: 40;
+}
+
+// docked, Excalidraw drops the sidebar's shadow: keep it, so the sidebar stands apart from the drawing beside it
+.excalidraw .sidebar.sidebar--docked.slides-sidebar {
+  box-shadow: var(--sidebar-shadow);
 }

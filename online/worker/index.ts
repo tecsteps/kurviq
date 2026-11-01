@@ -1,6 +1,6 @@
 // Kurviq (https://kurviq.com): the Cloudflare Worker.
 //
-//   /auth/*          Sign in with Google (./auth.ts) — stateless, encrypted cookie
+//   /auth/*          Sign in with Google (./auth.ts): stateless, encrypted cookie
 //   /scene/<fileId>/…  live sync of a Drive scene: tickets, WebSocket, proofs (./sceneRoutes.ts, ./scene.ts)
 //   /drive/notify    Drive's push notifications for live scenes
 //   /live/<key>      WebSocket of a Kurviq tab to its agent pairing (./pairing.ts)

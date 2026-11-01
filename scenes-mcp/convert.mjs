@@ -7,7 +7,7 @@ export const needsConversion = (el) =>
 
 /**
  * Markdown-like text as plain text (list markers kept): the formatting needs
- * the browser (an open app) — without one the words still arrive
+ * the browser (an open app); without one the words still arrive
  */
 const plainOfMarkdown = (markdown) => {
   let numbered = 0;

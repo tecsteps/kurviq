@@ -31,7 +31,7 @@ for (const { dir, url, commit, install } of UPSTREAM) {
     run(`git -c advice.detachedHead=false checkout ${commit}`, dir);
   } else if (head(dir) !== commit) {
     console.warn(
-      `[setup] ${dir} is at ${head(dir).slice(0, 7)}, tested with ${commit.slice(0, 7)} — leaving it as is`,
+      `[setup] ${dir} is at ${head(dir).slice(0, 7)}, tested with ${commit.slice(0, 7)}, leaving it as is`,
     );
   }
   run(install, dir);

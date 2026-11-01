@@ -2,7 +2,7 @@
 // through the public ExcalidrawImperativeAPI.
 //
 // Offline-first: the browser (localStorage + IndexedDB) is the source of
-// truth. Drive is a sync target — when it (or the scenes server) is not
+// truth. Drive is a sync target: when it (or the scenes server) is not
 // reachable, everything keeps working locally and syncs later.
 //
 // Per scene we track the Drive version (MD5 of its content) the local copy is based
@@ -60,9 +60,9 @@ export type SyncStatus =
   | "ahead"
   /** Drive has a newer version, no local changes */
   | "behind"
-  /** both changed — will be merged */
+  /** both changed: will be merged */
   | "diverged"
-  /** both changed the same elements — needs a decision */
+  /** both changed the same elements: needs a decision */
   | "conflict"
   /** never pushed */
   | "local"
@@ -123,9 +123,9 @@ export type SyncInfo = {
   lastCheckedAt: string | null;
   lastError: string | null;
   running: boolean;
-  /** not signed in with Google (or no Drive access) — everything stays in this browser */
+  /** not signed in with Google (or no Drive access): everything stays in this browser */
   notConnected: boolean;
-  /** a shared scene Drive lets this user read, not change (why) — nothing is pushed */
+  /** a shared scene Drive lets this user read, not change (why); nothing is pushed */
   readOnly: string | null;
 };
 
@@ -404,7 +404,7 @@ class ScenesController {
       this.editorGone();
       return;
     }
-    // the app loads its initial scene asynchronously — switching scenes
+    // the app loads its initial scene asynchronously; switching scenes
     // before that would get overwritten
     const waitForLoad = () =>
       api.getAppState().isLoading
@@ -432,7 +432,7 @@ class ScenesController {
   }
 
   /**
-   * The app restores the canvas the browser saved last — possibly by another
+   * The app restores the canvas the browser saved last, possibly by another
    * tab showing another scene. The canvas says which scene it is
    * (appState.name); if that isn't this tab's scene, load the right one.
    */
@@ -545,7 +545,7 @@ class ScenesController {
     appState: AppState,
     { force = false } = {},
   ) {
-    // while a scene is being loaded the canvas is in flux — recomputeDirty()
+    // while a scene is being loaded the canvas is in flux; recomputeDirty()
     // forces an update once it's done
     if (this.state.busy === "loading" && !force) {
       return;
@@ -638,7 +638,7 @@ class ScenesController {
   }
 
   /**
-   * Drive names that are deleted / renamed here, but not in Drive yet —
+   * Drive names that are deleted / renamed here, but not in Drive yet:
    * hidden from the list (unless a local scene took the name again)
    */
   private hiddenRemoteNames() {
@@ -1041,10 +1041,10 @@ class ScenesController {
         return;
       }
       if (on && meta.conflict) {
-        throw new Error(`"${name}" has a conflict — resolve it first`);
+        throw new Error(`"${name}" has a conflict: resolve it first`);
       }
       if (on && meta.renamedFrom) {
-        throw new Error(`The rename of "${name}" is not in Drive yet — try again once it is`);
+        throw new Error(`The rename of "${name}" is not in Drive yet. Try again once it is`);
       }
       if (on && this.isLive(name)) {
         throw new Error(`"${name}" saves live: use "Keep only here" (the cloud icon) to take it out of Drive`);
@@ -1066,7 +1066,7 @@ class ScenesController {
       this.log(
         "info",
         on
-          ? `"${name}" is local only now — not synced to Drive${this.remoteMd5Of(name) ? " (the copy there stays as it is)" : ""}`
+          ? `"${name}" is local only now: not synced to Drive${this.remoteMd5Of(name) ? " (the copy there stays as it is)" : ""}`
           : `"${name}" is synced with Drive again`,
       );
     }).then(() => {
@@ -1507,7 +1507,7 @@ class ScenesController {
 
   /**
    * switch to a scene (null = untitled draft). Not queued behind sync steps
-   * (a push can hang for seconds on a bad connection) — those re-check
+   * (a push can hang for seconds on a bad connection); those re-check
    * afterwards whether the scene is still the open one. Opens run one at a time.
    */
   open = (name: string | null, { missingIsFine = false }: { missingIsFine?: boolean } = {}) => {
@@ -1617,7 +1617,7 @@ class ScenesController {
       const meta = name === null ? undefined : this.meta.scenes[name];
 
       if (name === null || (snapshot && (snapshot.dirty || meta?.conflict))) {
-        // local changes win — sync takes care of Drive
+        // local changes win; sync takes care of Drive
         json = snapshot?.json ?? null;
         baseline = snapshot?.baseline ?? null;
       } else if (this.state.sync.driveOnline === false || this.state.sync.serverReachable === false) {
@@ -1853,7 +1853,7 @@ class ScenesController {
       const result = await this.pushScene(targetName, { manual: true });
       if (this.meta.scenes[targetName]?.conflict) {
         throw new Error(
-          `"${targetName}" has conflicting changes in Drive — resolve them in the Scenes sidebar`,
+          `"${targetName}" has conflicting changes in Drive: resolve them in the Scenes sidebar`,
         );
       }
       return { name: targetName, ...(result || {}) };
@@ -1887,7 +1887,7 @@ class ScenesController {
           return;
         }
         if (this.state.sync.serverReachable !== false) {
-          this.log("error", "Scenes server not reachable — working locally");
+          this.log("error", "Scenes server not reachable: working locally");
         }
         this.setState({
           sync: { ...this.state.sync, serverReachable: false, lastError: error.message },
@@ -1909,7 +1909,7 @@ class ScenesController {
       });
       if (listing.remote.online === false) {
         if (wasOnline !== false) {
-          this.log("error", `Drive not reachable — working locally (${listing.remote.lastError})`);
+          this.log("error", `Drive not reachable: working locally (${listing.remote.lastError})`);
         }
         return;
       }
@@ -1927,7 +1927,7 @@ class ScenesController {
         return;
       }
 
-      // renames / deletions made here (e.g. while offline) go first — they
+      // renames / deletions made here (e.g. while offline) go first: they
       // are explicit user actions, independent of auto-sync
       await this.exclusive(() => this.pushPendingOps());
       await this.exclusive(() => this.adoptEmptyLocalOnly());
@@ -1997,7 +1997,7 @@ class ScenesController {
       meta.baseMd5 = null;
       meta.dirty = false;
       this.persistMeta();
-      this.log("info", `"${name}" now exists in Drive — loading it`);
+      this.log("info", `"${name}" now exists in Drive, loading it`);
     }
     this.refresh();
   }
@@ -2060,7 +2060,7 @@ class ScenesController {
       await this.pushPendingRename(name);
       if (this.meta.scenes[name]?.renamedFrom) {
         if (manual) {
-          throw new Error(`Saved locally — the rename of "${name}" is not in Drive yet, will retry`);
+          throw new Error(`Saved locally. The rename of "${name}" is not in Drive yet, will retry`);
         }
         return null;
       }
@@ -2097,14 +2097,14 @@ class ScenesController {
       if (apiError.status === 409) {
         meta.remoteMd5 = apiError.remoteMd5 ?? null;
         this.updateRemoteMd5(name, apiError.remoteMd5 ?? null);
-        this.log("info", `"${name}" changed in Drive meanwhile — merging`);
+        this.log("info", `"${name}" changed in Drive meanwhile, merging`);
         await this.mergeScene(name, { pushAfter: true });
         return null;
       }
       if (apiError.notConnected) {
         this.setState({ sync: { ...this.state.sync, driveOnline: false, notConnected: true } });
         if (manual) {
-          throw new Error("Saved in this browser — sign in with Google to sync it");
+          throw new Error("Saved in this browser. Sign in with Google to sync it");
         }
         return null;
       }
@@ -2122,7 +2122,7 @@ class ScenesController {
           sync: { ...this.state.sync, driveOnline: apiError.status === 0 ? this.state.sync.driveOnline : false, serverReachable: apiError.status === 0 ? false : true },
         });
         if (manual) {
-          throw new Error(`Saved locally — Drive not reachable, will sync when back online`);
+          throw new Error(`Saved locally. Drive not reachable, will sync when back online`);
         }
         return null;
       }
@@ -2179,7 +2179,7 @@ class ScenesController {
       return;
     }
     if (this.isDirty(name)) {
-      return; // the user started editing meanwhile — next round merges
+      return; // the user started editing meanwhile; next round merges
     }
     await this.writeLocal(name, latest.json, { dirty: false });
     const meta = this.sceneMeta(name);
@@ -2269,7 +2269,7 @@ class ScenesController {
     const mine = JSON.parse(mineJson);
     const theirsData = JSON.parse(theirs.json);
     // the merge is based on mineJson: if the scene changed while Drive was
-    // asked (edited, or switched to/away), drop this round — the next sync merges
+    // asked (edited, or switched to/away), drop this round; the next sync merges
     const unchanged = async () =>
       name === this.meta.current
         ? this.serializeCurrent().json === mineJson
@@ -2305,7 +2305,7 @@ class ScenesController {
       this.persistMeta();
       this.log(
         "conflict",
-        `Conflict in "${name}": you and Drive changed the same ${merged.clashes.length} element(s) — choose how to resolve`,
+        `Conflict in "${name}": you and Drive changed the same ${merged.clashes.length} element(s). Choose how to resolve`,
       );
       this.refresh();
       return null;
@@ -2362,7 +2362,7 @@ class ScenesController {
           return;
         }
         if (apiError.status === 409) {
-          this.log("info", `"${name}" was changed in Drive after you deleted it — kept in Drive`);
+          this.log("info", `"${name}" was changed in Drive after you deleted it, so it is kept in Drive`);
         } else if (apiError.status !== 404) {
           this.log("error", `Could not delete "${name}" in Drive: ${apiError.message}`);
           continue;
@@ -2406,7 +2406,7 @@ class ScenesController {
         this.log(
           "error",
           apiError.exists
-            ? `Can't rename "${from}" to "${name}" in Drive: "${name}" exists there — rename this scene again`
+            ? `Can't rename "${from}" to "${name}" in Drive: "${name}" exists there. Rename this scene again`
             : `Rename of "${from}" in Drive failed: ${apiError.message}`,
         );
         return true;
@@ -2447,17 +2447,17 @@ class ScenesController {
         continue;
       }
       if (this.isDirty(name)) {
-        this.log("info", `"${name}" was deleted in Drive — you changed it here, so it is kept`);
+        this.log("info", `"${name}" was deleted in Drive, but you changed it here, so it is kept`);
         meta.baseMd5 = null;
       } else if (name === this.meta.current) {
-        this.log("info", `"${name}" was deleted in Drive — still open here as a local scene`);
+        this.log("info", `"${name}" was deleted in Drive, still open here as a local scene`);
         meta.baseMd5 = null;
         this.meta.baseline = null;
       } else {
         await deleteSnapshot(name);
         await deleteAgentBaseline(name);
         delete this.meta.scenes[name];
-        this.log("pull", `"${name}" was deleted in Drive — removed here too`);
+        this.log("pull", `"${name}" was deleted in Drive, removed here too`);
       }
       this.persistMeta();
     }
@@ -2480,7 +2480,7 @@ class ScenesController {
   }
 
   // ---------------------------------------------------------------------------
-  // rename / delete / duplicate — applied here right away, in Drive right
+  // rename / delete / duplicate: applied here right away, in Drive right
   // away too when it is reachable, otherwise queued until it is
   // ---------------------------------------------------------------------------
 
@@ -2521,7 +2521,7 @@ class ScenesController {
       this.requireFreeName(to);
       const meta = this.meta.scenes[from];
       if (meta?.conflict) {
-        throw new Error(`"${from}" has a conflict — resolve it first`);
+        throw new Error(`"${from}" has a conflict: resolve it first`);
       }
       // local-only scenes are renamed here only (a copy in Drive keeps its name)
       const liveFile = this.liveFileId(from);
@@ -2558,7 +2558,7 @@ class ScenesController {
           } else if (!apiError.offline) {
             throw apiError;
           } else if (!(await this.hasLocalContent(from))) {
-            throw new Error(`"${from}" was never downloaded to this browser and Drive is not reachable — try again online`);
+            throw new Error(`"${from}" was never downloaded to this browser and Drive is not reachable. Try again online`);
           } else {
             next.renamedFrom = driveName; // Drive follows when reachable
           }
@@ -2585,7 +2585,7 @@ class ScenesController {
       this.log(
         "info",
         next.renamedFrom
-          ? `Renamed "${from}" to "${to}" — in Drive once it is reachable`
+          ? `Renamed "${from}" to "${to}", in Drive once it is reachable`
           : `Renamed "${from}" to "${to}"${driveName ? " (also in Drive)" : ""}`,
       );
     });
@@ -2676,7 +2676,7 @@ class ScenesController {
         } catch (error) {
           const apiError = error as ApiError;
           if (apiError.status === 409) {
-            throw new Error(`"${name}" was just changed in Drive — not deleted. Have a look at the new version first.`);
+            throw new Error(`"${name}" was just changed in Drive, not deleted. Have a look at the new version first.`);
           } else if (apiError.offline) {
             this.meta.pendingDeletes[driveName] = driveMd5;
             queued = true;
@@ -2700,7 +2700,7 @@ class ScenesController {
       this.log(
         "info",
         queued
-          ? `Deleted "${name}" — in Drive once it is reachable`
+          ? `Deleted "${name}", in Drive once it is reachable`
           : `Deleted "${name}"${driveMd5 ? " (also in Drive)" : ""}`,
       );
     });

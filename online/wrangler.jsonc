@@ -50,7 +50,7 @@
     // usage statistics (worker/stats.ts): "on", anything else = off; off in wrangler dev unless STATS_DEV=1
     "STATS_ENABLED": "on"
   },
-  // hourly: retention (worker/retention.ts) — feedback deleted after 2 years, contact messages after 1 year,
+  // hourly: retention (worker/retention.ts): feedback deleted after 2 years, contact messages after 1 year,
   // their sender hashes blanked after 1 day
   "triggers": { "crons": ["17 * * * *"] },
   // the contact form's email to the operator (worker/contact.ts), sent from contact@kurviq.com. Email

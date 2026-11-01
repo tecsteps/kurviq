@@ -2246,7 +2246,7 @@ export class LiveScene {
   /**
    * The DO gave a font another number (two fonts in the scene had the same
    * one): it is registered under that number (as "<family> <number>"), and
-   * every element of this tab using the old number follows — on the canvas,
+   * every element of this tab using the old number follows: on the canvas,
    * in the draft and in batches not sent yet. The DO already moved the
    * elements of the batch it answered.
    */
@@ -2999,7 +2999,7 @@ export class LiveScene {
 
   /**
    * Stop after the draft is in the browser's queue (also a gesture's): an
-   * account switch then resets the canvas without losing anything — the
+   * account switch then resets the canvas without losing anything; the
    * queue stays the departing account's.
    */
   async shutdown(options: { resetToConfirmed?: boolean } = {}) {

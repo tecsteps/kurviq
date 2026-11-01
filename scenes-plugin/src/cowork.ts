@@ -1,6 +1,6 @@
 // Co-working on the scene open in the editor: the agent reads the live canvas
 // (incl. the user's unsaved edits) and applies edits that merge with whatever
-// the user is doing — one undoable step per agent edit.
+// the user is doing: one undoable step per agent edit.
 
 import {
   CaptureUpdateAction,
@@ -48,7 +48,7 @@ import type { ExcalidrawElement } from "@excalidraw/element/types";
 
 /**
  * Agent baselines (what the canvas looked like when an agent last read /
- * edited a scene) are kept here in the browser (IndexedDB), per scene — the
+ * edited a scene) are kept here in the browser (IndexedDB), per scene; the
  * MCP server and the scenes server keep nothing.
  */
 type BaselineOptions = {
@@ -58,7 +58,7 @@ type BaselineOptions = {
   storeBaseline?: string;
   /** also keep the current canvas as a checkpoint with this id */
   revision?: string;
-  /** the scene the agent means (routing) — nothing is stored for another scene */
+  /** the scene the agent means (routing); nothing is stored for another scene */
   targetScene?: string | null;
 };
 
@@ -128,7 +128,7 @@ const handleBaseline = async (
   { withBaseline, storeBaseline, revision, targetScene }: BaselineOptions,
 ) => {
   if (targetScene !== undefined && targetScene !== scene) {
-    return {}; // the agent meant another scene — it gets an error, store nothing
+    return {}; // the agent meant another scene: it gets an error, store nothing
   }
   const previous = withBaseline ? (await getAgentBaseline(scene)) ?? null : undefined;
   if (revision) {
@@ -159,7 +159,7 @@ export const readOpenScene = async (command: ReadCommand = { type: "read" }) => 
 /**
  * After an edit: labels are wrapped to their shape (which grows if the text
  * needs it) and centered in it again; arrows bound to moved or resized
- * shapes follow them — what the editor does when a user does the same.
+ * shapes follow them, as the editor does when a user does the same.
  */
 const layoutAfterEdit = (
   input: ExcalidrawElement[],
@@ -270,7 +270,7 @@ const withRoomForWords = (el: any) => {
 
 /**
  * Apply an agent's add / update / delete to a list of elements (incl. deleted
- * ones) — used for the user's open canvas (live mode) and for the agent's own
+ * ones), used for the user's open canvas (live mode) and for the agent's own
  * headless copy (detached mode).
  */
 const applyEdits = async (
@@ -455,7 +455,7 @@ const applyEdits = async (
     }
   }
   // reset: slides (frame ids, numbers), template copies (ids), or a copy's
-  // single changes ({ id, changes: ["color"] }) — like the card's icon and the canvas's bar
+  // single changes ({ id, changes: ["color"] }), like the card's icon and the canvas's bar
   const slidesNow = getSlides(elements);
   const refs = command.restyle || command.reset === "all" ? slidesNow.map((slide) => slide.id) : Array.isArray(command.reset) ? command.reset : [];
   const resetIds: string[] = [];
@@ -504,7 +504,7 @@ const applyEdits = async (
       const deletedFrames = new Set((command.delete || []).filter((id) => ["frame", "magicframe"].includes(input.find((el) => el.id === id)?.type as string)));
       const leftOver = clash.filter((el) => deletedFrames.size && !current.get(el.id)!.frameId);
       throw new Error(
-        `Element ids already exist: ${clash.map((el) => el.id).join(", ")} — use update for existing elements, pick new ids, or pass upsert: true to replace them (nothing was changed)` +
+        `Element ids already exist: ${clash.map((el) => el.id).join(", ")}. Use update for existing elements, pick new ids, or pass upsert: true to replace them (nothing was changed)` +
           (leftOver.length
             ? `. ${leftOver.map((el) => el.id).join(", ")} survived the frame you deleted: they had no frameId (not part of the frame, only on top of it); delete them too`
             : ""),
@@ -863,7 +863,7 @@ export const readLocalScene = async ({ name, since }: { name: string; since?: st
   if (since) {
     const stored = (await getCheckpoint(revisionKey(name, since))) as { elements: unknown[] } | null;
     if (!stored) {
-      throw new Error(`Revision "${since}" of "${name}" not found — call without since/basedOn`);
+      throw new Error(`Revision "${since}" of "${name}" not found: call without since/basedOn`);
     }
     base = { elements: stored.elements, label: `since revision ${since}` };
   } else {

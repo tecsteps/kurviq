@@ -454,7 +454,7 @@ Drive version it is based on (the MD5 of its content, Drive's
   Not realtime: no live cursors. Clock differences between machines decide
   "newer" when the same element is changed within seconds.
 - **Offline:** everything keeps working. **Google Drive…** shows "Drive not
-  reachable — working locally", and syncing resumes when the connection is
+  reachable: working locally", and syncing resumes when the connection is
   back.
 - Pushes are safe: a push only goes through if Drive still has the version
   it is based on (no silent overwrites); otherwise the app merges first.

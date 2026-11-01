@@ -111,7 +111,7 @@ The tools describe themselves, so plain requests work:
 - "Switch my Excalidraw to **Agent - House**."
 - "List all scenes."
 - "Create an empty scene called **Sprint 42 Retro** and switch to it."
-- "Rename **Sprint 42 Retro** to **Sprint 42 – Retro**." · "Duplicate **Madsack** as **Madsack v2**." · "Delete the scene **agent-live**."
+- "Rename **Sprint 42 Retro** to **Sprint 42: Retro**." · "Duplicate **Madsack** as **Madsack v2**." · "Delete the scene **agent-live**."
 
 ## Tools
 

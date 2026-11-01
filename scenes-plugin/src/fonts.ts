@@ -35,7 +35,7 @@ export type CustomFont = {
   source: "google" | "file";
 };
 
-/** the numbers of custom fonts (Excalidraw's own are below 20, its fallbacks at 100 and 998–1000) */
+/** the numbers of custom fonts (Excalidraw's own are below 20, its fallbacks at 100 and 998 to 1000) */
 const ID_BASE = 2000;
 const ID_RANGE = 7000;
 const DATA_RE = /^data:(font\/(woff2|woff|ttf|otf|sfnt)|application\/(font-woff2?|x-font-ttf|x-font-otf|vnd\.ms-opentype|octet-stream));base64,[A-Za-z0-9+/=]+$/;

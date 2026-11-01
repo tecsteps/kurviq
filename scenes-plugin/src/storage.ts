@@ -1,4 +1,4 @@
-// Browser-side persistence for scenes — the source of truth, works offline.
+// Browser-side persistence for scenes: the source of truth, works offline.
 //
 // The *active* scene keeps living in Excalidraw's regular localStorage keys
 // (the app saves it as usual). We add:
@@ -39,7 +39,7 @@ export const UNTITLED = "\u0000untitled";
 export type SceneMeta = {
   /** version in Drive (MD5 of the content) the local copy is based on; null = never saved there */
   baseMd5: string | null;
-  /** last seen version in Drive (null = not in Drive) — for status while offline */
+  /** last seen version in Drive (null = not in Drive), for status while offline */
   remoteMd5?: string | null;
   /** local changes not pushed yet (for the active scene this is live state) */
   dirty: boolean;
@@ -50,7 +50,7 @@ export type SceneMeta = {
    * Drive already stays there unchanged); syncing can be turned on later
    */
   localOnly?: boolean;
-  /** both sides changed the same elements — waits for the user */
+  /** both sides changed the same elements: waits for the user */
   conflict?: {
     remoteMd5: string;
     clashes: string[];
@@ -192,7 +192,7 @@ export const deleteSnapshot = (name: string | null) =>
   del(snapshotKey(name), snapshotStore);
 
 // -----------------------------------------------------------------------------
-// agent support data — kept in the browser too, so the server side stays
+// agent support data: kept in the browser too, so the server side stays
 // stateless
 // -----------------------------------------------------------------------------
 

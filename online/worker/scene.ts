@@ -2392,7 +2392,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return refuse("invalid");
     }
     // the file's own record (who wrote what, what is saved, on whose behalf) comes from Drive,
-    // read with this editor's access — never from the tab: forged receipts would make other tabs drop their work
+    // read with this editor's access, never from the tab: forged receipts would make other tabs drop their work
     const record = await this.driveRecord(att);
     if (this.seeded() || this.lifecycle().state !== "active" || ws.readyState !== WebSocket.OPEN) {
       refuse(this.seeded() ? "seeded" : "lifecycle");
@@ -2631,7 +2631,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
   /**
    * The batches that stand or fall with `seed`: those, and every later
    * batch that touches what one of them (or of the batches it pulled in)
-   * touched — transitively, groups included (touches carry group ids)
+   * touched, transitively, groups included (touches carry group ids)
    */
   private closureFrom(seed: Set<Batch>) {
     const touched = new Set<string>();

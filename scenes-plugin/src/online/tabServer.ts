@@ -1,8 +1,8 @@
 // Kurviq: the scenes server's HTTP API (/api/scenes…), answered by a tab.
 // The MCP server (online/worker, or the local one) asks "the scenes server";
 // its requests arrive here (through the pairing WebSocket, or relayed by the
-// local scenes server) and are served with the Google Drive API (./drive.ts)
-// — the agent's edits are saved with this browser's Google sign-in.
+// local scenes server) and are served with the Google Drive API (./drive.ts):
+// the agent's edits are saved with this browser's Google sign-in.
 
 import { leanScene } from "../leanFiles";
 import { scenesController } from "../controller";

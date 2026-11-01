@@ -5,8 +5,8 @@
 //
 // Rich text: formatting inside a text element. Stored in the element's
 // `customData.rich`; the element's `originalText` stays the plain text
-// (list markers included), so everything that only knows plain text — search,
-// copy, other Excalidraw apps, agents — still sees the words. The formatting
+// (list markers included), so everything that only knows plain text (search,
+// copy, other Excalidraw apps, agents) still sees the words. The formatting
 // counts only while its plain text equals `originalText` (an edit by a tool
 // that doesn't know it simply drops it).
 

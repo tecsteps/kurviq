@@ -63,8 +63,8 @@ const useScenes = () =>
 
 // -----------------------------------------------------------------------------
 // scene filter: sticky (localStorage), e.g. "Madsack" to show only that
-// customer's scenes while sharing the screen — in the switcher, the sidebar
-// list and the activity log. The open scene is always shown.
+// customer's scenes while sharing the screen (in the switcher, the sidebar
+// list and the activity log). The open scene is always shown.
 // -----------------------------------------------------------------------------
 
 const FILTER_KEY = "excalidraw-scenes-filter";
@@ -322,7 +322,7 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
       <button
         type="button"
         className={clsx("scenes-pill", { "scenes-pill--mobile": isMobile, "scenes-pill--open": open })}
-        title={`${STATUS[status].label}${offline ? " · offline" : ""} — switch scene`}
+        title={`${STATUS[status].label}${offline ? " · offline" : ""}. Switch scene`}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setPanel((value) => (value ? null : "switch"))}
@@ -707,13 +707,13 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
   let text: string;
   if (sync.serverReachable === false) {
     tone = "danger";
-    text = IS_ONLINE ? "Kurviq server not reachable — working locally" : "Scenes server not running — working locally";
+    text = IS_ONLINE ? "Kurviq server not reachable: working locally" : "Scenes server not running: working locally";
   } else if (sync.readOnly) {
     tone = "muted";
-    text = `Read only — ${sync.readOnly}`;
+    text = `Read only: ${sync.readOnly}`;
   } else if (sync.driveOnline === false) {
     tone = "danger";
-    text = "Drive not reachable — working locally";
+    text = "Drive not reachable: working locally";
   } else if (sync.driveOnline === null) {
     tone = "muted";
     text = "Connecting to Google Drive…";
@@ -738,12 +738,12 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
       {pending > 0 && (
         <div className="scenes-syncbar__pending">
           {pending} scene{pending === 1 ? "" : "s"} with changes not in Drive yet
-          {isOffline(state) ? " — will sync when back online" : ""}
+          {isOffline(state) ? ", will sync when back online" : ""}
         </div>
       )}
       {deletes.length > 0 && (
         <div className="scenes-syncbar__pending">
-          Deleted here, still in Drive: {deletes.map((name) => `“${name}”`).join(", ")} — deleted there once
+          Deleted here, still in Drive: {deletes.map((name) => `“${name}”`).join(", ")}. Deleted there once
           reachable
         </div>
       )}
@@ -808,40 +808,40 @@ const currentStatusText = (
       return "Same as in Drive";
     case "ahead":
       return offline
-        ? "Changes not in Drive yet — saved there when Drive is reachable"
+        ? "Changes not in Drive yet. Saved there when Drive is reachable"
         : autoSync
-        ? `Changes not in Drive yet — saved there ${IDLE_PUSH_MS / 1000}s after you stop drawing`
+        ? `Changes not in Drive yet. Saved there ${IDLE_PUSH_MS / 1000}s after you stop drawing`
         : "Changes not in Drive yet (auto-sync is off for this scene: Save puts them there)";
     case "behind":
-      return autoSync ? "Newer version in Drive — updating…" : "A newer version is in Drive";
+      return autoSync ? "Newer version in Drive, updating…" : "A newer version is in Drive";
     case "diverged":
       return autoSync
-        ? "Changed here and in Drive — merging…"
-        : "Changed here and in Drive — Save merges both";
+        ? "Changed here and in Drive, merging…"
+        : "Changed here and in Drive. Save merges both";
     case "conflict":
       return "You and Drive changed the same elements";
     case "local":
       return empty
-        ? "New, empty scene — only in this browser"
+        ? "New, empty scene, only in this browser"
         : autoSync
-        ? "Only in this browser — saved to Drive after a short pause"
-        : "Only in this browser — Save to put it in Drive";
+        ? "Only in this browser. Saved to Drive after a short pause"
+        : "Only in this browser. Save to put it in Drive";
     case "local-only":
-      return "Local only — stays in this browser, never synced to Drive. Publish puts it in Drive.";
+      return "Local only: stays in this browser, never synced to Drive. Publish puts it in Drive.";
     case "untitled":
-      return empty ? "Empty — draw something, then save it" : "Not saved yet — give it a name";
+      return empty ? "Empty: draw something, then save it" : "Not saved yet: give it a name";
     case "live-saving":
       return "Saving your latest change in this browser…";
     case "live-browser":
       return offline
-        ? "Your latest changes are in this browser — sent to Kurviq's server once it is reachable"
+        ? "Your latest changes are in this browser. Sent to Kurviq's server once it is reachable"
         : "Your latest changes are in this browser, on their way to Kurviq's server";
     case "live-server":
-      return "Saved on Kurviq's server — in Drive within about a minute";
+      return "Saved on Kurviq's server, in Drive within about a minute";
     case "live-drive":
       return "Saved in Drive · changes show live for everyone who has it open";
     case "live-unsaved":
-      return "This browser could not store your latest changes — export the scene to keep them";
+      return "This browser could not store your latest changes. Export the scene to keep them";
   }
 };
 
@@ -982,7 +982,7 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
   );
 };
 
-/** confirm text for deleting a scene — says exactly what will be lost */
+/** confirm text for deleting a scene: says exactly what will be lost */
 const confirmDelete = (item: SceneListItem) => {
   const name = item.name!;
   const unpushed = item.dirty || ["ahead", "diverged", "conflict"].includes(item.status);
@@ -991,10 +991,10 @@ const confirmDelete = (item: SceneListItem) => {
     item.localOnly
       ? item.inDrive
         ? "It is local only: it is deleted in this browser. The older copy in Drive is not touched."
-        : "It only exists in this browser — it will be gone."
+        : "It only exists in this browser. It will be gone."
       : item.inDrive
       ? "It is deleted here and moved to the trash of your Google Drive (restorable there for 30 days)."
-      : "It only exists in this browser — it will be gone.",
+      : "It only exists in this browser. It will be gone.",
     unpushed && !item.localOnly ? "Its changes that are not in Drive yet are lost." : null,
   ];
   return window.confirm(lines.filter(Boolean).join("\n\n"));
@@ -1272,7 +1272,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
             : busy === "loading"
             ? "Loading…"
             : currentItem?.pendingRename
-            ? `Renamed here — in Drive it is still “${currentItem.pendingRename}”, renamed there once reachable`
+            ? `Renamed here. In Drive it is still “${currentItem.pendingRename}”, renamed there once reachable`
             : !withDrive && current !== null
             ? "Saved in this browser"
             : currentStatusText(status, { autoSync: sceneAutoSync, offline: isOffline(state), empty })}

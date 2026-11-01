@@ -1,5 +1,5 @@
 // Live sync, server side: what a scene's Durable Object (./scene.ts) does
-// with scene content while it saves — decrypting events, building the
+// with scene content while it saves: decrypting events, building the
 // Drive file, and telling what an outside app changed.
 //
 // The comparison here is the strict one the concept asks for (outside
