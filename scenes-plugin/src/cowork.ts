@@ -733,9 +733,9 @@ export const editOpenScene = async (
       elements: images.elements,
       captureUpdate: CaptureUpdateAction.IMMEDIATELY, // user can undo agent edits
     });
+    // the user sees what the agent changed (live scenes: liveSync shows it)
+    showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), images.elements as any);
   }
-  // the user sees what the agent changed (a short glow, new things fade in)
-  showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), images.elements as any);
 
   await new Promise((resolve) => setTimeout(resolve, 50));
   const after = requireApi().getSceneElements();

@@ -11,8 +11,10 @@ import "./agentGlow.scss";
 
 type El = { id: string; isDeleted?: boolean; version: number; versionNonce?: number; containerId?: string | null; opacity: number } & Record<string, any>;
 
-const FADE_MS = 450;
-const GLOW_MS = 1800;
+const FADE_MS = 700;
+const GLOW_MS = 2600;
+/** sparkles burst from at most this many boxes */
+const SPARKLE_BOXES = 8;
 /** bigger edits: glow the whole area once instead of every element */
 const MAX_BOXES = 40;
 
@@ -59,12 +61,15 @@ export const showAgentChange = (api: ExcalidrawImperativeAPI | null, before: Rea
 
   // the new elements (and their labels) fade and rise into place
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const fading = new Map<string, number>();
+  // id → [its opacity, added (rises in) or changed (dips and comes back: reads as a transition)]
+  const fading = new Map<string, [number, boolean]>();
   if (!reduceMotion) {
     const addedIds = new Set(added.map((el) => el.id));
-    for (const el of after) {
-      if (!el.isDeleted && (addedIds.has(el.id) || (el.containerId && addedIds.has(el.containerId)))) {
-        fading.set(el.id, el.opacity ?? 100);
+    const changedIds = new Set(changed.map((el) => el.id));
+    for (const el of api.getSceneElements() as unknown as El[]) {
+      const shape = el.containerId ?? el.id;
+      if (addedIds.has(shape) || changedIds.has(shape)) {
+        fading.set(el.id, [el.opacity ?? 100, addedIds.has(shape)]);
       }
     }
   }
@@ -83,9 +88,25 @@ export const showAgentChange = (api: ExcalidrawImperativeAPI | null, before: Rea
 
   const layer = document.createElement("div");
   layer.className = "kq-agent-glow";
-  const nodes = boxes.map((box) => {
+  const nodes = boxes.map((box, i) => {
     const node = document.createElement("div");
     node.className = `kq-agent-glow__box kq-agent-glow__box--${box.kind}`;
+    if (box.kind !== "deleted" && i < SPARKLE_BOXES && !reduceMotion) {
+      // a few sparkles burst out of the box's corners and edges
+      for (let k = 0; k < 6; k++) {
+        const spark = document.createElement("span");
+        spark.className = "kq-agent-glow__spark";
+        const angle = (k / 6) * Math.PI * 2 + Math.random() * 0.6;
+        const distance = 26 + Math.random() * 22;
+        spark.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
+        spark.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
+        spark.style.left = `${[0, 50, 100, 100, 50, 0][k]}%`;
+        spark.style.top = `${[0, 0, 0, 100, 100, 100][k]}%`;
+        spark.style.animationDelay = `${120 + Math.random() * 180}ms`;
+        spark.textContent = "✦";
+        node.appendChild(spark);
+      }
+    }
     layer.appendChild(node);
     return node;
   });
@@ -121,13 +142,18 @@ export const showAgentChange = (api: ExcalidrawImperativeAPI | null, before: Rea
     if (fading.size) {
       const progress = Math.min(1, t / FADE_MS);
       const eased = 1 - (1 - progress) ** 3;
+      // ease-out-back: rises a little past its place and settles
+      const back = 1 + 2.2 * (progress - 1) ** 3 + 1.2 * (progress - 1) ** 2;
+      const labels = new Set((api.getSceneElements() as unknown as El[]).filter((el) => el.containerId).map((el) => el.id));
       api.setElementRenderOverrides(
         progress >= 1
           ? null
           : new Map(
-              [...fading].map(([id, opacity]) => [
+              [...fading].map(([id, [opacity, isNew]]) => [
                 id,
-                { opacity: opacity * eased, ...((api.getSceneElements().find((el) => el.id === id) as El | undefined)?.containerId ? {} : { offset: { x: 0, y: 14 * (1 - eased) } }) },
+                isNew
+                  ? { opacity: opacity * eased, ...(labels.has(id) ? {} : { offset: { x: 0, y: 28 * (1 - back) } }) }
+                  : { opacity: opacity * (0.25 + 0.75 * eased) },
               ]),
             ),
       );

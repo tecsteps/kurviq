@@ -2849,7 +2849,10 @@ export class LiveScene {
     await this.flush();
     this.agentMark = { command };
     try {
+      const before = new Map(this.surface.elements().map((el) => [el.id, el]));
       this.surface.edit({ elements, files, ...(settings ? { settings } : {}) });
+      // the user sees what the agent changed
+      this.surface.agentChange?.(before, elements);
       this.collect();
       await this.flush();
     } finally {

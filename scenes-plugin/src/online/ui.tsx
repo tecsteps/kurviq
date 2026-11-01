@@ -40,7 +40,7 @@ import type { LinkAccess, Permission } from "./drive";
 import lilitaLatin from "@excalidraw/excalidraw/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYEF8RXi4EwQ.woff2";
 
 import { deck, isDeck } from "../deck";
-import { appVersion, reloadApp } from "./version";
+import { appVersion, isAutoReloading, reloadApp } from "./version";
 import { openPublicScene } from "../router";
 
 import "./online.scss";
@@ -730,7 +730,7 @@ export const UpdateBanner = () => {
   const outdated = useSyncExternalStore(appVersion.subscribe, appVersion.isOutdated);
   return outdated ? (
     <div className="kq-update" role="status">
-      <span>Kurviq was updated. Reload to continue with your agent (your work is saved).</span>
+      <span>{isAutoReloading() ? "Kurviq was updated: reloading in a moment (your work is saved)…" : "Kurviq was updated. Reload to continue with your agent (your work is saved)."}</span>
       <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => reloadApp()}>
         Reload
       </button>
