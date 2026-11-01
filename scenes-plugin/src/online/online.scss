@@ -629,6 +629,15 @@
   z-index: 1001;
 }
 
+// Excalidraw's --color-success is a pale background green: text and borders need a darker one
+.excalidraw {
+  --kq-ok-color: #2b8a3e;
+}
+
+.excalidraw.theme--dark {
+  --kq-ok-color: #69db7c;
+}
+
 .excalidraw .kq-pub__row {
   display: flex;
   flex-direction: column;
@@ -688,8 +697,8 @@
 }
 
 .excalidraw .kq-pub__field--ok:focus-within {
-  border-color: var(--color-success, #2b8a3e);
-  box-shadow: 0 0 0 1px var(--color-success, #2b8a3e);
+  border-color: var(--kq-ok-color);
+  box-shadow: 0 0 0 1px var(--kq-ok-color);
 }
 
 .excalidraw .kq-pub__field--bad,
@@ -712,7 +721,7 @@
 }
 
 .excalidraw .kq-pub__status--ok {
-  color: var(--color-success, #2b8a3e);
+  color: var(--kq-ok-color);
   font-weight: 600;
 }
 
