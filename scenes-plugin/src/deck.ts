@@ -72,7 +72,6 @@ class Deck {
   private listeners = new Set<() => void>();
   private lastKey = "";
   /** the slides at the last change: ids, and whether they were Kurviq's grid (from where) */
-  private lastGrid: { scene: string; ids: string[]; grid: boolean; at: { x: number; y: number } | null } | null = null;
   private lastTemplateKey = 0;
   /** the body text style last made the editor's default */
   private lastBodyKey = "";
@@ -138,9 +137,39 @@ class Deck {
         .find((el) => ids.has(el.id) && x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height);
       this.setActive(frame?.id ?? null);
     });
+    // Delete / Backspace on selected slides (the user's own, on this canvas): if the slides were
+    // Kurviq's grid, the others close the hole, as when one is deleted in the slide list. Never in
+    // reaction to changes coming in (an agent, another tab, the server): those are laid out where
+    // they are made, and a second layout here would rewrite every moved element as the user's change
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.key !== "Delete" && event.key !== "Backspace") || event.repeat || this.api !== api) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const appState = api.getAppState();
+      if (appState.editingTextElement || target?.closest("input, textarea, [contenteditable]") || document.body.classList.contains("slides-presenting")) {
+        return;
+      }
+      const elements = api.getSceneElements();
+      const slides = getSlides(elements);
+      if (!slides.some((slide) => appState.selectedElementIds[slide.id]) || !isDeckGrid(elements)) {
+        return;
+      }
+      const at = slidesOrigin(elements);
+      const count = slides.length;
+      // after Excalidraw's own delete
+      setTimeout(() => {
+        const now = api.getSceneElements();
+        if (this.api === api && getSlides(now).length < count && !isDeckGrid(now)) {
+          closeSlideGaps(api, at);
+        }
+      });
+    };
+    document.addEventListener("keydown", onKey, true);
     this.detach = () => {
       offChange();
       offPointer();
+      document.removeEventListener("keydown", onKey, true);
     };
     this.onChange(api.getSceneElementsIncludingDeleted());
   }
@@ -206,37 +235,11 @@ class Deck {
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.rebuild(elements);
-      this.closeGaps(elements);
     }
     if (this.state.slides.length || this.state.templateId) {
       this.scheduleThumbs();
       this.scheduleTemplateSync();
     }
-  }
-
-  /**
-   * A slide removed in any way (Delete on the canvas, an agent, another tab):
-   * if the slides were Kurviq's grid, the others close the hole, as when one is
-   * deleted in the slide list. A hand-made arrangement stays as it is.
-   */
-  private closeGaps(elements: readonly ExcalidrawElement[]) {
-    const ids = getSlides(elements).map((slide) => slide.id);
-    const scene = this.deckName();
-    // another scene opened: nothing was removed
-    const before = this.lastGrid?.scene === scene ? this.lastGrid : null;
-    const grid = isDeckGrid(elements);
-    this.lastGrid = { scene, ids, grid, at: slidesOrigin(elements) };
-    const removed = !!before && ids.length < before.ids.length && ids.every((id) => before.ids.includes(id));
-    if (!before?.grid || !removed || grid || document.body.classList.contains("slides-presenting")) {
-      return;
-    }
-    const api = this.api;
-    // after Excalidraw's own update (not from inside its change event)
-    setTimeout(() => {
-      if (api && api === this.api) {
-        closeSlideGaps(api, before.at);
-      }
-    });
   }
 
   private rebuild(elements: readonly ExcalidrawElement[]) {
