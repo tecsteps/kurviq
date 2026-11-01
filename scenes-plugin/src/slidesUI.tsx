@@ -822,24 +822,6 @@ const slidesTab = (() => {
   });
 }
 
-/** a slide's pen on the canvas (notes.tsx): the slide list, with this slide selected and in view */
-export const showSlideInList = (id: string) => {
-  const api = deck.getApi();
-  if (!api) {
-    return;
-  }
-  slidesTab.set("slides");
-  if (api.getAppState().openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
-    api.toggleSidebar({ name: SLIDES_SIDEBAR_NAME, force: true });
-  }
-  api.updateScene({ appState: { selectedElementIds: { [id]: true } }, captureUpdate: CaptureUpdateAction.NEVER });
-  deck.setActive(id);
-  // its card, once the list shows
-  setTimeout(() => {
-    document.querySelector<HTMLElement>(`[data-slide-open="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, 120);
-};
-
 /** the template's pen on the canvas (notes.tsx): the Style tab, or closed again */
 export const editTemplate = () => {
   const api = deck.getApi();

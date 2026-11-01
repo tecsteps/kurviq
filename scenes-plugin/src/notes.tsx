@@ -14,7 +14,7 @@ import { deck, isDeck } from "./deck";
 import { presenter, usePresenter } from "./present";
 import { QuickTip } from "./quickTip";
 import { patchSlideData } from "./slides";
-import { showSlideInList, editTemplate } from "./slidesUI";
+import { editTemplate } from "./slidesUI";
 import { createRichEditable } from "./richText/editor";
 import { docFromMarkdown, docFromPlain, isPlainDoc, markdownOf, plainOf, richDocOf } from "./richText/model";
 import { docToHtml } from "./richText/layout";
@@ -156,14 +156,6 @@ const HiddenVeils = () => {
 };
 
 /** the slide in the slide list */
-const ListIcon = () => (
-  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="3" y="3.5" width="5" height="4" rx="1" />
-    <rect x="3" y="12.5" width="5" height="4" rx="1" />
-    <path d="M11 5.5h6M11 14.5h6" />
-  </svg>
-);
-
 /** eye (shown) / crossed eye (hidden from the presentation) */
 export const EyeIcon = ({ off }: { off: boolean }) => (
   <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -181,7 +173,6 @@ const PlayIcon = () => (
 
 /** an icon's room (touch screens: bigger, see slides.scss) */
 const touch = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
-const PEN_WIDTH = touch ? 32 : 22;
 const ICON_WIDTH = touch ? 32 : 22;
 
 /**
@@ -362,29 +353,17 @@ export const SlideNotesOverlay = () => {
         if (!spot) {
           return null;
         }
-        const at = iconsAt(spot, PEN_WIDTH + 3 * ICON_WIDTH);
+        const at = iconsAt(spot, 3 * ICON_WIDTH);
         if (!at) {
           return null;
         }
         const has = !!s.notes.trim();
         return [
-          <QuickTip key={`${s.id}-list`} tip="Show in the slide list" label={false}>
-            <button
-              type="button"
-              className={clsx("slides-notes-btn", { "slides-notes-btn--over": at.over })}
-              style={{ left: at.left, top: spot.y + spot.h / 2 }}
-              aria-label={`Slide ${s.index + 1} in the slide list`}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => showSlideInList(s.id)}
-            >
-              <ListIcon />
-            </button>
-          </QuickTip>,
           <QuickTip key={s.id} tip="Speaker notes" label={false}>
           <button
             type="button"
             className={clsx("slides-notes-btn", { "slides-notes-btn--has": has, "slides-notes-btn--open": s.id === id, "slides-notes-btn--over": at.over })}
-            style={{ left: at.left + PEN_WIDTH, top: spot.y + spot.h / 2 }}
+            style={{ left: at.left, top: spot.y + spot.h / 2 }}
             aria-label={`Speaker notes of slide ${s.index + 1}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => slideNotes.toggle(s.id)}
@@ -396,7 +375,7 @@ export const SlideNotesOverlay = () => {
             <button
               type="button"
               className={clsx("slides-notes-btn", { "slides-notes-btn--over": at.over })}
-              style={{ left: at.left + PEN_WIDTH + ICON_WIDTH, top: spot.y + spot.h / 2 }}
+              style={{ left: at.left + ICON_WIDTH, top: spot.y + spot.h / 2 }}
               aria-label={`Present from slide ${s.index + 1}`}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={() => presenter.start(s.id)}
@@ -408,7 +387,7 @@ export const SlideNotesOverlay = () => {
             <button
               type="button"
               className={clsx("slides-notes-btn", { "slides-notes-btn--open": s.skip, "slides-notes-btn--over": at.over })}
-              style={{ left: at.left + PEN_WIDTH + 2 * ICON_WIDTH, top: spot.y + spot.h / 2 }}
+              style={{ left: at.left + 2 * ICON_WIDTH, top: spot.y + spot.h / 2 }}
               aria-label={s.skip ? `Show slide ${s.index + 1}` : `Hide slide ${s.index + 1}`}
               aria-pressed={s.skip}
               onPointerDown={(event) => event.stopPropagation()}
