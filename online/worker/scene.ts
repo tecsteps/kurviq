@@ -2139,7 +2139,8 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (aliveAfter > LIMITS.elements) {
       return this.refuse(ws, counter, "limit", [], "elements");
     }
-    if (sceneAfter > LIMITS.sceneBytes) {
+    // the quick total counts every picture ever stored; over the limit, only what is in use counts
+    if (sceneAfter > LIMITS.sceneBytes && this.bytesInUse(batchMap) > LIMITS.sceneBytes) {
       return this.refuse(ws, counter, "limit", [], "sceneBytes");
     }
     if (this.pending.length >= MAX_PENDING_BATCHES) {
@@ -2249,6 +2250,76 @@ export class SceneRoom extends DurableObject<SceneEnv> {
    * alive elements (container, frame, bindings, newly bound elements), its
    * image and font exist, and nothing alive still points at what the batch deletes
    */
+  /**
+   * Pictures by use: in use (a live element shows it) and known (any element,
+   * deleted ones too, names it). A picture no element names yet was sent ahead
+   * of its element and counts as in use.
+   */
+  private fileUse(overrides?: Map<string, Entry>) {
+    const inUse = new Set<string>();
+    const named = new Set<string>();
+    const look = (entry: Entry) => {
+      if (entry.k === "el" && entry.r?.fileId) {
+        named.add(entry.r.fileId);
+        if (!entry.r.isDeleted) {
+          inUse.add(entry.r.fileId);
+        }
+      }
+    };
+    for (const [key, entry] of this.state) {
+      if (!overrides?.has(key)) {
+        look(entry);
+      }
+    }
+    overrides?.forEach(look);
+    return { inUse, named };
+  }
+
+  /** the scene's size with `overrides` applied, pictures only deleted elements show left out */
+  private bytesInUse(overrides: Map<string, Entry>) {
+    const { inUse, named } = this.fileUse(overrides);
+    let bytes = 0;
+    const count = (entry: Entry) => {
+      if (entry.k !== "file" || inUse.has(entry.id) || !named.has(entry.id)) {
+        bytes += sizeOf(entry);
+      }
+    };
+    for (const [key, entry] of this.state) {
+      if (!overrides.has(key)) {
+        count(entry);
+      }
+    }
+    overrides.forEach(count);
+    return bytes;
+  }
+
+  /**
+   * After a save: pictures only deleted elements show (and no unsaved batch
+   * carries) leave the snapshot and the state. Drive's file never had them
+   * (buildSceneFile). An element that comes back (undo) is refused with a
+   * reference to its picture, and the tab sends the picture along again.
+   */
+  private dropUnusedFiles() {
+    const { inUse, named } = this.fileUse();
+    const carried = new Set<string>();
+    for (const batch of this.pending) {
+      for (const entry of batch.entries) {
+        if (entry.k === "file") {
+          carried.add(entry.id);
+        }
+      }
+    }
+    for (const [key, entry] of [...this.snap]) {
+      if (entry.k === "file" && named.has(entry.id) && !inUse.has(entry.id) && !carried.has(entry.id)) {
+        this.snap.delete(key);
+        if (this.state.get(key) === entry) {
+          this.sceneBytes -= sizeOf(entry);
+          this.state.delete(key);
+        }
+      }
+    }
+  }
+
   private referenceProblem(entries: Entry[], batchMap: Map<string, Entry>): { target: string; detail: string } | null {
     const fontIds = new Set<number>();
     for (const entry of [...this.state.values(), ...entries]) {
@@ -2280,7 +2351,8 @@ export class SceneRoom extends DurableObject<SceneEnv> {
           return { target, detail: `${entry.id}:boundElements:${target}` };
         }
       }
-      if (r.fileId && r.fileId !== before?.fileId && !batchMap.has(eventKey("file", r.fileId)) && !this.state.has(eventKey("file", r.fileId))) {
+      // a new picture, or an element that comes back (its picture may have been dropped, see dropUnusedFiles)
+      if (r.fileId && (r.fileId !== before?.fileId || !before || before.isDeleted) && !batchMap.has(eventKey("file", r.fileId)) && !this.state.has(eventKey("file", r.fileId))) {
         return { target: eventKey("file", r.fileId), detail: `${entry.id}:fileId:${r.fileId}` };
       }
       if (r.fontFamily !== null && r.fontFamily >= FONT_ID_MIN && r.fontFamily !== before?.fontFamily && !fontIds.has(r.fontFamily)) {
@@ -3851,6 +3923,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const seqs = new Set(group.map((batch) => batch.seq));
     this.ctx.storage.transactionSync(() => {
       last.forEach((entry, k) => this.snap.set(k, entry));
+      this.dropUnusedFiles();
       this.writeSnapshot();
       const byTab = new Map<string, number[]>();
       for (const batch of group) {

@@ -2409,7 +2409,11 @@ export class LiveScene {
       // kept in this browser: nothing is cut off silently
       this.error =
         reason === "limit"
-          ? `Too big to save at once${refusal.detail ? ` (${refusal.detail})` : ""}: split it up, or remove large pictures`
+          ? refusal.detail === "sceneBytes"
+            ? "This scene is too big for Kurviq's server (30 MB, pictures included): your latest changes wait in this browser. Remove or shrink pictures."
+            : refusal.detail === "elements"
+            ? "This scene has too many elements for Kurviq's server: your latest changes wait in this browser."
+            : `Too big to save at once${refusal.detail ? ` (${refusal.detail})` : ""}: split it up, or remove large pictures`
           : reason === "role"
           ? "You can only view this scene now: your changes stay in this browser"
           : reason === "key"
@@ -2420,6 +2424,24 @@ export class LiveScene {
       }
       this.inFlight.delete(batch.counter);
       this.parked.add(batch.counter);
+      // a queue sent in the background (an earlier session's, or an agent's edit of a scene not open
+      // here): refused for good, it would wait forever where nobody sees it. It is kept as a copy
+      // of the scene with all of it, and leaves the queue
+      const forGood = reason === "role" || (reason === "limit" && ["sceneBytes", "elements", "eventsPerBatch"].includes(refusal.detail ?? ""));
+      if (this.headless && forGood) {
+        const copied = await this.makeOfflineCopy(`Changes that could not be saved (${refusal.detail ?? reason})`);
+        if (copied && !this.stale()) {
+          for (const queued of this.batches.filter((entry) => entry.state === "queued")) {
+            this.givenUp.set(queued.counter, refusal.detail ?? reason);
+            this.parked.delete(queued.counter);
+            this.skipped.push(queued.counter);
+            await this.forget(queued);
+          }
+          this.error = null;
+        }
+        this.changed();
+        return;
+      }
       // limits that pass by themselves (rate, unsaved changes waiting for Drive): tried again soon
       if (reason === "limit" && ["batchesPerMinute", "pendingBatches", "pendingBytes", "accountPendingBytes"].includes(refusal.detail ?? "")) {
         const counter = batch.counter;
@@ -2452,6 +2474,39 @@ export class LiveScene {
     }
     if (this.stale()) {
       return;
+    }
+    // what another queue of this browser still holds (another tab's, or one a reload left): it may
+    // just not be on the server yet. Never a copy over that (the server's version would win over
+    // work that is still on its way): this batch waits and is tried again
+    if (reason === "collision" || reason === "reference") {
+      const queued = await batchesOf(this.sub, this.fileId).catch(() => [] as QueuedBatch[]);
+      const held = new Set<string>();
+      for (const other of queued) {
+        if (other.tab !== this.tab?.tab && other.state === "queued") {
+          other.changes.forEach((change) => held.add(keyOf(change.k, change.id)));
+        }
+      }
+      const named = new Set([...colliding, ...unknownIds(refusal.detail)]);
+      const ref = referenceOf(refusal.detail);
+      if (ref) {
+        named.add(ref.id);
+        named.add(ref.target);
+      }
+      const waitsFor = [...named].filter((key) => held.has(key) || this.othersHave(key));
+      if (waitsFor.length && !this.stale()) {
+        const counter = batch.counter;
+        this.inFlight.delete(counter);
+        this.parked.add(counter);
+        this.refusals = [...this.refusals.slice(-5), `${new Date().toISOString().slice(11, 19)} #${counter} waits for ${waitsFor.slice(0, 3).join(", ")} (another queue of this browser has them)`];
+        setTimeout(() => {
+          if (this.parked.delete(counter)) {
+            this.rebases.delete(counter);
+            this.pump();
+          }
+        }, 15_000);
+        this.changed();
+        return;
+      }
     }
     // a live batch is settled and sent again; refused again and again, it takes the offline way
     const tries = (this.rebases.get(batch.counter) ?? 0) + 1;
@@ -2490,6 +2545,9 @@ export class LiveScene {
     }
     await this.dropColliding(batch, colliding, reason === "discarded" || reason === "invalid" || reason === "old");
   }
+
+  /** batches given up after a refusal for good (kept in an offline copy instead): counter -> why */
+  private givenUp = new Map<number, string>();
 
   /** the last refusals (time, batch, reason) and hung messages, for app_status (liveQueue.problems) */
   private refusals: string[] = [];
@@ -2762,7 +2820,9 @@ export class LiveScene {
       if (!host) {
         throw new Error("no host");
       }
-      const name = await host.saveCopy(`${this.name} (offline changes)`, json);
+      // a queue an earlier session left is sent by a session without a name: the scene's name from the server
+      const sceneName = this.name || (this.synced.get(NAME_KEY)?.el as { name?: string } | undefined)?.name || "Unsaved changes";
+      const name = await host.saveCopy(`${sceneName} (offline changes)`, json);
       this.note(`${why}: the whole scene as you had it is kept as "${name}" (only in this browser).`);
       return name;
     })();
@@ -2957,7 +3017,14 @@ export class LiveScene {
         .map((counter) => this.batches.find((batch) => batch.counter === counter))
         .filter((batch): batch is QueuedBatch => !!batch && batch.state === "queued");
     const refused = () => open().some((batch) => this.parked.has(batch.counter));
-    await this.waitFor(() => !open().length || refused(), 20_000, "unanswered").catch(() => {});
+    const gaveUp = () => counters.find((counter) => this.givenUp.has(counter));
+    await this.waitFor(() => !open().length || refused() || gaveUp() !== undefined, 20_000, "unanswered").catch(() => {});
+    const lost = gaveUp();
+    if (lost !== undefined) {
+      throw new Error(
+        `Kurviq's server refused this edit for good (${this.givenUp.get(lost)}): it is not saved. The scene with it is kept in the user's browser as an "(offline changes)" copy. Tell the user.`,
+      );
+    }
     if (refused()) {
       throw new Error(
         `Applied in the user's browser, but Kurviq's server refused it${this.error ? ` (${this.error})` : ""}: it is kept there and not saved. Tell the user.`,
@@ -3340,6 +3407,13 @@ class LiveSync {
 
   /** closed tabs' queues, sent from here under their own tab ids (also of scenes open here) */
   private replays = new Map<string, LiveScene>();
+
+  /** why a queue an earlier session of this scene left can't be sent (shown with the open scene) */
+  replayProblems(fileId: string) {
+    return [...this.replays]
+      .filter(([key, scene]) => key.startsWith(`${fileId}#`) && scene.error)
+      .map(([, scene]) => scene.error!);
+  }
 
   /** the closed tabs' queues being sent from here, for app_status (liveQueue.replays) */
   replayReport() {

@@ -1069,6 +1069,14 @@ export const LiveBanner = () => {
       </div>,
     );
   }
+  // a queue an earlier session of this scene left (a reload, a closed tab) that can't be sent
+  for (const [i, error] of liveSync.replayProblems(info.fileId).entries()) {
+    items.push(
+      <div key={`replay-${i}`} className="kq-live__item kq-live__item--danger">
+        Changes from an earlier session of this scene wait in this browser: {liveProblem(error) ?? error}
+      </div>,
+    );
+  }
   if (info.waitingForKey) {
     items.push(<div key="key" className="kq-live__item">Your changes wait in this browser until the scene is ready on Kurviq's server…</div>);
   }
