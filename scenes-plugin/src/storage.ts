@@ -7,7 +7,7 @@
 //  - snapshots of inactive scenes in IndexedDB (incl. image files, which
 //    would quickly blow the localStorage quota)
 
-import { createStore, del, delMany, entries, get, set } from "idb-keyval";
+import { createStore, del, delMany, get, keys, set } from "idb-keyval";
 
 // Kurviq: each space keeps its own scenes in the browser. "" is the user's
 // own scenes (their Kurviq folder in Google Drive); "f:<fileId>" is a scene
@@ -221,23 +221,43 @@ export const moveAgentBaseline = async (from: string, to: string) => {
   }
 };
 
-/** create_view checkpoints (agent drafts); the oldest are dropped */
+/** create_view checkpoints (agent drafts) and live revisions; the oldest are dropped */
 const MAX_CHECKPOINTS = 200;
+/** a live scene's revisions ("live-rev:<fileId>:…") are whole scenes, pictures included: a few per scene */
+const MAX_LIVE_REVISIONS = 12;
 const checkpointKey = (id: string) => `checkpoint:${id}`;
+/** the checkpoints' keys and times: pruning never loads the checkpoints themselves (each can be many MB) */
+const CHECKPOINT_INDEX = "checkpoint-index";
 
 export const getCheckpoint = (id: string) =>
   get<{ at: number; data: unknown }>(checkpointKey(id), agentStore).then((entry) => entry?.data ?? null);
 
-export const setCheckpoint = async (id: string, data: unknown) => {
-  await set(checkpointKey(id), { at: Date.now(), data }, agentStore);
-  const all = (await entries<string, { at: number }>(agentStore)).filter(([key]) =>
-    String(key).startsWith("checkpoint:"),
-  );
-  if (all.length > MAX_CHECKPOINTS) {
-    all.sort((a, b) => a[1].at - b[1].at);
-    await delMany(
-      all.slice(0, all.length - MAX_CHECKPOINTS).map(([key]) => key),
-      agentStore,
-    );
-  }
+/** checkpoints written one at a time in this tab (the index is read and written whole) */
+let checkpointWrites: Promise<unknown> = Promise.resolve();
+
+export const setCheckpoint = (id: string, data: unknown) => {
+  const write = checkpointWrites.then(async () => {
+    const key = checkpointKey(id);
+    const at = Date.now();
+    await set(key, { at, data }, agentStore);
+    // before the index existed: the stored ones, as the oldest
+    const index =
+      (await get<Record<string, number>>(CHECKPOINT_INDEX, agentStore)) ??
+      Object.fromEntries((await keys(agentStore)).filter((k) => String(k).startsWith("checkpoint:")).map((k) => [String(k), 0]));
+    index[key] = at;
+    const byAge = Object.entries(index).sort((a, b) => a[1] - b[1]);
+    const drop = new Set(byAge.slice(0, Math.max(0, byAge.length - MAX_CHECKPOINTS)).map(([k]) => k));
+    const live = key.match(/^checkpoint:live-rev:([^:]+):/);
+    if (live) {
+      const own = byAge.filter(([k]) => k.startsWith(`checkpoint:live-rev:${live[1]}:`));
+      own.slice(0, Math.max(0, own.length - MAX_LIVE_REVISIONS)).forEach(([k]) => drop.add(k));
+    }
+    drop.forEach((k) => delete index[k]);
+    if (drop.size) {
+      await delMany([...drop], agentStore);
+    }
+    await set(CHECKPOINT_INDEX, index, agentStore);
+  });
+  checkpointWrites = write.catch(() => {});
+  return write;
 };

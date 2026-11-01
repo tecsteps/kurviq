@@ -663,7 +663,7 @@ export class LiveScene {
           : "waiting",
         ...(this.rebases.get(batch.counter) ? { refusals: this.rebases.get(batch.counter) } : {}),
       })),
-      refusals: this.refusals,
+      problems: this.refusals,
     };
   }
 
@@ -954,7 +954,7 @@ export class LiveScene {
               return; // for a connection (or session) that is gone
             }
             this.activeConn = conn;
-            return this.receive(message);
+            return this.receiveGuarded(message, ws);
           })
           .catch((error) => {
             console.error("[live] could not apply a message", error);
@@ -1088,6 +1088,35 @@ export class LiveScene {
   // ---------------------------------------------------------------------------
   // messages from the Durable Object
   // ---------------------------------------------------------------------------
+
+  /**
+   * One message, but never forever: the inbox handles messages one by one,
+   * so a step that hangs (a database or font that never answers) would hold
+   * back every later message, the acks included, until a reload. After the
+   * limit it is noted, and the connection starts over (the handshake brings
+   * the state again; what is left of the hung message stops at its next
+   * stale() check).
+   */
+  private async receiveGuarded(message: ServerMessage, ws: WebSocket) {
+    const limit = message.type === "welcome" ? 120_000 : 45_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const hung = new Promise<"hung">((resolve) => {
+      timer = setTimeout(() => resolve("hung"), limit);
+    });
+    try {
+      const result = await Promise.race([this.receive(message).then(() => "done" as const), hung]);
+      if (result === "hung") {
+        const note = `${new Date().toISOString().slice(11, 19)} ${message.type} not handled within ${limit / 1000} s: reconnected`;
+        console.error(`[live] ${note}`);
+        this.refusals = [...this.refusals.slice(-5), note];
+        if (this.ws === ws) {
+          this.dropConnection();
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   private async receive(message: ServerMessage) {
     switch (message.type) {
@@ -2463,7 +2492,7 @@ export class LiveScene {
     await this.dropColliding(batch, colliding, reason === "discarded" || reason === "invalid" || reason === "old");
   }
 
-  /** the last refusals (time, batch, reason), for app_status */
+  /** the last refusals (time, batch, reason) and hung messages, for app_status (liveQueue.problems) */
   private refusals: string[] = [];
 
   /** refusals per batch (a batch refused again and again takes the offline way) */
