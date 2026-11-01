@@ -550,6 +550,8 @@ const status = () => {
     // the health of this tab: what it is working on (an edit or picture running for minutes is stuck)
     busy: [...busy.values()].map(({ what, since }) => `${what} for ${Math.round((Date.now() - since) / 1000)} s`),
     editsRunning: editsRunning(),
+    // the open live scene's send queue: what is not on Kurviq's server yet, and why
+    ...(scenesController.liveCurrent() ? { liveQueue: scenesController.liveCurrent()!.queueReport() } : {}),
     visible: document.visibilityState === "visible",
     // "name: status": synced / ahead (not pushed) / behind / diverged / conflict / local
     scenes: list

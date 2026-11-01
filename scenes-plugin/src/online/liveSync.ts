@@ -636,6 +636,37 @@ export class LiveScene {
     return "drive";
   }
 
+  /** the send queue, for app_status (agents report it when edits are not confirmed) */
+  queueReport() {
+    const now = Date.now();
+    const queued = this.batches.filter((batch) => batch.state === "queued");
+    const size = (batch: QueuedBatch) => Math.round(JSON.stringify(batch.changes).length / 1024);
+    return {
+      phase: this.phase,
+      connected: this.connected,
+      role: this.role,
+      error: this.error,
+      serverSeq: this.seq,
+      unsent: queued.length,
+      onServer: this.batches.filter((batch) => batch.state === "acked").length,
+      waiting: queued.slice(0, 8).map((batch) => ({
+        counter: batch.counter,
+        via: batch.via,
+        ...(batch.command ? { command: batch.command } : {}),
+        changes: batch.changes.length,
+        kb: size(batch),
+        ageS: Math.round((now - batch.made) / 1000),
+        state: this.parked.has(batch.counter)
+          ? "refused (set aside until reconnect)"
+          : this.inFlight.has(batch.counter)
+          ? `sent ${Math.round((now - this.inFlight.get(batch.counter)!.at) / 1000)} s ago, unanswered`
+          : "waiting",
+        ...(this.rebases.get(batch.counter) ? { refusals: this.rebases.get(batch.counter) } : {}),
+      })),
+      refusals: this.refusals,
+    };
+  }
+
   info(): LiveInfo {
     return {
       fileId: this.fileId,
@@ -2325,6 +2356,7 @@ export class LiveScene {
     // stays "in flight" while it is settled, so nothing sends it meanwhile
     this.inFlight.set(batch.counter, { at: Date.now(), ids: new Set() });
     const reason: RefuseReason = refusal.reason;
+    this.refusals = [...this.refusals.slice(-5), `${new Date().toISOString().slice(11, 19)} #${batch.counter} ${reason}${refusal.detail ? ` (${refusal.detail})` : ""}`];
     this.trace?.push(`refused#${batch.counter} ${reason} ${refusal.detail ?? ""} live=${batch.live} [${batch.changes.map((c) => `${c.k}:${c.id.slice(0, 6)}${c.value?.isDeleted ? "(del)" : ""}`).join(",")}] current=[${refusal.current.map((e) => e.id.slice(0, 6))}]`);
     if (reason === "token") {
       await this.renew();
@@ -2360,6 +2392,15 @@ export class LiveScene {
       }
       this.inFlight.delete(batch.counter);
       this.parked.add(batch.counter);
+      // limits that pass by themselves (rate, unsaved changes waiting for Drive): tried again soon
+      if (reason === "limit" && ["batchesPerMinute", "pendingBatches", "pendingBytes", "accountPendingBytes"].includes(refusal.detail ?? "")) {
+        const counter = batch.counter;
+        setTimeout(() => {
+          if (this.parked.delete(counter)) {
+            this.pump();
+          }
+        }, 15_000);
+      }
       this.changed();
       return;
     }
@@ -2421,6 +2462,9 @@ export class LiveScene {
     }
     await this.dropColliding(batch, colliding, reason === "discarded" || reason === "invalid" || reason === "old");
   }
+
+  /** the last refusals (time, batch, reason), for app_status */
+  private refusals: string[] = [];
 
   /** refusals per batch (a batch refused again and again takes the offline way) */
   private rebases = new Map<number, number>();
@@ -2799,10 +2843,12 @@ export class LiveScene {
 
   /**
    * An agent's change: applied as its own step (on the canvas: undoable),
-   * sent as a batch of its own marked via "agent" with the command id;
-   * resolves once the DO has it.
+   * sent as a batch of its own marked via "agent" with the command id.
+   * Resolves once the DO has it (null), or after 20 s with a note: applied
+   * and kept in this browser, still on its way (nothing for the agent to
+   * redo). Throws if the DO refused it.
    */
-  async agentEdit(elements: El[], files: BinaryFileData[], command?: string, settings?: Settings | null) {
+  async agentEdit(elements: El[], files: BinaryFileData[], command?: string, settings?: Settings | null): Promise<string | null> {
     if (!this.baseLoaded) {
       // without the DO's state nothing could be queued: wait for the handshake
       await this.ready();
@@ -2815,11 +2861,10 @@ export class LiveScene {
     }
     // exactly once, also across tabs and reloads: one tab at a time per command; the
     // durably queued batches carrying the command id are its journal
-    const run = async () => {
+    const run = async (): Promise<string | null> => {
       const own = this.batches.filter((batch) => batch.command === command);
       if (own.length) {
-        await this.waitForCommand(command);
-        return this.revision();
+        return this.agentBatchesConfirmed(own.map((batch) => batch.counter));
       }
       const queued = await batchesOf(this.sub, this.fileId).catch(() => [] as QueuedBatch[]);
       if (queued.some((batch) => batch.command === command)) {
@@ -2829,24 +2874,26 @@ export class LiveScene {
             (batch) => batch.command === command && batch.state === "queued",
           );
           if (!left.length) {
-            return this.revision();
+            return null;
           }
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
-        throw new Error("The edit is kept in the user's browser (another tab sends it); the Kurviq server has not confirmed it yet");
+        return "Applied in the user's browser (another tab of it sends it); Kurviq's server has not confirmed it yet. It goes out by itself: nothing to redo.";
       }
       const done = await commandRecord(this.sub, this.fileId, command).catch(() => undefined);
       if (done) {
-        return done.revision ?? this.revision(); // applied and answered before (maybe in Drive by now)
+        return null; // applied and answered before (maybe in Drive by now)
       }
       return this.applyAgentEdit(elements, files, command, settings);
     };
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-    return locks ? ((await locks.request(`kurviq-live-command:${this.fileId}:${command}`, run)) as unknown as string) : run();
+    return locks ? ((await locks.request(`kurviq-live-command:${this.fileId}:${command}`, run)) as string | null) : run();
   }
 
   private async applyAgentEdit(elements: El[], files: BinaryFileData[], command: string | undefined, settings?: Settings | null) {
     await this.flush();
+    // this edit's own batches: what was queued before (the user's, earlier agent edits) is not waited for
+    const earlier = new Set(this.batches.map((batch) => batch.counter));
     this.agentMark = { command };
     try {
       const before = new Map(this.surface.elements().map((el) => [el.id, el]));
@@ -2861,28 +2908,41 @@ export class LiveScene {
     if (this.storageFailed) {
       throw new Error("The edit could not be kept in the user's browser (storage failed): try again");
     }
-    await this.waitForCommand(command);
-    const revision = this.revision();
+    const mine = this.batches.filter((batch) => !earlier.has(batch.counter) && batch.via === "agent").map((batch) => batch.counter);
+    const note = await this.agentBatchesConfirmed(mine);
     if (command) {
-      // answered: remembered past the queue (its batches go once Drive has them)
-      await recordCommand(this.sub, this.fileId, command, { at: Date.now(), revision }).catch(() => {});
+      // applied (and kept): remembered past the queue (its batches go once Drive has them)
+      await recordCommand(this.sub, this.fileId, command, { at: Date.now(), revision: this.revision() }).catch(() => {});
     }
-    return revision;
+    return note;
   }
 
-  /** an agent command's batches answered by the DO */
-  private async waitForCommand(command: string | undefined) {
-    const counters = this.batches.filter((batch) => batch.via === "agent" && batch.command === command && batch.state === "queued").map((batch) => batch.counter);
-    await this.waitFor(
-      () => counters.every((counter) => this.batches.find((batch) => batch.counter === counter)?.state !== "queued"),
-      20_000,
-      "The edit is kept in the user's browser, the Kurviq server has not confirmed it yet",
-    ).catch((error) => {
-      if (!this.connected) {
-        throw new Error("Saved in the user's browser only: Kurviq's server is not reachable right now, it is sent once it is");
-      }
-      throw error;
-    });
+  /**
+   * An agent edit's batches answered by the DO: null. Refused (set aside, see
+   * onRefused): throws with the reason. Still unanswered after 20 s: a note,
+   * not an error: the edit is applied and kept in this browser and goes out
+   * by itself (an agent that retried would apply it twice).
+   */
+  private async agentBatchesConfirmed(counters: number[]): Promise<string | null> {
+    const open = () =>
+      counters
+        .map((counter) => this.batches.find((batch) => batch.counter === counter))
+        .filter((batch): batch is QueuedBatch => !!batch && batch.state === "queued");
+    const refused = () => open().some((batch) => this.parked.has(batch.counter));
+    await this.waitFor(() => !open().length || refused(), 20_000, "unanswered").catch(() => {});
+    if (refused()) {
+      throw new Error(
+        `Applied in the user's browser, but Kurviq's server refused it${this.error ? ` (${this.error})` : ""}: it is kept there and not saved. Tell the user.`,
+      );
+    }
+    if (!open().length) {
+      return null;
+    }
+    const waiting = open();
+    const sent = waiting.filter((batch) => this.inFlight.has(batch.counter)).length;
+    return this.connected
+      ? `Applied in the user's browser; Kurviq's server has not confirmed it yet (${sent ? "sent, no answer yet" : "waiting behind earlier changes"}). It goes out by itself: nothing to redo.`
+      : "Applied and kept in the user's browser; Kurviq's server is not reachable right now, it is sent once it is. Nothing to redo.";
   }
 
   /** an agent wants to see the user's latest work: what is collected goes out now */

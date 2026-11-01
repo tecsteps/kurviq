@@ -750,13 +750,15 @@ export const editOpenScene = async (
 
   const images = repairImages(elements, api.getFiles());
   const live = scenesController.liveCurrent();
+  /** applied, not confirmed by Kurviq's server yet (it goes out by itself) */
+  let pending: string | null = null;
   if (live) {
     // a live scene: the agent's change goes out as its own batch (via "agent", with its id)
     const changes = liveDifference(live.elements(), images.elements.filter((el) => !el.isDeleted), readState as any);
     if (changes.clashes.length) {
       throw new Error(`The user changed ${changes.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
     }
-    await live.agentEdit(changes, Object.values(command.files || {}), command.requestId);
+    pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId);
   } else {
     api.updateScene({
       elements: images.elements,
@@ -773,6 +775,7 @@ export const editOpenScene = async (
     ...(await handleBaseline(scene, after, command)),
     ...edit,
     ...images.info,
+    ...(pending ? { pending } : {}),
     elements: after,
   };
 };
@@ -851,10 +854,10 @@ const editLiveScene = async (
   if (changed.clashes.length) {
     throw new Error(`The user changed ${changed.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
   }
-  await live.agentEdit(changed, Object.values(command.files || {}), command.requestId);
+  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId);
   const json = withSceneName(withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements), command.name);
   const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
-  return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0 };
+  return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0, ...(pending ? { pending } : {}) };
 };
 
 // -----------------------------------------------------------------------------
