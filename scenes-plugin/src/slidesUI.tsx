@@ -327,15 +327,17 @@ const SlideList = () => {
             data-slide-open={slide.id}
             onClick={() => focusFrame(slide.id)}
             onKeyDown={(event) => {
-              if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.metaKey && !event.ctrlKey) {
+              // ← / → work like ↑ / ↓ (as when presenting)
+              const back = event.key === "ArrowUp" || event.key === "ArrowLeft";
+              if ((back || event.key === "ArrowDown" || event.key === "ArrowRight") && !event.metaKey && !event.ctrlKey) {
                 // not the canvas's arrow keys (they would nudge the selected frame)
                 event.preventDefault();
                 event.stopPropagation();
-                const delta = event.key === "ArrowUp" ? -1 : 1;
+                const delta = back ? -1 : 1;
                 if (event.altKey) {
-                  moveBy(slide.id, delta); // ⌥↑ / ⌥↓: one place up or down in the deck
+                  moveBy(slide.id, delta); // ⌥ + arrow: one place up or down in the deck
                 } else {
-                  goBy(slide.id, delta); // ↑ / ↓: the previous / next slide
+                  goBy(slide.id, delta); // arrow: the previous / next slide
                 }
               }
             }}
