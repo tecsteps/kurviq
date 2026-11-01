@@ -203,6 +203,27 @@ const SlideList = () => {
     }
   }, [slides]);
 
+  // the active slide's card comes into view, however it became active (selected on the canvas,
+  // the view, keys); not while dragging (the list scrolls by itself then)
+  useEffect(() => {
+    if (!activeId || dragId) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const card = document.querySelector<HTMLElement>(`[data-slide-open="${CSS.escape(activeId)}"]`)?.closest<HTMLElement>(".slides-card");
+      const body = card?.closest<HTMLElement>(".slides-body");
+      if (!card || !body) {
+        return;
+      }
+      const box = card.getBoundingClientRect();
+      const view = body.getBoundingClientRect();
+      if (box.top < view.top || box.bottom > view.bottom) {
+        card.scrollIntoView({ block: box.height > view.height ? "start" : "nearest", behavior: "smooth" });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeId]);
+
   /** ⌥↑ / ⌥↓ on a slide: one place up or down in the deck */
   const moveBy = (id: string, delta: number) => {
     const to = slides.findIndex((s) => s.id === id) + delta;
