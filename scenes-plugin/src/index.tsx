@@ -4,8 +4,11 @@
 
 import { exportToBlob, getNonDeletedElements, restoreElements, useExcalidrawAPI } from "@excalidraw/excalidraw";
 import {
+  DuplicateIcon,
   LoadIcon,
   PlusIcon,
+  TrashIcon,
+  pencilIcon,
   save,
 } from "@excalidraw/excalidraw/components/icons";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -374,8 +377,8 @@ const MobileSlidesButton = () => {
       onClick={() => api?.toggleSidebar({ name: SLIDES_SIDEBAR_NAME })}
     >
       <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
-        <rect x="2.5" y="3.5" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M10 13.5v3M6.5 16.5h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <rect x="2.5" y="3.5" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.25" />
+        <path d="M10 13.5v3M6.5 16.5h7" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
       </svg>
     </button>
   );
@@ -408,8 +411,8 @@ const ScenesTopRightUI = ({ isMobile }: { isMobile: boolean }) => {
         onClick={() => api?.toggleSidebar({ name: SLIDES_SIDEBAR_NAME })}
       >
         <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden>
-          <rect x="2.5" y="3.5" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M10 13.5v3M6.5 16.5h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          <rect x="2.5" y="3.5" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.25" />
+          <path d="M10 13.5v3M6.5 16.5h7" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
         </svg>
         Slides
       </button>
@@ -613,7 +616,7 @@ const SceneSwitcher = ({
                     aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`}
                     onClick={() => manage(item.name)}
                   >
-                    <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                       <path d="M13.5 3.5l3 3L7 16H4v-3z" />
                       <path d="M11.5 5.5l3 3" />
                     </svg>
@@ -960,9 +963,10 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
   const override = scenesController.sceneAutoSyncOverride(name);
   const value = override === undefined ? "default" : override ? "on" : "off";
   return (
+    <QuickTip tip="Auto-sync for this scene" label={false}>
     <label className="scenes-scene-sync">
-      This scene:
       <select
+        aria-label="Auto-sync for this scene"
         value={value}
         onChange={async (event) => {
           const next = event.target.value;
@@ -974,11 +978,12 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
         }}
         onKeyDown={(event) => event.stopPropagation()}
       >
-        <option value="default">auto-sync {global ? "on" : "off"} (default)</option>
-        <option value="on">always auto-sync</option>
-        <option value="off">manual only</option>
+        <option value="default">Auto-sync {global ? "on" : "off"} (default)</option>
+        <option value="on">Always auto-sync</option>
+        <option value="off">Manual save only</option>
       </select>
     </label>
+    </QuickTip>
   );
 };
 
@@ -1222,6 +1227,18 @@ const DriveFlyover = ({ onClose }: { onClose: () => void }) => {
   );
 };
 
+/** "save as": an outline floppy with a plus, in the stroke style of Excalidraw's menu icons */
+const saveAsIcon = (
+  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M10 16.667H4.583a1.25 1.25 0 0 1-1.25-1.25V4.583a1.25 1.25 0 0 1 1.25-1.25h8.334l3.75 3.75V10" />
+    <path d="M6.25 3.333v3.334h5V3.333M6.25 16.667v-4.167h4.167" />
+    <path d="M15 12.5v4.167M12.917 14.583h4.166" />
+  </svg>
+);
+
+/** states that need no words in the scene panel (the badge and its tooltip say it) */
+const QUIET_STATUS: string[] = ["synced", "live-drive", "live-server", "live-saving", "local", "local-only", "untitled"];
+
 /** the open scene: save, rename, share, sync mode, history */
 const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
   const state = useScenes();
@@ -1266,6 +1283,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
       onClose={onClose}
     >
       <section className="scenes-current">
+        {(busy || currentItem?.pendingRename || (withDrive && current !== null && !QUIET_STATUS.includes(status))) && (
         <div className="scenes-current__status">
           {busy === "saving"
             ? "Saving to Google Drive…"
@@ -1277,6 +1295,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
             ? "Saved in this browser"
             : currentStatusText(status, { autoSync: sceneAutoSync, offline: isOffline(state), empty })}
         </div>
+        )}
 
         {conflict && current !== null && <ConflictBox name={current} clashes={conflict.clashes.length} />}
 
@@ -1291,65 +1310,67 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
             onCancel={() => setPrompt(null)}
           />
         ) : (
-          <div className="scenes-row">
+          <div className="scenes-actions">
             {(withDrive || current === null) && (
-              <button
-                type="button"
-                className="scenes-btn scenes-btn--primary"
-                disabled={isBusy || !!conflict}
-                title={status === "local-only" ? "Put this scene in Drive; it is synced from then on" : "Push to Drive now"}
-                onClick={() =>
-                  current === null
-                    ? setPrompt({ mode: "save" })
-                    : status === "local-only"
-                    ? scenesController.setLocalOnly(current, false).then(() => scenesController.save()).catch(ignore)
-                    : scenesController.save().catch(ignore)
-                }
+              <QuickTip
+                tip={current === null ? "Save: give it a name" : status === "local-only" ? "Put it in Google Drive (synced from then on)" : "Save to Google Drive now"}
+                label={false}
               >
-                {save} {status === "local-only" ? "Publish" : "Save"}
-              </button>
+                <button
+                  type="button"
+                  className="scenes-btn scenes-btn--primary"
+                  disabled={isBusy || !!conflict}
+                  onClick={() =>
+                    current === null
+                      ? setPrompt({ mode: "save" })
+                      : status === "local-only"
+                      ? scenesController.setLocalOnly(current, false).then(() => scenesController.save()).catch(ignore)
+                      : scenesController.save().catch(ignore)
+                  }
+                >
+                  {save} {status === "local-only" ? "Publish" : "Save"}
+                </button>
+              </QuickTip>
             )}
             {current !== null && (
-              <button type="button" className="scenes-btn" disabled={isBusy} onClick={() => setPrompt({ mode: "saveAs" })}>
-                Save as…
-              </button>
+              <QuickTip tip="Save as… (a copy under a new name)" label={false}>
+                <button type="button" className="scenes-icon-btn" aria-label="Save as" disabled={isBusy} onClick={() => setPrompt({ mode: "saveAs" })}>
+                  {saveAsIcon}
+                </button>
+              </QuickTip>
             )}
-            <button type="button" className="scenes-btn" disabled={isBusy} onClick={() => setPrompt({ mode: "new" })}>
-              {PlusIcon} New
-            </button>
-          </div>
-        )}
-
-        {current !== null && !prompt && currentItem && (
-          <div className="scenes-current__manage">
-            <QuickTip tip="Give this scene a new name (its link changes too)" label={false}>
-              <button type="button" className="scenes-link" disabled={isBusy} onClick={() => setPrompt({ mode: "rename", scene: current })}>
-                Rename
+            <QuickTip tip="New scene" label={false}>
+              <button type="button" className="scenes-icon-btn" aria-label="New scene" disabled={isBusy} onClick={() => setPrompt({ mode: "new" })}>
+                {PlusIcon}
               </button>
             </QuickTip>
-            <QuickTip tip="Make a copy of this scene under a new name" label={false}>
-              <button type="button" className="scenes-link" disabled={isBusy} onClick={() => setPrompt({ mode: "duplicate", scene: current })}>
-                Duplicate
-              </button>
-            </QuickTip>
-            <QuickTip
-              tip={
-                currentItem.inDrive
-                  ? "Delete this scene, also in Drive (it goes to Drive's trash)"
-                  : "Delete this scene from this browser"
-              }
-              label={false}
-            >
-              <button
-                type="button"
-                className="scenes-link scenes-link--danger"
-                disabled={isBusy}
-                onClick={() => confirmDelete(currentItem) && scenesController.remove(current).catch(ignore)}
-              >
-                Delete
-              </button>
-            </QuickTip>
-            <SceneSharing item={currentItem} disabled={isBusy} />
+            {current !== null && currentItem && (
+              <>
+                <QuickTip tip="Rename" label={false}>
+                  <button type="button" className="scenes-icon-btn" aria-label="Rename" disabled={isBusy} onClick={() => setPrompt({ mode: "rename", scene: current })}>
+                    {pencilIcon}
+                  </button>
+                </QuickTip>
+                <QuickTip tip="Duplicate" label={false}>
+                  <button type="button" className="scenes-icon-btn" aria-label="Duplicate" disabled={isBusy} onClick={() => setPrompt({ mode: "duplicate", scene: current })}>
+                    {DuplicateIcon}
+                  </button>
+                </QuickTip>
+                <SceneSharing item={currentItem} disabled={isBusy} iconOnly />
+                <span className="scenes-actions__spacer" />
+                <QuickTip tip={currentItem.inDrive ? "Delete (also in Drive: goes to its trash)" : "Delete"} label={false}>
+                  <button
+                    type="button"
+                    className="scenes-icon-btn scenes-icon-btn--danger"
+                    aria-label="Delete"
+                    disabled={isBusy}
+                    onClick={() => confirmDelete(currentItem) && scenesController.remove(current).catch(ignore)}
+                  >
+                    {TrashIcon}
+                  </button>
+                </QuickTip>
+              </>
+            )}
           </div>
         )}
 

@@ -452,8 +452,8 @@ const CopyLink = ({
           })
         }
       >
-        {icon}
-        {copied ? "Copied ✓" : label}
+        {copied && !label ? "✓" : icon}
+        {label && (copied ? "Copied ✓" : label)}
       </button>
     </QuickTip>
   );
@@ -477,7 +477,7 @@ const LINK_ICON = (
       d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9m1.3 3.9a3 3 0 0 0-4.2 0l-2.6 2.6a3 3 0 0 0 4.2 4.2l.9-.9"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth="1.25"
       strokeLinecap="round"
     />
   </svg>
@@ -706,7 +706,7 @@ const ShareDialog = ({ name }: { name: string }) => {
 };
 
 /** in the current scene's actions: Share… and the link */
-export const SceneSharing = ({ item, disabled }: { item: SceneListItem; disabled?: boolean }) => {
+export const SceneSharing = ({ item, iconOnly }: { item: SceneListItem; disabled?: boolean; iconOnly?: boolean }) => {
   useConnection();
   if (item.name === null || notShareable(item, "scene")) {
     return null;
@@ -716,7 +716,9 @@ export const SceneSharing = ({ item, disabled }: { item: SceneListItem; disabled
     <>
       <CopyLink
         link={item.fileId ? sceneLink(item.fileId, name) : null}
-        label="Copy link"
+        label={iconOnly ? "" : "Copy link"}
+        icon={iconOnly ? LINK_ICON : undefined}
+        className={iconOnly ? "scenes-icon-btn" : undefined}
         tip={item.fileId ? `Copies the link to this scene (${item.public ? "anyone with it can view it" : "only people you share it with can open it"})` : "Not in Google Drive yet: you can copy its link once it has synced"}
       />
     </>
@@ -1146,7 +1148,7 @@ export const McpButton = () => {
       <QuickTip tip={key ? "Connect an AI agent (MCP). Agent access is on in this browser." : "Connect an AI agent (MCP)"} label={false}>
         <button type="button" className="scenes-pill scenes-slides-btn" onClick={() => setOpen(true)}>
           <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden>
-            <path d="M7 3v4M13 3v4M5 7h10v3a5 5 0 0 1-10 0V7zM10 15v3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M7 3v4M13 3v4M5 7h10v3a5 5 0 0 1-10 0V7zM10 15v3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           MCP
           {key && <span className="kq-dot" />}

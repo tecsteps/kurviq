@@ -16,7 +16,7 @@ import { resetTemplateChanges, templateChanges } from "./slides";
 type Bar = { x: number; y: number; changes: Array<[string, string[]]> };
 
 const ResetIcon = () => (
-  <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+  <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M4 10a6 6 0 1 0 1.8-4.3" />
     <path d="M4 3.5v3.2h3.2" />
   </svg>

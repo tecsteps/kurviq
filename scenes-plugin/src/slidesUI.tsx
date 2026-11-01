@@ -373,7 +373,7 @@ const SlideList = () => {
                   aria-pressed={slide.template}
                   onClick={() => patchSlideData(api(), new Map([[slide.id, { template: slide.template ? false : undefined }]]))}
                 >
-                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden>
                     <rect x="2.5" y="4" width="15" height="12" rx="1.5" />
                     <path d="M5 13h10" />
                     {!slide.template && <path d="M3 3l14 14" />}
@@ -384,7 +384,7 @@ const SlideList = () => {
             {templateId && slide.template && (
               <QuickTip tip="Back to template: header, footer, logo… as in the template again, and the deck's fonts and colors on this slide (undo with ⌘Z)" label={false}>
                 <button type="button" aria-label={`Slide ${slide.index + 1} back to template`} onClick={() => resetSlides([slide.id])}>
-                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d="M4 10a6 6 0 1 0 1.8-4.3" />
                     <path d="M4 3.5v3.2h3.2" />
                   </svg>
@@ -402,7 +402,7 @@ const SlideList = () => {
                   }
                 }}
               >
-                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden>
                   <rect x="6.5" y="6.5" width="10" height="10" rx="1.5" />
                   <path d="M13.5 3.5h-8a2 2 0 0 0-2 2v8" />
                 </svg>
@@ -414,7 +414,7 @@ const SlideList = () => {
                 aria-label={`Delete slide ${slide.index + 1}`}
                 onClick={() => window.confirm(`Delete slide ${slide.index + 1} “${slide.title}” with everything on it?`) && deleteSlides(api(), [slide.id])}
               >
-                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden>
                   <path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5l.8 11h7.4l.8-11" />
                 </svg>
               </button>
@@ -835,7 +835,7 @@ export const editTemplate = () => {
 };
 
 const icon = (children: ReactNode) => (
-  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     {children}
   </svg>
 );
@@ -856,8 +856,8 @@ const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boo
     label: "Clicks",
     icon: icon(
       <>
-        <path d="M7.5 3.5l.6 2M3.5 7.5l2 .6M4.6 4.6l1.5 1.5" />
-        <path d="M8.5 8.5l7.5 3-3.2 1.3-1.3 3.2z" />
+        <path d="M7.5 2.917v1.666M3.75 4.583l1.25 1.25M2.917 8.333h1.666" />
+        <path d="M8.333 8.333l7.5 2.917-3.333 1.25-1.25 3.333z" />
       </>,
     ),
   },

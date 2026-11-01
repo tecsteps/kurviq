@@ -676,10 +676,52 @@
   @media (hover: none) {
   }
 
-  .scenes-current__manage {
+  // the scene panel's actions: Save, then icons (tooltips name them), Delete at the end
+  .scenes-actions {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem 1rem;
+    align-items: center;
+    gap: 0.2rem;
+
+    .scenes-btn--primary {
+      margin-right: 0.3rem;
+    }
+  }
+
+  .scenes-actions__spacer {
+    flex: 1;
+  }
+
+  .scenes-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: none;
+    border-radius: var(--border-radius-md, 6px);
+    background: none;
+    color: var(--icon-fill-color, var(--text-primary-color));
+    cursor: pointer;
+
+    svg {
+      width: 1.15rem;
+      height: 1.15rem;
+    }
+
+    &:hover:not(:disabled):not([aria-disabled]) {
+      background: var(--button-hover-bg, var(--color-surface-high));
+    }
+
+    &:disabled,
+    &[aria-disabled] {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    &--danger {
+      color: var(--color-danger-darkest, #c92a2a);
+    }
   }
 
   .scenes-link--danger {

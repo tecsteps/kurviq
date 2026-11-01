@@ -99,7 +99,7 @@ const useNameSpots = (enabled: boolean) => {
 
 /** the slide in the slide list */
 const ListIcon = () => (
-  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="3" y="3.5" width="5" height="4" rx="1" />
     <rect x="3" y="12.5" width="5" height="4" rx="1" />
     <path d="M11 5.5h6M11 14.5h6" />
@@ -107,7 +107,7 @@ const ListIcon = () => (
 );
 
 const PlayIcon = () => (
-  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
+  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" aria-hidden>
     <path d="M6.5 4.5v11l9-5.5z" />
   </svg>
 );
@@ -130,14 +130,14 @@ const iconsAt = (spot: Spot, width: number) => {
 };
 
 const PenIcon = () => (
-  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M4 16h3l8.5-8.5a2.1 2.1 0 0 0-3-3L4 13z" />
     <path d="M11.5 5.5l3 3" />
   </svg>
 );
 
 const NotesIcon = ({ filled }: { filled: boolean }) => (
-  <svg viewBox="0 0 20 20" width="15" height="15" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
+  <svg viewBox="0 0 20 20" width="15" height="15" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" aria-hidden>
     <path d="M4 3.5h12v9.5l-4 3.5H4z" fillOpacity={filled ? 0.18 : undefined} />
     <path d="M7 7.5h6M7 10.5h4" />
   </svg>
