@@ -1,4 +1,4 @@
-// an agent's edit arriving: glow, ripple and sparkles around what it added / changed / deleted (agentGlow.ts)
+// an agent's edit arriving: old looks morphing away, a soft glow around what changed (agentGlow.ts)
 
 .kq-agent-glow {
   position: fixed;
@@ -7,10 +7,15 @@
   pointer-events: none;
 }
 
+.kq-agent-glow__ghost {
+  position: fixed;
+  transform-origin: top left;
+}
+
 .kq-agent-glow__box {
   position: fixed;
   border-radius: 10px;
-  animation: kq-agent-glow 2.6s ease-out forwards;
+  animation: kq-agent-glow 2.2s ease-out forwards;
 
   &--added,
   &--changed {
@@ -19,15 +24,6 @@
       0 0 24px 6px rgba(105, 101, 219, 0.35);
     background: rgba(105, 101, 219, 0.08);
 
-    // a ripple ring pulsing out, twice
-    &::after {
-      content: "";
-      position: absolute;
-      inset: -2px;
-      border: 2px solid rgba(105, 101, 219, 0.7);
-      border-radius: 12px;
-      animation: kq-agent-ripple 1.1s ease-out 2;
-    }
   }
 
   &--deleted {
@@ -36,16 +32,6 @@
   }
 }
 
-.kq-agent-glow__spark {
-  position: absolute;
-  margin: -0.45rem 0 0 -0.35rem;
-  color: #8b87f0;
-  font-size: 1rem;
-  line-height: 1;
-  opacity: 0;
-  text-shadow: 0 0 6px rgba(139, 135, 240, 0.9);
-  animation: kq-agent-spark 0.9s ease-out forwards;
-}
 
 .kq-agent-glow__tag {
   position: fixed;
@@ -58,7 +44,7 @@
   font-weight: 600;
   white-space: nowrap;
   box-shadow: 0 2px 10px rgba(105, 101, 219, 0.45);
-  animation: kq-agent-tag 2.6s ease-out forwards;
+  animation: kq-agent-tag 2.2s ease-out forwards;
 }
 
 @keyframes kq-agent-glow {
@@ -81,30 +67,7 @@
   }
 }
 
-@keyframes kq-agent-ripple {
-  0% {
-    opacity: 0.8;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.12);
-  }
-}
 
-@keyframes kq-agent-spark {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0) scale(0.4) rotate(0deg);
-  }
-  25% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(var(--dx), var(--dy)) scale(1) rotate(90deg);
-  }
-}
 
 @keyframes kq-agent-tag {
   0% {
@@ -128,9 +91,5 @@
   .kq-agent-glow__tag {
     animation-duration: 3s;
     animation-timing-function: linear;
-  }
-
-  .kq-agent-glow__box::after {
-    animation: none;
   }
 }
