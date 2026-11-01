@@ -9,12 +9,17 @@
 //                          for 5 s: open viewers poll it and reload on change
 //   /s/<fileId>/<slug>     the app, with the scene's title for link previews
 //                          (Slack, Teams, …) and the scene preloaded
+//   /pub/<name>            the same for a short link (./pubLinks.ts)
 //
 // Scenes shared only with people are never fetched here: the visitor's
 // browser reads them from Drive with the visitor's own sign-in.
 
+import { pubNameFromPath } from "../../scenes-plugin/src/online/pubName";
+
 import { googleUrls } from "./google";
 import type { GoogleEnv } from "./google";
+import { pubFile } from "./pubLinks";
+import type { PubEnv } from "./pubLinks";
 
 export type SharedEnv = GoogleEnv & {
   /** API key (Drive API only) for files shared "anyone with the link" */
@@ -115,30 +120,43 @@ export const handlePublicApi = (request: Request, env: SharedEnv, ctx: Execution
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 
-/** /s/<fileId>/<slug>: the app page, titled after the scene (if it is public) */
+/**
+ * /s/<fileId>/<slug> and the short link /pub/<name> (./pubLinks.ts): the app
+ * page, titled after the scene (if it is public). A short link's page names
+ * its file (meta kurviq-pub), so the app needs no lookup of its own.
+ */
 export const handleSharedPage = async (
   request: Request,
-  env: SharedEnv,
+  env: SharedEnv & PubEnv,
   assets: Fetcher,
   ctx: ExecutionContext,
 ): Promise<Response | null> => {
   const url = new URL(request.url);
   const match = url.pathname.match(/^\/s\/([^/]+)(?:\/[^/]*)?\/?$/);
-  if (!match || request.method !== "GET") {
+  const pubName = pubNameFromPath(url.pathname);
+  if ((!match && !pubName) || request.method !== "GET") {
     return null;
   }
   const page = await assets.fetch(new Request(new URL("/", url), { headers: request.headers }));
-  if (!FILE_ID_RE.test(match[1]) || !(page.headers.get("Content-Type") || "").includes("text/html")) {
+  const fileId = match ? match[1] : await pubFile(env, pubName!).catch(() => null);
+  if (!fileId || !FILE_ID_RE.test(fileId) || !(page.headers.get("Content-Type") || "").includes("text/html")) {
+    if (pubName && !fileId) {
+      const missing = new HTMLRewriter()
+        .on("head", { element: (el) => el.append(`<meta name="robots" content="noindex">`, { html: true }) })
+        .transform(page);
+      const response = new Response(missing.body, missing);
+      response.headers.set("Cache-Control", "no-cache");
+      return response;
+    }
     return page;
   }
-  const fileId = match[1];
   const scene = await publicScene(url.origin, fileId, env, ctx);
   const name = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-Name") || "") : "";
   const title = name ? `${name} · Kurviq` : `A shared scene on Kurviq`;
   const description = name
     ? `A drawing made with Kurviq. Open it in your browser: no sign-up.`
     : `Shared with you on Kurviq. Sign in with Google to see it, if it was shared with you.`;
-  const link = `${url.origin}${url.pathname}`;
+  const link = pubName ? `${url.origin}/pub/${pubName}` : `${url.origin}${url.pathname}`;
   const content = (value: string) => ({ element: (el: Element) => el.setAttribute("content", value) });
   const rewritten = new HTMLRewriter()
     .on("title", { element: (el) => el.setInnerContent(title) })
@@ -149,9 +167,10 @@ export const handleSharedPage = async (
     .on("head", {
       element: (el) =>
         el.append(
-          name
-            ? `<link rel="preload" href="${escapeHtml(apiPath(fileId))}" as="fetch" crossorigin="anonymous">`
-            : `<meta name="robots" content="noindex">`,
+          (pubName ? `<meta name="kurviq-pub" content="${escapeHtml(`${pubName} ${fileId}`)}">` : "") +
+            (name
+              ? `<link rel="preload" href="${escapeHtml(apiPath(fileId))}" as="fetch" crossorigin="anonymous">`
+              : `<meta name="robots" content="noindex">`),
           { html: true },
         ),
     })

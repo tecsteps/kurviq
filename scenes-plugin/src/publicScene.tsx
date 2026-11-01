@@ -124,7 +124,7 @@ const editShared = async (fileId: string, name: string) => {
     // its name for the pill while the scene loads after the reload
     sessionStorage.setItem(OPENING_KEY, JSON.stringify({ fileId, name }));
   } catch {}
-  enterSpace(fileId, window.location.pathname.startsWith("/s/") ? window.location.pathname : `/s/${fileId}/${encodeURIComponent(name)}`);
+  enterSpace(fileId, /^\/(s|pub)\//.test(window.location.pathname) ? window.location.pathname : `/s/${fileId}/${encodeURIComponent(name)}`);
 };
 
 const parseScene = async (json: string, access: { public?: boolean; canEdit?: boolean }): Promise<Scene> => {

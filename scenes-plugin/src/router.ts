@@ -2,17 +2,41 @@
 // locally if it doesn't exist yet) and the URL follows the current scene.
 // Two more kinds open in a viewer above the editor instead (see
 // publicScene.tsx): Kurviq's own (kurviq.com/features) and shared ones,
-// kurviq.com/s/<fileId>/<name> (a Google Drive file). A shared scene this tab
-// edits (its space, see storage.ts) opens in the editor, at the same URL.
+// kurviq.com/s/<fileId>/<name> (a Google Drive file), also through a short
+// link kurviq.com/pub/<name>. A shared scene this tab edits (its space, see
+// storage.ts) opens in the editor, at the same URL.
 
 import { scenesController } from "./controller";
-import { sharedFileId } from "./online/drive";
+import { pubNameHolder, sharedFileId } from "./online/drive";
+import { pubNameFromPath } from "./online/pubName";
 import { isPublicScene, publicScene } from "./publicScene";
 import { deck } from "./deck";
 import { getSlides } from "./slides";
 
-/** /s/<fileId>/<name>: a shared scene (the name only makes the link readable) */
+/** short links: name → file id (null: none). The page names its file (meta kurviq-pub, see online/worker/shared.ts) */
+const pubFiles = new Map<string, string | null>();
+{
+  const [name, fileId] = (document.querySelector('meta[name="kurviq-pub"]')?.getAttribute("content") ?? "").split(" ");
+  if (name && fileId) {
+    pubFiles.set(name, fileId);
+  }
+}
+
+/** a short link the page didn't name (offline start, history): asked for */
+const resolvePub = async () => {
+  const name = pubNameFromPath(window.location.pathname);
+  if (name && !pubFiles.has(name)) {
+    pubFiles.set(name, await pubNameHolder(name).catch(() => null));
+  }
+};
+
+/** /s/<fileId>/<name> or /pub/<name>: a shared scene (the name only makes the link readable) */
 const sharedFromPath = (): { fileId: string; name: string } | null => {
+  const pub = pubNameFromPath(window.location.pathname);
+  if (pub) {
+    const fileId = pubFiles.get(pub);
+    return fileId ? { fileId, name: pub.replace(/-/g, " ") } : null;
+  }
   const match = window.location.pathname.match(/^\/s\/([\w-]{10,200})(?:\/([^/]*))?\/?$/);
   if (!match) {
     return null;
@@ -48,7 +72,7 @@ const showShared = () => {
 };
 
 const sceneFromPath = (): string | null => {
-  if (sharedFromPath()) {
+  if (sharedFromPath() || pubNameFromPath(window.location.pathname)) {
     return null;
   }
   const raw = window.location.pathname.replace(/^\/+|\/+$/g, "");
@@ -63,8 +87,12 @@ const sceneFromPath = (): string | null => {
 };
 
 const pathFor = (name: string | null) => {
-  // a shared scene's space keeps its link
+  // a shared scene's space keeps its link (the short one, if it came through that)
   if (sharedFileId) {
+    const pub = pubNameFromPath(window.location.pathname);
+    if (pub && pubFiles.get(pub) === sharedFileId) {
+      return name === null ? "/" : window.location.pathname;
+    }
     return name === null ? "/" : `/s/${sharedFileId}/${encodeURIComponent(name)}`;
   }
   return name === null ? "/" : `/${encodeURIComponent(name)}`;
@@ -189,6 +217,7 @@ export const connectRouter = async () => {
   scenesController.subscribe(syncTitle);
   publicScene.subscribe(syncTitle);
 
+  await resolvePub();
   const target = sceneFromPath();
   // right away, the editor loads underneath
   if (!showShared() && isPublicScene(target)) {
@@ -242,7 +271,8 @@ export const connectRouter = async () => {
     syncUrl("push");
   });
 
-  window.addEventListener("popstate", () => {
+  window.addEventListener("popstate", async () => {
+    await resolvePub();
     if (showShared()) {
       return;
     }

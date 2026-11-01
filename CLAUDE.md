@@ -62,7 +62,7 @@ An hour or day without any activity has no rows (read it as 0).
 
 | table | metric | dim | meaning |
 |---|---|---|---|
-| hourly | `views` | `app` (/ and any /<scene>), `shared` (/s/… viewer), `features` (Kurviq's own public scene), `imprint`, `privacy`, `terms`, `contact` | page loads that reached the Worker, by entry (see the service worker note) |
+| hourly | `views` | `app` (/ and any /<scene>), `shared` (/s/… and /pub/… viewer), `features` (Kurviq's own public scene), `imprint`, `privacy`, `terms`, `contact` | page loads that reached the Worker, by entry (see the service worker note) |
 | hourly | `views_country` | ISO country (`XX` unknown, `T1` Tor) | page loads (all entries) by country |
 | hourly | `views_device` | `desktop`, `mobile`, `tablet` | page loads by device class |
 | hourly | `public_reads` | `all` | public scenes read through `/api/public/<id>` (viewers and link previews; version polls not counted; cache hits included) |

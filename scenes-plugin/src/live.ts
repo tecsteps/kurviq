@@ -20,6 +20,7 @@ import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from
 
 import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
 import { scenesController } from "./controller";
+import { claimPubName, linkAccessOf, listPermissions, loadPubName, pubLink, releasePubName, setLinkAccess, shareLink } from "./online/drive";
 import {
   editLocalScene,
   editOpenScene,
@@ -58,6 +59,7 @@ type Command =
   | { type: "create"; name: string }
   | { type: "save"; name?: string }
   | { type: "local-only"; name: string; on: boolean }
+  | { type: "short-link"; name: string; shortName?: string | null; access?: "restricted" | "reader" | "writer" }
   | { type: "convert"; elements: any[]; deck?: string }
   | { type: "deck-check"; elements: any[]; files?: Record<string, any>; kurviqFonts?: unknown; deck: string; background?: string }
   | {
@@ -723,6 +725,32 @@ const runCommand = async (command: Command) => {
     case "local-only":
       await scenesController.setLocalOnly(command.name, command.on);
       return status();
+    case "short-link": {
+      // a scene's links: kurviq.com/pub/<short name> (unique on Kurviq) and the long one; optionally who may open them
+      const fileId = await scenesController.fileForSharing(command.name);
+      if (command.access) {
+        await setLinkAccess(fileId, command.access);
+      }
+      const before = await loadPubName(fileId);
+      if (command.shortName === null && before) {
+        await releasePubName(fileId, before);
+      } else if (command.shortName && command.shortName !== before) {
+        await claimPubName(fileId, command.shortName);
+      }
+      const short = command.shortName === undefined ? before : command.shortName;
+      const access = linkAccessOf(await listPermissions(fileId));
+      const link = short ? pubLink(short) : shareLink(fileId, command.name);
+      return {
+        scene: command.name,
+        shortLink: short ? pubLink(short) : null,
+        longLink: shareLink(fileId, command.name),
+        presentLink: `${link}?present`,
+        generalAccess: access,
+        ...(access === "restricted"
+          ? { note: "Only people the scene is shared with can open these links (signed in with Google). For everyone: generalAccess \"reader\", only if the user wants it public." }
+          : {}),
+      };
+    }
     case "open":
       await scenesController.open(command.name);
       return status();

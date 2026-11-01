@@ -1075,6 +1075,94 @@ export const shareLink = (fileId: string, name: string) => {
 };
 
 // -----------------------------------------------------------------------------
+// short links: kurviq.com/pub/<name> (online/worker/pubLinks.ts), besides the long link
+// -----------------------------------------------------------------------------
+
+/** kurviq.com/pub/<name> */
+export const pubLink = (name: string) => `${IS_LOCAL_INSTALL ? AUTH_BASE : window.location.origin}/pub/${name}`;
+
+/** the short names known in this tab, by file (null: none); kept fresh by the calls below */
+const pubNames = new Map<string, string | null>();
+const pubListeners = new Set<() => void>();
+const setPubName = (fileId: string, name: string | null) => {
+  pubNames.set(fileId, name);
+  pubListeners.forEach((listener) => listener());
+};
+
+export const pubNameStore = {
+  subscribe: (listener: () => void) => {
+    pubListeners.add(listener);
+    return () => {
+      pubListeners.delete(listener);
+    };
+  },
+  /** undefined: not asked yet */
+  get: (fileId: string) => pubNames.get(fileId),
+};
+
+const pubCall = async (path: string, init: RequestInit = {}) => {
+  let res: Response;
+  try {
+    res = await fetch(`${AUTH_BASE}/api/pub${path}`, { credentials: "omit", ...init });
+  } catch {
+    throw offlineError("Kurviq server not reachable");
+  }
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, body: body as { fileId?: string; name?: string | null; error?: string; code?: string } };
+};
+
+/** a file's short name (null: none) */
+export const loadPubName = async (fileId: string): Promise<string | null> => {
+  const { status, body } = await pubCall(`?file=${encodeURIComponent(fileId)}`);
+  if (status !== 200) {
+    throw httpError(status, body.error || `Kurviq server error (${status})`);
+  }
+  setPubName(fileId, body.name ?? null);
+  return body.name ?? null;
+};
+
+/** the file a short name stands for (null: free) */
+export const pubNameHolder = async (name: string): Promise<string | null> => {
+  const { status, body } = await pubCall(`/${encodeURIComponent(name)}`);
+  if (status === 404) {
+    return null;
+  }
+  if (status !== 200 || !body.fileId) {
+    throw httpError(status, body.error || `Kurviq server error (${status})`);
+  }
+  return body.fileId;
+};
+
+const withToken = async () => {
+  const token = await getToken();
+  if (!token) {
+    throw notConnectedError();
+  }
+  return { Authorization: `Bearer ${token}` };
+};
+
+/** give the file this short name (its old one is freed); Kurviq's server asks Drive whether the user may edit it */
+export const claimPubName = async (fileId: string, name: string) => {
+  const { status, body } = await pubCall("", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await withToken()) },
+    body: JSON.stringify({ fileId, name }),
+  });
+  if (status !== 200) {
+    throw httpError(status, body.error || `Kurviq server error (${status})`);
+  }
+  setPubName(fileId, name);
+};
+
+export const releasePubName = async (fileId: string, name: string) => {
+  const { status, body } = await pubCall(`/${encodeURIComponent(name)}`, { method: "DELETE", headers: await withToken() });
+  if (status !== 200) {
+    throw httpError(status, body.error || `Kurviq server error (${status})`);
+  }
+  setPubName(fileId, null);
+};
+
+// -----------------------------------------------------------------------------
 // scenes others shared with this user (each opens in a space of its own)
 // -----------------------------------------------------------------------------
 

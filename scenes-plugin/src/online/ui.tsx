@@ -18,12 +18,18 @@ import {
   FOLDER_NAME,
   changeRole,
   checkConnection,
+  claimPubName,
   connectGoogle,
   connection,
   disconnectGoogle,
   enterSpace,
   linkAccessOf,
   listPermissions,
+  loadPubName,
+  pubLink,
+  pubNameHolder,
+  pubNameStore,
+  releasePubName,
   removeAccess,
   setLinkAccess,
   shareLink,
@@ -32,6 +38,7 @@ import {
 } from "./drive";
 import { pairing } from "./pairing";
 import { liveSync } from "./liveSync";
+import { PUB_MAX, pubNameProblem, toPubName } from "./pubName";
 
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "../../../scenes-mcp/feedback.mjs";
 import type { SceneListItem } from "../controller";
@@ -418,9 +425,22 @@ export const DrivePanel = () => {
 // sharing: Drive's permissions of a scene's file, and its links
 // -----------------------------------------------------------------------------
 
-/** kurviq.com/s/<fileId>/<name> (?present: starts presenting) */
-const sceneLink = (fileId: string, name: string, { present = false } = {}) =>
-  `${shareLink(fileId, name)}${present ? "?present" : ""}`;
+/** kurviq.com/pub/<short name> if the scene has one, else kurviq.com/s/<fileId>/<name> (?present: starts presenting) */
+const sceneLink = (fileId: string, name: string, { present = false } = {}) => {
+  const short = pubNameStore.get(fileId);
+  return `${short ? pubLink(short) : shareLink(fileId, name)}${present ? "?present" : ""}`;
+};
+
+/** a file's short name, asked for once per tab (undefined while not known) */
+const usePubName = (fileId: string | null | undefined) => {
+  const name = useSyncExternalStore(pubNameStore.subscribe, () => (fileId ? pubNameStore.get(fileId) : undefined));
+  useEffect(() => {
+    if (fileId && pubNameStore.get(fileId) === undefined) {
+      loadPubName(fileId).catch(() => {});
+    }
+  }, [fileId]);
+  return name;
+};
 
 /** a link button that copies and says so; `tip` says who can open the link (null: nothing to share yet) */
 const CopyLink = ({
@@ -516,6 +536,205 @@ const LINK_HINT: Record<LinkAccess, string> = {
   writer: "Anyone who has the link can view it; with a Google account they can also change it.",
 };
 
+/** the short-link dialog over the share dialog: pick a name, see right away whether it is free */
+const ShortLinkDialog = ({
+  fileId,
+  sceneName,
+  current,
+  restricted,
+  onClose,
+}: {
+  fileId: string;
+  sceneName: string;
+  current: string | null;
+  restricted: boolean;
+  onClose: () => void;
+}) => {
+  const [value, setValue] = useState(current ?? toPubName(sceneName));
+  // free / taken (by another scene) / this scene's own / being asked / couldn't ask
+  const [check, setCheck] = useState<{ name: string; state: "free" | "taken" | "own" | "checking" | "unknown" } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // a hyphen at the end is where the next word starts while typing: left out
+  const wanted = value.replace(/-+$/, "");
+  const problem = pubNameProblem(wanted);
+
+  useEffect(() => {
+    if (problem) {
+      setCheck(null);
+      return;
+    }
+    setCheck({ name: wanted, state: "checking" });
+    const timer = window.setTimeout(() => {
+      pubNameHolder(wanted)
+        .then((holder) => setCheck({ name: wanted, state: holder === null ? "free" : holder === fileId ? "own" : "taken" }))
+        .catch(() => setCheck({ name: wanted, state: "unknown" }));
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [wanted, problem, fileId]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    // capture: before the share dialog's own Escape
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  const state = check?.name === wanted ? check.state : null;
+  const canSave = !problem && !busy && (state === "free" || state === "unknown");
+  const save = async () => {
+    if (!canSave) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await claimPubName(fileId, wanted);
+      onClose();
+    } catch (err: any) {
+      setError(err.message);
+      if (err.status === 409) {
+        setCheck({ name: wanted, state: "taken" });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const status = problem
+    ? { text: wanted ? problem : "Type a name", tone: "muted" }
+    : state === "free"
+      ? { text: "✓ Available", tone: "ok" }
+      : state === "taken"
+        ? { text: "Already taken: try another name", tone: "bad" }
+        : state === "own"
+          ? { text: "This is the scene's short link already", tone: "muted" }
+          : state === "unknown"
+            ? { text: "Could not check right now: it is checked when you save", tone: "muted" }
+            : { text: "Checking…", tone: "muted" };
+
+  return (
+    <div className="kq-overlay kq-overlay--top" onClick={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="kq-dialog kq-dialog--narrow kq-share kq-pub" role="dialog" aria-modal="true" aria-labelledby="kq-pub-title">
+        <div className="kq-dialog__head">
+          <h2 id="kq-pub-title">{current ? "Change the short link" : "Make a short link"}</h2>
+          <button type="button" className="kq-close" aria-label="Close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <p className="kq-muted">A short, readable address for "{sceneName}". The long link keeps working.</p>
+        <form
+          className="kq-pub__form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+        >
+          <label className={clsx("kq-pub__field", status.tone === "bad" && "kq-pub__field--bad", status.tone === "ok" && "kq-pub__field--ok")}>
+            <span className="kq-pub__prefix">{pubLink("").replace(/^https?:\/\//, "")}</span>
+            <input
+              autoFocus
+              value={value}
+              maxLength={PUB_MAX}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoComplete="off"
+              aria-label="Short name"
+              aria-describedby="kq-pub-status"
+              onChange={(event) =>
+                // typed as it will be: lowercase, spaces and other characters become hyphens
+                setValue(
+                  event.target.value
+                    .normalize("NFKD")
+                    .replace(/[\u0300-\u036f]/g, "")
+                    .toLowerCase()
+                    .replace(/[^a-z0-9-]+/g, "-")
+                    .replace(/-{2,}/g, "-")
+                    .replace(/^-+/, "")
+                    .slice(0, PUB_MAX),
+                )
+              }
+              onFocus={(event) => event.target.select()}
+            />
+          </label>
+          <div id="kq-pub-status" className={`kq-pub__status kq-pub__status--${status.tone}`} role="status">
+            {status.text}
+          </div>
+          <p className="kq-muted kq-pub__rules">
+            Lowercase letters, digits and hyphens, {3} to {PUB_MAX} characters. Short links are unique on Kurviq: first
+            come, first served.
+          </p>
+          {restricted && (
+            <p className="kq-notice">
+              Only people you shared the scene with can open it. For everyone, set General access to "Anyone with the
+              link can view".
+            </p>
+          )}
+          {error && <p className="scenes-error">{error}</p>}
+          <div className="kq-pub__actions">
+            <button type="button" className="scenes-btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="scenes-btn scenes-btn--primary" aria-disabled={!canSave || undefined} disabled={busy}>
+              {busy ? "Saving…" : current ? "Save" : "Make short link"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+/** the share dialog's short link: kurviq.com/pub/<name> with copy / change / remove, or a button to make one */
+const ShortLink = ({ fileId, sceneName, restricted }: { fileId: string; sceneName: string; restricted: boolean }) => {
+  const name = usePubName(fileId);
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (name === undefined) {
+    return null;
+  }
+  return (
+    <div className="kq-pub__row">
+      <span className="kq-field">Short link</span>
+      {name ? (
+        <div className="scenes-row">
+          <code className="kq-pub__link">{pubLink(name).replace(/^https?:\/\//, "")}</code>
+          <CopyLink className="scenes-btn" link={pubLink(name)} label="Copy" tip="Copies the short link" />
+          <button type="button" className="scenes-link" onClick={() => setEditing(true)}>
+            Change
+          </button>
+          <button
+            type="button"
+            className="scenes-link scenes-link--danger"
+            onClick={() => {
+              setError(null);
+              releasePubName(fileId, name).catch((err) => setError(err.message));
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      ) : (
+        <div className="scenes-row">
+          <button type="button" className="scenes-btn" onClick={() => setEditing(true)}>
+            {LINK_ICON} Make a short link…
+          </button>
+          <span className="kq-muted">like kurviq.com/pub/{toPubName(sceneName) || "my-talk"}</span>
+        </div>
+      )}
+      {error && <p className="scenes-error">{error}</p>}
+      {editing && (
+        <ShortLinkDialog fileId={fileId} sceneName={sceneName} current={name} restricted={restricted} onClose={() => setEditing(false)} />
+      )}
+    </div>
+  );
+};
+
 const ShareDialog = ({ name }: { name: string }) => {
   const [fileId, setFileId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<Permission[] | null>(null);
@@ -571,6 +790,8 @@ const ShareDialog = ({ name }: { name: string }) => {
 
   const people = (permissions ?? []).filter((permission) => permission.type !== "anyone");
   const access = permissions ? linkAccessOf(permissions) : "restricted";
+  // the copy buttons give the short link once there is one
+  usePubName(fileId);
   const link = fileId ? sceneLink(fileId, name) : null;
 
   return (
@@ -678,6 +899,7 @@ const ShareDialog = ({ name }: { name: string }) => {
               </select>
             </label>
             <p className="kq-muted">{LINK_HINT[access]}</p>
+            {fileId && <ShortLink fileId={fileId} sceneName={name} restricted={access === "restricted"} />}
             <div className="scenes-row">
               <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />
               {presentation && (
@@ -708,6 +930,7 @@ const ShareDialog = ({ name }: { name: string }) => {
 /** in the current scene's actions: Share… and the link */
 export const SceneSharing = ({ item, iconOnly }: { item: SceneListItem; disabled?: boolean; iconOnly?: boolean }) => {
   useConnection();
+  usePubName(item.name === null ? null : item.fileId);
   if (item.name === null || notShareable(item, "scene")) {
     return null;
   }

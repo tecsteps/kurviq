@@ -16,6 +16,7 @@
 //                    counted from page loads and server events (./stats.ts)
 //   /api/fonts/…     fonts from Google Fonts for "Add font", cached (./fonts.ts)
 //   /s/<fileId>/…    a shared scene: the app, titled for link previews (./shared.ts)
+//   /pub/<name>      the same through a short link; /api/pub/… claims and looks them up (./pubLinks.ts)
 //   /drive/open      Drive's "Open with Kurviq": to /s/<fileId>
 //   everything else  the app (static assets, built by `npm run build:online`);
 //                    /assets/* and /fonts/* don't reach the Worker at all
@@ -36,6 +37,8 @@ import { bearerPairing, handleOAuth, pairingName, unauthorized, uploadPairing, u
 import { handleSceneRoutes } from "./sceneRoutes";
 import type { SceneRoutesEnv } from "./sceneRoutes";
 import { handlePublicApi, handleSharedPage } from "./shared";
+import { handlePubApi } from "./pubLinks";
+import type { PubEnv } from "./pubLinks";
 import { kurviqSkill } from "./skill";
 import { feedbackStats, handleStatsDev, mcpStats, pageStats, publicReadStats, routeStats } from "./stats";
 import type { StatsEnv } from "./stats";
@@ -52,7 +55,7 @@ export { AccountGuard } from "./account";
 export { FakeGoogle } from "./fakeGoogle";
 export { Stats } from "./stats";
 
-type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & {
+type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & PubEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -438,6 +441,10 @@ export default {
     const fonts = await handleFonts(request, ctx);
     if (fonts) {
       return fonts;
+    }
+    const pubApi = await handlePubApi(request, env);
+    if (pubApi) {
+      return pubApi;
     }
     const publicApi = handlePublicApi(request, env, ctx);
     if (publicApi) {

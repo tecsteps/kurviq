@@ -5,7 +5,7 @@
 // Worker. Nothing runs in the visitor's browser for statistics (no beacons,
 // no scripts, no storage).
 //
-//   page loads        navigations to the app's HTML (/, /<scene>, /s/…,
+//   page loads        navigations to the app's HTML (/, /<scene>, /s/…, /pub/…,
 //                     /features) and the plain pages (imprint, privacy,
 //                     terms, contact): by entry, country, device class
 //   server events     live sync tickets and renewals, agent tool calls,
@@ -69,6 +69,7 @@ const MCP_TOOLS = new Set([
   "save_scene",
   "send_feedback",
   "set_local_only",
+  "short_link",
   "validate_deck",
   "view_scene",
 ]);
@@ -136,7 +137,7 @@ export const entryOf = (pathname: string) => {
   if (PLAIN_PAGES[path]) {
     return PLAIN_PAGES[path];
   }
-  if (path.startsWith("/s/")) {
+  if (path.startsWith("/s/") || path.startsWith("/pub/")) {
     return "shared";
   }
   let name = path.slice(1);

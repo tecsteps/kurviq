@@ -321,6 +321,20 @@ local only. `app_status` / `list_scenes` mark them.
 - `set_local_only(name, localOnly)`: make a scene local only, or sync it
   with Drive again. Only when the user asks.
 
+## Links to share
+
+`short_link(name)` gives a scene's links: the long one
+(`kurviq.com/s/<fileId>/<name>`, always works), its short link
+`kurviq.com/pub/<shortName>` if it has one, a `presentLink` and who can open
+them (`generalAccess`). `short_link(name, shortName: "my-talk")` gives the
+scene that short link: any free name (it need not match the scene's name),
+3 to 40 lowercase letters, digits and hyphens, unique on Kurviq (first come,
+first served; a taken name is refused, try another). The scene's old short
+name is freed; `shortName: null` removes it. `generalAccess: "reader"` makes
+the links open for everyone (view and present, no account). Only claim a
+name or change access when the user asks. The scene must be synced with
+Google Drive.
+
 ## Merge conflicts
 
 By default the user's app settles clashes by itself (the same element

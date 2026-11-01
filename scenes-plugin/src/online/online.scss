@@ -623,3 +623,115 @@
     white-space: nowrap;
   }
 }
+
+// short links (kurviq.com/pub/<name>): the row in the share dialog, and its own dialog above it
+.excalidraw .kq-overlay--top {
+  z-index: 1001;
+}
+
+.excalidraw .kq-pub__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--default-border-color);
+  border-bottom: 1px solid var(--default-border-color);
+
+  .scenes-btn svg {
+    vertical-align: -2px;
+    margin-right: 0.25rem;
+  }
+}
+
+.excalidraw .kq-pub__link {
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--border-radius-md);
+  background: var(--color-surface-high);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.excalidraw .kq-pub__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+// the address as one field: the fixed part, then the name
+.excalidraw .kq-pub__field {
+  display: flex;
+  align-items: center;
+  height: 2.5rem;
+  border: 1px solid var(--default-border-color);
+  border-radius: var(--border-radius-lg, 0.5rem);
+  background: var(--input-bg-color, var(--island-bg-color));
+  overflow: hidden;
+
+  &:focus-within {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
+  }
+
+  input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0 0.6rem 0 0.1rem;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+}
+
+.excalidraw .kq-pub__field--ok:focus-within {
+  border-color: var(--color-success, #2b8a3e);
+  box-shadow: 0 0 0 1px var(--color-success, #2b8a3e);
+}
+
+.excalidraw .kq-pub__field--bad,
+.excalidraw .kq-pub__field--bad:focus-within {
+  border-color: var(--color-danger, #e03131);
+  box-shadow: 0 0 0 1px var(--color-danger, #e03131);
+}
+
+.excalidraw .kq-pub__prefix {
+  flex: none;
+  padding-left: 0.75rem;
+  color: var(--color-gray-50);
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+
+.excalidraw .kq-pub__status {
+  min-height: 1.1rem;
+  font-size: 0.8rem;
+}
+
+.excalidraw .kq-pub__status--ok {
+  color: var(--color-success, #2b8a3e);
+  font-weight: 600;
+}
+
+.excalidraw .kq-pub__status--bad {
+  color: var(--color-danger, #e03131);
+  font-weight: 600;
+}
+
+.excalidraw .kq-pub__status--muted {
+  color: var(--color-gray-50);
+}
+
+.excalidraw .kq-pub__rules {
+  font-size: 0.75rem;
+}
+
+.excalidraw .kq-pub__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}

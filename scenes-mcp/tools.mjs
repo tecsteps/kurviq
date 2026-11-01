@@ -1756,6 +1756,30 @@ ${EDIT_HELP}
       }),
     );
 
+    server.registerTool(
+      "short_link",
+      {
+        description:
+          "A scene's links to share: the long one (kurviq.com/s/<fileId>/<name>, always works) and its optional short link kurviq.com/pub/<shortName>. shortName gives the scene that short link (any free name, not necessarily the scene's: 3 to 40 lowercase letters, digits and hyphens; unique on Kurviq, first come first served; the scene's old short name is freed); null removes it; leave it out to just read the links. generalAccess changes who can open the links: \"reader\" = anyone with the link can view and present (public), \"writer\" = anyone can edit, \"restricted\" = only people it is shared with. Only make a scene public or change its short link when the user asks. Needs the app open and the scene synced with Google Drive (signed in). presentLink starts presenting.",
+        inputSchema: {
+          name: SCENE_NAME,
+          shortName: z
+            .string()
+            .regex(/^[a-z0-9-]{3,40}$/)
+            .nullable()
+            .optional()
+            .describe("The short name to claim (kurviq.com/pub/<shortName>), null to remove it, omit to read"),
+          generalAccess: z.enum(["restricted", "reader", "writer"]).optional().describe("Who can open the links (only when the user asks)"),
+        },
+      },
+      tool(async ({ name, shortName, generalAccess }) => {
+        if (!(await appConnected())) {
+          throw new Error(`Links are made through the user's app (browser), which is not open. Ask the user to open ${APP_HINT}.`);
+        }
+        return text(await appCommand({ type: "short-link", name, shortName, access: generalAccess }));
+      }),
+    );
+
     if (MODE === "live") {
       server.registerTool(
         "save_open_scene",
