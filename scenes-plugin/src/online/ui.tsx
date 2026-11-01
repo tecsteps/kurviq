@@ -23,6 +23,7 @@ import {
   connection,
   disconnectGoogle,
   enterSpace,
+  getByline,
   linkAccessOf,
   listPermissions,
   loadPubName,
@@ -31,6 +32,7 @@ import {
   pubNameStore,
   releasePubName,
   removeAccess,
+  setByline,
   setLinkAccess,
   shareLink,
   showDriveShareDialog,
@@ -511,6 +513,11 @@ export const openShareDialog = (name: string) => {
   sharingListeners.forEach((listener) => listener());
 };
 const closeShareDialog = () => openShareDialog(null as unknown as string);
+
+if (import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE) {
+  // end-to-end tests (dev, and builds for the fake Google): the share dialog without the menus
+  (window as any).__openShareDialog = openShareDialog;
+}
 const useSharing = () =>
   useSyncExternalStore(
     (listener) => {
@@ -687,6 +694,47 @@ const ShortLinkDialog = ({
         </form>
       </div>
     </div>
+  );
+};
+
+/** the author on the public page: the user's Google name, only if they choose */
+const Byline = ({ fileId }: { fileId: string }) => {
+  const me = connection.getState().user?.name ?? null;
+  const [by, setBy] = useState<string | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    getByline(fileId)
+      .then(setBy)
+      .catch(() => setBy(null));
+  }, [fileId]);
+  if (by === undefined || (!me && !by)) {
+    return null;
+  }
+  const change = async (on: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await setByline(fileId, on ? me : null);
+      setBy(on ? me : null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <label className="scenes-switch">
+        <input type="checkbox" checked={!!by} disabled={busy || (!me && !by)} onChange={(event) => change(event.target.checked)} />
+        <span className="scenes-switch__track" />
+        <span className="scenes-switch__label">
+          Show {by && by !== me ? `"${by}"` : "my name"} on the public page
+          <span className="scenes-switch__hint">{`"by ${by || me}" under the title, for everyone who opens the link`}</span>
+        </span>
+      </label>
+      {error && <p className="scenes-error">{error}</p>}
+    </>
   );
 };
 
@@ -899,6 +947,7 @@ const ShareDialog = ({ name }: { name: string }) => {
               </select>
             </label>
             <p className="kq-muted">{LINK_HINT[access]}</p>
+            {fileId && access !== "restricted" && <Byline fileId={fileId} />}
             {fileId && <ShortLink fileId={fileId} sceneName={name} restricted={access === "restricted"} />}
             <div className="scenes-row">
               <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />

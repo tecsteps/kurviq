@@ -1075,6 +1075,32 @@ export const shareLink = (fileId: string, name: string) => {
 };
 
 // -----------------------------------------------------------------------------
+// the author on the public page: only when they choose (Share…), a public property of the file
+// -----------------------------------------------------------------------------
+
+const BYLINE_PROPERTY = "kurviqBy";
+
+/** the name shown as the scene's author on its public page, or null */
+export const getByline = async (fileId: string): Promise<string | null> => {
+  const res = await drive(`/files/${fileId}?fields=properties&supportsAllDrives=true`);
+  if (res.status !== 200) {
+    fail(res, "Could not read the scene's details");
+  }
+  return res.data?.properties?.[BYLINE_PROPERTY] ?? null;
+};
+
+/** name the user as the author on the public page (their Google name), or not (null) */
+export const setByline = async (fileId: string, name: string | null) => {
+  const res = await drive(`/files/${fileId}?fields=id&supportsAllDrives=true`, {
+    method: "PATCH",
+    body: { properties: { [BYLINE_PROPERTY]: name ? name.slice(0, 80) : null } },
+  });
+  if (res.status !== 200) {
+    fail(res, "Could not change who is named on the public page");
+  }
+};
+
+// -----------------------------------------------------------------------------
 // short links: kurviq.com/pub/<name> (online/worker/pubLinks.ts), besides the long link
 // -----------------------------------------------------------------------------
 
@@ -1217,6 +1243,8 @@ export const enterSpace = (fileId: string | null, path = "/") => {
 export type SharedScene = {
   json: string;
   name: string;
+  /** the author, if they chose to be named on the public page */
+  by?: string;
   public: boolean;
   /** Drive lets this user change it */
   canEdit: boolean;
@@ -1253,7 +1281,11 @@ export const sharedSceneVersion = async (fileId: string): Promise<string | null>
 export const readSharedScene = async (fileId: string, { version }: { version?: string } = {}): Promise<SharedSceneAnswer> => {
   // public scenes: through Kurviq's edge cache (the page preloads this very URL), no sign-in needed
   const publicCopy = fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}${version ? `?v=${version}` : ""}`)
-    .then(async (res) => (res.ok ? { json: await res.text(), name: decodeURIComponent(res.headers.get("X-Kurviq-Name") || "") } : null))
+    .then(async (res) =>
+      res.ok
+        ? { json: await res.text(), name: decodeURIComponent(res.headers.get("X-Kurviq-Name") || ""), by: decodeURIComponent(res.headers.get("X-Kurviq-By") || "") }
+        : null,
+    )
     .catch(() => null);
   const signedIn = getToken().catch(() => null);
   const access = signedIn.then(async (value) => (value ? fetchSharedFile(fileId).catch(() => null) : null));
@@ -1261,7 +1293,7 @@ export const readSharedScene = async (fileId: string, { version }: { version?: s
   if (pub) {
     // don't wait for the access check longer than a moment
     const file = await Promise.race([access, new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500))]);
-    return { scene: { json: pub.json, name: pub.name || (file ? sceneNameOf(file) ?? "" : ""), public: true, canEdit: !!file?.capabilities?.canEdit } };
+    return { scene: { json: pub.json, name: pub.name || (file ? sceneNameOf(file) ?? "" : ""), ...(pub.by ? { by: pub.by } : {}), public: true, canEdit: !!file?.capabilities?.canEdit } };
   }
   if (!(await signedIn)) {
     return { signIn: true };

@@ -34,6 +34,9 @@ const MAX_BYTES = 25 * 1024 * 1024;
 
 const apiPath = (fileId: string) => `/api/public/${fileId}`;
 
+/** the author's name on the public page, set only when they choose (scenes-plugin/src/online/drive.ts setByline) */
+const BYLINE_PROPERTY = "kurviqBy";
+
 const notPublic = () =>
   new Response("Not a public scene", {
     status: 404,
@@ -52,11 +55,13 @@ const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: 
     return notPublic();
   }
   const drive = `${googleUrls(env).api}/files/${fileId}`;
-  const meta = await fetch(`${drive}?fields=name,mimeType,size&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`);
+  const meta = await fetch(`${drive}?fields=name,mimeType,size,properties&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`);
   const info: any = meta.ok ? await meta.json() : null;
   const isScene = !!info && (info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION)) && Number(info.size || 0) <= MAX_BYTES;
   const upstream = isScene ? await fetch(`${drive}?alt=media&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`) : null;
   const name = isScene ? String(info.name).replace(/\.excalidraw$/, "") : "";
+  // the author, only if they chose to be named (Share…: "Show my name"): a public property of the file
+  const by = isScene ? String(info.properties?.[BYLINE_PROPERTY] ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80) : "";
   const response = upstream?.ok
     ? new Response(upstream.body, {
         headers: {
@@ -67,7 +72,8 @@ const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: 
           "X-Content-Type-Options": "nosniff",
           "Content-Security-Policy": "default-src 'none'; sandbox",
           "X-Kurviq-Name": encodeURIComponent(name),
-          "Access-Control-Expose-Headers": "X-Kurviq-Name",
+          ...(by ? { "X-Kurviq-By": encodeURIComponent(by) } : {}),
+          "Access-Control-Expose-Headers": "X-Kurviq-Name, X-Kurviq-By",
         },
       })
     : notPublic();
@@ -152,9 +158,10 @@ export const handleSharedPage = async (
   }
   const scene = await publicScene(url.origin, fileId, env, ctx);
   const name = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-Name") || "") : "";
+  const by = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-By") || "") : "";
   const title = name ? `${name} · Kurviq` : `A shared scene on Kurviq`;
   const description = name
-    ? `A drawing made with Kurviq. Open it in your browser: no sign-up.`
+    ? `${by ? `By ${by}. ` : ""}A drawing made with Kurviq. Open it in your browser: no sign-up.`
     : `Shared with you on Kurviq. Sign in with Google to see it, if it was shared with you.`;
   const link = pubName ? `${url.origin}/pub/${pubName}` : `${url.origin}${url.pathname}`;
   const content = (value: string) => ({ element: (el: Element) => el.setAttribute("content", value) });

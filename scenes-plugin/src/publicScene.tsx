@@ -107,6 +107,8 @@ type Scene = {
   numbers: number[];
   public?: boolean;
   canEdit?: boolean;
+  /** the author, if they chose to be named */
+  by?: string;
 };
 
 /**
@@ -128,7 +130,7 @@ const editShared = async (fileId: string, name: string) => {
   enterSpace(fileId, /^\/(s|pub)\//.test(window.location.pathname) ? window.location.pathname : `/s/${fileId}/${encodeURIComponent(name)}`);
 };
 
-const parseScene = async (json: string, access: { public?: boolean; canEdit?: boolean }): Promise<Scene> => {
+const parseScene = async (json: string, access: { public?: boolean; canEdit?: boolean; by?: string }): Promise<Scene> => {
   const data = JSON.parse(json);
   await registerSceneFonts(data);
   let elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
@@ -186,9 +188,9 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
           }
           return answer.scene;
         })
-      : fetchScene(name).then((json) => ({ json, public: true, canEdit: false }));
+      : fetchScene(name).then((json) => ({ json, public: true, canEdit: false, by: undefined as string | undefined }));
     load
-      .then(async ({ json, public: isPublic, canEdit }) => setScene(await parseScene(json, { public: isPublic, canEdit })))
+      .then(async ({ json, public: isPublic, canEdit, by }) => setScene(await parseScene(json, { public: isPublic, canEdit, by })))
       .catch((err) => (err.missing ? setMissing(err.missing) : setError(err.message)));
     root.current?.focus();
   }, [fileId, attempt]);
@@ -296,7 +298,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
         if (stopped || !("scene" in answer)) {
           return;
         }
-        const next = await parseScene(answer.scene.json, { public: answer.scene.public, canEdit: answer.scene.canEdit });
+        const next = await parseScene(answer.scene.json, { public: answer.scene.public, canEdit: answer.scene.canEdit, by: answer.scene.by });
         version.current = latest;
         api.addFiles(Object.values(next.files));
         api.updateScene({ elements: next.elements, captureUpdate: CaptureUpdateAction.NEVER });
@@ -391,6 +393,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     >
       <div className="public-scene__bar">
         <strong className="public-scene__title">{title}</strong>
+        {scene?.by && <span className="public-scene__meta">by {scene.by}</span>}
         <span className="public-scene__spacer" />
         {scene && scene.slides.length > 0 && (
           <button
