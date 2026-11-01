@@ -20,6 +20,7 @@ import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from
 
 import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
 import { scenesController } from "./controller";
+import { liveSync } from "./online/liveSync";
 import { claimPubName, linkAccessOf, listPermissions, loadPubName, pubLink, releasePubName, setLinkAccess, shareLink } from "./online/drive";
 import {
   editLocalScene,
@@ -552,6 +553,8 @@ const status = () => {
     editsRunning: editsRunning(),
     // the open live scene's send queue: what is not on Kurviq's server yet, and why
     ...(scenesController.liveCurrent() ? { liveQueue: scenesController.liveCurrent()!.queueReport() } : {}),
+    // queues closed tabs (or a reload) left, sent from this tab under their own tab ids
+    ...(liveSync.replayReport().length ? { liveReplays: liveSync.replayReport() } : {}),
     visible: document.visibilityState === "visible",
     // "name: status": synced / ahead (not pushed) / behind / diverged / conflict / local
     scenes: list

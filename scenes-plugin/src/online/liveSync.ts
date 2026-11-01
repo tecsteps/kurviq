@@ -640,7 +640,6 @@ export class LiveScene {
   queueReport() {
     const now = Date.now();
     const queued = this.batches.filter((batch) => batch.state === "queued");
-    const size = (batch: QueuedBatch) => Math.round(JSON.stringify(batch.changes).length / 1024);
     return {
       phase: this.phase,
       connected: this.connected,
@@ -654,7 +653,7 @@ export class LiveScene {
         via: batch.via,
         ...(batch.command ? { command: batch.command } : {}),
         changes: batch.changes.length,
-        kb: size(batch),
+        pictures: batch.changes.filter((change) => change.k === "file").length,
         ageS: Math.round((now - batch.made) / 1000),
         state: this.parked.has(batch.counter)
           ? "refused (set aside until reconnect)"
@@ -3341,6 +3340,11 @@ class LiveSync {
 
   /** closed tabs' queues, sent from here under their own tab ids (also of scenes open here) */
   private replays = new Map<string, LiveScene>();
+
+  /** the closed tabs' queues being sent from here, for app_status (liveQueue.replays) */
+  replayReport() {
+    return [...this.replays].map(([key, scene]) => ({ key, ...scene.queueReport() }));
+  }
 
   /** queues no open tab holds go out from this one; idle headless sessions close */
   private async sweep() {
