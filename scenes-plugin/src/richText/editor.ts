@@ -504,6 +504,16 @@ export const createRichEditable = (
         // at a list item's start: it stops being one
         const { k: _k, d: _d, x: _x, ...rest } = para;
         apply(setParagraphs(doc, from.p, from.p, () => rest), from);
+      } else if (!comparePos(from, to) && from.o === 0 && from.p > 0) {
+        // at a line's start: it joins the line above, with its own formatting (the browser's merge
+        // would lose it); an empty line above just goes, the line keeps its paragraph style too
+        const above = doc.p[from.p - 1];
+        if (!paraText(above)) {
+          apply({ ...doc, p: doc.p.filter((_, i) => i !== from.p - 1) }, { p: from.p - 1, o: 0 });
+        } else {
+          const end = { p: from.p - 1, o: paraText(above).length };
+          apply(deleteRange(doc, end, from), end);
+        }
       } else {
         handled = false;
       }
