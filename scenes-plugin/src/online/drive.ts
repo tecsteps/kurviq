@@ -403,18 +403,18 @@ const versionIndex = createStore("kurviq-drive-version-index", "index");
 /** versions kept per file (the newest; the base of a merge is among them) */
 const KEEP_VERSIONS = 4;
 
-const keepVersion = async (fileId: string, sha: string, json: string) => {
+const keepVersion = async (fileId: string, checksum: string, json: string) => {
   try {
-    await set(`${fileId}:${sha}`, json, versionStore);
-    const kept = [sha, ...((await get<string[]>(fileId, versionIndex)) ?? []).filter((other) => other !== sha)];
+    await set(`${fileId}:${checksum}`, json, versionStore);
+    const kept = [checksum, ...((await get<string[]>(fileId, versionIndex)) ?? []).filter((other) => other !== checksum)];
     await set(fileId, kept.slice(0, KEEP_VERSIONS), versionIndex);
     await Promise.all(kept.slice(KEEP_VERSIONS).map((other) => del(`${fileId}:${other}`, versionStore)));
   } catch {}
 };
 
-const keptVersion = async (fileId: string, sha: string) => {
+const keptVersion = async (fileId: string, checksum: string) => {
   try {
-    return (await get<string>(`${fileId}:${sha}`, versionStore)) ?? null;
+    return (await get<string>(`${fileId}:${checksum}`, versionStore)) ?? null;
   } catch {
     return null;
   }
@@ -589,9 +589,9 @@ const ownerName = (file: DriveFile) => file.owners?.[0]?.displayName || file.own
 
 const locate = async (name: string, force = true) => (await fetchScenes(force)).files.get(name) ?? null;
 
-const checkBase = (name: string, current: string | undefined, baseSha: string | undefined) => {
-  if (baseSha !== undefined && (current || "none") !== baseSha) {
-    throw httpError(409, `"${name}" was changed in Google Drive in the meantime`, { remoteSha: current || null });
+const checkBase = (name: string, current: string | undefined, baseMd5: string | undefined) => {
+  if (baseMd5 !== undefined && (current || "none") !== baseMd5) {
+    throw httpError(409, `"${name}" was changed in Google Drive in the meantime`, { remoteMd5: current || null });
   }
 };
 
@@ -614,20 +614,20 @@ const download = async (fileId: string, revision?: string) => {
 };
 
 /** an older version of a file, by its MD5: kept in this browser, else from Drive's revisions */
-const loadVersion = async (file: DriveFile, name: string, sha: string) => {
-  const kept = await keptVersion(file.id, sha);
+const loadVersion = async (file: DriveFile, name: string, checksum: string) => {
+  const kept = await keptVersion(file.id, checksum);
   if (kept !== null) {
     return kept;
   }
   const revisions = await listRevisions(file.id);
-  for (const revision of revisions.filter((entry) => entry.md5Checksum === sha).reverse()) {
+  for (const revision of revisions.filter((entry) => entry.md5Checksum === checksum).reverse()) {
     const res = await download(file.id, revision.id);
     if (res.status === 200) {
-      await keepVersion(file.id, sha, res.text);
+      await keepVersion(file.id, checksum, res.text);
       return res.text;
     }
   }
-  throw httpError(404, `Version ${sha} of scene "${name}" not found (Google Drive keeps older versions about 30 days)`);
+  throw httpError(404, `Version ${checksum} of scene "${name}" not found (Google Drive keeps older versions about 30 days)`);
 };
 
 type Revision = {
@@ -693,8 +693,8 @@ const markAgentVersion = async (file: DriveFile, revision: string) => {
 
 export const isLiveFile = (file: { appProperties?: Record<string, string> }) => file.appProperties?.kurviqSync === LIVE_MARKER;
 
-export type LiveWrite = { fileId: string; name: string; json: string; baseSha?: string; source?: string };
-let liveWriter: ((write: LiveWrite) => Promise<{ sha: string; commit: string | null; changed: boolean }>) | null = null;
+export type LiveWrite = { fileId: string; name: string; json: string; baseMd5?: string; source?: string };
+let liveWriter: ((write: LiveWrite) => Promise<{ md5: string; driveRevision: string | null; changed: boolean }>) | null = null;
 let liveRenamer: ((rename: { fileId: string; from: string; to: string }) => Promise<void>) | null = null;
 let liveRemover: ((remove: { fileId: string; name: string }) => Promise<void>) | null = null;
 
@@ -723,7 +723,7 @@ export const driveScenes = {
         ? [...current.files]
             .map(([name, file]) => ({
               name,
-              sha: file.md5Checksum ?? "",
+              md5: file.md5Checksum ?? "",
               updatedAt: file.modifiedTime ?? null,
               public: !!file.permissionIds?.includes("anyoneWithLink"),
               fileId: file.id,
@@ -742,14 +742,14 @@ export const driveScenes = {
   },
 
   /** latest version, or a specific one (its MD5) */
-  load: async (name: string, sha?: string): Promise<{ json: string; sha: string }> => {
+  load: async (name: string, checksum?: string): Promise<{ json: string; md5: string }> => {
     checkName(name);
     const file = await locate(name);
     if (!file) {
       throw httpError(404, `Scene not found: ${name}`);
     }
-    if (sha && sha !== file.md5Checksum) {
-      return { json: await loadVersion(file, name, sha), sha };
+    if (checksum && checksum !== file.md5Checksum) {
+      return { json: await loadVersion(file, name, checksum), md5: checksum };
     }
     const res = await download(file.id);
     if (res.status !== 200) {
@@ -758,14 +758,14 @@ export const driveScenes = {
     // the content's own MD5 (the listing may be a moment older than what was read)
     const actual = md5(encodeBytes(res.text));
     await keepVersion(file.id, actual, res.text);
-    return { json: res.text, sha: actual };
+    return { json: res.text, md5: actual };
   },
 
   /**
-   * Save a scene. baseSha: undefined = overwrite, "none" = must be new,
+   * Save a scene. baseMd5: undefined = overwrite, "none" = must be new,
    * <md5> = must be exactly that version in Drive (else 409: merge first).
    */
-  save: async (name: string, json: string, baseSha?: string, source?: string) => {
+  save: async (name: string, json: string, baseMd5?: string, source?: string) => {
     checkName(name);
     let data: any;
     try {
@@ -778,7 +778,7 @@ export const driveScenes = {
       throw httpError(422, `Refused: this content belongs to scene "${owner}", not "${name}". Nothing was written.`);
     }
     requireWritable();
-    const sha = md5(encodeBytes(json));
+    const checksum = md5(encodeBytes(json));
     const file = await locate(name);
     if (file && isLiveFile(file)) {
       // the scene saves through its Durable Object: never a second writer
@@ -786,11 +786,11 @@ export const driveScenes = {
       if (!liveWriter) {
         throw httpError(409, `"${name}" is saved through live sync: it can't be written to Drive directly`);
       }
-      return liveWriter({ fileId: file.id, name, json, baseSha, source });
+      return liveWriter({ fileId: file.id, name, json, baseMd5, source });
     }
-    checkBase(name, file?.md5Checksum, baseSha);
-    if (file && file.md5Checksum === sha) {
-      return { sha, commit: null, changed: false };
+    checkBase(name, file?.md5Checksum, baseMd5);
+    if (file && file.md5Checksum === checksum) {
+      return { md5: checksum, driveRevision: null, changed: false };
     }
     let res: DriveResponse;
     if (file) {
@@ -827,15 +827,15 @@ export const driveScenes = {
     }
     const saved = res.data as DriveFile;
     forgetListing();
-    await keepVersion(saved.id, sha, json);
+    await keepVersion(saved.id, checksum, json);
     if (isAgent(source) && saved.headRevisionId) {
       await markAgentVersion({ ...saved, appProperties: file?.appProperties ?? saved.appProperties }, saved.headRevisionId);
     }
-    return { sha: saved.md5Checksum ?? sha, commit: saved.headRevisionId ?? null, changed: true };
+    return { md5: saved.md5Checksum ?? checksum, driveRevision: saved.headRevisionId ?? null, changed: true };
   },
 
-  /** delete a scene (to Drive's bin); baseSha (optional): only if Drive still has that version */
-  remove: async (name: string, baseSha?: string | null) => {
+  /** delete a scene (to Drive's bin); baseMd5 (optional): only if Drive still has that version */
+  remove: async (name: string, baseMd5?: string | null) => {
     checkName(name);
     requireWritable();
     const file = await locate(name);
@@ -852,19 +852,19 @@ export const driveScenes = {
       }
       await liveRemover({ fileId: file.id, name });
       forgetListing();
-      return { sha: null };
+      return { md5: null };
     }
-    checkBase(name, file.md5Checksum, baseSha ?? undefined);
+    checkBase(name, file.md5Checksum, baseMd5 ?? undefined);
     const res = await drive(`/files/${file.id}?fields=id`, { method: "PATCH", body: { trashed: true } });
     if (res.status !== 200) {
       fail(res, `Deleting "${name}" failed`);
     }
     forgetListing();
-    return { sha: null };
+    return { md5: null };
   },
 
   /** rename (the file keeps its id, so links to it keep working; the content and its MD5 stay) */
-  rename: async (from: string, to: string): Promise<{ sha: string; commit: string | null }> => {
+  rename: async (from: string, to: string): Promise<{ md5: string; driveRevision: string | null }> => {
     checkName(from);
     checkName(to);
     if (from === to) {
@@ -886,7 +886,7 @@ export const driveScenes = {
       }
       await liveRenamer({ fileId: file.id, from, to });
       forgetListing();
-      return { sha: file.md5Checksum ?? "", commit: null };
+      return { md5: file.md5Checksum ?? "", driveRevision: null };
     }
     const res = await drive(`/files/${file.id}?fields=id&supportsAllDrives=true`, {
       method: "PATCH",
@@ -896,7 +896,7 @@ export const driveScenes = {
       fail(res, "Rename failed");
     }
     forgetListing();
-    return { sha: file.md5Checksum ?? "", commit: null };
+    return { md5: file.md5Checksum ?? "", driveRevision: null };
   },
 
   /** the versions of a scene, newest first (load one with loadAt) */
@@ -911,17 +911,17 @@ export const driveScenes = {
       .reverse()
       .slice(0, 60)
       .map((revision) => ({
-        commit: revision.id,
+        driveRevision: revision.id,
         at: revision.modifiedTime ?? null,
         author: revision.lastModifyingUser?.displayName ?? revision.lastModifyingUser?.emailAddress ?? null,
         message: revision.id === agentRev ? "Agent edit" : "",
         agent: revision.id === agentRev,
-        sha: revision.md5Checksum,
+        md5: revision.md5Checksum,
       }));
   },
 
   /** the scene as it was in a revision */
-  loadAt: async (name: string, revision: string): Promise<{ json: string; sha: string }> => {
+  loadAt: async (name: string, revision: string): Promise<{ json: string; md5: string }> => {
     checkName(name);
     const file = await locate(name, false);
     if (!file) {
@@ -931,7 +931,7 @@ export const driveScenes = {
     if (res.status !== 200) {
       throw httpError(res.status, `This version of "${name}" can't be read any more (Google Drive keeps older versions about 30 days)`);
     }
-    return { json: res.text, sha: md5(encodeBytes(res.text)) };
+    return { json: res.text, md5: md5(encodeBytes(res.text)) };
   },
 
   /** the version of a scene an agent saved last (kept for good in Drive) */
@@ -946,7 +946,7 @@ export const driveScenes = {
     if (res.status !== 200 || !res.data?.md5Checksum) {
       return null;
     }
-    return { sha: res.data.md5Checksum as string, commit: revision, at: res.data.modifiedTime ?? file.appProperties?.agentAt ?? null };
+    return { md5: res.data.md5Checksum as string, driveRevision: revision, at: res.data.modifiedTime ?? file.appProperties?.agentAt ?? null };
   },
 
   /** a scene that saves through live sync: its file id (null: Drive is written directly, or unknown) */
@@ -956,8 +956,8 @@ export const driveScenes = {
   },
 
   /** a version of a file by its MD5: kept in this browser, else the current one if it is that version */
-  loadFileVersion: async (fileId: string, sha: string): Promise<string | null> => {
-    const kept = await keptVersion(fileId, sha);
+  loadFileVersion: async (fileId: string, checksum: string): Promise<string | null> => {
+    const kept = await keptVersion(fileId, checksum);
     if (kept !== null) {
       return kept;
     }
@@ -967,7 +967,7 @@ export const driveScenes = {
     }
     const actual = md5(encodeBytes(res.text));
     await keepVersion(fileId, actual, res.text);
-    return actual === sha ? res.text : null;
+    return actual === checksum ? res.text : null;
   },
 
   /** move a file to Drive's trash (the live scene's DO was told first) */

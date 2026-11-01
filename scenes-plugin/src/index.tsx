@@ -167,7 +167,7 @@ const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> 
   "live-unsaved": { icon: "!", label: "Not saved", tone: "danger" },
 };
 
-// where a scene is kept (this browser / a repository) and who can see it
+// where a scene is kept (this browser / Google Drive) and who can see it
 // (private / public): two small icons with tooltips, in the list and the pill
 
 
@@ -240,7 +240,7 @@ const ScenePlace = ({
   const inDrive = item.name !== null && !item.localOnly && item.inDrive;
   const where = inDrive
     ? {
-        kind: "repository" as const,
+        kind: "drive" as const,
         title: `${owner ? `In ${owner}'s Google Drive` : "In your Google Drive"}${item.status === "synced" ? "" : ` (${STATUS[item.status].label.toLowerCase()})`}`,
       }
     : {
@@ -314,7 +314,7 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
   const currentItem = list.find((item) => item.name === current);
   const status = currentItem?.status ?? "untitled";
   const offline = isOffline(state);
-  const [panel, setPanel] = useState<null | "switch" | "scene" | "github">(null);
+  const [panel, setPanel] = useState<null | "switch" | "scene" | "drive">(null);
   const open = panel === "switch";
 
   return (
@@ -353,10 +353,10 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         <span className="scenes-pill__caret" aria-hidden>▾</span>
       </button>
       {panel === "switch" && (
-        <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onDrive={() => setPanel("github")} />
+        <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onDrive={() => setPanel("drive")} />
       )}
       {panel === "scene" && <SceneFlyover onClose={() => setPanel(null)} />}
-      {panel === "github" && <DriveFlyover onClose={() => setPanel(null)} />}
+      {panel === "drive" && <DriveFlyover onClose={() => setPanel(null)} />}
       {isMobile && <MobileSlidesButton />}
     </div>
   );
@@ -1056,7 +1056,7 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
   const [versions, setVersions] = useState<SceneVersion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ commit: string; json?: string; url?: string; error?: string } | null>(null);
+  const [preview, setPreview] = useState<{ driveRevision: string; json?: string; url?: string; error?: string } | null>(null);
   const [restored, setRestored] = useState<string | null>(null);
   const [all, setAll] = useState(false);
 
@@ -1083,12 +1083,12 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
   );
 
   const show = async (version: SceneVersion) => {
-    if (open === version.commit) {
+    if (open === version.driveRevision) {
       setOpen(null);
       return;
     }
-    setOpen(version.commit);
-    setPreview({ commit: version.commit });
+    setOpen(version.driveRevision);
+    setPreview({ driveRevision: version.driveRevision });
     try {
       const json = await scenesController.loadVersion(name, version);
       const data = JSON.parse(json);
@@ -1100,9 +1100,9 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
         maxWidthOrHeight: 640,
         mimeType: "image/png",
       });
-      setPreview((prev) => (prev?.commit === version.commit ? { commit: version.commit, json, url: URL.createObjectURL(blob) } : prev));
+      setPreview((prev) => (prev?.driveRevision === version.driveRevision ? { driveRevision: version.driveRevision, json, url: URL.createObjectURL(blob) } : prev));
     } catch (err: any) {
-      setPreview((prev) => (prev?.commit === version.commit ? { commit: version.commit, error: err.message } : prev));
+      setPreview((prev) => (prev?.driveRevision === version.driveRevision ? { driveRevision: version.driveRevision, error: err.message } : prev));
     }
   };
 
@@ -1131,8 +1131,8 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
       {restored && <div className="scenes-history__restored">{restored}</div>}
       <ol className="scenes-history">
         {shown.map((version, index) => (
-          <li key={version.commit} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.commit })}>
-            <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.commit}>
+          <li key={version.driveRevision} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.driveRevision })}>
+            <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.driveRevision}>
               <span className="scenes-history__label">
                 {versionLabel(version)}
                 {index === 0 && <span className="scenes-history__tag">latest</span>}
@@ -1143,7 +1143,7 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
                 {version.author ? ` · ${version.author}` : ""}
               </span>
             </button>
-            {open === version.commit && (
+            {open === version.driveRevision && (
               <div className="scenes-history__preview">
                 {preview?.url ? (
                   <img src={preview.url} alt={`“${name}” as of ${version.at ?? "this version"}`} />

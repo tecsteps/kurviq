@@ -136,15 +136,6 @@ export const startDrive = () => {
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   }
 
-  // never signed in with Google here: the scenes' sync state is GitHub's, not Drive's
-  let knownAccount: string | null = "";
-  try {
-    knownAccount = localStorage.getItem(ACCOUNT_KEY);
-  } catch {}
-  if (knownAccount === null && !sharedFileId) {
-    scenesController.forgetGitHubState().catch((error) => console.error("[scenes] forgetting GitHub's sync state", error));
-  }
-
   // only the tab that went to Google acts on its answer (a link with ?google=connected does nothing)
   let asked = false;
   try {
@@ -167,7 +158,7 @@ export const startDrive = () => {
       } catch {}
       if (previous !== user.email) {
         // what this browser knew about the remote side was another Drive's
-        // (another account), or GitHub's: its scenes stay here (local only)
+        // (another account, or none yet): its scenes stay here (local only)
         // until the user picks which go to Drive (the dialog after sign-in)
         scenesController.resetRemoteState();
       }
@@ -226,7 +217,7 @@ export const ConnectDriveOffer = () => {
     return null;
   }
   return (
-    <div className="kq-switcher-github">
+    <div className="kq-switcher-signin">
       <span className="kq-muted">Scenes are saved in this browser only.</span>
       <SignInButton />
     </div>
@@ -404,16 +395,16 @@ export const DrivePanel = () => {
     );
   }
   return (
-    <section className="kq-card kq-card--repo">
-      <a className="scenes-repo" href={folderUrl()} target="_blank" rel="noopener noreferrer" title="Open the folder in Google Drive">
-        <span className="scenes-repo__logo">{DriveIcon}</span>
-        <span className="scenes-repo__text">
-          <span className="scenes-repo__caption">Synced with Google Drive</span>
-          <span className="scenes-repo__name">{FOLDER_NAME}</span>
+    <section className="kq-card kq-card--folder">
+      <a className="scenes-folder" href={folderUrl()} target="_blank" rel="noopener noreferrer" title="Open the folder in Google Drive">
+        <span className="scenes-folder__logo">{DriveIcon}</span>
+        <span className="scenes-folder__text">
+          <span className="scenes-folder__caption">Synced with Google Drive</span>
+          <span className="scenes-folder__name">{FOLDER_NAME}</span>
         </span>
-        <span className="scenes-repo__external">{ExternalLinkIcon}</span>
+        <span className="scenes-folder__external">{ExternalLinkIcon}</span>
       </a>
-      <div className="kq-repo-actions">
+      <div className="kq-folder-actions">
         <span className="kq-muted">as {user.email}</span>
         <button type="button" className="scenes-link scenes-link--danger" onClick={confirmSignOut}>
           Sign out

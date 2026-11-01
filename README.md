@@ -83,8 +83,6 @@ install:
   (sharing a file in Drive itself works the same). Links: your own scenes
   `kurviq.com/<scene>`, shared ones `kurviq.com/s/<fileId>/<name>` (the name
   is only for reading; renaming keeps the file, so links keep working).
-  Old `kurviq.com/@<owner>/<scene>` links say they are from an older version
-  and to ask for a new link.
 - **Opening a shared link:** a scene open to "anyone with the link" can be
   viewed, presented and copied (**Make a copy**) without any account; the
   Worker reads it with an API key (`/api/public/<fileId>`, one-minute edge

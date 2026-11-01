@@ -11,7 +11,9 @@ import { createStore, del, delMany, entries, get, set } from "idb-keyval";
 
 // Kurviq: each space keeps its own scenes in the browser. "" is the user's
 // own scenes (their Kurviq folder in Google Drive); "f:<fileId>" is a scene
-// someone shared (one Drive file). Older spaces (Drive accounts) are left.
+// someone shared (one Drive file). Spaces of older versions (one per
+// repository, before Drive) are not opened any more; their data in the
+// browser is left as it is.
 export const SPACE_KEY = "kurviq-space";
 export const currentSpace = (() => {
   try {
@@ -36,9 +38,9 @@ export const UNTITLED = "\u0000untitled";
 
 export type SceneMeta = {
   /** version in Drive (MD5 of the content) the local copy is based on; null = never saved there */
-  baseSha: string | null;
+  baseMd5: string | null;
   /** last seen version in Drive (null = not in Drive) — for status while offline */
-  remoteSha?: string | null;
+  remoteMd5?: string | null;
   /** local changes not pushed yet (for the active scene this is live state) */
   dirty: boolean;
   /** per-scene override of the global auto-sync switch */
@@ -50,7 +52,7 @@ export type SceneMeta = {
   localOnly?: boolean;
   /** both sides changed the same elements — waits for the user */
   conflict?: {
-    remoteSha: string;
+    remoteMd5: string;
     clashes: string[];
     /** merge algorithm that found it (older ones are re-checked) */
     v?: number;
@@ -104,6 +106,43 @@ export type Snapshot = {
   dirty: boolean;
 };
 
+/**
+ * Metadata written before the Drive versions were renamed (baseSha →
+ * baseMd5, remoteSha → remoteMd5, conflict.remoteSha → conflict.remoteMd5):
+ * moved to the new names in place, so the scenes keep their sync state.
+ * Returns whether anything changed (the caller writes it back).
+ */
+export const migrateMeta = (meta: { scenes?: Record<string, unknown> }) => {
+  let changed = false;
+  for (const scene of Object.values(meta.scenes ?? {}) as Record<string, any>[]) {
+    if (!scene || typeof scene !== "object") {
+      continue;
+    }
+    if ("baseSha" in scene) {
+      if (scene.baseMd5 === undefined) {
+        scene.baseMd5 = scene.baseSha;
+      }
+      delete scene.baseSha;
+      changed = true;
+    }
+    if ("remoteSha" in scene) {
+      if (scene.remoteMd5 === undefined) {
+        scene.remoteMd5 = scene.remoteSha;
+      }
+      delete scene.remoteSha;
+      changed = true;
+    }
+    if (scene.conflict && typeof scene.conflict === "object" && "remoteSha" in scene.conflict) {
+      if (scene.conflict.remoteMd5 === undefined) {
+        scene.conflict.remoteMd5 = scene.conflict.remoteSha;
+      }
+      delete scene.conflict.remoteSha;
+      changed = true;
+    }
+  }
+  return changed;
+};
+
 export const loadMeta = (): ScenesMeta => {
   const fallback: ScenesMeta = {
     current: null,
@@ -116,9 +155,12 @@ export const loadMeta = (): ScenesMeta => {
     const raw = localStorage.getItem(META_KEY);
     if (raw) {
       const meta: ScenesMeta = { ...fallback, ...JSON.parse(raw) };
+      if (migrateMeta(meta)) {
+        saveMeta(meta);
+      }
       for (const scene of Object.values(meta.scenes)) {
-        if (scene.baseSha === undefined) {
-          scene.baseSha = null;
+        if (scene.baseMd5 === undefined) {
+          scene.baseMd5 = null;
           scene.legacy = true;
         }
       }

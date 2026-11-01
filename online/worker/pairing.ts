@@ -2,8 +2,8 @@
 // link). It plays the part of the local scenes server's live channel: the
 // browser's Kurviq tabs are connected to it with a WebSocket, and the remote
 // MCP's requests to "the scenes server" are answered here (app state,
-// commands) or by the most suitable tab (/api/scenes…: the tab talks to
-// GitHub with the user's connection).
+// commands) or by the most suitable tab (/api/scenes…: the tab reads and
+// saves in Google Drive with the user's sign-in).
 //
 // Stores nothing: the tabs' WebSockets (with their last state as attachment)
 // are all there is, and they survive hibernation.
@@ -44,7 +44,7 @@ type Pending = {
 };
 
 const COMMAND_TIMEOUT_MS = 30_000;
-/** edits (commits with pictures) and pictures may take longer */
+/** edits (saves with pictures) and pictures may take longer */
 const SLOW_COMMANDS = new Set(["scene-edit", "local-edit", "render", "deck-check", "convert", "upload", "upload-payload", "http"]);
 const SLOW_TIMEOUT_MS = 75_000;
 
@@ -241,7 +241,7 @@ export class Pairing extends DurableObject {
     return json(404, { error: "Not found" });
   }
 
-  /** tell the other tabs of this browser that GitHub changed (they sync) */
+  /** tell the other tabs of this browser that an agent saved a scene (they sync) */
   private broadcast(event: unknown, except?: WebSocket) {
     for (const tab of this.allTabs()) {
       if (tab.ws !== except) {

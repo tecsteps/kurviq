@@ -388,14 +388,18 @@ const allowedHosts = () => {
 /** the CORS origin to answer with: the request's own, if allowed */
 const corsOrigin = (res) => res.kqCorsOrigin || "null";
 
+/** the scene version headers the tab answers with (X-Scene-Sha: pre-rename name, remove after 2027-02) */
+const SCENE_VERSION_HEADERS = "X-Scene-Md5, X-Scene-Sha";
+
 const send = (res, status, body, type = "application/json") => {
   res.writeHead(status, {
     "Content-Type": type,
     "Access-Control-Allow-Origin": corsOrigin(res),
     Vary: "Origin",
     "Access-Control-Allow-Methods": "GET, PUT, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Scenes-Source, X-Scenes-Client, X-Base-Sha",
-    "Access-Control-Expose-Headers": "X-Scene-Sha",
+    // X-Base-Sha / X-Scene-Sha: pre-rename names (older tabs and MCP servers); remove after 2027-02
+    "Access-Control-Allow-Headers": "Content-Type, X-Scenes-Source, X-Scenes-Client, X-Base-Md5, X-Base-Sha",
+    "Access-Control-Expose-Headers": SCENE_VERSION_HEADERS,
   });
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 };
@@ -555,7 +559,7 @@ const server = http.createServer(async (req, res) => {
         "Content-Type": "application/json",
         ...(answer?.headers ?? {}),
         "Access-Control-Allow-Origin": corsOrigin(res),
-        "Access-Control-Expose-Headers": "X-Scene-Sha",
+        "Access-Control-Expose-Headers": SCENE_VERSION_HEADERS,
         Vary: "Origin",
       });
       return res.end(answer?.body ?? "");
@@ -565,7 +569,7 @@ const server = http.createServer(async (req, res) => {
     console.error(error.message);
     return send(res, error.status || 500, {
       error: error.message,
-      ...(error.remoteSha !== undefined ? { remoteSha: error.remoteSha } : {}),
+      ...(error.remoteMd5 !== undefined ? { remoteMd5: error.remoteMd5 } : {}),
       ...(error.offline ? { offline: true } : {}),
       ...(error.exists ? { exists: true } : {}),
     });

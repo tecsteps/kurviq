@@ -35,11 +35,11 @@ export const isPublicScene = (name: string | null): name is string => !!name && 
 
 /**
  * A bundled scene (name), or a shared one (its Drive file; name: from the
- * link, until it is loaded), or an old kind of link (moved: kurviq.com/@owner/scene).
+ * link, until it is loaded).
  * present / slide: a presentation link (?present&slide=3) starts presenting
  * at that slide.
  */
-export type Shown = { name: string; fileId?: string; moved?: boolean; present?: boolean; slide?: number };
+export type Shown = { name: string; fileId?: string; present?: boolean; slide?: number };
 
 let shown: Shown | null = null;
 const listeners = new Set<() => void>();
@@ -49,7 +49,7 @@ const setShown = (next: Shown | null) => {
 };
 
 export const publicScene = {
-  show: (name: string, start: { fileId?: string; moved?: boolean; present?: boolean; slide?: number } = {}) =>
+  show: (name: string, start: { fileId?: string; present?: boolean; slide?: number } = {}) =>
     setShown({ name, ...start }),
   close: () => setShown(null),
   shown: () => shown,
@@ -155,24 +155,19 @@ const parseScene = async (json: string, access: { public?: boolean; canEdit?: bo
 const REFRESH_STEPS_MS = [10_000, 30_000, 60_000];
 const AWAY_AFTER_MS = 3 * 60_000;
 
-const Viewer = ({ name: linkName, fileId, moved, present: startPresenting, slide: startSlide }: Shown) => {
-  const bundled = !fileId && !moved;
+const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: startSlide }: Shown) => {
+  const bundled = !fileId;
   const [name, setName] = useState(linkName);
   const title = bundled ? PUBLIC_SCENES[name].title : name || "A shared scene";
   const [scene, setScene] = useState<Scene | null>(null);
   /** why a shared scene can't be shown (yet) */
-  const [missing, setMissing] = useState<Exclude<SharedSceneAnswer, { scene: unknown }> | { moved: true } | null>(
-    moved ? { moved: true } : null,
-  );
+  const [missing, setMissing] = useState<Exclude<SharedSceneAnswer, { scene: unknown }> | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [copying, setCopying] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (moved) {
-      return;
-    }
     setMissing(null);
     const load = fileId
       ? readSharedScene(fileId).then((answer) => {
@@ -470,19 +465,11 @@ const WhyMissing = ({
   fileId,
   retry,
 }: {
-  why: Exclude<SharedSceneAnswer, { scene: unknown }> | { moved: true };
+  why: Exclude<SharedSceneAnswer, { scene: unknown }>;
   fileId?: string;
   retry: () => void;
 }) => {
   const [error, setError] = useState<string | null>(null);
-  if ("moved" in why) {
-    return (
-      <p>
-        This link is from an older version of Kurviq and doesn't work any more. Kurviq now keeps scenes in Google Drive:
-        ask whoever sent it for a new link.
-      </p>
-    );
-  }
   if ("signIn" in why) {
     return (
       <>
@@ -522,7 +509,7 @@ const WhyMissing = ({
 /** rendered next to the editor (see index.tsx) */
 export const PublicSceneOverlay = () => {
   const current = useSyncExternalStore(publicScene.subscribe, publicScene.shown);
-  if (!current || (!current.fileId && !current.moved && !isPublicScene(current.name))) {
+  if (!current || (!current.fileId && !isPublicScene(current.name))) {
     return null;
   }
   return <Viewer key={current.fileId ?? current.name} {...current} />;

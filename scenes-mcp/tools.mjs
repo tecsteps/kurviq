@@ -164,7 +164,7 @@ export const createScenesMcp = ({
   const leanQuery = (lean) => (lean && LEAN ? "?lean=1" : "");
 
   /** a scene in Google Drive plus its version, the MD5 of its content (null if it doesn't exist) */
-  const loadSceneWithSha = async (name, { lean = false } = {}) => {
+  const loadSceneWithMd5 = async (name, { lean = false } = {}) => {
     const res = await serverFetch(`${sceneUrl(name)}${leanQuery(lean)}`).catch(() => {
       throw new Error(unreachable);
     });
@@ -174,7 +174,8 @@ export const createScenesMcp = ({
     if (!res.ok) {
       throw new Error(await res.text());
     }
-    return { file: await res.json(), sha: res.headers.get("x-scene-sha") };
+    // x-scene-sha: pre-rename tabs; remove after 2027-02
+    return { file: await res.json(), md5: res.headers.get("x-scene-md5") ?? res.headers.get("x-scene-sha") };
   };
 
   const loadSceneFile = async (name, { lean = false } = {}) => {
@@ -908,8 +909,9 @@ export const createScenesMcp = ({
     // ---------------------------------------------------------------------------
 
     /** a specific version (MD5 of its content) of a scene */
-    const loadVersion = async (name, sha) =>
-      JSON.parse(await call(`${sceneUrl(name)}?sha=${encodeURIComponent(sha)}${LEAN ? "&lean=1" : ""}`));
+    const loadVersion = async (name, md5) =>
+      // sha=: for pre-rename tabs; remove after 2027-02
+      JSON.parse(await call(`${sceneUrl(name)}?md5=${encodeURIComponent(md5)}&sha=${encodeURIComponent(md5)}${LEAN ? "&lean=1" : ""}`));
 
     /** user's sync state for this scene, after the flush — so the agent knows what it sees */
     const userSyncNote = (flushed) => {
@@ -939,7 +941,7 @@ export const createScenesMcp = ({
       } else {
         const { version } = await callJson(`${sceneUrl(name)}/agent-version`);
         if (version) {
-          base = await loadVersion(name, version.sha).catch(() => null);
+          base = await loadVersion(name, version.md5 ?? version.sha).catch(() => null); // sha: pre-rename tabs
           label = `since an agent last edited this scene (${version.at})`;
         }
       }
@@ -974,7 +976,7 @@ export const createScenesMcp = ({
       const { file, revision, base } = await loadLocalScene(name, since, { lean: true });
       return {
         file,
-        sha: revision,
+        md5: revision,
         changes: (elements) =>
           base
             ? { ...describeChanges((base.elements || []).filter((el) => !el.isDeleted), elements, `by the user ${base.label}`), firstLook: false }
@@ -1006,7 +1008,7 @@ export const createScenesMcp = ({
         tool(async ({ name, view, changesOnly, summary, region, elementIds, slide, relative, since, textsOffset }) => {
           const flushed = await flushUser(name);
           const local = isLocalOnly(flushed);
-          const current = local ? await localVersion(name, since) : await loadSceneWithSha(name, { lean: true });
+          const current = local ? await localVersion(name, since) : await loadSceneWithMd5(name, { lean: true });
           if (!current) {
             throw notFound(name);
           }
@@ -1014,7 +1016,7 @@ export const createScenesMcp = ({
           const changes = local ? current.changes(elements) : await changesSince(name, elements, since);
           const result = text({
             scene: name,
-            revision: current.sha,
+            revision: current.md5,
             sync: local ? LOCAL_NOTE : userSyncNote(flushed),
             elementCount: elements.length,
             ...fileStats(current.file),
@@ -1094,7 +1096,7 @@ ${EDIT_HELP}
 
           // what did the user do since the agent's version?
           const local = isLocalOnly(await flushUser(name));
-          const before = local ? await localVersion(name, basedOn) : await loadSceneWithSha(name, { lean: true });
+          const before = local ? await localVersion(name, basedOn) : await loadSceneWithMd5(name, { lean: true });
           if (!before) {
             throw new Error(`Scene "${name}" not found in Google Drive. Create new scenes with create_view + save_scene.`);
           }
@@ -1169,10 +1171,11 @@ ${EDIT_HELP}
             ...editExtras(edited),
             ...(edited.missingIds ? { missingIds: edited.missingIds } : {}),
             requestId,
-            revision: local ? edited.revision : edited.sha,
+            // sha / commit: pre-rename tabs; remove after 2027-02
+            revision: local ? edited.revision : edited.md5 ?? edited.sha,
             ...(local
               ? { note: `${LOCAL_NOTE} Your edit is in their app now; nothing else to do.` }
-              : { commit: edited.commit, note: "Saved to Google Drive. The user's app merges it within seconds; nothing else to do." }),
+              : { driveRevision: edited.driveRevision ?? edited.commit, note: "Saved to Google Drive. The user's app merges it within seconds; nothing else to do." }),
           });
           if (view) {
             result.content.push(...(await imageOf(after, [...edited.addedIds, ...edited.updated], "the edited area")));
@@ -1204,7 +1207,7 @@ ${EDIT_HELP}
       "view_scene",
       {
         description: `SEE a scene: returns an actual PNG image of it, rendered by Excalidraw itself (no browser automation needed — uses the open app tab or a hidden headless renderer).
-  Source (pick one): name = scene in the repo; checkpointId = a create_view/get_scene checkpoint (e.g. to check your drawing before saving); neither = the scene currently open in the user's app, including unsaved edits.
+  Source (pick one): name = a saved scene (in the user's app / Google Drive); checkpointId = a create_view/get_scene checkpoint (e.g. to check your drawing before saving); neither = the scene currently open in the user's app, including unsaved edits.
   Slides: slide = slide number (1-based, deck order) or frame id renders exactly that slide as the audience sees it — with the template's header/footer/logo and filled-in {page}/{total}/{deck}; step = what is visible after that many clicks (default: everything). slides = "all" (or "2-5") renders a contact sheet of the whole deck in one image; add steps=true for every click state.
   Focus (optional): elementIds = just those elements (+padding, + whatever overlaps that area) — ideal to check the part you worked on; region = a scene-coordinate rectangle. Without focus the whole scene is rendered; for huge scenes render an overview first (get_scene summary=true tells you where things are), then zoom in with region.
   The result also reports renderedBounds/sceneBounds (scene coordinates) and the scale.`,
@@ -1241,7 +1244,7 @@ ${EDIT_HELP}
             throw notFound(name);
           }
           scene = sceneOf(file);
-          source = `scene "${name}" (${local ? "local only, from the user's browser" : "repo"})`;
+          source = `scene "${name}" (${local ? "local only, from the user's browser" : "Google Drive"})`;
         } else {
           const state = await callJson("/api/app/state");
           if (!state.connected) {
@@ -1416,7 +1419,7 @@ ${EDIT_HELP}
             `"${name}" exists as a local-only scene in the user's browser. Change it with read_scene + edit_scene; replace it with save_scene(local: true, replace: true) only if the user wants the whole scene replaced.`,
           );
         }
-        const current = local ? null : await loadSceneWithSha(name);
+        const current = local ? null : await loadSceneWithMd5(name);
         if (current && !replace) {
           throw new Error(
             `Scene "${name}" already exists. Don't overwrite it: ${MODE === "detached" ? `change it with read_scene("${name}") + edit_scene("${name}", …), which merges with the user's work.` : `the user's app syncs it by itself. To change it, open_scene("${name}") (if it isn't open), read_open_scene, then edit_open_scene; the app pushes the result.`} Only if the user explicitly wants the whole scene replaced by your drawing, or the app is not open at all (app_status: connected false; it then merges your version on its next sync), call save_scene again with replace: true.`,
@@ -1468,8 +1471,9 @@ ${EDIT_HELP}
           headers: {
             "Content-Type": "application/json",
             "X-Scenes-Source": "agent", "X-Scenes-Client": "mcp",
-            // only replace the version we just looked at
-            "X-Base-Sha": current?.sha || "none",
+            // only replace the version we just looked at (X-Base-Sha: pre-rename tabs; remove after 2027-02)
+            "X-Base-Md5": current?.md5 || "none",
+            "X-Base-Sha": current?.md5 || "none",
           },
           body: JSON.stringify(scene, null, 2),
         });
@@ -1487,12 +1491,12 @@ ${EDIT_HELP}
         return text({
           saved: name,
           created: !existing,
-          commit: result.commit,
+          driveRevision: result.driveRevision ?? result.commit, // commit: pre-rename tabs
           changed: result.changed,
           elementCount: sceneElements.length,
           convertedBy,
           checkpointId: savedCheckpointId,
-          ...(MODE === "detached" ? { revision: result.sha } : {}),
+          ...(MODE === "detached" ? { revision: result.md5 ?? result.sha } : {}),
           ...(app ? { app } : {}),
         });
       }),
@@ -1530,7 +1534,7 @@ ${EDIT_HELP}
           headers: { "Content-Type": "application/json", "X-Scenes-Source": "agent", "X-Scenes-Client": "mcp" },
           body: JSON.stringify({ to: newName }),
         });
-        return text({ renamed: name, to: newName, commit: result.commit, note: viaDriveNote });
+        return text({ renamed: name, to: newName, note: viaDriveNote });
       }),
     );
 
@@ -1552,7 +1556,7 @@ ${EDIT_HELP}
           method: "DELETE",
           headers: { "X-Scenes-Source": "agent", "X-Scenes-Client": "mcp" },
         });
-        return text({ deleted: name, commit: result.commit, note: viaDriveNote });
+        return text({ deleted: name, note: viaDriveNote });
       }),
     );
 
@@ -1579,11 +1583,11 @@ ${EDIT_HELP}
         }
         const result = await callJson(sceneUrl(newName), {
           method: "PUT",
-          headers: { "Content-Type": "application/json", "X-Scenes-Source": "agent", "X-Scenes-Client": "mcp", "X-Base-Sha": "none" },
+          headers: { "Content-Type": "application/json", "X-Scenes-Source": "agent", "X-Scenes-Client": "mcp", "X-Base-Md5": "none", "X-Base-Sha": "none" },
           body: JSON.stringify({ ...file, appState: { ...(file.appState || {}), name: newName } }, null, 2),
         });
         const app = open ? await appCommand({ type: "open", name: newName }).catch((error) => ({ error: error.message })) : null;
-        return text({ cloned: name, to: newName, commit: result.commit, note: viaDriveNote, ...(app ? { app } : {}) });
+        return text({ cloned: name, to: newName, driveRevision: result.driveRevision ?? result.commit, note: viaDriveNote, ...(app ? { app } : {}) });
       }),
     );
 
@@ -1667,7 +1671,7 @@ ${EDIT_HELP}
         "save_open_scene",
         {
           description:
-            "Push the scene open in the user's app to Google Drive right now, including the user's edits. Usually NOT needed: with auto-sync on (the default) the app pushes by itself about 10 s after the last edit and pulls Google Drive changes within about a minute. Use it only when the user asks to save/commit/push now, or to give an untitled scene a name. If auto-sync is off for the scene, the user wants to decide when it goes to Google Drive: only push when they ask.",
+            "Push the scene open in the user's app to Google Drive right now, including the user's edits. Usually NOT needed: with auto-sync on (the default) the app pushes by itself about 10 s after the last edit and pulls Google Drive changes within about a minute. Use it only when the user asks to save/push now, or to give an untitled scene a name. If auto-sync is off for the scene, the user wants to decide when it goes to Google Drive: only push when they ask.",
           inputSchema: { name: SCENE_NAME.optional() },
         },
         tool(async ({ name }) => text(await appCommand({ type: "save", ...(name ? { name } : {}) }))),

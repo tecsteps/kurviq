@@ -2,7 +2,7 @@
   "name": "kurviq",
   "private": true,
   "type": "module",
-  "description": "Local Excalidraw with git-backed multi-scene support. Upstream excalidraw lives untouched in ./excalidraw",
+  "description": "Excalidraw with named scenes, synced with Google Drive. Upstream excalidraw lives untouched in ./excalidraw",
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "start": "node scripts/start.mjs",

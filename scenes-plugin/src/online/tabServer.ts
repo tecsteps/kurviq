@@ -28,6 +28,19 @@ const NOT_CONNECTED =
   "Google Drive is not connected in this Kurviq browser: scenes are kept only in the browser (local-only). " +
   "Work with local-only scenes, or ask the user to sign in with Google (Scenes sidebar → Sign in with Google).";
 
+/**
+ * Names of a scene version on the wire: md5 (the content's MD5, Drive's
+ * md5Checksum) and driveRevision (Drive's revision id). Answers carry the
+ * old names too (sha / commit, header X-Scene-Sha) and requests may still use
+ * them (?sha=, X-Base-Sha): pre-rename MCP servers and tabs; remove after 2027-02.
+ */
+const withOldNames = <T extends Record<string, unknown>>(result: T) => ({
+  ...result,
+  ...("md5" in result ? { sha: result.md5 } : {}),
+  ...("driveRevision" in result ? { commit: result.driveRevision } : {}),
+});
+const versionHeaders = (md5: string) => ({ "Content-Type": "application/json", "X-Scene-Md5": md5, "X-Scene-Sha": md5 });
+
 /** an agent changed Drive through this tab: sync the editor right away */
 const afterAgentWrite = (source?: string) => {
   if (source?.startsWith("agent")) {
@@ -39,9 +52,14 @@ const afterAgentWrite = (source?: string) => {
 const liveFileOf = async (name: string) =>
   scenesController.liveFileId(name) ?? (await driveScenes.liveFileOf(name).catch(() => null));
 
+/** ?md5= (?sha=: pre-rename MCP servers; remove after 2027-02) */
+const versionParam = (url: URL) => url.searchParams.get("md5") ?? url.searchParams.get("sha");
+
 const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Promise<TabResponse> => {
   const url = new URL(path, "http://tab");
   const header = (name: string) => headers[name] ?? headers[name.toLowerCase()];
+  // X-Base-Sha: pre-rename MCP servers; remove after 2027-02
+  const baseHeader = () => header("X-Base-Md5") ?? header("X-Base-Sha");
 
   if (url.pathname === "/api/scenes" && method === "GET") {
     if (!connection.isActive()) {
@@ -62,11 +80,11 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
     if (scenesController.liveFileId(from)) {
       // live: a name event through the scene's Durable Object
       await scenesController.rename(from, String(to ?? "").trim());
-      return json(200, { from, to, sha: "", commit: null });
+      return json(200, withOldNames({ from, to, md5: "", driveRevision: null }));
     }
     const result = await driveScenes.rename(from, String(to ?? "").trim());
     afterAgentWrite(header("X-Scenes-Source"));
-    return json(200, { from, to, ...result });
+    return json(200, withOldNames({ from, to, ...result }));
   }
   const agentMatch = url.pathname.match(/^\/api\/scenes\/(.+)\/agent-version$/);
   if (agentMatch && method === "GET") {
@@ -74,7 +92,7 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
     const liveFile = await liveFileOf(name);
     // live: the agent's last edit as this browser keeps it, until Drive has a newer agent version
     const version = (liveFile ? await scenesController.liveAgentVersion(liveFile) : null) ?? (await driveScenes.agentVersion(name));
-    return json(200, { name, version });
+    return json(200, { name, version: version && withOldNames(version) });
   }
   const match = url.pathname.match(/^\/api\/scenes\/(.+)$/);
   if (match) {
@@ -82,16 +100,16 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
     const liveFile = await liveFileOf(name);
     if (liveFile && method === "GET") {
       // live: the scene as its Durable Object has it now (Drive is up to a minute behind)
-      const sha = url.searchParams.get("sha");
+      const wanted = versionParam(url);
       let text: string | null;
       let revision: string;
-      if (sha?.startsWith("live-")) {
-        text = await scenesController.liveRevision(liveFile, sha);
-        revision = sha;
-      } else if (sha) {
-        const scene = await driveScenes.load(name, sha);
+      if (wanted?.startsWith("live-")) {
+        text = await scenesController.liveRevision(liveFile, wanted);
+        revision = wanted;
+      } else if (wanted) {
+        const scene = await driveScenes.load(name, wanted);
         text = scene.json;
-        revision = scene.sha;
+        revision = scene.md5;
       } else {
         const live = await scenesController.liveSessionFor(name);
         if (!live) {
@@ -104,39 +122,39 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
         await scenesController.rememberLiveRevision(liveFile, revision, text);
       }
       if (text === null) {
-        return json(404, { error: `Revision ${sha} of "${name}" is not kept in this browser any more` });
+        return json(404, { error: `Revision ${wanted} of "${name}" is not kept in this browser any more` });
       }
       const body = url.searchParams.has("lean") ? JSON.stringify(leanScene(JSON.parse(text))) : text;
-      return { status: 200, headers: { "Content-Type": "application/json", "X-Scene-Sha": revision }, body };
+      return { status: 200, headers: versionHeaders(revision), body };
     }
     if (liveFile && method === "PUT") {
-      const result = await scenesController.liveWrite(liveFile, name, body, header("X-Base-Sha"), header("X-Scenes-Source"));
-      return json(200, { name, ...result });
+      const result = await scenesController.liveWrite(liveFile, name, body, baseHeader(), header("X-Scenes-Source"));
+      return json(200, withOldNames({ name, ...result }));
     }
     if (liveFile && method === "DELETE") {
       await scenesController.remove(name);
-      return json(200, { name, sha: null });
+      return json(200, withOldNames({ name, md5: null }));
     }
     if (method === "GET") {
-      const scene = await driveScenes.load(name, url.searchParams.get("sha") || undefined);
+      const scene = await driveScenes.load(name, versionParam(url) || undefined);
       // ?lean: without image bytes (the agent's server reads it; this tab keeps the images)
       const body = url.searchParams.has("lean") ? JSON.stringify(leanScene(JSON.parse(scene.json))) : scene.json;
-      return { status: 200, headers: { "Content-Type": "application/json", "X-Scene-Sha": scene.sha }, body };
+      return { status: 200, headers: versionHeaders(scene.md5), body };
     }
-    const baseHeader = header("X-Base-Sha");
-    const baseSha = baseHeader === undefined ? undefined : String(baseHeader).trim();
-    if (baseSha !== undefined && !/^([0-9a-f]{32}|none)$/.test(baseSha)) {
-      return json(400, { error: 'X-Base-Sha must be a version (32 hex characters) or "none"' });
+    const given = baseHeader();
+    const baseMd5 = given === undefined ? undefined : String(given).trim();
+    if (baseMd5 !== undefined && !/^([0-9a-f]{32}|none)$/.test(baseMd5)) {
+      return json(400, { error: 'X-Base-Md5 must be a version (32 hex characters) or "none"' });
     }
     if (method === "DELETE") {
-      const result = await driveScenes.remove(name, baseSha);
+      const result = await driveScenes.remove(name, baseMd5);
       afterAgentWrite(header("X-Scenes-Source"));
-      return json(200, { name, ...result });
+      return json(200, withOldNames({ name, ...result }));
     }
     if (method === "PUT") {
-      const result = await driveScenes.save(name, body, baseSha, header("X-Scenes-Source"));
+      const result = await driveScenes.save(name, body, baseMd5, header("X-Scenes-Source"));
       afterAgentWrite(header("X-Scenes-Source"));
-      return json(200, { name, ...result });
+      return json(200, withOldNames({ name, ...result }));
     }
   }
   return json(404, { error: "Not found" });
@@ -148,7 +166,8 @@ export const serveRequest = async (request: TabRequest): Promise<TabResponse> =>
   } catch (error: any) {
     return json(error.status && error.status >= 400 ? error.status : error.offline ? 503 : 500, {
       error: error.message,
-      ...(error.remoteSha !== undefined ? { remoteSha: error.remoteSha } : {}),
+      // remoteSha: for pre-rename MCP servers; remove after 2027-02
+      ...(error.remoteMd5 !== undefined ? { remoteMd5: error.remoteMd5, remoteSha: error.remoteMd5 } : {}),
       ...(error.offline ? { offline: true } : {}),
       ...(error.exists ? { exists: true } : {}),
     });

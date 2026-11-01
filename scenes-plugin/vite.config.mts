@@ -535,7 +535,7 @@ const kurviqOnline = () => ({
         [": [ExcalidrawPlusCommand, ExcalidrawPlusAppCommand]),", ": []),"],
         // no scenes from links: #url= (any website's JSON), #json= and ?id=
         // (excalidraw.com's backend) would load foreign content into the
-        // editor; Kurviq's own links are /@owner/scene (read-only viewer)
+        // editor; Kurviq's own links are /s/<fileId>/<name> (read-only viewer)
         ['const id = searchParams.get("id");', "const id = null as string | null;"],
         [
           "const jsonBackendMatch = window.location.hash.match(\n    /^#json=([a-zA-Z0-9_-]+),([a-zA-Z0-9_-]+)$/,\n  );",

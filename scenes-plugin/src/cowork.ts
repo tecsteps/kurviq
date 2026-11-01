@@ -64,7 +64,7 @@ type BaselineOptions = {
 
 export type ReadCommand = { type: "read" } & BaselineOptions;
 
-/** detached mode: the agent edits its own copy of a scene and commits it */
+/** detached mode: the agent edits its own copy of a scene and saves it to Drive */
 export type SceneEditCommand = {
   type: "scene-edit";
   name: string;
@@ -781,8 +781,8 @@ export const editSceneOnDrive = async (
       command.name, // ties the content to this scene
     );
     try {
-      const saved = await scenesApi.save(command.name, json, latest.sha, "agent");
-      return { ...edit, ...images.info, ...sceneSize(json, elements), elements, sha: saved.sha, commit: saved.commit, changed: saved.changed };
+      const saved = await scenesApi.save(command.name, json, latest.md5, "agent");
+      return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(saved.md5, saved.driveRevision), changed: saved.changed };
     } catch (error) {
       if ((error as ApiError).status !== 409 || attempt >= 3) {
         throw error;
@@ -790,6 +790,12 @@ export const editSceneOnDrive = async (
     }
   }
 };
+
+/**
+ * The saved version in an edit's result: md5 (content MD5) and driveRevision;
+ * sha / commit as well for pre-rename MCP servers (remove after 2027-02).
+ */
+const versionNames = (md5: string, driveRevision: string | null) => ({ md5, driveRevision, sha: md5, commit: driveRevision });
 
 /**
  * A live scene (saved through its Durable Object): the edit is applied to
@@ -816,7 +822,7 @@ const editLiveScene = async (
   await live.agentEdit(changed, Object.values(command.files || {}), command.requestId);
   const json = withSceneName(withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements), command.name);
   const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
-  return { ...edit, ...images.info, ...sceneSize(json, elements), elements, sha: revision, commit: revision, changed: changed.length > 0 };
+  return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0 };
 };
 
 // -----------------------------------------------------------------------------

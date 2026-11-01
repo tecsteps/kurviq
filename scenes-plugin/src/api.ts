@@ -7,7 +7,8 @@ import { driveScenes } from "./online/drive";
 
 export type RemoteScene = {
   name: string;
-  sha: string;
+  /** the version in Drive: MD5 of the content (Drive's md5Checksum) */
+  md5: string;
   updatedAt: string | null;
   /** shared "anyone with the link" in Drive */
   public?: boolean;
@@ -19,14 +20,15 @@ export type RemoteScene = {
 
 /** a version of a scene in Drive's revisions (newest first in lists) */
 export type SceneVersion = {
-  commit: string;
+  /** Drive's revision id */
+  driveRevision: string;
   at: string | null;
   author: string | null;
   message: string;
-  /** made by an agent (commit trailer) */
+  /** made by an agent (the file's appProperties.agentRev names this revision) */
   agent: boolean;
   /** the scene's version (MD5 of its content) in that revision */
-  sha?: string;
+  md5?: string;
 };
 
 export type RemoteInfo = {
@@ -52,7 +54,7 @@ export type ApiError = Error & {
   status: number;
   /** server or Google Drive not reachable — keep working locally, retry later */
   offline?: boolean;
-  remoteSha?: string | null;
+  remoteMd5?: string | null;
   /** rename: the target name already exists */
   exists?: boolean;
   /** not signed in with Google (or no Drive access) — work locally */
@@ -79,7 +81,7 @@ const request = async (path: string, init?: RequestInit) => {
     throw Object.assign(new Error(body.error || `${res.status} ${res.statusText}`), {
       status: res.status,
       offline: res.status === 503 || !!body.offline,
-      remoteSha: body.remoteSha,
+      remoteMd5: body.remoteMd5,
       exists: !!body.exists,
     }) as ApiError;
   }
@@ -115,17 +117,17 @@ export const scenesApi = {
   /** latest version, or a specific one (its MD5) */
   load: driveScenes.load,
   /**
-   * Save to Drive. baseSha = the version this content is based on ("none"
+   * Save to Drive. baseMd5 = the version this content is based on ("none"
    * for a new scene) — 409 if Drive has something else.
    */
-  save: (name: string, json: string, baseSha: string, source = `app:${TAB_ID}`) => driveScenes.save(name, json, baseSha, source),
-  /** delete in Drive; baseSha: only if Drive still has that version (else 409) */
+  save: (name: string, json: string, baseMd5: string, source = `app:${TAB_ID}`) => driveScenes.save(name, json, baseMd5, source),
+  /** delete in Drive; baseMd5: only if Drive still has that version (else 409) */
   remove: driveScenes.remove,
   /** rename in Drive (content unchanged, so the version stays) */
   rename: driveScenes.rename,
   /** the scene's versions, newest first */
   history: driveScenes.history,
   /** the scene as it was in one of those versions */
-  loadVersion: (name: string, version: SceneVersion) => driveScenes.loadAt(name, version.commit),
+  loadVersion: (name: string, version: SceneVersion) => driveScenes.loadAt(name, version.driveRevision),
   ...(IS_ONLINE ? { reportState: async () => {}, sendResult: async () => {} } : localRelay),
 };

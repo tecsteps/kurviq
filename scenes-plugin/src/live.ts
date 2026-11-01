@@ -1,7 +1,7 @@
 // Live channel to the scenes server: lets agents (via the scenes MCP server)
-// drive the editor that is open in the browser — switch scenes, commit the
+// drive the editor that is open in the browser — switch scenes, save the
 // open scene, convert MCP-style elements with real font metrics — and keeps
-// the editor in sync when an agent commits a scene.
+// the editor in sync when an agent saves a scene.
 
 import {
   CaptureUpdateAction,
@@ -1004,7 +1004,7 @@ export const connectLive = () => {
         return;
       }
       if (event.type === "scene-renamed") {
-        await scenesController.followRemoteRename(event.from, event.to, event.sha ?? null);
+        await scenesController.followRemoteRename(event.from, event.to, event.md5 ?? null);
       }
       // someone else pushed: check and sync (visible in the activity log)
       scenesController.syncNow();

@@ -5,7 +5,6 @@
 // kurviq.com/s/<fileId>/<name> (a Google Drive file). A shared scene this tab
 // edits (its space, see storage.ts) opens in the editor, at the same URL.
 
-import { IS_ONLINE } from "./api";
 import { scenesController } from "./controller";
 import { sharedFileId } from "./online/drive";
 import { isPublicScene, publicScene } from "./publicScene";
@@ -24,9 +23,6 @@ const sharedFromPath = (): { fileId: string; name: string } | null => {
     return { fileId: match[1], name: "" };
   }
 };
-
-/** /@owner/scene: a link of the time scenes were on GitHub */
-const isOldSharedPath = () => IS_ONLINE && /^\/(?:@|%40)[A-Za-z0-9-]{1,39}\/.+/i.test(window.location.pathname);
 
 /** a presentation link: ?present (and &slide=3) */
 const presentFromSearch = () => {
@@ -48,15 +44,11 @@ const showShared = () => {
     publicScene.show(shared.name, { fileId: shared.fileId, ...presentFromSearch() });
     return true;
   }
-  if (isOldSharedPath()) {
-    publicScene.show("", { moved: true });
-    return true;
-  }
   return false;
 };
 
 const sceneFromPath = (): string | null => {
-  if (sharedFromPath() || isOldSharedPath()) {
+  if (sharedFromPath()) {
     return null;
   }
   const raw = window.location.pathname.replace(/^\/+|\/+$/g, "");
