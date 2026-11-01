@@ -95,8 +95,13 @@
       background: var(--color-primary-light, var(--color-surface-high));
     }
 
+    // hidden: the whole card grayed out (its icons stay usable)
+    &--skip .slides-card__open {
+      opacity: 0.45;
+    }
+
     &--skip .slides-card__thumb {
-      opacity: 0.4;
+      filter: grayscale(1);
     }
 
     &--over {
@@ -1032,4 +1037,36 @@ body.slides-presenting .excalidraw .public-scene {
 // docked, Excalidraw drops the sidebar's shadow: keep it, so the sidebar stands apart from the drawing beside it
 .excalidraw .sidebar.sidebar--docked.slides-sidebar {
   box-shadow: var(--sidebar-shadow);
+}
+
+// a hidden slide's mark before its title in the list
+.excalidraw .slides-card__hidden {
+  display: inline-flex;
+  margin-right: 0.25rem;
+  vertical-align: -2px;
+  color: var(--color-gray-60, #666);
+}
+
+// hidden slides on the canvas: a light veil (clicks go through to the drawing)
+.excalidraw .slides-hidden-veil {
+  position: fixed;
+  z-index: 1;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--default-bg-color, #fff) 62%, transparent);
+  pointer-events: none;
+}
+
+.excalidraw .slides-hidden-veil__label {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--island-bg-color, #fff);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  color: var(--color-gray-60, #666);
+  font-size: 0.75rem;
 }

@@ -12,7 +12,7 @@ import { optimizeImages, pickSlides, printInBrowser, printToPdf, slidesHtml } fr
 import { IS_ONLINE } from "./api";
 import { QuickTip } from "./quickTip";
 import { presenter } from "./present";
-import { slideNotes } from "./notes";
+import { EyeIcon, slideNotes, toggleHidden } from "./notes";
 import { setSlideParam } from "./router";
 import {
   addSlide,
@@ -345,7 +345,14 @@ const SlideList = () => {
             <span className="slides-card__num">{slide.index + 1}</span>
             <span className="slides-card__thumb">{thumbs[slide.id] ? <img src={thumbs[slide.id]} alt="" /> : null}</span>
             <span className="slides-card__meta">
-              <span className="slides-card__title">{slide.title}</span>
+              <span className="slides-card__title">
+                {slide.skip && (
+                  <span className="slides-card__hidden" title="Hidden: not presented">
+                    <EyeIcon off />
+                  </span>
+                )}
+                {slide.title}
+              </span>
 
             </span>
           </button>
@@ -367,13 +374,26 @@ const SlideList = () => {
           {slide.id === activeId && (
           <span className="slides-card__actions">
             {templateId && (
-              <QuickTip tip={slide.template ? "Template is on: header, footer, logo… (click: off for this slide)" : "Template is off for this slide (click: on)"} label={false}>
+              <QuickTip
+                tip={
+                  slide.template
+                    ? "Template is on: header, footer, logo… (click: off for this slide; click twice: the slide back to the template)"
+                    : "Template is off for this slide (click: on, with the template's header, footer, logo, fonts and colors)"
+                }
+                label={false}
+              >
                 <button
                   type="button"
                   className={clsx({ "slides-card__action--off": !slide.template })}
                   aria-label={`Template on slide ${slide.index + 1}`}
                   aria-pressed={slide.template}
-                  onClick={() => patchSlideData(api(), new Map([[slide.id, { template: slide.template ? false : undefined }]]))}
+                  onClick={() => {
+                    patchSlideData(api(), new Map([[slide.id, { template: slide.template ? false : undefined }]]));
+                    if (!slide.template) {
+                      // on again: the slide as the template has it (what "back to template" did; undo with ⌘Z)
+                      setTimeout(() => resetSlides([slide.id]), 50);
+                    }
+                  }}
                 >
                   <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden>
                     <rect x="2.5" y="4" width="15" height="12" rx="1.5" />
@@ -383,16 +403,17 @@ const SlideList = () => {
                 </button>
               </QuickTip>
             )}
-            {templateId && slide.template && (
-              <QuickTip tip="Back to template: header, footer, logo… as in the template again, and the deck's fonts and colors on this slide (undo with ⌘Z)" label={false}>
-                <button type="button" aria-label={`Slide ${slide.index + 1} back to template`} onClick={() => resetSlides([slide.id])}>
-                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M4 10a6 6 0 1 0 1.8-4.3" />
-                    <path d="M4 3.5v3.2h3.2" />
-                  </svg>
-                </button>
-              </QuickTip>
-            )}
+            <QuickTip tip={slide.skip ? "Hidden: not presented (click: show it)" : "Hide this slide (not presented)"} label={false}>
+              <button
+                type="button"
+                className={clsx({ "slides-card__action--off": slide.skip })}
+                aria-label={slide.skip ? `Show slide ${slide.index + 1}` : `Hide slide ${slide.index + 1}`}
+                aria-pressed={slide.skip}
+                onClick={() => toggleHidden(slide.id, !slide.skip)}
+              >
+                <EyeIcon off={slide.skip} />
+              </button>
+            </QuickTip>
             <QuickTip tip="Duplicate slide" label={false}>
               <button
                 type="button"
@@ -469,7 +490,7 @@ const SlideDetails = ({ id }: { id: string }) => {
       </button>
       <label className="slides-check">
         <input type="checkbox" checked={slide.skip} onChange={(event) => patchSlideData(api(), new Map([[id, { skip: event.target.checked || undefined }]]))} />
-        Skip when presenting (backup slide)
+        Hidden (not presented, not in the PDF)
       </label>
       <label className="slides-check">
         <input

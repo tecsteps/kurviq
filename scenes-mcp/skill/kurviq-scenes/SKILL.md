@@ -197,8 +197,10 @@ Every frame of a scene is a slide; the user presents with the "Slides" button
   slide's top-left corner; it becomes part of the slide. Works in
   `save_scene` and in `edit_scene` (`add` and `update`).
 - In the slide frame's `customData.slides`: `"skip": true` hides a slide
-  while presenting; `"template": false` turns the template off for that
-  slide (title slides).
+  (not presented, not in the PDF; the user sees it grayed out, and it is
+  listed with `"hidden": true` in a summary's frames; `"skip": null` shows it
+  again); `"template": false` turns the template off for that slide (title
+  slides).
 - Click-by-click reveals: `"customData": { "slides": { "step": 1 } }` on
   elements (1, 2, 3 …; a shape's label follows its shape).
 - Template: one frame with `"customData": { "slides": { "role": "template",

@@ -454,7 +454,7 @@ export const createScenesMcp = ({
   - upsert: true lets add reuse ids of existing elements (they are replaced). Ids of deleted elements can always be used again.
   - Deleting a slide (frame) deletes everything on it, template copies included (like in the editor).
   - "slide": n counts slides in deck order AS IT IS NOW, after this edit's deletions: numbers shift when slides are deleted or moved. Prefer frame ids ("slide": "q12"); the result's slideNumbers says which frame each number hit.
-  - customData in an update MERGES into the element's (also one level down, e.g. customData.slides): { "customData": { "slides": { "skip": true } } } keeps the slide's notes and order; a key set to null is removed.
+  - customData in an update MERGES into the element's (also one level down, e.g. customData.slides): { "customData": { "slides": { "skip": true } } } hides the slide (not presented) and keeps its notes and order; a key set to null is removed.
   - Texts are listed as written (without the line breaks of wrapping); "autoResize": false marks a box of a fixed width, which re-wraps inside it and widens to its longest word (words are never broken).
   - Changing fontFamily / fontSize of a text measures it again (a box with "autoResize": false keeps its width and re-wraps). A free text with "width" wraps at that width; textAlign aligns inside x … x + width.
   - Deck style = the template's elements: style them (font, color, size … as on any element) and every slide follows; there is no separate theme (customData.slides.theme only holds the slide transition: "glide" | "cut").

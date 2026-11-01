@@ -308,16 +308,18 @@ pill) opens the deck:
   second window with the current and next slide, speaker notes and a timer.
 - **Add slide** (at the end of the list) adds a 16:9 frame (1920 × 1080)
   after the selected one. Drag slides in the list (or press ↑ / ↓ on one)
-  to reorder; the active slide's card has icons for template on / off,
-  back to template, duplicate and delete. On the
+  to reorder; the active slide's card has icons for template on / off
+  (turning it on again puts the slide back to the template), hide,
+  duplicate and delete. On the
   canvas the slides always lie in deck order, seven per row: the canvas
   follows every change in the list. A duplicate keeps the slide's content,
   click steps and notes and goes right after its original; everything can
-  be undone with ⌘Z. Per slide: title, "skip when presenting" (backup
-  slides), "show template".
+  be undone with ⌘Z. Per slide: title, "hidden" (backup slides: grayed
+  out in the list and on the canvas, not presented, not in the PDF),
+  "show template".
 - **On the canvas**, after each slide's name: a list icon (shows the slide
-  in the slide list) and the notes icon. The template's pen opens it for
-  editing.
+  in the slide list), the notes icon, ▶ (present from this slide) and an
+  eye (hide / show the slide). The template's pen opens it for editing.
 - **Speaker notes:** the notes icon after a slide's name (filled
   when there are notes) opens them in a popover, with formatting (bold,
   lists, colors, links … the same toolbar as text on the canvas). Saved as
@@ -338,8 +340,8 @@ pill) opens the deck:
   still follows the template's position and font. Select a changed copy
   and a **Changed here** bar lists its changes (text, color …): each goes
   back to the template on its own, also for several selected elements. The
-  card's **back to template** icon does it for a whole slide, **Reset all
-  slides** (Style tab) for the deck.
+  card's template icon does it for a whole slide (off, then on again),
+  **Reset all slides** (Style tab) for the deck.
 - **Headline & eyebrow:** every template has both (an older deck gets them
   once, when it opens): slides' own headlines where the template's goes
   become theirs (words kept, place and style from the template), other
@@ -357,7 +359,8 @@ pill) opens the deck:
   deck is about 300 KB. The scenes server prints it with your Chrome; if it
   can't, the browser's print dialog opens instead ("Save as PDF").
 - Deleting a template element on one slide (unlock it, delete it) keeps it
-  off that slide, on every device, until **back to template**.
+  off that slide, on every device, until the slide goes back to the
+  template (its template icon off and on again).
 
 All of it is stored in the scene itself, so decks sync, merge and travel
 like any other scene, and agents can build them (see the skill). The scene

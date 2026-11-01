@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { sceneCoordsToViewportCoords } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 
 import { deck, isDeck } from "./deck";
@@ -97,12 +98,78 @@ const useNameSpots = (enabled: boolean) => {
   return spots;
 };
 
+/** hide a slide from the presentation (and the PDF), or show it again */
+export const toggleHidden = (id: string, hidden: boolean) => {
+  const api = deck.getApi();
+  if (api) {
+    patchSlideData(api, new Map([[id, { skip: hidden || undefined }]]));
+  }
+};
+
+/** a light veil over hidden slides on the canvas: they look grayed out */
+const HiddenVeils = () => {
+  const { slides } = useSyncExternalStore(deck.subscribe, deck.getState);
+  const hiddenIds = slides.filter((s) => s.skip).map((s) => s.id).join(",");
+  const [rects, setRects] = useState<Record<string, { left: number; top: number; width: number; height: number }>>({});
+  useEffect(() => {
+    const ids = hiddenIds ? hiddenIds.split(",") : [];
+    if (!ids.length) {
+      setRects({});
+      return;
+    }
+    let frame = 0;
+    let last = "";
+    const loop = () => {
+      const api = deck.getApi();
+      const next: Record<string, { left: number; top: number; width: number; height: number }> = {};
+      if (api) {
+        const appState = api.getAppState();
+        const zoom = appState.zoom.value;
+        for (const el of api.getSceneElements()) {
+          if (ids.includes(el.id)) {
+            const at = sceneCoordsToViewportCoords({ sceneX: el.x, sceneY: el.y }, appState);
+            next[el.id] = { left: Math.round(at.x), top: Math.round(at.y), width: Math.round(el.width * zoom), height: Math.round(el.height * zoom) };
+          }
+        }
+      }
+      const key = JSON.stringify(next);
+      if (key !== last) {
+        last = key;
+        setRects(next);
+      }
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, [hiddenIds]);
+  return (
+    <>
+      {Object.entries(rects).map(([id, rect]) => (
+        <div key={id} className="slides-hidden-veil" style={rect} aria-hidden>
+          <span className="slides-hidden-veil__label">
+            <EyeIcon off /> Hidden
+          </span>
+        </div>
+      ))}
+    </>
+  );
+};
+
 /** the slide in the slide list */
 const ListIcon = () => (
   <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="3" y="3.5" width="5" height="4" rx="1" />
     <rect x="3" y="12.5" width="5" height="4" rx="1" />
     <path d="M11 5.5h6M11 14.5h6" />
+  </svg>
+);
+
+/** eye (shown) / crossed eye (hidden from the presentation) */
+export const EyeIcon = ({ off }: { off: boolean }) => (
+  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M2.5 10s2.917-5 7.5-5 7.5 5 7.5 5-2.917 5-7.5 5-7.5-5-7.5-5z" />
+    <circle cx="10" cy="10" r="2.083" />
+    {off && <path d="M3.333 3.333l13.334 13.334" />}
   </svg>
 );
 
@@ -289,12 +356,13 @@ export const SlideNotesOverlay = () => {
 
   return createPortal(
     <>
+      <HiddenVeils />
       {slides.map((s) => {
         const spot = spots[s.id];
         if (!spot) {
           return null;
         }
-        const at = iconsAt(spot, PEN_WIDTH + 2 * ICON_WIDTH);
+        const at = iconsAt(spot, PEN_WIDTH + 3 * ICON_WIDTH);
         if (!at) {
           return null;
         }
@@ -334,6 +402,19 @@ export const SlideNotesOverlay = () => {
               onClick={() => presenter.start(s.id)}
             >
               <PlayIcon />
+            </button>
+          </QuickTip>,
+          <QuickTip key={`${s.id}-hide`} tip={s.skip ? "Hidden: not presented (click: show it)" : "Hide this slide (not presented)"} label={false}>
+            <button
+              type="button"
+              className={clsx("slides-notes-btn", { "slides-notes-btn--open": s.skip, "slides-notes-btn--over": at.over })}
+              style={{ left: at.left + PEN_WIDTH + 2 * ICON_WIDTH, top: spot.y + spot.h / 2 }}
+              aria-label={s.skip ? `Show slide ${s.index + 1}` : `Hide slide ${s.index + 1}`}
+              aria-pressed={s.skip}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => toggleHidden(s.id, !s.skip)}
+            >
+              <EyeIcon off={s.skip} />
             </button>
           </QuickTip>,
         ];

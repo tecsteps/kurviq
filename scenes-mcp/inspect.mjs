@@ -105,6 +105,8 @@ export const summarize = (elements, { textsOffset = 0, textsLimit = 100 } = {}) 
       name: el.name ?? null,
       ...(slideNumber.has(el.id) ? { slide: slideNumber.get(el.id) } : {}),
       ...(slideData(el).role === "template" ? { template: true } : {}),
+      // hidden: not presented, not in the PDF (customData.slides.skip)
+      ...(slideNumber.has(el.id) && slideData(el).skip ? { hidden: true } : {}),
       ...toRect(elementBounds(el)),
     }))
     .sort((a, b) => (a.slide ?? 0) - (b.slide ?? 0));
