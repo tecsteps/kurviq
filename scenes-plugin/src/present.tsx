@@ -33,6 +33,14 @@ type PresentState = {
 const REVEAL_MS = 450;
 const GLIDE_MS = 750;
 
+/** `b` is the slide right after (or before) `a` on the canvas, in the same row: a plain glide scrolls sideways */
+const sideBySide = (a: Frame, b: Frame, order: readonly Frame[]) => {
+  const forward = order.findIndex((s) => s.id === b.id) > order.findIndex((s) => s.id === a.id);
+  const sameRow = Math.abs(a.y - b.y) < 1;
+  const gap = forward ? b.x - (a.x + a.width) : a.x - (b.x + b.width);
+  return sameRow && gap >= 0 && gap <= Math.max(a.width, b.width) / 2;
+};
+
 class Presenter {
   state: PresentState = {
     active: false,
@@ -50,6 +58,10 @@ class Presenter {
   private wasFullscreen = false;
   private moveTimer = 0;
   private revealFrame = 0;
+  /** the slide the camera is on (real position) */
+  private onSlide: Frame | null = null;
+  /** while gliding to a slide that isn't next to the current one: it is drawn next to it (offsets per element) */
+  private shift: Map<string, { x: number; y: number }> | null = null;
   presenterWindow: Window | null = null;
 
   subscribe = (listener: () => void) => {
@@ -146,6 +158,9 @@ class Presenter {
     window.removeEventListener("resize", this.onResize);
     document.removeEventListener("fullscreenchange", this.onFullscreen);
     cancelAnimationFrame(this.revealFrame);
+    clearTimeout(this.moveTimer);
+    this.shift = null;
+    this.onSlide = null;
     api.setElementRenderOverrides(null);
     api.setViewport(null);
     api.setActiveTool({ type: "selection" });
@@ -183,19 +198,53 @@ class Presenter {
     if (!frame) {
       return;
     }
-    const glide = animate && getTransition(api.getSceneElements()) === "glide";
-    api.setViewport({
-      target: frame,
-      fit: "contain",
-      lock: { scroll: true, zoom: true, overscroll: false },
-      animation: glide ? { duration: GLIDE_MS } : false,
-    });
+    const view = (target: Frame | [number, number, number, number], animation: boolean) =>
+      api.setViewport({
+        target,
+        fit: "contain",
+        lock: { scroll: true, zoom: true, overscroll: false },
+        animation: animation ? { duration: GLIDE_MS } : false,
+      });
     clearTimeout(this.moveTimer);
+    const from = this.onSlide;
+    if (this.shift && from) {
+      // a glide was interrupted: back to the real position of the slide it went to
+      this.shift = null;
+      view(from, false);
+    }
+    const glide = animate && getTransition(api.getSceneElements()) === "glide";
+    this.onSlide = frame;
+    if (glide && from && from.id !== frame.id && !sideBySide(from, frame, this.shown())) {
+      // not the slide next to this one on the canvas (e.g. the first of the next row): it is drawn
+      // right next to it, the camera scrolls over, then jumps to its real place (looks the same)
+      const order = this.shown();
+      const forward = order.findIndex((s) => s.id === frame.id) > order.findIndex((s) => s.id === from.id);
+      const gap = from.width / 8;
+      const x = forward ? from.x + from.width + gap : from.x - gap - frame.width;
+      const offset = { x: x - frame.x, y: from.y - frame.y };
+      this.shift = new Map(
+        api
+          .getSceneElements()
+          .filter((el) => el.id === frame.id || (el.frameId === frame.id && !(el as any).containerId))
+          .map((el) => [el.id, offset]),
+      );
+      this.applySteps(null);
+      view([x, from.y, x + frame.width, from.y + frame.height], true);
+    } else {
+      this.applySteps(null);
+      view(frame, glide);
+    }
     this.set({ moving: glide });
     if (glide) {
-      this.moveTimer = window.setTimeout(() => this.set({ moving: false }), GLIDE_MS + 50);
+      this.moveTimer = window.setTimeout(() => {
+        if (this.shift) {
+          this.shift = null;
+          view(frame, false);
+          this.applySteps(null);
+        }
+        this.set({ moving: false });
+      }, GLIDE_MS + 50);
     }
-    this.applySteps(null);
   }
 
   /** render overrides for steps; `reveal`: the step that animates in now */
@@ -223,6 +272,10 @@ class Presenter {
             ...((el as any).containerId ? {} : { offset: { x: 0, y: 24 * (1 - eased) } }),
           });
         }
+      }
+      for (const [id, shift] of this.shift ?? []) {
+        const own = overrides.get(id);
+        overrides.set(id, { ...own, offset: { x: shift.x + (own?.offset?.x ?? 0), y: shift.y + (own?.offset?.y ?? 0) } });
       }
       api.setElementRenderOverrides(overrides);
     };
