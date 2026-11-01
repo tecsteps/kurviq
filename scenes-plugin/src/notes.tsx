@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import clsx from "clsx";
 
 import { deck, isDeck } from "./deck";
-import { usePresenter } from "./present";
+import { presenter, usePresenter } from "./present";
 import { QuickTip } from "./quickTip";
 import { patchSlideData } from "./slides";
 import { showSlideInList, editTemplate } from "./slidesUI";
@@ -103,6 +103,12 @@ const ListIcon = () => (
     <rect x="3" y="3.5" width="5" height="4" rx="1" />
     <rect x="3" y="12.5" width="5" height="4" rx="1" />
     <path d="M11 5.5h6M11 14.5h6" />
+  </svg>
+);
+
+const PlayIcon = () => (
+  <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
+    <path d="M6.5 4.5v11l9-5.5z" />
   </svg>
 );
 
@@ -288,7 +294,7 @@ export const SlideNotesOverlay = () => {
         if (!spot) {
           return null;
         }
-        const at = iconsAt(spot, PEN_WIDTH + ICON_WIDTH);
+        const at = iconsAt(spot, PEN_WIDTH + 2 * ICON_WIDTH);
         if (!at) {
           return null;
         }
@@ -317,6 +323,18 @@ export const SlideNotesOverlay = () => {
           >
             <NotesIcon filled={has} />
           </button>
+          </QuickTip>,
+          <QuickTip key={`${s.id}-present`} tip="Present from this slide" label={false}>
+            <button
+              type="button"
+              className={clsx("slides-notes-btn", { "slides-notes-btn--over": at.over })}
+              style={{ left: at.left + PEN_WIDTH + ICON_WIDTH, top: spot.y + spot.h / 2 }}
+              aria-label={`Present from slide ${s.index + 1}`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => presenter.start(s.id)}
+            >
+              <PlayIcon />
+            </button>
           </QuickTip>,
         ];
       })}
