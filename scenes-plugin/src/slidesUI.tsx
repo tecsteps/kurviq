@@ -216,7 +216,8 @@ const SlideList = () => {
       const box = card.getBoundingClientRect();
       const view = body.getBoundingClientRect();
       if (box.top < view.top || box.bottom > view.bottom) {
-        card.scrollIntoView({ block: box.height > view.height ? "start" : "nearest", behavior: "smooth" });
+        // in the middle of the list (as far down as it goes for the last ones)
+        card.scrollIntoView({ block: box.height > view.height ? "start" : "center", behavior: "smooth" });
       }
     });
     return () => cancelAnimationFrame(frame);
@@ -904,62 +905,7 @@ const readDocked = () => {
   }
 };
 
-/**
- * While the sidebar is open: the slide in the middle of the view becomes the active one in the
- * list, once it fills a good part of the view (zoomed in on it, not the overview). Not while
- * something is selected (the selection decides then) or while presenting.
- */
-const useFollowViewport = () => {
-  useEffect(() => {
-    let last = "";
-    const timer = window.setInterval(() => {
-      const editor = deck.getApi();
-      if (!editor || document.body.classList.contains("slides-presenting")) {
-        return;
-      }
-      const appState = editor.getAppState();
-      if (appState.openSidebar?.name !== SLIDES_SIDEBAR_NAME) {
-        last = "";
-        return;
-      }
-      const zoom = appState.zoom.value;
-      const key = `${appState.scrollX}:${appState.scrollY}:${zoom}:${appState.width}:${appState.height}`;
-      if (key === last) {
-        return;
-      }
-      // remembered with a selection too: unselecting (clicking away) doesn't make the slide in view active again
-      last = key;
-      if (Object.values(appState.selectedElementIds).some(Boolean)) {
-        return;
-      }
-      const left = -appState.scrollX;
-      const top = -appState.scrollY;
-      const width = appState.width / zoom;
-      const height = appState.height / zoom;
-      const cx = left + width / 2;
-      const cy = top + height / 2;
-      const { slides, activeId } = deck.getState();
-      const ids = new Set(slides.map((slide) => slide.id));
-      const frame = editor
-        .getSceneElements()
-        .find((el) => ids.has(el.id) && cx >= el.x && cx <= el.x + el.width && cy >= el.y && cy <= el.y + el.height);
-      if (!frame || frame.id === activeId) {
-        return;
-      }
-      // visible part of the slide, against the view: at least a fifth (the overview doesn't switch)
-      const visible = Math.max(0, Math.min(frame.x + frame.width, left + width) - Math.max(frame.x, left)) * Math.max(0, Math.min(frame.y + frame.height, top + height) - Math.max(frame.y, top));
-      if (visible / (width * height) < 0.2) {
-        return;
-      }
-      deck.setActive(frame.id);
-      document.querySelector(`[data-slide-open="${CSS.escape(frame.id)}"]`)?.scrollIntoView({ block: "nearest" });
-    }, 250);
-    return () => window.clearInterval(timer);
-  }, []);
-};
-
 export const SlidesSidebar = () => {
-  useFollowViewport();
   const [docked, setDocked] = useState(readDocked);
   const dock = (next: boolean) => {
     setDocked(next);

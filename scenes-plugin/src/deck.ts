@@ -116,10 +116,27 @@ class Deck {
         api.updateScene({ appState: { zenModeEnabled: false } });
       }
     } catch {}
-    this.detach = api.onChange((elements, appState) => {
+    const offChange = api.onChange((elements, appState) => {
       this.onChange(elements);
       this.onSelection(elements, appState.selectedElementIds);
     });
+    // a click into a slide (an element on it, or its empty space) makes it the active one; a click
+    // outside all slides, none. Zooming or scrolling the view doesn't change it.
+    const offPointer = api.onPointerDown((tool, pointerDownState) => {
+      if (tool.type !== "selection" || document.body.classList.contains("slides-presenting")) {
+        return;
+      }
+      const { x, y } = pointerDownState.origin;
+      const ids = new Set([...this.state.slides.map((slide) => slide.id), this.state.templateId]);
+      const frame = api
+        .getSceneElements()
+        .find((el) => ids.has(el.id) && x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height);
+      this.setActive(frame?.id ?? null);
+    });
+    this.detach = () => {
+      offChange();
+      offPointer();
+    };
     this.onChange(api.getSceneElementsIncludingDeleted());
   }
 
