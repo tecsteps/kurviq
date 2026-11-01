@@ -2,8 +2,6 @@
 excalidraw/
 excalidraw-mcp/
 node_modules
-# scenes server's transport clone of the scenes repo
-scenes-server/.repo/
 # local config (see .env.example)
 .env
 .env.local
