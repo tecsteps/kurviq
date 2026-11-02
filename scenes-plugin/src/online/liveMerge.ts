@@ -202,13 +202,38 @@ const alive = (el: El | undefined) => (el && !el.isDeleted ? el : undefined);
  * the writer didn't change it, or when someone else changed it meanwhile
  * (a clash, noted in `clashes`, unless both made the same change).
  */
+/** User intent excludes editor-maintained geometry and binding caches. */
+const intent = (el: El | null | undefined) => {
+  if (!el) return el;
+  const value = { ...el };
+  for (const key of ["boundElements", "lastCommittedPoint"]) delete value[key];
+  for (const key of ["startBinding", "endBinding"]) {
+    value[key] = el[key]?.elementId ?? null;
+  }
+  if (el.type === "arrow" || el.type === "line" || (el.type === "text" && el.autoResize !== false)) {
+    delete value.width;
+    delete value.height;
+  }
+  if (el.type === "text" && el.containerId) {
+    delete value.x;
+    delete value.y;
+  }
+  return value;
+};
+
+const intentFields = (a: El | null | undefined, b: El | null | undefined): string[] => {
+  const first = normalize(intent(a) ?? {}) as Record<string, unknown>;
+  const second = normalize(intent(b) ?? {}) as Record<string, unknown>;
+  return [...new Set([...Object.keys(first), ...Object.keys(second)])].filter((key) => !same(first[key], second[key]));
+};
+
 const writerChanged = (el: El, now: El | undefined, before: Map<string, El>, clashes: string[]) => {
   const was = alive(before.get(el.id));
-  if (was && contentEqual(was, el)) {
+  if (was && intentFields(was, el).length === 0) {
     return false; // not the writer's change
   }
-  if (!contentEqual(alive(now) ?? null, was ?? null)) {
-    if (!contentEqual(alive(now) ?? null, el)) {
+  if (intentFields(alive(now), was).length !== 0) {
+    if (intentFields(alive(now), el).length !== 0) {
       clashes.push(el.id);
     }
     return false;
@@ -222,7 +247,7 @@ const writerDeleted = (el: El, before: Map<string, El>, clashes: string[]) => {
   if (!was) {
     return false; // added by someone else meanwhile: not the writer's to delete
   }
-  if (!contentEqual(was, el)) {
+  if (intentFields(was, el).length !== 0) {
     clashes.push(el.id); // the writer deleted what someone changed meanwhile
     return false;
   }
@@ -237,13 +262,14 @@ const writerDeleted = (el: El, before: Map<string, El>, clashes: string[]) => {
  * changed meanwhile stay), and an element both changed is a clash (the
  * write is refused, like Drive's "changed in the meantime").
  */
-export const liveDifference = (current: readonly El[], next: readonly El[], base?: readonly El[] | null) => {
+export const liveDifference = (current: readonly El[], next: readonly El[], base?: readonly El[] | null, overwrite = false, touched?: ReadonlySet<string>) => {
   const byId = new Map(current.map((el) => [el.id, el]));
   const nextIds = new Set(next.map((el) => el.id));
   const before = base ? new Map(base.map((el) => [el.id, el])) : null;
   const changed: El[] = [];
   const clashes: string[] = [];
   for (const el of next) {
+    if (touched && !touched.has(el.id)) continue;
     const now = byId.get(el.id);
     if (before && !writerChanged(el, now, before, clashes)) {
       continue;
@@ -254,7 +280,7 @@ export const liveDifference = (current: readonly El[], next: readonly El[], base
     changed.push({ ...el, version: Math.max(now?.version ?? 0, el.version) + 1, versionNonce: randomNonce() });
   }
   for (const el of current) {
-    if (el.isDeleted || nextIds.has(el.id)) {
+    if ((touched && !touched.has(el.id)) || el.isDeleted || nextIds.has(el.id)) {
       continue;
     }
     if (before && !writerDeleted(el, before, clashes)) {
@@ -262,7 +288,13 @@ export const liveDifference = (current: readonly El[], next: readonly El[], base
     }
     changed.push({ ...el, isDeleted: true, version: el.version + 1, versionNonce: randomNonce() });
   }
-  return before ? Object.assign(changed, { clashes }) : Object.assign(changed, { clashes: [] as string[] });
+  const conflictFields = Object.fromEntries(clashes.map((id) => [id, intentFields(before?.get(id), byId.get(id))]));
+  if (overwrite && clashes.length) {
+    const forced = liveDifference(current, next);
+    const ids = new Set(clashes);
+    changed.push(...forced.filter((el) => ids.has(el.id)));
+  }
+  return Object.assign(changed, { clashes: overwrite ? [] : clashes, conflictFields });
 };
 
 // -----------------------------------------------------------------------------

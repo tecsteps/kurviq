@@ -394,6 +394,11 @@ push now.
 
 ## Troubleshooting
 
+- Background tabs may answer more slowly because browsers throttle timers.
+  Wait and retry with the same requestId (never applied twice); edits are not lost.
+  Keep working on other tasks. Only mention the tab to the user if retries
+  still fail after about 2 minutes.
+
 - "Scenes server not reachable": the user runs `npm start` in the project
   folder (kurviq).
 - "Kurviq is not open": ask the user to open the app (http://draw.test) in

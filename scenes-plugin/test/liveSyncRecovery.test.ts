@@ -4,6 +4,7 @@ import { presentationOf } from "../../scenes-mcp/presentation.mjs";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { editorYield } from "../src/editorYield";
 import * as liveMerge from "../src/online/liveMerge";
 import * as liveProtocol from "../src/online/liveProtocol";
 
@@ -34,6 +35,7 @@ const imports: Record<string, unknown> = {
   "./frames": { createReceiver: vi.fn(), sendMessage: vi.fn() },
   "./liveCrypto": { decodeEvent: vi.fn(), encodeEvent: mocks.encodeEvent, importSceneKey: vi.fn() },
   "./liveMerge": liveMerge,
+  "../editorYield": { editorYield },
   "./liveProtocol": { ...liveProtocol, fontHash: mocks.fontHash },
   "./liveQueue": {
     batchesOf: mocks.batchesOf, deleteBatch: mocks.deleteBatch, claimTab: vi.fn(), newTabId: vi.fn(), commandRecord: vi.fn(),

@@ -18,6 +18,7 @@ const addTitleBlock = vi.fn<any>();
 const resetTemplateChanges = vi.fn<any>();
 const resetToTemplate = vi.fn<any>();
 const dependencies: Record<string, any> = {
+  "./editorYield": { editorYield: async () => {} },
   "./presentation": { presentationOf, serializeAsJSON: (...args: any[]) => JSON.stringify({ elements: args[0], appState: args[1], files: args[2] }) },
   "@excalidraw/excalidraw": {
     CaptureUpdateAction: {},
@@ -291,3 +292,10 @@ describe("agent edit pipeline", () => {
     expect(result.reset).toBeUndefined();
   });
 });
+
+ it("normalizes arrow extents when points change", async () => {
+    const result = await edit([el("arrow", { type: "arrow", width: 420, height: 45 })], {
+      update: [{ id: "arrow", points: [[0, 0], [25, 0], [25, -65], [420, -65], [420, -30]] }],
+    });
+    expect(result.elements[0]).toMatchObject({ width: 420, height: 65 });
+  });

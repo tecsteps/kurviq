@@ -1,3 +1,4 @@
+import { editorYield } from "./editorYield";
 // Live channel to the scenes server: lets agents (via the scenes MCP server)
 // drive the editor that is open in the browser (switch scenes, save the
 // open scene, convert MCP-style elements with real font metrics) and keeps
@@ -488,7 +489,6 @@ const fitLabel = (el: any) => {
 
 export const LIVE_SCENE = "agent-live";
 let liveToken = 0;
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const showLive = async (elements: any[]) => {
   const token = ++liveToken;
@@ -536,7 +536,7 @@ const showLive = async (elements: any[]) => {
 
   render(); // apply changes/deletions of existing elements right away
   for (const el of pending) {
-    await sleep(delay);
+    await editorYield(delay);
     if (!isCurrent()) {
       return;
     }
@@ -544,7 +544,7 @@ const showLive = async (elements: any[]) => {
     render();
   }
   if (!camera && converted.length) {
-    await sleep(50);
+    await editorYield();
     api.setViewport({
       target: api.getSceneElements(),
       fit: "scale-down",
@@ -599,7 +599,7 @@ const status = () => {
 /** app_status: right after the tab opened, wait a moment for its first Drive check */
 const statusSettled = async () => {
   for (let i = 0; i < 25 && !scenesController.getState().sync.lastCheckedAt && !scenesController.getState().sync.notConnected; i++) {
-    await sleep(200); // NOSONAR S9382: in order on purpose (polls Drive status with a delay between checks)
+    await editorYield(200); // NOSONAR S9382: in order on purpose (polls Drive status with a delay between checks)
   }
   return status();
 };

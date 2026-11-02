@@ -1,3 +1,4 @@
+import { editorYield } from "./editorYield";
 import { serializeAsJSON, presentationOf } from "./presentation";
 // Co-working on the scene open in the editor: the agent reads the live canvas
 // (incl. the user's unsaved edits) and applies edits that merge with whatever
@@ -107,6 +108,7 @@ export type EditOptions = {
   addTitleBlock?: boolean;
   /** the agent's id for this edit: sent again (e.g. after a timeout), it is not applied twice */
   requestId?: string;
+  onConflict?: "reject" | "overwrite";
 };
 
 export type EditCommand = {
@@ -460,6 +462,13 @@ export const applyEdits = async (
             reshaped.add(id);
           }
         };
+        if ((el.type === "arrow" || el.type === "line") && Array.isArray(patch.points) && patch.points.length) {
+          const points = patch.points as number[][];
+          const xs = points.map((point) => point[0]);
+          const ys = points.map((point) => point[1]);
+          patch.width = Math.max(...xs) - Math.min(...xs);
+          patch.height = Math.max(...ys) - Math.min(...ys);
+        }
         trackTextChanges();
         patches.set(id, patch);
         if (format !== undefined) {
@@ -803,6 +812,21 @@ const moveLayers = (
   return { elements: list, problems };
 };
 
+/** Ordinary edits cannot claim changes on unrelated elements repaired by restore. */
+const editScope = (command: EditCommand | SceneEditCommand, elements: readonly any[], addedIds: readonly string[]) => {
+  if (command.restyle || command.reset || command.addTitleBlock) return undefined;
+  const ids = new Set([
+    ...addedIds,
+    ...(command.update ?? []).map((el) => el.id),
+    ...(command.add ?? []).map((el) => el.id),
+    ...(command.delete ?? []),
+  ].filter((id): id is string => typeof id === "string"));
+  for (const el of elements) {
+    if (ids.has(el.containerId) || ids.has(el.frameId) || ids.has(el.startBinding?.elementId) || ids.has(el.endBinding?.elementId)) ids.add(el.id);
+  }
+  return ids;
+};
+
 export const editOpenScene = async (
   command: EditCommand,
   convert: (elements: any[]) => Promise<any[]>,
@@ -822,7 +846,7 @@ export const editOpenScene = async (
   }
   // what the edit is made on, as copies: the user may go on drawing while it is converted, and the
   // editor changes its element objects in place (the comparison base must not move with them)
-  const readState = api.getSceneElementsIncludingDeleted().map((el) => ({ ...el }));
+  const readState = api.getSceneElementsIncludingDeleted().map((el) => structuredClone(el));
   const { elements, ...edit } = await applyEdits(
     readState,
     command,
@@ -836,9 +860,9 @@ export const editOpenScene = async (
   let pending: string | null = null;
   if (live) {
     // a live scene: the agent's change goes out as its own batch (via "agent", with its id)
-    const changes = liveDifference(live.elements(), images.elements.filter((el) => !el.isDeleted), readState as any);
+    const changes = liveDifference(live.elements(), images.elements.filter((el) => !el.isDeleted), readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...images.elements], edit.addedIds));
     if (changes.clashes.length) {
-      throw new Error(`The user changed ${changes.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
+      throw new Error(`The user changed ${changes.clashes.map((id) => `${id} (${changes.conflictFields[id].join(", ")})`).join(", ")} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
     }
     pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
   } else {
@@ -851,7 +875,7 @@ export const editOpenScene = async (
     showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), images.elements as any);
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await editorYield();
   const after = requireApi().getSceneElements();
   return {
     ...sceneInfo(),
@@ -927,15 +951,15 @@ const editLiveScene = async (
 ) => {
   const data = JSON.parse(live.sceneJson());
   await registerSceneFonts(data);
-  const readState = restoreElements(data.elements || [], null, { repairBindings: true });
-  const edit = await applyEdits(readState, command, convert, command.name);
+  const readState = structuredClone(live.elements());
+  const edit = await applyEdits(restoreElements(structuredClone(readState) as any, null, { repairBindings: true }), command, convert, command.name);
   const files = { ...data.files, ...command.files };
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
   // against what the edit was made on: what the user did meanwhile stays
-  const changed = liveDifference(live.elements(), elements, readState as any);
+  const changed = liveDifference(live.elements(), elements, readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...images.elements], edit.addedIds));
   if (changed.clashes.length) {
-    throw new Error(`The user changed ${changed.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
+    throw new Error(`The user changed ${changed.clashes.map((id) => `${id} (${changed.conflictFields[id].join(", ")})`).join(", ")} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
   }
   const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
   const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements), command.name);

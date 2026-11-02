@@ -696,9 +696,10 @@ export const createScenesMcp = ({
       return result;
     };
 
-    const applyOpenEdit = async ({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision }) => {
+    const applyOpenEdit = async ({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision, onConflict }) => {
       const edited = await appCommand({
         type: "edit",
+        onConflict,
         targetScene: before.scene,
         expectScene: expectScene !== undefined ? expectScene : before.scene,
         ...(edit.add.length ? { add: edit.add } : {}),
@@ -716,12 +717,13 @@ export const createScenesMcp = ({
       return edited;
     };
 
-    const detachedEditCommand = ({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation }) => {
+    const detachedEditCommand = ({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, onConflict }) => {
       const command = {
         type: local ? "local-edit" : "scene-edit",
         ...(local ? { targetScene: name } : {}),
         name,
         requestId,
+        onConflict,
         ...(edit.add.length ? { add: edit.add } : {}),
         ...(updates.length ? { update: updates } : {}),
         ...(edit.delete.length ? { delete: edit.delete } : {}),
@@ -1228,7 +1230,7 @@ export const createScenesMcp = ({
             });
           }
 
-          const edited = await applyOpenEdit({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision });
+          const edited = await applyOpenEdit({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision, onConflict });
           const { elements, ...info } = edited;
           delete info.agentBaseline;
 
@@ -1472,7 +1474,7 @@ ${EDIT_HELP}
           }
 
           // local-only scenes are edited in the user's app (their only copy)
-          const command = detachedEditCommand({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation });
+          const command = detachedEditCommand({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, onConflict });
           const send = () => (local ? appCommand : agentCommand)(command);
           const edited = await sendDetachedEdit(send, requestId);
           const after = {
@@ -1882,7 +1884,7 @@ ${EDIT_HELP}
           health = `ok: edits and pictures are answered (${ms} ms)`;
         } else if (answered === false) {
           const working = status.busy?.length ? `; working on: ${status.busy.join(", ")}` : "";
-          health = `BUSY: edits and pictures wait (no answer within 8 s)${working}. Edits sent now run when it is done (a stuck task is given up after 90 s); if it stays busy, ask the user to bring the tab to the front or reload it.`;
+          health = `BUSY: edits and pictures wait (no answer within 8 s)${working}. Edits sent now run when it is done (a stuck task is given up after 90 s); Background tabs may answer more slowly. Wait and retry the same requestId (never applied twice); edits are not lost. Keep working on other tasks. Only mention the tab to the user if retries still fail after about 2 minutes.`;
         } else {
           health = `error: ${answered}`;
         }

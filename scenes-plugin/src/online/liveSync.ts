@@ -1,3 +1,4 @@
+import { editorYield } from "../editorYield";
 import { serializeAsJSON, presentationOf } from "../presentation";
 // Live sync, the tab's side (docs/live-sync/PROTOCOL.md §7): every Drive
 // scene saves through its own Durable Object (online/worker/scene.ts). The
@@ -3206,7 +3207,7 @@ export class LiveScene {
           if (!left.length) {
             return null;
           }
-          await new Promise((resolve) => setTimeout(resolve, 500)); // NOSONAR S9382: in order on purpose (polling waits for the preceding observation)
+          await editorYield(500); // NOSONAR S9382: polling waits for the preceding observation
         }
         return "Applied in the user's browser (another tab of it sends it); Kurviq's server has not confirmed it yet. It goes out by itself: nothing to redo.";
       }

@@ -1,3 +1,4 @@
+import { editorYield } from "./editorYield";
 import { mergePresentation, restorePresentation } from "../../scenes-mcp/presentation.mjs";
 import { serializeAsJSON, presentationOf } from "./presentation";
 // Scenes: switching, saving and syncing with Drive. Talks to the editor only
@@ -232,7 +233,7 @@ const usedFiles = (elements: readonly any[], files: Record<string, any>) => {
   return used;
 };
 
-const nextFrame = () => new Promise((resolve) => setTimeout(resolve, 50));
+const nextFrame = () => editorYield();
 
 const timestamp = () => {
   const d = new Date();
@@ -469,7 +470,7 @@ class ScenesController {
     // before that would get overwritten
     const waitForLoad = () => {
       if (api.getAppState().isLoading) {
-        setTimeout(waitForLoad, 100);
+        void editorYield(100).then(waitForLoad).catch((error) => console.error("[scenes] initialization wait failed", error));
         return;
       }
       this.adoptInitialCanvas()

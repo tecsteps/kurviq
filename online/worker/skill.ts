@@ -43,8 +43,10 @@ const TROUBLESHOOTING = (app: string) => `## Troubleshooting
   machine"); the user exports PDFs in Kurviq (Slides sidebar → PDF).
 - "The Kurviq tab did not answer": the edit may still land. Call it again
   with the same \`requestId\` (it is never applied twice), and check
-  \`app_status\` → \`health\`. A browser may pause a tab in the background:
-  ask the user to bring Kurviq to the front.
+  \`app_status\` → \`health\`. Background tabs may answer more slowly because browsers throttle timers.
+  Wait and retry with the same requestId (never applied twice); edits are not lost.
+  Keep working on other tasks. Only mention the tab to the user if retries
+  still fail after about 2 minutes.
 `;
 
 const UPLOADS = (uploadUrl: string) => `## Images from your machine (photos, illustrations, screenshots)

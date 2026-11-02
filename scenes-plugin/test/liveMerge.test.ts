@@ -293,3 +293,33 @@ describe("merge edge cases", () => {
     expect(result[2].version).toBeGreaterThan(result[1].version);
   });
 });
+
+describe("agent edits with restored arrow geometry", () => {
+  const arrow = () => el("arrow", { type: "arrow", height: 45, width: 420, points: [[0, 0], [25, 0], [25, -65], [420, -65], [420, -30]] });
+
+  it("does not let an unrelated inconsistent arrow block an edit", () => {
+    const raw = arrow();
+    const diff = liveDifference([raw, el("box")], [{ ...raw, height: 65 }, el("box", { x: 20 })], [raw, el("box")]);
+    expect(diff.clashes).toEqual([]);
+    expect(diff.map((item) => item.id)).toEqual(["box"]);
+  });
+
+  it("allows editing the arrow across derived geometry and binding repairs", () => {
+    const raw = arrow();
+    const diff = liveDifference([raw], [{ ...raw, height: 65, strokeColor: "red", boundElements: [{ id: "label", type: "text" }] }], [{ ...raw, height: 65, version: 7 }]);
+    expect(diff.clashes).toEqual([]);
+    expect(diff[0].strokeColor).toBe("red");
+  });
+
+  it("reports real concurrent fields and supports explicit overwrite", () => {
+    const base = [arrow()];
+    const current = [{ ...base[0], x: 40 }];
+    const next = [{ ...base[0], strokeColor: "red" }];
+    const diff = liveDifference(current, next, base);
+    expect(diff.clashes).toEqual(["arrow"]);
+    expect(diff.conflictFields.arrow).toEqual(["x"]);
+    const forced = liveDifference(current, next, base, true);
+    expect(forced.clashes).toEqual([]);
+    expect(forced[0].strokeColor).toBe("red");
+  });
+});
