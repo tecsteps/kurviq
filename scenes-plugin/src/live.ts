@@ -689,7 +689,18 @@ const runCommand = async (command: Command) => {
       // an image the agent uploaded: kept in this tab until a scene uses it
       const file = await keepUpload((command as any).file);
       scenesController.getApi()?.addFiles([{ id: file.id, mimeType: file.mimeType, dataURL: file.dataURL, created: file.created } as any]);
-      return { fileId: file.id, mimeType: file.mimeType, width: file.width, height: file.height };
+      const kb = Math.round((file.dataURL.length - file.dataURL.indexOf(",") - 1) * 0.75 / 1024);
+      return {
+        fileId: file.id,
+        mimeType: file.mimeType,
+        width: file.width,
+        height: file.height,
+        kb,
+        // the agent decides; Kurviq keeps the image as it is
+        ...(kb > 500 || Math.max(file.width ?? 0, file.height ?? 0) > 2400
+          ? { note: `Large for a scene: ${kb} KB, ${file.width}×${file.height}. Every picture travels with the scene file and counts toward Kurviq's 30 MB per scene (stored at about 1.8× its size). A slide is 1920×1080: about twice the size it is shown at is enough. WebP (keeps transparency) or JPEG usually needs a fraction of a PNG's bytes. Shrinking is up to you.` }
+          : {}),
+      };
     }
     case "flush":
       return scenesController.flush(command.name);

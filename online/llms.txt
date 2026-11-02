@@ -41,7 +41,7 @@ The MCP server's instructions (sent on connect) explain everything in detail. In
 
 ## Limits of the online version
 
-- Local file paths (image `src`, edit files) don't work: Kurviq's MCP server runs on kurviq.com, not on the agent's machine. Images from your machine: upload them with `curl -s --data-binary @image.png <upload address>` (the upload address is in `read_me` and the MCP server's instructions, valid for a week; PNG, JPEG, GIF, WebP, SVG up to 10 MB), then add `{ "type": "image", "fileId": "<the answer's fileId>", "x": 0, "y": 0, "width": 800 }`. The image's bytes never pass through your context; it goes straight to the user's open Kurviq tab.
+- Local file paths (image `src`, edit files) don't work: Kurviq's MCP server runs on kurviq.com, not on the agent's machine. Images from your machine: upload them with `curl -s --data-binary @image.png <upload address>` (the upload address is in `read_me` and the MCP server's instructions, valid for a week; PNG, JPEG, GIF, WebP, SVG up to 10 MB; size them for the scene first: every picture travels inside the scene file, which may hold 30 MB on Kurviq's server, so prefer WebP or JPEG at about twice the size they are shown at), then add `{ "type": "image", "fileId": "<the answer's fileId>", "x": 0, "y": 0, "width": 800 }`. The image's bytes never pass through your context; it goes straight to the user's open Kurviq tab.
 - `export_pdf` is not available through MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).
 - Want Kurviq on your own machine (local Excalidraw, local file paths, PDF export through MCP)? Use the local install: https://github.com/tecsteps/kurviq
 

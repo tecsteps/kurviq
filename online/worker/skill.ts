@@ -53,8 +53,15 @@ curl -s --data-binary @/path/to/image.png ${uploadUrl}
 Then \`edit_scene\` (or \`save_scene\`) with
 \`{ "type": "image", "id": "hero", "x": 0, "y": 0, "width": 960, "fileId": "3f7a…" }\`
 (\`width\` or \`height\` alone keeps the aspect ratio; on a slide add
-\`"slide": 3\`). PNG, JPEG, GIF, WebP or SVG, up to 10 MB; prefer JPEG or
-WebP for photos (the scene file carries the image). The upload goes straight
+\`"slide": 3\`). PNG, JPEG, GIF, WebP or SVG, up to 10 MB. **Size them for
+the scene before uploading:** every picture travels inside the scene file and
+counts toward Kurviq's 30 MB per scene (stored at about 1.8× its size), and big
+pictures make the scene slow to load and present. A slide is 1920×1080: about
+twice the size an image is shown at is plenty (longest side rarely over
+2400 px). WebP (keeps transparency, good for illustrations and cut-outs) or
+JPEG (photos) usually needs a fraction of a PNG's bytes. The answer tells you
+the size (\`kb\`) and adds a \`note\` when it is large. Kurviq keeps what you
+upload as it is: shrinking is your call. The upload goes straight
 to the user's open Kurviq tab, which keeps it until a scene uses it (the same
 fileId can be used on many slides). http(s) URLs as \`src\` work too.
 

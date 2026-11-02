@@ -111,7 +111,11 @@ you.
   "width": 48 }` plus one of `"src"` (absolute file path, http(s) URL or data
   URL), `"svg"` (inline SVG markup) or `"icon"` (`"lucide:database"`,
   `"simple-icons:github"`, tinted with `"color"`). Works in `edit_scene` and
-  `save_scene`; `create_view` drafts can't hold images.
+  `save_scene`; `create_view` drafts can't hold images. Size pictures for the
+  scene first: each one travels inside the scene file (Kurviq online: 30 MB
+  per scene, stored at about 1.8× its size). On a 1920×1080 slide about twice
+  the size it is shown at is plenty; WebP (keeps transparency) or JPEG beats
+  PNG. Kurviq keeps pictures as you add them: shrinking is your call.
 - **ER diagrams:** arrows take crow's-foot heads: `startArrowhead` /
   `endArrowhead` = `cardinality_one`, `cardinality_many`,
   `cardinality_one_or_many`, `cardinality_exactly_one`,
