@@ -1446,7 +1446,7 @@ export const showDriveShareDialog = async (fileId: string) => {
   client.showSettingsDialog();
 };
 
-export const pickerAvailable = () => !!google.browserApiKey && !!google.projectNumber;
+export const pickerAvailable = () => !!import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY && !!google.projectNumber;
 
 /**
  * the picked file ids (empty: cancelled). shared: Drive's "Shared with me",
@@ -1484,7 +1484,7 @@ export const pickFiles = async ({ fileId, shared }: { fileId?: string; shared?: 
     const picker = builder
       .addView(view)
       .setOAuthToken(value)
-      .setDeveloperKey(google.browserApiKey)
+      .setDeveloperKey(import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY)
       .setAppId(google.projectNumber)
       .setTitle(pickerTitle())
       .setCallback((data: any) => {

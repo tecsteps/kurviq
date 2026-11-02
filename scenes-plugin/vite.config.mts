@@ -885,6 +885,8 @@ export default async function kurviqConfig(configEnv: { mode: string; command: s
       ),
       // a dev build against the fake Google of `wrangler dev` (FAKE_GOOGLE=1): "/fake-google"
       "import.meta.env.VITE_APP_GOOGLE_API_BASE": JSON.stringify(process.env.KURVIQ_FAKE_GOOGLE ? "/fake-google" : ""),
+      // the Google Picker's browser API key (restricted by website; set in .env or as a GitHub secret, not kept in the repository)
+      "import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY": JSON.stringify(env.KURVIQ_GOOGLE_BROWSER_KEY || ""),
       "import.meta.env.VITE_APP_SCENES_SERVER_URL": JSON.stringify(
         env.SCENES_SERVER_URL || "http://localhost:3101",
       ),

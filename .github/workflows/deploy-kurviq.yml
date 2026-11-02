@@ -49,6 +49,8 @@ jobs:
 
       - name: Build the app
         run: npm run build:online
+        env:
+          KURVIQ_GOOGLE_BROWSER_KEY: ${{ secrets.KURVIQ_GOOGLE_BROWSER_KEY }}
 
       - name: Build and deploy the Worker
         run: npm run deploy
