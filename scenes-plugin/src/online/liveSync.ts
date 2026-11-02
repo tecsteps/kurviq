@@ -32,6 +32,7 @@ import { createStore, get, set } from "idb-keyval";
 
 
 import { addFont, customFonts, isCustomFontId, withFonts } from "../fonts";
+import { getUpload } from "../uploads";
 
 import { authPost, connection, driveScenes, liveSocketUrl, signOutListeners } from "./drive";
 import { createReceiver, sendMessage } from "./frames";
@@ -2562,11 +2563,26 @@ export class LiveScene {
     if (ref && (ref.field === "fileId" || ref.field === "fontFamily")) {
       // the picture or font is missing on the server: it goes along in this very batch
       const el = batch.changes.find((change) => change.k === "el" && change.id === ref.id)?.value as El | undefined;
-      if (el?.fileId && ref.field === "fileId" && !batch.changes.some((change) => change.k === "file" && change.id === el.fileId)) {
-        const file = this.surface.files()[el.fileId];
-        if (file) {
-          this.confirmedFiles.delete(el.fileId);
-          batch.changes.unshift({ k: "file", id: el.fileId, value: file, base: null, keys: null });
+      if (ref.field === "fileId") {
+        // every picture of the batch the server may lack, not only the one it named: one refusal per
+        // picture would use up the batch's retries. From the canvas, or (after a reload: the canvas
+        // holds only pictures a scene used) from the agent's uploads
+        const needed = new Set<string>();
+        for (const change of batch.changes) {
+          const fileId = change.k === "el" ? (change.value as El | undefined)?.fileId : null;
+          if (fileId && !change.value?.isDeleted && !batch.changes.some((other) => other.k === "file" && other.id === fileId)) {
+            if (fileId === el?.fileId || !this.confirmedFiles.has(fileId)) {
+              needed.add(fileId);
+            }
+          }
+        }
+        for (const fileId of needed) {
+          const upload = this.surface.files()[fileId] ? null : await getUpload(fileId);
+          const file = this.surface.files()[fileId] ?? (upload ? { id: upload.id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created } : undefined);
+          if (file) {
+            this.confirmedFiles.delete(fileId);
+            batch.changes.unshift({ k: "file", id: fileId, value: file, base: null, keys: null });
+          }
         }
       }
       if (el && ref.field === "fontFamily" && isCustomFontId(el.fontFamily)) {

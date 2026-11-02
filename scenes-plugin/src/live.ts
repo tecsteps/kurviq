@@ -42,7 +42,7 @@ import { getCheckpoint, setCheckpoint } from "./storage";
 import { addFont, customFonts, fontFamilyValue, fontFromGoogle, registerSceneFonts } from "./fonts";
 import { fillFiles, leanScene } from "./leanFiles";
 import { editsRunning, getPayload, keepPayload, onceForRequest } from "./agentRequests";
-import { keepUpload, withUploads } from "./uploads";
+import { getUpload, keepUpload, withUploads } from "./uploads";
 import { createReceiver, sendMessage } from "./online/frames";
 import { OUTDATED_MESSAGE, checkServerBuild } from "./online/version";
 import { connection } from "./online/drive";
@@ -649,6 +649,20 @@ const attachUploads = async (command: any) => {
   if (Array.isArray(command.add)) {
     const { elements, files } = await withUploads(command.add, command.files || {});
     command.add = elements;
+    command.files = files;
+  }
+  // an update that points an image at another uploaded picture: that picture comes along too
+  // (the canvas holds only pictures a scene used, and none after a reload)
+  if (Array.isArray(command.update)) {
+    const files = { ...(command.files || {}) };
+    for (const item of command.update) {
+      if (typeof item?.fileId === "string" && !files[item.fileId]) {
+        const upload = await getUpload(item.fileId);
+        if (upload) {
+          files[item.fileId] = { id: upload.id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created };
+        }
+      }
+    }
     command.files = files;
   }
   if (command.type === "convert" && Array.isArray(command.elements)) {
