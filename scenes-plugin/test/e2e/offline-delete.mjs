@@ -8,6 +8,11 @@ const SCENE = `shared-${Date.now() % 100000}`;
 const [OWNER, GUEST] = [process.argv[2] || "henry@example.test", process.argv[3] || "ivy@example.test"];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+let failed = 0;
+const ok = (cond, what, extra) => {
+  console.log(`${cond ? "PASS" : "FAIL"} ${what}${extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 300)}`);
+  if (!cond) failed++;
+};
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME || "/Users/fabianwesner/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
   headless: "new",
@@ -91,10 +96,22 @@ await sleep(3000);
 log("owner back", await state(owner));
 log("guest", await state(guest));
 log("owner scenes", JSON.stringify(await owner.evaluate(() => window.__scenes.getState().list.map((i) => `${i.name}:${i.status}`))));
+const independent = await guest.evaluate(() => window.__live.current().surface.elements().find((e) => e.id === "offlinenew01" && !e.isDeleted));
+ok(independent?.x === 1200, "independent offline work reaches the other account", independent);
+const copies = await owner.evaluate((name) => window.__scenes.getState().list.filter((i) => i.name !== name), SCENE);
+ok(copies.length > 0, "offline collision creates a recovery copy", copies);
+const recovered = await owner.evaluate(async (names) => Promise.all(names.map(async (name) => {
+  const text = await window.__scenes.localJson(name);
+  return text ? JSON.parse(text).elements : [];
+})), copies.map((copy) => copy.name));
+ok(recovered.some((elements) => elements.some((e) => !e.isDeleted && e.x === 777)), "recovery copy retains colliding offline position", recovered);
 // delete: lifecycle trash, then Drive's trash
-await owner.evaluate((n) => window.__scenes.remove(n), SCENE).catch((e) => log("remove ERR", e.message));
+await owner.evaluate((n) => window.__scenes.remove(n), SCENE);
 await sleep(2000);
 const f = await admin(`file?fileId=${fileId}`);
+ok((f.trashed ?? f.file?.trashed) === true, "deletion trashes the Drive file");
+ok(await guest.evaluate(() => window.__live.current()?.lifecycle === "trashed"), "trash propagates to guest", await state(guest));
 log("trashed", JSON.stringify(f.trashed ?? f.file?.trashed), "guest", await state(guest));
 log("owner scenes", JSON.stringify(await owner.evaluate(() => window.__scenes.getState().list.map((i) => `${i.name}:${i.status}`))));
 await browser.close();
+process.exitCode = failed ? 1 : 0;

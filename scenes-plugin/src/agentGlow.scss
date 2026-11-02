@@ -90,7 +90,7 @@
 @media (prefers-reduced-motion: reduce) {
   .kq-agent-glow__box,
   .kq-agent-glow__tag {
-    animation-duration: 3s;
+    animation-duration: 3s; /* NOSONAR S9440: preserve the existing slower glow and tag animations; disabling them changes edit feedback. */
     animation-timing-function: linear;
   }
 }

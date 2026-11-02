@@ -55,9 +55,17 @@ const liveFileOf = async (name: string) =>
 /** ?md5= (?sha=: pre-rename MCP servers; remove after 2027-02) */
 const versionParam = (url: URL) => url.searchParams.get("md5") ?? url.searchParams.get("sha");
 
+const parseRequestBody = (body: string) => {
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw Object.assign(new Error("Request body must be valid JSON"), { status: 400 });
+  }
+};
+
 const renameScene = async (renameMatch: RegExpExecArray, body: string, source: () => string | undefined) => {
   const from = decodeURIComponent(renameMatch[1]);
-  const { to } = JSON.parse(body || "{}");
+  const { to } = parseRequestBody(body || "{}");
   if (scenesController.liveFileId(from)) {
     // live: a name event through the scene's Durable Object
     await scenesController.rename(from, String(to ?? "").trim());
@@ -101,6 +109,9 @@ const readLiveScene = async (name: string, liveFile: string, url: URL) => {
 const routeScene = async (match: RegExpExecArray, method: string, body: string, url: URL, header: (name: string) => string | undefined, baseHeader: () => string | undefined): Promise<TabResponse> => {
   const name = decodeURIComponent(match[1]);
   const liveFile = await liveFileOf(name);
+  if (method === "PUT") {
+    parseRequestBody(body);
+  }
   if (liveFile && method === "GET") {
     return readLiveScene(name, liveFile, url);
   }

@@ -752,7 +752,7 @@ const commandShortLink = async (command: Extract<Command, { type: "short-link" }
   } else if (command.shortName && command.shortName !== before) {
     await claimPubName(fileId, command.shortName);
   }
-  const short = command.shortName === undefined ? before : command.shortName;
+  const short = command.shortName === undefined ? before : command.shortName; // NOSONAR S6606: null releases the short link; only undefined keeps the previous name
   const access = linkAccessOf(await listPermissions(fileId));
   const link = short ? pubLink(short) : shareLink(fileId, command.name);
   return {

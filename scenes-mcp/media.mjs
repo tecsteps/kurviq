@@ -17,14 +17,17 @@ const MIME_BY_EXT = {
 
 // Local inputs stay inside the directory the MCP server was launched in.
 const LOCAL_ROOT = process.cwd();
-const confinedPath = async (file) => {
-  const root = await realpath(LOCAL_ROOT);
-  const resolved = await realpath(file);
-  const relative = path.relative(root, resolved);
-  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+const readLocalFile = async (file, encoding) => {
+  const base = await realpath(LOCAL_ROOT);
+  const target = path.resolve(base, file);
+  if (target !== base && !target.startsWith(base + path.sep)) {
     throw new Error(`file "${file}": must be inside ${LOCAL_ROOT}`);
   }
-  return resolved;
+  const resolved = path.resolve(base, await realpath(target));
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+    throw new Error(`file "${file}": must be inside ${LOCAL_ROOT}`);
+  }
+  return readFile(resolved, encoding);
 };
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -211,7 +214,7 @@ const loadSource = async (el) => {
   if (!MIME_BY_EXT[ext]) {
     throw new Error(`src "${src}": only ${Object.keys(MIME_BY_EXT).join(" ")} files`);
   }
-  return { bytes: await readFile(await confinedPath(src)), mimeType: MIME_BY_EXT[ext], what: src };
+  return { bytes: await readLocalFile(src), mimeType: MIME_BY_EXT[ext], what: src };
 };
 
 const imageElement = (el, source, files) => {
@@ -293,6 +296,6 @@ export const readEditFile = async (file) => {
   if (!path.isAbsolute(file)) {
     throw new Error(`file "${file}": use an absolute path`);
   }
-  const data = JSON.parse(await readFile(await confinedPath(file), "utf8"));
+  const data = JSON.parse(await readLocalFile(file, "utf8"));
   return Array.isArray(data) ? { add: data } : data;
 };

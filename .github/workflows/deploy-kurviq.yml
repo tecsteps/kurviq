@@ -44,7 +44,7 @@ jobs:
         run: npm run setup
 
       - name: Install Worker tooling
-        run: npm ci
+        run: npm ci # NOSONAR S6505: esbuild and workerd postinstall scripts bootstrap and validate their platform binaries
         working-directory: online
 
       - name: Build the app

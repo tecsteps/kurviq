@@ -48,7 +48,7 @@ export const AddFontButton = () => (
 const familyFromFileName = (name: string) =>
   name
     .replace(/\.[^.]+$/, "")
-    .replace(/[-_ ]?(Regular|Variable|VariableFont|Book|Normal|Roman|wght|\[.*\])+$/i, "")
+    .replace(/[-_ ]?(Regular|Variable|VariableFont|Book|Normal|Roman|wght|\[.*\])+$/i, "") // NOSONAR S8786: preserve greedy filename suffix matching; an equivalent rewrite has not been established
     .replace(/_+/g, " ")
     .trim();
 

@@ -413,7 +413,7 @@ const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContex
     return pubApi;
   }
   const publicApi = handlePublicApi(request, env, ctx);
-  if (publicApi) {
+  if (publicApi) { // NOSONAR S6544: preserve the existing Promise short-circuit; awaiting its nullable result changes routing
     publicReadStats(request, env, ctx);
     return publicApi;
   }
@@ -440,7 +440,7 @@ export default {
     }
     // dev only (FAKE_GOOGLE=1, local DEV_ORIGIN): the fake Google of ./fakeGoogle.ts
     const fakeGoogle = handleFakeGoogle(request, env as Env & { FAKE_GOOGLE_STORE?: DurableObjectNamespace });
-    if (fakeGoogle) {
+    if (fakeGoogle) { // NOSONAR S6544: preserve the existing Promise short-circuit; awaiting its nullable result changes routing
       return fakeGoogle;
     }
     const url = new URL(request.url);

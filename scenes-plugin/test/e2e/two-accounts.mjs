@@ -8,6 +8,11 @@ const SCENE = `shared-${Date.now() % 100000}`;
 const [OWNER, GUEST] = [process.argv[2] || "henry@example.test", process.argv[3] || "ivy@example.test"];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+let failed = 0;
+const ok = (cond, what, extra) => {
+  console.log(`${cond ? "PASS" : "FAIL"} ${what}${extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 300)}`);
+  if (!cond) failed++;
+};
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME || "/Users/fabianwesner/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
   headless: "new",
@@ -72,15 +77,46 @@ await Promise.all([edit(owner, { x: 900 }), edit(guest, { strokeColor: "#e03131"
 await sleep(2500);
 log("owner after collision", await state(owner));
 log("guest after collision", await state(guest));
+const elements = (page) =>
+  page.evaluate(() =>
+    window.__live
+      .current()
+      .surface.elements()
+      .filter((e) => !e.isDeleted)
+      .map(({ id, type, x, y, width, height, strokeColor, backgroundColor }) => ({ id, type, x, y, width, height, strokeColor, backgroundColor })),
+  );
+const merged = await elements(owner);
+ok(merged.length === 1 && merged[0].x === 900 && merged[0].strokeColor === "#e03131", "independent properties merge", merged);
+ok(JSON.stringify(await elements(guest)) === JSON.stringify(merged), "accounts converge after independent edits");
 // same property at the same moment: later wins, the other is offered "restore yours?"
 await Promise.all([edit(owner, { x: 100 }), edit(guest, { x: 200 })]);
 await sleep(2500);
 log("owner after same-property", await state(owner));
 log("guest after same-property", await state(guest));
+const winner = await elements(owner);
+ok(winner.length === 1 && [100, 200].includes(winner[0].x), "one concurrent position wins", winner);
+ok(JSON.stringify(await elements(guest)) === JSON.stringify(winner), "accounts converge after conflicting edits");
+const losers = await Promise.all([owner, guest].map((page) => page.evaluate(() => window.__live.current().losers.length)));
+ok(losers.some((count) => count > 0), "losing edit offers restoration", losers);
+if (losers.some((count) => count > 0)) {
+  const loserPage = losers[0] > 0 ? owner : guest;
+  await loserPage.evaluate(() => {
+    const s = window.__live.current();
+    return s.restoreLoser(s.losers[0].id);
+  });
+  await sleep(2500);
+  const restored = await elements(owner);
+  ok(restored[0]?.x === (winner[0]?.x === 100 ? 200 : 100), "restore recovers the losing position", restored);
+  ok(JSON.stringify(restored) === JSON.stringify(await elements(guest)), "restored edit converges");
+}
 log("waiting for the save round…");
 await sleep(75_000);
 log("owner later", await state(owner));
 log("guest later", await state(guest));
 const file = await admin(`file?fileId=${fileId}`);
 log("revisions", JSON.stringify((file.revisions || file.file?.revisions || []).map((r) => r.lastModifyingUser?.emailAddress ?? r.lastModifyingUser ?? r.modifiedBy ?? "?")), "appProperties", JSON.stringify(file.appProperties ?? file.file?.appProperties ?? {}).slice(0, 200));
+ok(JSON.stringify(await elements(owner)) === JSON.stringify(await elements(guest)), "accounts remain converged after saving");
+const authors = (file.revisions || file.file?.revisions || []).map((r) => r.lastModifyingUser?.emailAddress ?? r.lastModifyingUser ?? r.modifiedBy);
+log("revision authors (the fake Drive may not report them)", JSON.stringify(authors));
 await browser.close();
+process.exitCode = failed ? 1 : 0;

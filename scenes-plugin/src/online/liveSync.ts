@@ -1560,6 +1560,67 @@ export class LiveScene {
     // the DO answers with a welcome
   }
 
+  private async showQueuedState() {
+    // a headless copy shows the DO's state with the queue's changes on top
+    // (a closed tab's, sent from here), images and settings included: what
+    // a recovery copy below must contain
+    const latest = new Map<string, El>(this.confirmed);
+    const files: BinaryFileData[] = [];
+    let settings = this.confirmedSettings?.value ?? null;
+    const takeChange = (change: QueuedChange) => {
+      if (change.k === "el") {
+        latest.set(change.id, change.value);
+      } else if (change.k === "file") {
+        files.push(change.value);
+      } else if (change.k === "set") {
+        settings = change.value;
+      } else if (change.k === "font") {
+        return addFont({ ...change.value, id: change.fontId ?? change.value.id }).catch(() => {});
+      }
+    };
+    for (const batch of this.batches) {
+      if (batch.state !== "queued") {
+        continue; // answered ones are in the DO's state already (maybe changed by others since)
+      }
+      for (const change of batch.changes) {
+        const writingFont = takeChange(change);
+        if (writingFont !== undefined) {
+          await writingFont; // NOSONAR S9382: keep queued changes in their stored order
+        }
+      }
+    }
+    this.surface.apply({ elements: [...latest.values()], files, settings });
+    for (const el of this.surface.elements()) {
+      this.known.set(el.id, stampOf(el));
+      this.lastCanvas.set(el.id, el);
+    }
+  }
+
+  private unchangedLocal(el: El, theirs: El | null, before: El | null, base: Map<string, El> | null) {
+    // a stamp the DO gave it: an older state of the DO's (the canvas copy is older than the
+    // stored state, e.g. written by another tab), not an edit made here
+    // the DO's version as this browser had it: its stamp, or (not in the stored state yet) only the DO's index repair missing
+    const sameStampAsTheirs =
+      !!theirs &&
+      ((el.version === theirs.version && el.versionNonce === theirs.versionNonce) || (!before && contentEqual({ ...el, index: theirs.index }, theirs)));
+    // an older state, not an unsent edit: its version is not above the DO's (an edit made here
+    // counts up from its base; the canvas copy of this browser can be older than the DO's state,
+    // e.g. written by another tab, with stamps of the editor's own repairs the DO never saw)
+    const olderThanTheirs = !!theirs && !!base && el.version <= theirs.version;
+    const unchangedHere = !base || sameStampAsTheirs || olderThanTheirs || this.isDoStamp(el) || (before ? contentEqual(el, before) : !!el.isDeleted);
+    return unchangedHere;
+  }
+
+  private takeUnchanged(el: El, theirs: El | null, toApply: El[]) {
+    if (theirs) {
+      toApply.push(theirs);
+      this.synced.set(el.id, { stamp: stampOf(theirs), el: theirs });
+    } else if (!el.isDeleted && this.baseLoaded) {
+      // gone from the DO's scene, not changed here: gone here too
+      toApply.push({ ...el, isDeleted: true });
+    }
+  }
+
   /**
    * After the handshake: the local copy against the DO's state. Elements the
    * user didn't change take the DO's version; changes made while no
@@ -1568,33 +1629,7 @@ export class LiveScene {
    */
   private async reconcile(stale: QueuedBatch[]) {
     if (this.headless) {
-      // a headless copy shows the DO's state with the queue's changes on top
-      // (a closed tab's, sent from here), images and settings included: what
-      // a recovery copy below must contain
-      const latest = new Map<string, El>(this.confirmed);
-      const files: BinaryFileData[] = [];
-      let settings = this.confirmedSettings?.value ?? null;
-      for (const batch of this.batches) {
-        if (batch.state !== "queued") {
-          continue; // answered ones are in the DO's state already (maybe changed by others since)
-        }
-        for (const change of batch.changes) {
-          if (change.k === "el") {
-            latest.set(change.id, change.value);
-          } else if (change.k === "file") {
-            files.push(change.value);
-          } else if (change.k === "set") {
-            settings = change.value;
-          } else if (change.k === "font") {
-            await addFont({ ...change.value, id: change.fontId ?? change.value.id }).catch(() => {}); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-          }
-        }
-      }
-      this.surface.apply({ elements: [...latest.values()], files, settings });
-      for (const el of this.surface.elements()) {
-        this.known.set(el.id, stampOf(el));
-        this.lastCanvas.set(el.id, el);
-      }
+      await this.showQueuedState();
     }
     const pendingIds = this.pendingIds();
     const base = this.localBase;
@@ -1603,38 +1638,22 @@ export class LiveScene {
     const clashes = new Set<string>();
     const canvas = this.surface.elements();
     const onCanvas = new Set<string>();
-    for (const el of canvas) {
+    const reconcileElement = (el: El) => {
       onCanvas.add(el.id);
       if (pendingIds.has(el.id) || this.othersHave(el.id)) {
-        continue;
+        return;
       }
       const theirs = this.confirmed.get(el.id) ?? null;
       if (theirs && contentEqual(el, theirs) && el.index === theirs.index) {
         // the same: the canvas keeps its element (and the editor's history its objects)
         this.synced.set(el.id, { stamp: stampOf(theirs), el: theirs });
-        continue;
+        return;
       }
       const before = base?.get(el.id) ?? null;
-      // a stamp the DO gave it: an older state of the DO's (the canvas copy is older than the
-      // stored state, e.g. written by another tab), not an edit made here
-      // the DO's version as this browser had it: its stamp, or (not in the stored state yet) only the DO's index repair missing
-      const sameStampAsTheirs =
-        !!theirs &&
-        ((el.version === theirs.version && el.versionNonce === theirs.versionNonce) || (!before && contentEqual({ ...el, index: theirs.index }, theirs)));
-      // an older state, not an unsent edit: its version is not above the DO's (an edit made here
-      // counts up from its base; the canvas copy of this browser can be older than the DO's state,
-      // e.g. written by another tab, with stamps of the editor's own repairs the DO never saw)
-      const olderThanTheirs = !!theirs && !!base && el.version <= theirs.version;
-      const unchangedHere = !base || sameStampAsTheirs || olderThanTheirs || this.isDoStamp(el) || (before ? contentEqual(el, before) : !!el.isDeleted);
+      const unchangedHere = this.unchangedLocal(el, theirs, before, base);
       if (unchangedHere) {
-        if (theirs) {
-          toApply.push(theirs);
-          this.synced.set(el.id, { stamp: stampOf(theirs), el: theirs });
-        } else if (!el.isDeleted && this.baseLoaded) {
-          // gone from the DO's scene, not changed here: gone here too
-          toApply.push({ ...el, isDeleted: true });
-        }
-        continue;
+        this.takeUnchanged(el, theirs, toApply);
+        return;
       }
       // (another tab's claimed change was skipped above: only an explicit claim makes it another tab's)
       if (this.role !== "edit" || this.viewOnly) {
@@ -1642,7 +1661,7 @@ export class LiveScene {
           toApply.push(theirs);
           this.synced.set(el.id, { stamp: stampOf(theirs), el: theirs });
         }
-        continue;
+        return;
       }
       if (!theirs || (before && contentEqual(theirs, before)) || (!before && !theirs)) {
         unqueued.push({ el, from: before });
@@ -1650,6 +1669,9 @@ export class LiveScene {
       } else {
         clashes.add(el.id);
       }
+    };
+    for (const el of canvas) {
+      reconcileElement(el);
     }
     for (const el of this.confirmed.values()) {
       if (!onCanvas.has(el.id) && !el.isDeleted) {
@@ -1696,49 +1718,55 @@ export class LiveScene {
       // kept as they are (and not sent): the user can export the scene
       stale.forEach((batch) => this.parked.add(batch.counter));
     }
-    // the DO's version where it wins (only once the user's version is safe in the copy)
-    let losing: string[] = [];
-    if (copied) {
-      losing = this.signedOutEdits ? unqueued.map((entry) => entry.el.id) : [...clashes];
-    }
-    if (!copied) {
-      clashes.forEach((id) => this.protectedIds.add(id)); // left as they are on the canvas
-      if (this.signedOutEdits) {
-        unqueued.forEach(({ el }) => this.protectedIds.add(el.id));
+    const settleCopy = () => {
+      // the DO's version where it wins (only once the user's version is safe in the copy)
+      let losing: string[] = [];
+      if (copied) {
+        losing = this.signedOutEdits ? unqueued.map((entry) => entry.el.id) : [...clashes];
       }
-    }
-    for (const id of losing) {
-      const theirs = this.confirmed.get(id);
-      const el = canvas.find((item) => item.id === id)!;
-      toApply.push(theirs ?? { ...el, isDeleted: true });
-      if (theirs) {
-        this.synced.set(id, { stamp: stampOf(theirs), el: theirs });
+      if (!copied) {
+        clashes.forEach((id) => this.protectedIds.add(id)); // left as they are on the canvas
+        if (this.signedOutEdits) {
+          unqueued.forEach(({ el }) => this.protectedIds.add(el.id));
+        }
       }
-    }
-    const settingsPending = this.draft.has(SETTINGS_KEY) || this.batches.some((batch) => batch.changes.some((change) => change.k === "set"));
-    const settings = this.confirmedSettings && !settingsPending && !sameJson(this.surface.settings(), this.confirmedSettings.value) ? this.confirmedSettings.value : null;
-    if (this.confirmedSettings) {
-      this.synced.set(SETTINGS_KEY, { stamp: this.confirmedSettings.stamp, el: this.confirmedSettings.value });
-    }
-    this.applyToSurface(toApply, settings);
-    if (!this.signedOutEdits) {
-      for (const { el } of unqueued) {
-        this.addDraft("el", el.id, el, { live: false });
+      for (const id of losing) {
+        const theirs = this.confirmed.get(id);
+        const el = canvas.find((item) => item.id === id)!;
+        toApply.push(theirs ?? { ...el, isDeleted: true });
+        if (theirs) {
+          this.synced.set(id, { stamp: stampOf(theirs), el: theirs });
+        }
       }
-    }
-    if (this.signedOutEdits && copied) {
-      // separated (or nothing to separate): the next open is a normal one
-      liveSync.signedOutHandled(this.sub, this.fileId);
-      this.signedOutEdits = false;
-    }
-    this.localBase = null;
-    // images the scene uses that the DO doesn't have yet
-    for (const el of this.surface.elements()) {
-      this.draftAssets(el, false);
-    }
-    if (this.draft.size) {
-      await this.flush();
-    }
+    };
+    settleCopy();
+    const finishReconciliation = async () => {
+      const settingsPending = this.draft.has(SETTINGS_KEY) || this.batches.some((batch) => batch.changes.some((change) => change.k === "set"));
+      const settings = this.confirmedSettings && !settingsPending && !sameJson(this.surface.settings(), this.confirmedSettings.value) ? this.confirmedSettings.value : null;
+      if (this.confirmedSettings) {
+        this.synced.set(SETTINGS_KEY, { stamp: this.confirmedSettings.stamp, el: this.confirmedSettings.value });
+      }
+      this.applyToSurface(toApply, settings);
+      if (!this.signedOutEdits) {
+        for (const { el } of unqueued) {
+          this.addDraft("el", el.id, el, { live: false });
+        }
+      }
+      if (this.signedOutEdits && copied) {
+        // separated (or nothing to separate): the next open is a normal one
+        liveSync.signedOutHandled(this.sub, this.fileId);
+        this.signedOutEdits = false;
+      }
+      this.localBase = null;
+      // images the scene uses that the DO doesn't have yet
+      for (const el of this.surface.elements()) {
+        this.draftAssets(el, false);
+      }
+      if (this.draft.size) {
+        await this.flush();
+      }
+    };
+    await finishReconciliation();
   }
 
   /** write the DO's elements into the local copy; the stamps they get there count as seen */
@@ -1831,40 +1859,48 @@ export class LiveScene {
     this.changed();
   }
 
+  private streamedAck(batch: StampedBatch, own: QueuedBatch): Extract<ServerMessage, { type: "ack" }> {
+    const stamps: Record<string, Base> = {};
+    const repairs: Record<string, string> = {};
+    const fontIds: Record<string, number> = {};
+    for (const event of batch.events) {
+      const key = eventKey(event.k, event.id);
+      stamps[key] = event.r ? { v: event.r.version, n: event.r.versionNonce } : event.v ?? { v: 0, n: 0 };
+      const sent = own.changes.find((change) => change.k === event.k && change.id === event.id);
+      if (event.r && sent && event.r.index && sent.value.index !== event.r.index) {
+        repairs[key] = event.r.index;
+      }
+      if (event.k === "font" && sent && event.fontId !== undefined && event.fontId !== sent.value.id) {
+        fontIds[event.id] = event.fontId;
+      }
+    }
+    return {
+      type: "ack",
+      counter: batch.counter!,
+      seq: batch.seq,
+      stamps,
+      ...(Object.keys(repairs).length ? { repairs } : {}),
+      ...(Object.keys(fontIds).length ? { fontIds } : {}),
+    };
+  }
+
+  private async takeOwnStamped(batch: StampedBatch, own: QueuedBatch) {
+    // its answer was lost: the streamed batch is it, with the DO's repairs (index, font numbers)
+    await this.onAck(this.streamedAck(batch, own));
+    // elements whose font number the DO changed: its readable copy is in force
+    for (const event of batch.events) {
+      const now = event.r ? this.confirmed.get(event.id) : undefined;
+      if (now && event.r!.fontFamily !== null && now.fontFamily !== event.r!.fontFamily) {
+        this.setConfirmed(event.id, { ...now, fontFamily: event.r!.fontFamily }, "ack");
+      }
+    }
+  }
+
   private async takeStamped(batch: StampedBatch, { toCanvas }: { toCanvas: boolean }) {
     if (batch.tab === this.tab?.tab && batch.counter !== undefined) {
       const own = this.batches.find((entry) => entry.counter === batch.counter);
       if (own?.state === "queued") {
-        // its answer was lost: the streamed batch is it, with the DO's repairs (index, font numbers)
-        const stamps: Record<string, Base> = {};
-        const repairs: Record<string, string> = {};
-        const fontIds: Record<string, number> = {};
-        for (const event of batch.events) {
-          const key = eventKey(event.k, event.id);
-          stamps[key] = event.r ? { v: event.r.version, n: event.r.versionNonce } : event.v ?? { v: 0, n: 0 };
-          const sent = own.changes.find((change) => change.k === event.k && change.id === event.id);
-          if (event.r && sent && event.r.index && sent.value.index !== event.r.index) {
-            repairs[key] = event.r.index;
-          }
-          if (event.k === "font" && sent && event.fontId !== undefined && event.fontId !== sent.value.id) {
-            fontIds[event.id] = event.fontId;
-          }
-        }
-        await this.onAck({
-          type: "ack",
-          counter: batch.counter,
-          seq: batch.seq,
-          stamps,
-          ...(Object.keys(repairs).length ? { repairs } : {}),
-          ...(Object.keys(fontIds).length ? { fontIds } : {}),
-        });
-        // elements whose font number the DO changed: its readable copy is in force
-        for (const event of batch.events) {
-          const now = event.r ? this.confirmed.get(event.id) : undefined;
-          if (now && event.r!.fontFamily !== null && now.fontFamily !== event.r!.fontFamily) {
-            this.setConfirmed(event.id, { ...now, fontFamily: event.r!.fontFamily }, "ack");
-          }
-        }
+        await this.takeOwnStamped(batch, own);
         return;
       }
     }
@@ -1873,19 +1909,22 @@ export class LiveScene {
     const toApply: El[] = [];
     let settings: Settings | null = null;
     const files: BinaryFileData[] = [];
-    for (const event of batch.events) {
+    const takeElement = async (event: WireEvent) => {
+      const previous = this.confirmed.get(event.id);
+      const el = await this.decode(event, previous ?? this.lastCanvas.get(event.id)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      if (!el) {
+        return;
+      }
+      this.setConfirmed(el.id, el, "ev");
+      this.traced(`ev${batch.seq}${batch.origin === "user" ? "" : batch.origin}`, el);
+      if (toCanvas && !pending.has(el.id) && !gesture.has(el.id)) {
+        toApply.push(el);
+        this.synced.set(el.id, { stamp: stampOf(el), el });
+      }
+    };
+    const takeEvent = async (event: WireEvent) => {
       if (event.k === "el") {
-        const previous = this.confirmed.get(event.id);
-        const el = await this.decode(event, previous ?? this.lastCanvas.get(event.id)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-        if (!el) {
-          continue;
-        }
-        this.setConfirmed(el.id, el, "ev");
-        this.traced(`ev${batch.seq}${batch.origin === "user" ? "" : batch.origin}`, el);
-        if (toCanvas && !pending.has(el.id) && !gesture.has(el.id)) {
-          toApply.push(el);
-          this.synced.set(el.id, { stamp: stampOf(el), el });
-        }
+        await takeElement(event);
       } else if (event.k === "set") {
         const value = settingsOf(await this.decode(event)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         this.confirmedSettings = { value, stamp: event.v ?? null };
@@ -1903,6 +1942,9 @@ export class LiveScene {
       } else if (event.k === "name") {
         await this.takeName(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
+    };
+    for (const event of batch.events) {
+      await takeEvent(event); // NOSONAR S9382: streamed events must be applied in order
     }
     if (this.stale()) {
       return;
@@ -2509,6 +2551,122 @@ export class LiveScene {
   /** fonts whose number the DO changed in this scene (old -> new) */
   private readonly fontRemap = new Map<number, number>();
 
+  private async recoverRefusedQueue(refusal: Extract<ServerMessage, { type: "refused" }>, reason: RefuseReason) {
+    const copied = await this.makeOfflineCopy(`Changes that could not be saved (${refusal.detail ?? reason})`);
+    if (copied && !this.stale()) {
+      for (const queued of this.batches.filter((entry) => entry.state === "queued")) {
+        this.givenUp.set(queued.counter, refusal.detail ?? reason);
+        this.parked.delete(queued.counter);
+        this.skipped.push(queued.counter);
+        await this.forget(queued); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+      this.error = null;
+    }
+    this.changed();
+  }
+
+  private async parkRefused(batch: QueuedBatch, refusal: Extract<ServerMessage, { type: "refused" }>, reason: RefuseReason) {
+    // kept in this browser: nothing is cut off silently
+    this.error = refusedMessage(reason, refusal.detail);
+    if (reason === "role") {
+      this.role = "read";
+    }
+    this.inFlight.delete(batch.counter);
+    this.parked.add(batch.counter);
+    // a queue sent in the background (an earlier session's, or an agent's edit of a scene not open
+    // here): refused for good, it would wait forever where nobody sees it. It is kept as a copy
+    // of the scene with all of it, and leaves the queue
+    const forGood = reason === "role" || (reason === "limit" && ["sceneBytes", "elements", "eventsPerBatch"].includes(refusal.detail ?? ""));
+    if (this.headless && forGood) {
+      await this.recoverRefusedQueue(refusal, reason);
+      return;
+    }
+    // limits that pass by themselves (rate, unsaved changes waiting for Drive): tried again soon
+    if (reason === "limit" && ["batchesPerMinute", "pendingBatches", "pendingBytes", "accountPendingBytes"].includes(refusal.detail ?? "")) {
+      const counter = batch.counter;
+      setTimeout(() => {
+        if (this.parked.delete(counter)) {
+          this.pump();
+        }
+      }, 15_000);
+    }
+    this.changed();
+  }
+
+  private async readRefusedCurrent(refusal: Extract<ServerMessage, { type: "refused" }>, current: Map<string, El>, colliding: Set<string>) {
+    for (const event of refusal.current) {
+      colliding.add(keyOf(event.k, event.id));
+      if (event.k === "el") {
+        const el = await this.decode(event, this.confirmed.get(event.id)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+        if (el) {
+          current.set(el.id, el);
+          this.setConfirmed(el.id, el, "refused");
+        }
+      } else if (event.k === "set") {
+        this.confirmedSettings = { value: settingsOf(await this.decode(event)), stamp: event.v ?? null }; // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+        this.synced.set(SETTINGS_KEY, { stamp: event.v ?? null, el: this.confirmedSettings.value });
+      } else if (event.k === "name") {
+        this.synced.set(NAME_KEY, { stamp: event.v ?? null, el: await this.decode(event) }); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+    }
+  }
+
+  private async waitForOtherQueue(batch: QueuedBatch, colliding: Set<string>, refusal: Extract<ServerMessage, { type: "refused" }>) {
+    const queued = await batchesOf(this.sub, this.fileId).catch(() => [] as QueuedBatch[]);
+    const held = new Set<string>();
+    for (const other of queued) {
+      if (other.tab !== this.tab?.tab && other.state === "queued") {
+        other.changes.forEach((change) => held.add(keyOf(change.k, change.id)));
+      }
+    }
+    const named = new Set([...colliding, ...unknownIds(refusal.detail)]);
+    const ref = referenceOf(refusal.detail);
+    if (ref) {
+      named.add(ref.id);
+      named.add(ref.target);
+    }
+    const waitsFor = [...named].filter((key) => held.has(key) || this.othersHave(key));
+    if (waitsFor.length && !this.stale()) {
+      const counter = batch.counter;
+      this.inFlight.delete(counter);
+      this.parked.add(counter);
+      this.refusals = [...this.refusals.slice(-5), `${new Date().toISOString().slice(11, 19)} #${counter} waits for ${waitsFor.slice(0, 3).join(", ")} (another queue of this browser has them)`];
+      setTimeout(() => {
+        if (this.parked.delete(counter)) {
+          this.rebases.delete(counter);
+          this.pump();
+        }
+      }, 15_000);
+      this.changed();
+      return true;
+    }
+    return false;
+  }
+
+  private async recoverRefusedBatch(batch: QueuedBatch, refusal: Extract<ServerMessage, { type: "refused" }>, reason: RefuseReason, colliding: Set<string>, tries: number) {
+    // elements the DO no longer knows (deleted and forgotten) collide too, and what a reference names
+    unknownIds(refusal.detail).forEach((id) => colliding.add(id));
+    const ref = referenceOf(refusal.detail);
+    if (reason === "reference" && ref) {
+      colliding.add(ref.id);
+      if (!ref.target.startsWith("file:") && !ref.target.startsWith("font#")) {
+        colliding.add(ref.target);
+      }
+    }
+    this.debugCopy({ at: "refused", reason, detail: refusal.detail, counter: batch.counter, live: batch.live, tries, colliding: [...colliding].slice(0, 10) });
+    // after offline (or discarded, invalid): nothing of it is applied, the whole local scene becomes a copy
+    const copied = await this.makeOfflineCopy(refusedCopyReason(reason));
+    this.inFlight.delete(batch.counter);
+    if (!copied) {
+      // the queue and the canvas stay as they are (not sent again): the user can export the scene
+      this.parked.add(batch.counter);
+      batch.changes.forEach((change) => change.k === "el" && this.protectedIds.add(change.id));
+      this.changed();
+      return;
+    }
+    await this.dropColliding(batch, colliding, reason === "discarded" || reason === "invalid" || reason === "old");
+  }
+
   private async onRefused(refusal: Extract<ServerMessage, { type: "refused" }>) {
     const batch = this.batches.find((entry) => entry.counter === refusal.counter);
     if (!batch) {
@@ -2542,60 +2700,14 @@ export class LiveScene {
       return;
     }
     if (reason === "key" || reason === "role" || reason === "lifecycle" || reason === "limit") {
-      // kept in this browser: nothing is cut off silently
-      this.error = refusedMessage(reason, refusal.detail);
-      if (reason === "role") {
-        this.role = "read";
-      }
-      this.inFlight.delete(batch.counter);
-      this.parked.add(batch.counter);
-      // a queue sent in the background (an earlier session's, or an agent's edit of a scene not open
-      // here): refused for good, it would wait forever where nobody sees it. It is kept as a copy
-      // of the scene with all of it, and leaves the queue
-      const forGood = reason === "role" || (reason === "limit" && ["sceneBytes", "elements", "eventsPerBatch"].includes(refusal.detail ?? ""));
-      if (this.headless && forGood) {
-        const copied = await this.makeOfflineCopy(`Changes that could not be saved (${refusal.detail ?? reason})`);
-        if (copied && !this.stale()) {
-          for (const queued of this.batches.filter((entry) => entry.state === "queued")) {
-            this.givenUp.set(queued.counter, refusal.detail ?? reason);
-            this.parked.delete(queued.counter);
-            this.skipped.push(queued.counter);
-            await this.forget(queued); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-          }
-          this.error = null;
-        }
-        this.changed();
-        return;
-      }
-      // limits that pass by themselves (rate, unsaved changes waiting for Drive): tried again soon
-      if (reason === "limit" && ["batchesPerMinute", "pendingBatches", "pendingBytes", "accountPendingBytes"].includes(refusal.detail ?? "")) {
-        const counter = batch.counter;
-        setTimeout(() => {
-          if (this.parked.delete(counter)) {
-            this.pump();
-          }
-        }, 15_000);
-      }
-      this.changed();
+      await this.parkRefused(batch, refusal, reason);
       return;
     }
     const current = new Map<string, El>();
     /** event keys the DO named as newer than this batch's base */
     const colliding = new Set<string>();
-    for (const event of refusal.current) {
-      colliding.add(keyOf(event.k, event.id));
-      if (event.k === "el") {
-        const el = await this.decode(event, this.confirmed.get(event.id)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-        if (el) {
-          current.set(el.id, el);
-          this.setConfirmed(el.id, el, "refused");
-        }
-      } else if (event.k === "set") {
-        this.confirmedSettings = { value: settingsOf(await this.decode(event)), stamp: event.v ?? null }; // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-        this.synced.set(SETTINGS_KEY, { stamp: event.v ?? null, el: this.confirmedSettings.value });
-      } else if (event.k === "name") {
-        this.synced.set(NAME_KEY, { stamp: event.v ?? null, el: await this.decode(event) }); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-      }
+    if (refusal.current.length) {
+      await this.readRefusedCurrent(refusal, current, colliding);
     }
     if (this.stale()) {
       return;
@@ -2604,32 +2716,7 @@ export class LiveScene {
     // just not be on the server yet. Never a copy over that (the server's version would win over
     // work that is still on its way): this batch waits and is tried again
     if (reason === "collision" || reason === "reference") {
-      const queued = await batchesOf(this.sub, this.fileId).catch(() => [] as QueuedBatch[]);
-      const held = new Set<string>();
-      for (const other of queued) {
-        if (other.tab !== this.tab?.tab && other.state === "queued") {
-          other.changes.forEach((change) => held.add(keyOf(change.k, change.id)));
-        }
-      }
-      const named = new Set([...colliding, ...unknownIds(refusal.detail)]);
-      const ref = referenceOf(refusal.detail);
-      if (ref) {
-        named.add(ref.id);
-        named.add(ref.target);
-      }
-      const waitsFor = [...named].filter((key) => held.has(key) || this.othersHave(key));
-      if (waitsFor.length && !this.stale()) {
-        const counter = batch.counter;
-        this.inFlight.delete(counter);
-        this.parked.add(counter);
-        this.refusals = [...this.refusals.slice(-5), `${new Date().toISOString().slice(11, 19)} #${counter} waits for ${waitsFor.slice(0, 3).join(", ")} (another queue of this browser has them)`];
-        setTimeout(() => {
-          if (this.parked.delete(counter)) {
-            this.rebases.delete(counter);
-            this.pump();
-          }
-        }, 15_000);
-        this.changed();
+      if (await this.waitForOtherQueue(batch, colliding, refusal)) {
         return;
       }
     }
@@ -2640,27 +2727,7 @@ export class LiveScene {
       await this.rebaseLive(batch, current, reason, refusal.detail);
       return;
     }
-    // elements the DO no longer knows (deleted and forgotten) collide too, and what a reference names
-    unknownIds(refusal.detail).forEach((id) => colliding.add(id));
-    const ref = referenceOf(refusal.detail);
-    if (reason === "reference" && ref) {
-      colliding.add(ref.id);
-      if (!ref.target.startsWith("file:") && !ref.target.startsWith("font#")) {
-        colliding.add(ref.target);
-      }
-    }
-    this.debugCopy({ at: "refused", reason, detail: refusal.detail, counter: batch.counter, live: batch.live, tries, colliding: [...colliding].slice(0, 10) });
-    // after offline (or discarded, invalid): nothing of it is applied, the whole local scene becomes a copy
-    const copied = await this.makeOfflineCopy(refusedCopyReason(reason));
-    this.inFlight.delete(batch.counter);
-    if (!copied) {
-      // the queue and the canvas stay as they are (not sent again): the user can export the scene
-      this.parked.add(batch.counter);
-      batch.changes.forEach((change) => change.k === "el" && this.protectedIds.add(change.id));
-      this.changed();
-      return;
-    }
-    await this.dropColliding(batch, colliding, reason === "discarded" || reason === "invalid" || reason === "old");
+    await this.recoverRefusedBatch(batch, refusal, reason, colliding, tries);
   }
 
   /** batches given up after a refusal for good (kept in an offline copy instead): counter -> why */
@@ -2672,45 +2739,55 @@ export class LiveScene {
   /** refusals per batch (a batch refused again and again takes the offline way) */
   private readonly rebases = new Map<number, number>();
 
-  /** a live collision: the user's properties on top of the newer state, sent again (same counter) */
-  private async rebaseLive(batch: QueuedBatch, current: Map<string, El>, reason: RefuseReason, detail?: string) {
-    const losers: WireEvent[] = [];
-    const ref = reason === "reference" ? referenceOf(detail) : null;
+  private missingFilesOf(batch: QueuedBatch, el: El | undefined) {
+    const needed = new Set<string>();
+    for (const change of batch.changes) {
+      const fileId = change.k === "el" ? (change.value as El | undefined)?.fileId : null;
+      if (fileId && !change.value?.isDeleted && !batch.changes.some((other) => other.k === "file" && other.id === fileId)) {
+        if (fileId === el?.fileId || !this.confirmedFiles.has(fileId)) {
+          needed.add(fileId);
+        }
+      }
+    }
+    return needed;
+  }
+
+  private async includeMissingFiles(batch: QueuedBatch, el: El | undefined) {
+    // every picture of the batch the server may lack, not only the one it named: one refusal per
+    // picture would use up the batch's retries. From the canvas, or (after a reload: the canvas
+    // holds only pictures a scene used) from the agent's uploads
+    const needed = this.missingFilesOf(batch, el);
+    for (const fileId of needed) {
+      const upload = this.surface.files()[fileId] ? null : await getUpload(fileId); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      const file = this.surface.files()[fileId] ?? (upload ? { id: upload.id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created } : undefined);
+      if (file) {
+        this.confirmedFiles.delete(fileId);
+        batch.changes.unshift({ k: "file", id: fileId, value: file, base: null, keys: null });
+      }
+    }
+  }
+
+  private async includeMissingFont(batch: QueuedBatch, el: El) {
+    const font = customFonts.get(el.fontFamily);
+    if (font) {
+      const { family, id, faces, source } = font;
+      const hash = await fontHash(font);
+      this.confirmedFonts.delete(hash);
+      if (!batch.changes.some((change) => change.k === "font" && change.id === hash)) {
+        batch.changes.unshift({ k: "font", id: hash, value: { family, id, faces, source }, base: null, keys: null, fontId: id });
+      }
+    }
+  }
+
+  private async repairBatchReference(batch: QueuedBatch, ref: ReturnType<typeof referenceOf>) {
     if (ref && (ref.field === "fileId" || ref.field === "fontFamily")) {
       // the picture or font is missing on the server: it goes along in this very batch
       const el = batch.changes.find((change) => change.k === "el" && change.id === ref.id)?.value as El | undefined;
       if (ref.field === "fileId") {
-        // every picture of the batch the server may lack, not only the one it named: one refusal per
-        // picture would use up the batch's retries. From the canvas, or (after a reload: the canvas
-        // holds only pictures a scene used) from the agent's uploads
-        const needed = new Set<string>();
-        for (const change of batch.changes) {
-          const fileId = change.k === "el" ? (change.value as El | undefined)?.fileId : null;
-          if (fileId && !change.value?.isDeleted && !batch.changes.some((other) => other.k === "file" && other.id === fileId)) {
-            if (fileId === el?.fileId || !this.confirmedFiles.has(fileId)) {
-              needed.add(fileId);
-            }
-          }
-        }
-        for (const fileId of needed) {
-          const upload = this.surface.files()[fileId] ? null : await getUpload(fileId); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-          const file = this.surface.files()[fileId] ?? (upload ? { id: upload.id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created } : undefined);
-          if (file) {
-            this.confirmedFiles.delete(fileId);
-            batch.changes.unshift({ k: "file", id: fileId, value: file, base: null, keys: null });
-          }
-        }
+        await this.includeMissingFiles(batch, el);
       }
       if (el && ref.field === "fontFamily" && isCustomFontId(el.fontFamily)) {
-        const font = customFonts.get(el.fontFamily);
-        if (font) {
-          const { family, id, faces, source } = font;
-          const hash = await fontHash(font);
-          this.confirmedFonts.delete(hash);
-          if (!batch.changes.some((change) => change.k === "font" && change.id === hash)) {
-            batch.changes.unshift({ k: "font", id: hash, value: { family, id, faces, source }, base: null, keys: null, fontId: id });
-          }
-        }
+        await this.includeMissingFont(batch, el);
       }
     } else if (ref && !batch.changes.some((change) => change.k === "el" && change.id === ref.id)) {
       // someone's element still points at what this batch deletes: the pointer goes (part of the same action)
@@ -2720,31 +2797,47 @@ export class LiveScene {
         batch.changes.push({ k: "el", id: other.id, value: { ...fixed, version: other.version + 1 }, base: stampOf(other), keys: changedKeys(other, fixed) });
       }
     }
-    // elements the DO no longer knows (deleted and forgotten) with a base: someone deleted them, they stay deleted
-    const unknown = new Set(unknownIds(detail));
-    if (unknown.size) {
-      const gone: El[] = [];
-      for (const change of batch.changes.filter((item) => item.k === "el" && unknown.has(item.id))) {
-        const shown = this.surface.elements().find((el) => el.id === change.id);
-        if (shown && !shown.isDeleted) {
-          gone.push({ ...shown, isDeleted: true, version: shown.version + 1 });
-        }
-        this.synced.delete(change.id);
+  }
+
+  private removeUnknownElements(batch: QueuedBatch, unknown: Set<string>) {
+    const gone: El[] = [];
+    for (const change of batch.changes.filter((item) => item.k === "el" && unknown.has(item.id))) {
+      const shown = this.surface.elements().find((el) => el.id === change.id);
+      if (shown && !shown.isDeleted) {
+        gone.push({ ...shown, isDeleted: true, version: shown.version + 1 });
       }
-      batch.changes = batch.changes.filter((item) => !(item.k === "el" && unknown.has(item.id)));
-      this.applyToSurface(gone);
-      if (gone.length) {
-        this.note("Someone deleted what you were changing: it stays deleted.");
-      }
-      if (!batch.changes.length) {
-        this.inFlight.delete(batch.counter);
-        this.skipped.push(batch.counter);
-        await this.forget(batch);
-        this.changed();
-        this.pump();
-        return;
-      }
+      this.synced.delete(change.id);
     }
+    batch.changes = batch.changes.filter((item) => !(item.k === "el" && unknown.has(item.id)));
+    this.applyToSurface(gone);
+    if (gone.length) {
+      this.note("Someone deleted what you were changing: it stays deleted.");
+    }
+  }
+
+  private replaySettingChanges(batch: QueuedBatch, before: Settings, next: Settings) {
+    // later settings changes (batches, the draft) keep only their own keys on top of it; the
+    // canvas shows the result, so nothing re-queues the old value
+    let previous: Settings = before;
+    let current: Settings = next;
+    const later = [
+      ...this.batches.filter((entry) => entry.counter > batch.counter && entry.state === "queued").flatMap((entry) => entry.changes.filter((item) => item.k === "set")),
+      ...[...this.draft.values()].filter((draft) => draft.k === "set"),
+    ];
+    for (const step of later) {
+      const own = changedKeys(previous, step.value) ?? [];
+      const value = { ...current };
+      own.forEach((key) => ((value as any)[key] = step.value[key]));
+      previous = step.value;
+      step.value = value;
+      current = value;
+    }
+    if (!sameJson(this.surface.settings(), current)) {
+      this.surface.apply({ settings: current });
+    }
+  }
+
+  private rebaseSettings(batch: QueuedBatch) {
     // settings: the user's own settings on top of the current ones; name: the later change wins
     for (const change of batch.changes) {
       if (change.k === "set" || change.k === "name") {
@@ -2758,29 +2851,81 @@ export class LiveScene {
           }
           change.value = next;
           change.keys = changedKeys(now.el, next);
-          // later settings changes (batches, the draft) keep only their own keys on top of it; the
-          // canvas shows the result, so nothing re-queues the old value
-          let previous: Settings = before;
-          let current: Settings = next;
-          const later = [
-            ...this.batches.filter((entry) => entry.counter > batch.counter && entry.state === "queued").flatMap((entry) => entry.changes.filter((item) => item.k === "set")),
-            ...[...this.draft.values()].filter((draft) => draft.k === "set"),
-          ];
-          for (const step of later) {
-            const own = changedKeys(previous, step.value) ?? [];
-            const value = { ...current };
-            own.forEach((key) => ((value as any)[key] = step.value[key]));
-            previous = step.value;
-            step.value = value;
-            current = value;
-          }
-          if (!sameJson(this.surface.settings(), current)) {
-            this.surface.apply({ settings: current });
-          }
+          this.replaySettingChanges(batch, before, next);
         }
         delete change.after;
       }
     }
+  }
+
+  private async rebaseLaterElements(batch: QueuedBatch, change: QueuedChange, el: El, restamp: El[]) {
+    // the user's later versions of it (later batches, the draft, the canvas) move along:
+    // each keeps only the properties it changed, never the ones the rebase took over
+    const before = change.value as El;
+    const later = this.batches.filter((entry) => entry.counter > batch.counter && entry.state === "queued");
+    const steps = later.flatMap((entry) => entry.changes.filter((item) => item.k === "el" && item.id === change.id));
+    const draft = this.draft.get(change.id);
+    const shown = this.surface.elements().find((item) => item.id === change.id);
+    const lastLocal = (draft?.value ?? steps.at(-1)?.value ?? before) as El;
+    const showsLast = !!shown && shown.version === lastLocal.version && shown.versionNonce === lastLocal.versionNonce;
+    const chain = reapplyChain(before, el, [...steps.map((step) => step.value as El), ...(draft ? [draft.value as El] : [])]);
+    steps.forEach((step, i) => (step.value = chain[i]));
+    if (draft) {
+      draft.value = chain.at(-1);
+    }
+    if (showsLast) {
+      restamp.push(chain.length ? chain.at(-1)! : el); // the canvas shows the rebased result
+    }
+    change.value = el;
+    change.keys = changedKeys(this.synced.get(change.id)?.el, el);
+    for (const entry of later) {
+      if (entry.changes.some((item) => item.k === "el" && item.id === change.id)) {
+        await this.persist(entry); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+    }
+  }
+
+  private async rebaseElement(batch: QueuedBatch, change: QueuedChange, current: Map<string, El>, reason: RefuseReason, exists: (id: string) => boolean, losers: WireEvent[], restamp: El[]) {
+    const theirs = current.get(change.id);
+    let el = change.value as El;
+    if (theirs) {
+      const base = this.synced.get(change.id)?.el ?? null;
+      const result = rebase(theirs, el, change.keys, base);
+      el = result.el;
+      if (result.overlaps.length) {
+        // the same property on both sides: the later change (this one) wins, they may restore theirs
+        losers.push(await encodeEvent(this.key!, "el", theirs.id, theirs, stampOf(theirs))); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+      change.base = stampOf(theirs);
+      this.synced.set(change.id, { stamp: stampOf(theirs), el: theirs });
+    }
+    if (reason === "reference") {
+      el = withoutDanglingRefs(el, exists);
+    }
+    await this.rebaseLaterElements(batch, change, el, restamp);
+  }
+
+  /** a live collision: the user's properties on top of the newer state, sent again (same counter) */
+  private async rebaseLive(batch: QueuedBatch, current: Map<string, El>, reason: RefuseReason, detail?: string) {
+    const losers: WireEvent[] = [];
+    const ref = reason === "reference" ? referenceOf(detail) : null;
+    if (ref) {
+      await this.repairBatchReference(batch, ref);
+    }
+    // elements the DO no longer knows (deleted and forgotten) with a base: someone deleted them, they stay deleted
+    const unknown = new Set(unknownIds(detail));
+    if (unknown.size) {
+      this.removeUnknownElements(batch, unknown);
+      if (!batch.changes.length) {
+        this.inFlight.delete(batch.counter);
+        this.skipped.push(batch.counter);
+        await this.forget(batch);
+        this.changed();
+        this.pump();
+        return;
+      }
+    }
+    this.rebaseSettings(batch);
     const exists = (id: string) => {
       const el = this.confirmed.get(id) ?? this.surface.elements().find((item) => item.id === id);
       return !!el && !el.isDeleted;
@@ -2790,46 +2935,7 @@ export class LiveScene {
       if (change.k !== "el") {
         continue;
       }
-      const theirs = current.get(change.id);
-      let el = change.value as El;
-      if (theirs) {
-        const base = this.synced.get(change.id)?.el ?? null;
-        const result = rebase(theirs, el, change.keys, base);
-        el = result.el;
-        if (result.overlaps.length) {
-          // the same property on both sides: the later change (this one) wins, they may restore theirs
-          losers.push(await encodeEvent(this.key!, "el", theirs.id, theirs, stampOf(theirs))); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-        }
-        change.base = stampOf(theirs);
-        this.synced.set(change.id, { stamp: stampOf(theirs), el: theirs });
-      }
-      if (reason === "reference") {
-        el = withoutDanglingRefs(el, exists);
-      }
-      // the user's later versions of it (later batches, the draft, the canvas) move along:
-      // each keeps only the properties it changed, never the ones the rebase took over
-      const before = change.value as El;
-      const later = this.batches.filter((entry) => entry.counter > batch.counter && entry.state === "queued");
-      const steps = later.flatMap((entry) => entry.changes.filter((item) => item.k === "el" && item.id === change.id));
-      const draft = this.draft.get(change.id);
-      const shown = this.surface.elements().find((item) => item.id === change.id);
-      const lastLocal = (draft?.value ?? steps.at(-1)?.value ?? before) as El;
-      const showsLast = !!shown && shown.version === lastLocal.version && shown.versionNonce === lastLocal.versionNonce;
-      const chain = reapplyChain(before, el, [...steps.map((step) => step.value as El), ...(draft ? [draft.value as El] : [])]);
-      steps.forEach((step, i) => (step.value = chain[i]));
-      if (draft) {
-        draft.value = chain.at(-1);
-      }
-      if (showsLast) {
-        restamp.push(chain.length ? chain.at(-1)! : el); // the canvas shows the rebased result
-      }
-      change.value = el;
-      change.keys = changedKeys(this.synced.get(change.id)?.el, el);
-      for (const entry of later) {
-        if (entry.changes.some((item) => item.k === "el" && item.id === change.id)) {
-          await this.persist(entry); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
-        }
-      }
+      await this.rebaseElement(batch, change, current, reason, exists, losers, restamp); // NOSONAR S9382: dependent element changes and writes must keep their order
     }
     // the batch builds on the DO's state now (its changes carry that base)
     batch.rebased = true;

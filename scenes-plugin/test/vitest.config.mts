@@ -8,6 +8,16 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
+  resolve: {
+    alias: {
+      "fractional-indexing": fileURLToPath(
+        new URL(
+          "../../excalidraw-mcp/node_modules/fractional-indexing/src/index.js",
+          import.meta.url
+        )
+      ),
+    },
+  },
   test: {
     include: ["*.test.ts"],
     environment: "node",

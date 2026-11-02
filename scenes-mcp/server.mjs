@@ -10,8 +10,8 @@
  * (SCENES_AGENT_MODE=detached) the agent edits scenes as data, merged into
  * what the user does; in live mode it co-edits the open canvas live.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { constants, existsSync, readFileSync } from "node:fs";
+import { realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +23,7 @@ import { createScenesMcp } from "./tools.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = path.resolve(HERE, "..");
+const LOCAL_ROOT = process.cwd();
 
 const readEnv = () => {
   const env = {};
@@ -58,9 +59,24 @@ const server = createScenesMcp({
   registerUpstream: (mcp, store) => registerTools(mcp, path.join(WORKSPACE, "excalidraw-mcp", "dist"), store),
   livePreview: process.env.SCENES_LIVE_PREVIEW !== "false",
   savePdf: async (name, pdf, file) => {
-    const target = path.resolve(file || path.join(process.cwd(), `${name}.pdf`));
-    await writeFile(target, pdf); // NOSONAR jssecurity:S2083: local stdio tool intentionally writes to the caller-selected export path
-    return { file: target };
+    const base = await realpath(LOCAL_ROOT);
+    const target = path.resolve(base, file || `${name}.pdf`);
+    if (target !== base && !target.startsWith(base + path.sep)) {
+      throw new Error(`file "${target}": must be inside ${LOCAL_ROOT}`);
+    }
+    let resolved;
+    try {
+      resolved = path.resolve(base, await realpath(target));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      resolved = path.resolve(base, await realpath(path.dirname(target)), path.basename(target));
+    }
+    if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+      throw new Error(`file "${target}": must be inside ${LOCAL_ROOT}`);
+    }
+    // Do not follow a dangling or newly swapped final symlink when creating the file.
+    await writeFile(resolved, pdf, { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW });
+    return { file: resolved };
   },
 });
 

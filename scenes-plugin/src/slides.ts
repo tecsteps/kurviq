@@ -1238,7 +1238,7 @@ export const renderSlide = async (
   files: BinaryFiles,
   frame: Frame,
   { width, background }: { width: number; background: string },
-) =>
+) => // NOSONAR S7503: argument construction failures must reject the returned promise
   exportToCanvas({
     elements: elements.filter((el) => !el.isDeleted) as any,
     appState: { exportBackground: true, viewBackgroundColor: background },

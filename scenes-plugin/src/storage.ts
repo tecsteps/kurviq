@@ -161,7 +161,15 @@ export const loadMeta = (): ScenesMeta => {
     const raw = localStorage.getItem(META_KEY);
     if (raw) {
       const meta: ScenesMeta = { ...fallback, ...JSON.parse(raw) };
-      if (migrateMeta(meta)) {
+      let dropped = false;
+      for (const [name, scene] of Object.entries(meta.scenes ?? {})) {
+        if (!scene || typeof scene !== "object" || Array.isArray(scene)) {
+          delete meta.scenes[name];
+          dropped = true;
+        }
+      }
+      const migrated = migrateMeta(meta);
+      if (migrated || dropped) {
         saveMeta(meta);
       }
       for (const scene of Object.values(meta.scenes)) {

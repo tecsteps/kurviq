@@ -8,6 +8,11 @@ const SCENE = `shared-${Date.now() % 100000}`;
 const [OWNER, GUEST] = [process.argv[2] || "henry@example.test", process.argv[3] || "ivy@example.test"];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+let failed = 0;
+const ok = (cond, what, extra) => {
+  console.log(`${cond ? "PASS" : "FAIL"} ${what}${extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 300)}`);
+  if (!cond) failed++;
+};
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME || "/Users/fabianwesner/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
   headless: "new",
@@ -71,29 +76,43 @@ const put = await owner.evaluate(async (name) => {
   data.elements.push({ ...data.elements[0], id: "agentrect01", x: 50, y: 50, version: 1, versionNonce: 1, boundElements: null, index: null });
   return window.__scenes.liveWrite(s.fileId, name, JSON.stringify(data), undefined, "agent");
 }, SCENE).catch((e) => "ERR " + e.message);
+ok(!(typeof put === "string" && put.startsWith("ERR")), "agent write succeeds", put);
+ok(await owner.evaluate(() => window.__live.current().surface.elements().some((e) => e.id === "agentrect01" && !e.isDeleted && e.x === 50)), "agent element reaches canvas");
 log("agent put", JSON.stringify(put));
 const batches = await owner.evaluate(() => window.__live.current().batches.map((b) => `${b.counter}:${b.via}:${b.state}`));
 log("batches", JSON.stringify(batches), await state(owner));
 // rename: a name event; Drive's file follows with the save round
 const renamed = `${SCENE}-renamed`;
-await owner.evaluate((a, b) => window.__scenes.rename(a, b), SCENE, renamed).catch((e) => log("rename ERR", e.message));
+await owner.evaluate((a, b) => window.__scenes.rename(a, b), SCENE, renamed);
 await sleep(2000);
 log("list after rename", JSON.stringify(await owner.evaluate(() => window.__scenes.getState().list.map((i) => `${i.name}:${i.status}`))));
+ok((await owner.evaluate(() => window.__scenes.getState().current)) === renamed, "rename persists as current scene");
 log("current after rename", await owner.evaluate(() => window.__scenes.getState().current), await state(owner));
 // keep only here: shared → refused, local copy offered
 await admin("share", { fileId, email: GUEST, role: "reader" });
 const keep = await owner.evaluate((n) => window.__scenes.keepOnlyHere(n).then(() => "ok", (e) => `refused: ${e.message} copy=${!!e.keepLocalCopy}`), renamed);
+ok(keep.startsWith("refused:") && keep.includes("copy=true"), "shared file refuses keep only here and offers copy", keep);
 log("keepOnlyHere shared:", keep);
 const copy = await owner.evaluate((n) => window.__scenes.keepLocalCopy(n).catch((e) => "ERR " + e.message), renamed);
+ok(typeof copy === "string" && !copy.startsWith("ERR") && copy !== renamed, "local copy is created", copy);
+const copied = await owner.evaluate(async (name) => {
+  const text = await window.__scenes.localJson(name);
+  return text ? JSON.parse(text).elements.filter((e) => !e.isDeleted) : [];
+}, copy);
+ok(copied.length === 2 && copied.some((e) => e.id === "agentrect01" && e.x === 50), "local copy retains original and agent work", copied);
 log("local copy", copy);
 await admin("unshare", { fileId, email: GUEST });
 await sleep(62_000);
 const meta = await admin(`file?fileId=${fileId}`);
+ok((meta.name ?? meta.file?.name) === renamed || (meta.name ?? meta.file?.name) === `${renamed}.excalidraw`, "Drive retains renamed scene", meta.name ?? meta.file?.name);
 log("drive name after save round", JSON.stringify(meta.name ?? meta.file?.name));
 const keep2 = await owner.evaluate((n) => window.__scenes.keepOnlyHere(n).then(() => "ok", (e) => `refused: ${e.message}`), renamed);
+ok(keep2 === "ok", "unshared file can be kept locally", keep2);
 log("keepOnlyHere unshared:", keep2, "status", await owner.evaluate((n) => window.__scenes.statusOf(n), renamed));
 const after = await admin(`file?fileId=${fileId}`);
+ok((after.trashed ?? after.file?.trashed) === true, "keep only here trashes remote file");
 log("trashed", JSON.stringify(after.trashed ?? after.file?.trashed), "list", JSON.stringify(await owner.evaluate(() => window.__scenes.getState().list.map((i) => `${i.name}:${i.status}`))));
 log("meta", JSON.stringify(await owner.evaluate(() => JSON.parse(localStorage.getItem("excalidraw-scenes")).scenes)));
 log("activity", JSON.stringify(await owner.evaluate(() => window.__scenes.getState().activity.map((a) => a.text))));
 await browser.close();
+process.exitCode = failed ? 1 : 0;

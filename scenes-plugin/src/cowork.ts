@@ -278,7 +278,7 @@ const withRoomForWords = (el: any) => {
  * ones), used for the user's open canvas (live mode) and for the agent's own
  * headless copy (detached mode).
  */
-const applyEdits = async (
+export const applyEdits = async (
   input: readonly ExcalidrawElement[],
   command: Pick<EditCommand, "add" | "update" | "delete" | "upsert" | "restyle" | "reset" | "addTitleBlock">,
   convert: (elements: any[]) => Promise<any[]>,
@@ -340,20 +340,15 @@ const applyEdits = async (
   const reshaped = new Set<string>();
   /** labels for shapes that have none yet (update with `label`) */
   const newLabels: any[] = [];
-  if (command.update?.length) {
-    const present = byId();
-    const patches = new Map<string, Record<string, unknown>>();
-    // { id, slide: 3, x, y }: coordinates on slide 3
-    const updates = placeOnSlides(command.update, elements);
-    const labelOf = (id: string) =>
-      elements.find((el) => !el.isDeleted && el.type === "text" && (el as any).containerId === id);
-    for (const { id, format, ...props } of updates.map(takeMove)) {
-      const el = present.get(id);
-      if (!el || el.isDeleted) {
-        missing.push(id);
-        continue;
-      }
-      if (format !== undefined) {
+  const applyUpdates = () => {
+    if (command.update?.length) {
+      const present = byId();
+      const patches = new Map<string, Record<string, unknown>>();
+      // { id, slide: 3, x, y }: coordinates on slide 3
+      const updates = placeOnSlides(command.update, elements);
+      const labelOf = (id: string) =>
+        elements.find((el) => !el.isDeleted && el.type === "text" && (el as any).containerId === id);
+      const validateFormatUpdate = (id: string, props: Record<string, any>) => {
         const label = (props as any).label;
         const setsText =
           ["text", "markdown", "originalText"].some((key) => key in props) ||
@@ -361,16 +356,9 @@ const applyEdits = async (
         if (setsText) {
           throw new Error(`${id}: format styles the text as it is; don't combine it with text / markdown in the same update (nothing was changed)`);
         }
-      }
-      const { label: rawLabel, ...rest } = applyMarkdownUpdate(el, props as Record<string, any>);
-      const label = rawLabel && typeof rawLabel === "object" ? applyMarkdownUpdate(labelOf(id) ?? {}, rawLabel) : rawLabel;
-      const patch: Record<string, unknown> = { ...patches.get(id) };
-      for (const [key, value] of Object.entries(rest)) {
-        if (!PROTECTED.has(key)) {
-          patch[key] = key === "customData" ? mergeCustomData((patch.customData ?? el.customData) as any, value) : value;
-        }
-      }
-      if (label !== undefined && el.type !== "text") {
+      };
+
+      const updateLabel = (id: string, label: any) => {
         // { label: { text, fontSize, … } } on a shape edits (or creates) its label
         const existing = labelOf(id);
         // a plain label drops the old one's formatting, like a text update
@@ -393,24 +381,9 @@ const applyEdits = async (
           const { rich, ...customData } = spec.customData || {};
           newLabels.push({ type: "text", id: `${id}-label`, containerId: id, ...spec, customData: rich ? { ...customData, rich } : customData });
         }
-      }
-      if (el.type === "text" && typeof patch.text === "string") {
-        patch.originalText = patch.text;
-        textUpdated.add(el.id);
-      }
-      // another font or size: measured again (else the box keeps the old font's size and cuts the text)
-      if (el.type === "text" && ["fontFamily", "fontSize", "lineHeight", "width", "autoResize"].some((key) => key in patch)) {
-        textUpdated.add(el.id);
-      }
-      // a free text given a width wraps at it (a box from x to x + width; textAlign aligns inside)
-      if (el.type === "text" && !(el as any).containerId && typeof patch.width === "number" && !("autoResize" in patch)) {
-        patch.autoResize = false;
-      }
-      if (["x", "y", "width", "height", "angle", "points"].some((key) => key in patch)) {
-        reshaped.add(id);
-      }
-      patches.set(id, patch);
-      if (format !== undefined) {
+      };
+
+      const formatCurrentText = (id: string, el: ExcalidrawElement, format: unknown) => {
         // a phrase of the CURRENT text (a free text, or a shape's label) styled; the words stay as they are
         const target = el.type === "text" ? el : labelOf(id);
         if (!target) {
@@ -427,36 +400,89 @@ const applyEdits = async (
         if (target.id !== id) {
           reshaped.add(id);
         }
-      }
-    }
-    // a moved frame takes its content along (like dragging it in the editor)
-    for (const [id, patch] of [...patches]) { // NOSONAR S7747: snapshot prevents newly added child patches from being visited in this pass
-      const frame = present.get(id)!;
-      if ((frame.type !== "frame" && frame.type !== "magicframe") || !("x" in patch || "y" in patch)) {
-        continue;
-      }
-      const dx = Number(patch.x ?? frame.x) - frame.x;
-      const dy = Number(patch.y ?? frame.y) - frame.y;
-      for (const child of elements) {
-        const own = patches.get(child.id) || {};
-        const moves = child.frameId === id && !child.isDeleted && !("x" in own) && !("y" in own);
-        if (moves && (dx || dy)) {
-          patches.set(child.id, { ...patches.get(child.id), x: child.x + dx, y: child.y + dy });
-          reshaped.add(child.id);
+      };
+
+      const applyUpdate = (id: string, format: unknown, props: Record<string, any>) => {
+        const el = present.get(id);
+        if (!el || el.isDeleted) {
+          missing.push(id);
+          return;
         }
+        if (format !== undefined) {
+          validateFormatUpdate(id, props);
+        }
+        const { label: rawLabel, ...rest } = applyMarkdownUpdate(el, props as Record<string, any>);
+        const label = rawLabel && typeof rawLabel === "object" ? applyMarkdownUpdate(labelOf(id) ?? {}, rawLabel) : rawLabel;
+        const patch: Record<string, unknown> = { ...patches.get(id) };
+        const mergePatchProperty = (key: string, value: unknown) => {
+          if (!PROTECTED.has(key)) {
+            patch[key] = key === "customData" ? mergeCustomData((patch.customData ?? el.customData) as any, value) : value;
+          }
+        };
+        for (const [key, value] of Object.entries(rest)) {
+          mergePatchProperty(key, value);
+        }
+        if (label !== undefined && el.type !== "text") {
+          updateLabel(id, label);
+        }
+        const trackTextChanges = () => {
+          if (el.type === "text" && typeof patch.text === "string") {
+            patch.originalText = patch.text;
+            textUpdated.add(el.id);
+          }
+          // another font or size: measured again (else the box keeps the old font's size and cuts the text)
+          if (el.type === "text" && ["fontFamily", "fontSize", "lineHeight", "width", "autoResize"].some((key) => key in patch)) {
+            textUpdated.add(el.id);
+          }
+          // a free text given a width wraps at it (a box from x to x + width; textAlign aligns inside)
+          if (el.type === "text" && !(el as any).containerId && typeof patch.width === "number" && !("autoResize" in patch)) {
+            patch.autoResize = false;
+          }
+          if (["x", "y", "width", "height", "angle", "points"].some((key) => key in patch)) {
+            reshaped.add(id);
+          }
+        };
+        trackTextChanges();
+        patches.set(id, patch);
+        if (format !== undefined) {
+          formatCurrentText(id, el, format);
+        }
+      };
+      for (const { id, format, ...props } of updates.map(takeMove)) {
+        applyUpdate(id, format, props);
       }
+      // a moved frame takes its content along (like dragging it in the editor)
+      const moveFrameContents = (id: string, patch: Record<string, unknown>) => {
+        const frame = present.get(id)!;
+        if ((frame.type !== "frame" && frame.type !== "magicframe") || !("x" in patch || "y" in patch)) {
+          return;
+        }
+        const dx = Number(patch.x ?? frame.x) - frame.x;
+        const dy = Number(patch.y ?? frame.y) - frame.y;
+        for (const child of elements) {
+          const own = patches.get(child.id) || {};
+          const moves = child.frameId === id && !child.isDeleted && !("x" in own) && !("y" in own);
+          if (moves && (dx || dy)) {
+            patches.set(child.id, { ...patches.get(child.id), x: child.x + dx, y: child.y + dy });
+            reshaped.add(child.id);
+          }
+        }
+      };
+      for (const [id, patch] of [...patches]) { // NOSONAR S7747: snapshot prevents newly added child patches from being visited in this pass
+        moveFrameContents(id, patch);
+      }
+      elements = elements.map((el) => {
+        const patch = patches.get(el.id);
+        return patch ? newElementWith(el, patch as any) : el;
+      });
     }
-    elements = elements.map((el) => {
-      const patch = patches.get(el.id);
-      return patch ? newElementWith(el, patch as any) : el;
-    });
-  }
+  };
+  applyUpdates();
 
   // re-measure edited text, with its font loaded (else a fallback font is
   // measured and the text is cut off in the user's browser); a free text
   // keeps its alignment (centered text stays centered where it was)
-  if (textUpdated.size) {
-    await Fonts.loadElementsFonts(elements.filter((el) => textUpdated.has(el.id))).catch(() => []);
+  const refreshEditedText = () => {
     const map = new Map(elements.map((el) => [el.id, el])) as any;
     const refreshed = new Map(
       elements
@@ -474,6 +500,10 @@ const applyEdits = async (
       }
       return next;
     });
+  };
+  if (textUpdated.size) {
+    await Fonts.loadElementsFonts(elements.filter((el) => textUpdated.has(el.id))).catch(() => []);
+    refreshEditedText();
   }
 
   // headline and eyebrow on the template, slides back to the template: what
@@ -488,52 +518,59 @@ const applyEdits = async (
   }
   // reset: slides (frame ids, numbers), template copies (ids), or a copy's
   // single changes ({ id, changes: ["color"] }), like the card's icon and the canvas's bar
-  const slidesNow = getSlides(elements);
-  let refs: typeof command.reset = [];
-  if (command.restyle || command.reset === "all") refs = slidesNow.map((slide) => slide.id);
-  else if (Array.isArray(command.reset)) refs = command.reset;
-  const resetIds: string[] = [];
-  const copyResets: Array<{ id: string; changes: string[] | null }> = [];
-  const unknown: string[] = [];
-  for (const ref of refs) {
-    const item = typeof ref === "object" && ref ? (ref as { id?: string; changes?: string[] }) : null;
-    let id: string;
-    if (item) id = String(item.id);
-    else if (typeof ref === "number") id = slidesNow[ref - 1]?.id ?? String(ref);
-    else id = String(ref);
-    if (slidesNow.some((slide) => slide.id === id) && !item) {
-      resetIds.push(id);
-    } else if (slideData(elements.find((el) => el.id === id && !el.isDeleted)).copyOf) {
-      copyResets.push({ id, changes: Array.isArray(item?.changes) ? item!.changes : null });
-    } else {
-      unknown.push(id);
+  const resetSlides = () => {
+    const slidesNow = getSlides(elements);
+    let refs: typeof command.reset = [];
+    if (command.restyle || command.reset === "all") refs = slidesNow.map((slide) => slide.id);
+    else if (Array.isArray(command.reset)) refs = command.reset;
+    const resetIds: string[] = [];
+    const copyResets: Array<{ id: string; changes: string[] | null }> = [];
+    const unknown: string[] = [];
+    const selectResetTarget = (ref: string | number | { id: string; changes?: string[] }) => {
+      const item = typeof ref === "object" && ref ? (ref as { id?: string; changes?: string[] }) : null;
+      let id: string;
+      if (item) id = String(item.id);
+      else if (typeof ref === "number") id = slidesNow[ref - 1]?.id ?? String(ref);
+      else id = String(ref);
+      if (slidesNow.some((slide) => slide.id === id) && !item) {
+        resetIds.push(id);
+      } else if (slideData(elements.find((el) => el.id === id && !el.isDeleted)).copyOf) {
+        copyResets.push({ id, changes: Array.isArray(item?.changes) ? item!.changes : null });
+      } else {
+        unknown.push(id);
+      }
+    };
+    for (const ref of refs) {
+      selectResetTarget(ref);
     }
-  }
-  if (unknown.length) {
-    throw new Error(`reset: no such slide or template copy: ${unknown.join(", ")} (frame ids, slide numbers or copy ids "<element>~<slide>"; nothing was changed)`);
-  }
-  let reset = 0;
-  if (resetIds.length) {
-    const next = resetToTemplate(elements, new Set(resetIds), deck);
-    if (next) {
-      elements = next as ExcalidrawElement[];
-      reset = resetIds.length;
+    if (unknown.length) {
+      throw new Error(`reset: no such slide or template copy: ${unknown.join(", ")} (frame ids, slide numbers or copy ids "<element>~<slide>"; nothing was changed)`);
     }
-  }
-  for (const { id, changes } of copyResets) {
-    const next = resetTemplateChanges(elements, [id], changes, deck);
-    if (next) {
-      elements = next as ExcalidrawElement[];
-      reset++;
+    let reset = 0;
+    if (resetIds.length) {
+      const next = resetToTemplate(elements, new Set(resetIds), deck);
+      if (next) {
+        elements = next as ExcalidrawElement[];
+        reset = resetIds.length;
+      }
     }
-  }
+    for (const { id, changes } of copyResets) {
+      const next = resetTemplateChanges(elements, [id], changes, deck);
+      if (next) {
+        elements = next as ExcalidrawElement[];
+        reset++;
+      }
+    }
+    return reset;
+  };
+  const reset = resetSlides();
 
   // additions: converted together with the existing elements, so arrows can
   // bind to shapes that are already on the canvas
   let addedIds: string[] = [];
   let replacedIds: string[] = [];
   const toAdd = [...(command.add || []), ...newLabels].map((el) => (el && typeof el === "object" ? takeMove(el) : el));
-  if (toAdd.length) {
+  const prepareAdditions = () => {
     const current = byId();
     const clash = toAdd.filter((el) => current.get(el?.id) && !current.get(el.id)!.isDeleted);
     if (clash.length && !command.upsert) {
@@ -556,12 +593,15 @@ const applyEdits = async (
         replacedIds.includes(el.id) && !el.isDeleted ? newElementWith(el, { isDeleted: true }) : el,
       );
     }
-    // ids of deleted elements can be used again: the new element outranks the
-    // deleted one wherever the two meet (the user's app merges by version)
+    // Reused ids must outrank their deleted versions when scenes merge.
     const deletedById = new Map(elements.filter((el) => el.isDeleted).map((el) => [el.id, el]));
     const live = elements.filter((el) => !el.isDeleted);
     const liveIds = new Set(live.map((el) => el.id));
-    const merged = (await convert([...live, ...toAdd])).map((el: any) => {
+    return { deletedById, live, liveIds };
+  };
+
+  const finishAdditions = (converted: any[], deletedById: Map<string, ExcalidrawElement>, liveIds: Set<string>) => {
+    const merged = converted.map((el: any) => {
       const tombstone = deletedById.get(el.id);
       return tombstone && !liveIds.has(el.id)
         ? { ...el, version: tombstone.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) } // NOSONAR S2245: not security relevant (Excalidraw versionNonce)
@@ -572,15 +612,13 @@ const applyEdits = async (
     const reused = new Set(addedIds.filter((id) => deletedById.has(id)));
     elements = elements.filter((el) => !reused.has(el.id));
     const mergedById = new Map(merged.map((el) => [el.id, el]));
-
-    // labels added as text with containerId (not via a shape's `label`): center
-    // them in the shape and register them on it (convert only does this for `label`)
-    for (const id of addedIds) {
+    // Standalone bound text is centered and registered like a shape label.
+    const registerAddedLabel = (id: string) => {
       const label = mergedById.get(id);
       const container = label?.containerId && mergedById.get(label.containerId);
       const raw = toAdd.find((el) => el?.id === id);
       if (label?.type !== "text" || !container || raw?.type !== "text") {
-        continue;
+        return;
       }
       mergedById.set(id, {
         ...label,
@@ -597,11 +635,19 @@ const applyEdits = async (
           boundElements: [...(container.boundElements || []), { type: "text", id }],
         });
       }
+    };
+    for (const id of addedIds) {
+      registerAddedLabel(id);
     }
     elements = [
       ...elements.filter((el) => el.isDeleted),
       ...merged,
     ].map((el) => mergedById.get(el.id) ?? el);
+  };
+  if (toAdd.length) {
+    const { deletedById, live, liveIds } = prepareAdditions();
+    const converted = await convert([...live, ...toAdd]);
+    finishAdditions(converted, deletedById, liveIds);
   }
 
   elements = layoutAfterEdit(elements, textUpdated, reshaped);
@@ -610,19 +656,22 @@ const applyEdits = async (
   // a slide placed in the deck by number lands there on the canvas too (if the slides were Kurviq's grid)
   elements = followDeckOrder(input, elements);
 
-  return {
-    elements,
-    addedIds,
-    updated: (command.update || []).map((u) => u.id).filter((id) => !missing.includes(id)),
-    deleted: (command.delete || []).filter((id) => !missing.includes(id)),
-    ...(alsoDeleted > 0 ? { alsoDeleted: `${alsoDeleted} more elements went with them (labels, and everything on deleted slides)` } : {}),
-    ...(replacedIds.length ? { replaced: replacedIds } : {}),
-    ...(reset ? { reset: `${reset} slide${reset === 1 ? "" : "s"} / template cop${reset === 1 ? "y" : "ies"} back to the template` } : {}),
-    ...(titleBlock !== null ? { titleBlock: `headline and eyebrow on the template; ${titleBlock} slide texts became their copies` } : {}),
-    ...(moved.problems.length ? { layerProblems: moved.problems } : {}),
-    ...(slideTargets ? { slideNumbers: slideTargets } : {}),
-    ...(missing.length ? { missingIds: missing } : {}),
+  const editResult = () => {
+    return {
+      elements,
+      addedIds,
+      updated: (command.update || []).map((u) => u.id).filter((id) => !missing.includes(id)),
+      deleted: (command.delete || []).filter((id) => !missing.includes(id)),
+      ...(alsoDeleted > 0 ? { alsoDeleted: `${alsoDeleted} more elements went with them (labels, and everything on deleted slides)` } : {}),
+      ...(replacedIds.length ? { replaced: replacedIds } : {}),
+      ...(reset ? { reset: `${reset} slide${reset === 1 ? "" : "s"} / template cop${reset === 1 ? "y" : "ies"} back to the template` } : {}),
+      ...(titleBlock !== null ? { titleBlock: `headline and eyebrow on the template; ${titleBlock} slide texts became their copies` } : {}),
+      ...(moved.problems.length ? { layerProblems: moved.problems } : {}),
+      ...(slideTargets ? { slideNumbers: slideTargets } : {}),
+      ...(missing.length ? { missingIds: missing } : {}),
+    };
   };
+  return editResult();
 };
 
 /**

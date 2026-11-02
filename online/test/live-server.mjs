@@ -376,8 +376,8 @@ a1.counter--;
 const invalid = await batch(a1, [{ k: "el", id: "Q", base: null, r: { id: "Q" }, c: "x".repeat(30) }]);
 ok(invalid?.reason === "invalid", "an event without a valid readable part is refused", invalid);
 a1.counter--;
-const many = await batch(a1, Array.from({ length: 5001 }, (_, i) => ({ k: "set", id: "settings", base: null, c: "y".repeat(30 + i) })));
-ok(many?.reason === "limit" || many?.reason === "invalid", "a batch over the event limit is refused", many?.reason);
+const many = await batch(a1, await Promise.all(Array.from({ length: 5001 }, (_, i) => elEvent(a1.scene, rect(`limit-${i}`, "a9"), null))));
+ok(many?.reason === "limit", "a batch over the event limit is refused", many?.reason);
 a1.counter--;
 const clashIndex = await batch(a1, [await elEvent(a1.scene, rect("C", "a1", { y: 300 }), null)]);
 ok(clashIndex?.type === "ack" && clashIndex.repairs?.C && clashIndex.repairs.C > "a1", "a clashing fractional index is repaired by the DO", clashIndex);
@@ -1119,9 +1119,9 @@ const freshPost = (path, headers, body) =>
   });
 // (wrangler's local runtime turns some answers sent before an upload ended into a 503; the edge answers as written)
 const tooBig = await freshPost(`/scene/${file9}/renew`, { Origin: B, Cookie: alice2.cookie() }, bigBody);
-ok(tooBig === 413 || tooBig === 503, "a 200 KB body to a scene route is refused (413), never parsed", tooBig);
+ok(tooBig === 413, "a 200 KB body to a scene route is refused (413), never parsed", tooBig);
 const anonymous = await freshPost(`/scene/${file9}/renew`, { Origin: B }, bigBody);
-ok(anonymous === 401 || anonymous === 503, "without a sign-in cookie it is refused (401), its body never parsed", anonymous);
+ok(anonymous === 401 || anonymous === 503, "without a sign-in cookie it is refused (401; the local runtime may say 503), its body never parsed", anonymous);
 const smallAnonymous = await fetch(`${B}/scene/${file9}/renew`, { method: "POST", headers: { Origin: B, "Content-Type": "application/json" }, body: "{}" });
 ok(smallAnonymous.status === 401, "a small request without a cookie: 401", smallAnonymous.status);
 

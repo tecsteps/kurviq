@@ -66,7 +66,7 @@ const canEdit = async (env: PubEnv, token: string, fileId: string): Promise<true
     return file.data?.capabilities?.canEdit && !file.data.trashed ? true : "no-access";
   }
   const problem = problemOf(file);
-  if (problem === "unreachable") {
+  if (problem === "unreachable" || problem === "rate-limited") {
     return "unreachable";
   }
   return problem === "token" ? "signed-out" : "no-access";
@@ -107,12 +107,12 @@ const claimPubLink = async (request: Request, env: PubEnv, db: D1, token: string
   if (holder && holder.file_id !== fileId) {
     return json(409, { error: `kurviq.com/pub/${wanted} is already taken`, code: "taken" });
   }
-  if (holder) {
-    return json(200, { name: wanted });
-  }
   const verdict = await canEdit(env, token, fileId);
   if (verdict !== true) {
     return refuse(verdict);
+  }
+  if (holder) {
+    return json(200, { name: wanted });
   }
   try {
     // one name per file: its old one is freed in the same step

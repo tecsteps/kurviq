@@ -652,7 +652,7 @@
     background: var(--color-danger-background, #ffe3e3);
     color: var(--color-danger-text, #c92a2a);
     font-size: 0.8rem;
-    word-break: break-word;
+    word-break: break-word; /* NOSONAR S1874: preserves existing wrapping and intrinsic sizing across supported browsers */
   }
 
   .scenes-list {
@@ -812,21 +812,22 @@
       font-weight: 700;
     }
 
+    // Opaque theme tints make the text contrast explicit.
     &--ok {
-      color: #2b8a3e;
-      background: rgba(47, 158, 68, 0.12);
+      color: #277d38;
+      background: #e6f3e9;
     }
     &--warn {
-      color: #b35900;
-      background: rgba(247, 103, 7, 0.14);
+      color: #aa5400;
+      background: #feeadc;
     }
     &--info {
       color: #1864ab;
-      background: rgba(34, 139, 230, 0.14);
+      background: #e0effc;
     }
     &--danger {
       color: #c92a2a;
-      background: rgba(250, 82, 82, 0.15);
+      background: #fee5e5;
     }
     &--muted {
       color: var(--color-gray-50);
@@ -837,15 +838,19 @@
   &.theme--dark .scenes-status {
     &--ok {
       color: #8ce99a;
+      background: #24322c;
     }
     &--warn {
       color: #ffc078;
+      background: #412d24;
     }
     &--info {
       color: #a5d8ff;
+      background: #233243;
     }
     &--danger {
       color: #ffa8a8;
+      background: #432a2f;
     }
   }
 

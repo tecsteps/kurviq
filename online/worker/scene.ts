@@ -156,6 +156,10 @@ type Batch = {
   chunked?: boolean;
 };
 
+type SaveStep = "stop" | "next" | "saved";
+type BatchInput = { ws: WebSocket; att: Attachment; msg: any; counter: number; tab: string };
+type BatchStamps = { batchMap: Map<string, Entry>; entries: Entry[]; stamps: Record<string, Base> };
+
 type Blocked = Record<string, { since: number; reason: BlockedAuthor["reason"] }>;
 type SavedReceipt = Receipt & { at: number };
 type Pin = { rev: string; kind: "day" | "agent" | "audit"; at: number };
@@ -1819,7 +1823,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     }
   }
 
-  async webSocketClose(ws: WebSocket, code: number) {
+  async webSocketClose(ws: WebSocket, code: number) { // NOSONAR S7503: async preserves rejected promises when synchronous work throws
     const started = Date.now();
     try {
       ws.close(code === 1005 || code === 1006 ? 1000 : code, "closed");
@@ -1828,7 +1832,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     this.countHandler("webSocketClose", started);
   }
 
-  async webSocketError(ws: WebSocket) {
+  async webSocketError(ws: WebSocket) { // NOSONAR S7503: async preserves rejected promises when synchronous work throws
     this.afterLeave(ws);
   }
 
@@ -2028,6 +2032,11 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return;
     }
     const tab = att.tab!;
+    return this.admitBatch({ ws, att, msg, counter, tab });
+  }
+
+  private admitBatch(input: BatchInput) {
+    const { ws, att, counter } = input;
     if (att.role !== "edit" || this.isRevoked(att.sub)) {
       return this.refuse(ws, counter, "role");
     }
@@ -2042,6 +2051,11 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (!this.meta("keyId") || att.keyId !== this.meta("keyId")) {
       return this.refuse(ws, counter, "key");
     }
+    return this.checkBatchCounter(input);
+  }
+
+  private checkBatchCounter(input: BatchInput) {
+    const { ws, counter, tab } = input;
     // resent: stored once, answered again
     const known = this.knownCounters(tab);
     if (this.discarded.get(tab)?.has(counter)) {
@@ -2056,6 +2070,11 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (counter > receiptTop(known) + LIMITS.counterWindow) {
       return this.refuse(ws, counter, "limit", [], "counterWindow");
     }
+    return this.checkBatchEvents(input);
+  }
+
+  private checkBatchEvents(input: BatchInput) {
+    const { ws, att, msg, counter } = input;
     const now = Date.now();
     // never replayed after 30 days (deleted elements could come back); `made` must be sane
     if (!isInt(msg.made) || msg.made > now + CLOCK_SKEW_MS) {
@@ -2077,6 +2096,11 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (events.length > LIMITS.eventsPerBatch) {
       return this.refuse(ws, counter, "limit", [], "eventsPerBatch");
     }
+    return this.validateBatchEvents(input, events);
+  }
+
+  private validateBatchEvents(input: BatchInput, events: WireEvent[]) {
+    const { ws, counter } = input;
     const seen = new Set<string>();
     for (const event of events) {
       if (!this.validEvent(event) || seen.has(eventKey(event.k, event.id))) {
@@ -2084,9 +2108,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       }
       seen.add(eventKey(event.k, event.id));
     }
-    const ownBase = isInt(msg.base, 1) ? msg.base : null;
+    return this.applyBatchBases(input, events);
+  }
 
-    // 1. bases: the element as the tab last saw it, or what its own pending batch produced
+  private batchCollisions(events: WireEvent[], tab: string, ownBase: number | null) {
     const collisions: Entry[] = [];
     const missing: string[] = [];
     for (const event of events as WireEvent[]) {
@@ -2106,10 +2131,35 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         collisions.push(cur);
       }
     }
+    return { collisions, missing };
+  }
+
+  private applyBatchBases(input: BatchInput, events: WireEvent[]) {
+    const { ws, msg, counter, tab } = input;
+    const ownBase = isInt(msg.base, 1) ? msg.base : null;
+
+    // 1. bases: the element as the tab last saw it, or what its own pending batch produced
+    const { collisions, missing } = this.batchCollisions(events, tab, ownBase);
     if (collisions.length || missing.length) {
       return this.refuse(ws, counter, "collision", collisions, missing.length ? `unknown: ${missing.slice(0, 20).join(",")}` : undefined);
     }
 
+    return this.mapBatchFonts(input, events);
+  }
+
+  private freeFontId(id: number, used: Map<number, string>) {
+    let free: number | null = null;
+    for (let step = 1; step < FONT_ID_MAX - FONT_ID_MIN && free === null; step++) {
+      const candidate = FONT_ID_MIN + ((id - FONT_ID_MIN + step) % (FONT_ID_MAX - FONT_ID_MIN));
+      if (!used.has(candidate)) {
+        free = candidate;
+      }
+    }
+    return free;
+  }
+
+  private mapBatchFonts(input: BatchInput, events: WireEvent[]) {
+    const { ws, counter } = input;
     // 2. fonts: one numeric id per font, without clashes
     const fontIds: Record<string, number> = {};
     const used = new Map<number, string>();
@@ -2126,13 +2176,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       const existing = this.state.get(eventKey("font", event.id));
       let id = existing?.fontId ?? event.fontId!;
       if (!existing && used.has(id) && used.get(id) !== event.id) {
-        let free: number | null = null;
-        for (let step = 1; step < FONT_ID_MAX - FONT_ID_MIN && free === null; step++) {
-          const candidate = FONT_ID_MIN + ((id - FONT_ID_MIN + step) % (FONT_ID_MAX - FONT_ID_MIN));
-          if (!used.has(candidate)) {
-            free = candidate;
-          }
-        }
+        const free = this.freeFontId(id, used);
         if (free === null) {
           return this.refuse(ws, counter, "font-id", [], "no free font id");
         }
@@ -2145,50 +2189,61 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       used.set(id, event.id);
     }
 
+    return this.stampBatch(input, events, fontIds, remap);
+  }
+
+  private batchEntryVersion(cur: Entry | undefined, event: WireEvent) {
+    let v = 1;
+    if (cur) {
+      v = cur.v + 1;
+    } else if (event.k === "el") {
+      v = Math.max(1, cleanReadable(event.r, event.id)!.version);
+    }
+    return v;
+  }
+
+  private stampBatchEvent(input: BatchInput, event: WireEvent, fontIds: Record<string, number>, remap: Map<number, number>, output: BatchStamps) {
+    const { att, counter, tab } = input;
+    const { batchMap, entries, stamps } = output;
+    const key = eventKey(event.k, event.id);
+    const cur = this.state.get(key);
+    if ((event.k === "file" || event.k === "font") && cur && event.base === null) {
+      stamps[key] = { v: cur.v, n: cur.n };
+      return;
+    }
+    const v = this.batchEntryVersion(cur, event);
+    const n = randomNonce();
+    const entry: Entry = { k: event.k, id: event.id, c: event.c, v, n, a: att.pseudonym, seq: 0, t: tab, u: counter };
+    if (event.k === "el") {
+      const r = cleanReadable(event.r, event.id)!;
+      r.version = v;
+      r.versionNonce = n;
+      if (r.fontFamily !== null && remap.has(r.fontFamily)) {
+        r.fontFamily = remap.get(r.fontFamily)!;
+      }
+      entry.r = r;
+    }
+    if (event.k === "font") {
+      entry.fontId = fontIds[event.id] ?? event.fontId;
+    }
+    batchMap.set(key, entry);
+    entries.push(entry);
+    stamps[key] = { v, n };
+  }
+
+  private stampBatch(input: BatchInput, events: WireEvent[], fontIds: Record<string, number>, remap: Map<number, number>) {
     // 3. build the stamped entries
     const batchMap = new Map<string, Entry>();
     const entries: Entry[] = [];
     const stamps: Record<string, Base> = {};
+    const output = { batchMap, entries, stamps };
     for (const event of events as WireEvent[]) {
-      const key = eventKey(event.k, event.id);
-      const cur = this.state.get(key);
-      if ((event.k === "file" || event.k === "font") && cur && event.base === null) {
-        stamps[key] = { v: cur.v, n: cur.n };
-        continue;
-      }
-      let v = 1;
-      if (cur) {
-        v = cur.v + 1;
-      } else if (event.k === "el") {
-        v = Math.max(1, cleanReadable(event.r, event.id)!.version);
-      }
-      const n = randomNonce();
-      const entry: Entry = { k: event.k, id: event.id, c: event.c, v, n, a: att.pseudonym, seq: 0, t: tab, u: counter };
-      if (event.k === "el") {
-        const r = cleanReadable(event.r, event.id)!;
-        r.version = v;
-        r.versionNonce = n;
-        if (r.fontFamily !== null && remap.has(r.fontFamily)) {
-          r.fontFamily = remap.get(r.fontFamily)!;
-        }
-        entry.r = r;
-      }
-      if (event.k === "font") {
-        entry.fontId = fontIds[event.id] ?? event.fontId;
-      }
-      batchMap.set(key, entry);
-      entries.push(entry);
-      stamps[key] = { v, n };
+      this.stampBatchEvent(input, event, fontIds, remap, output);
     }
+    return this.checkBatchResult(input, events, output, fontIds);
+  }
 
-    // 4. the resulting graph: nothing alive points at something deleted or unknown
-    const problem = this.referenceProblem(entries, batchMap);
-    if (problem) {
-      const current = this.state.get(problem.target);
-      return this.refuse(ws, counter, "reference", current ? [current] : [], problem.detail);
-    }
-
-    // 5. limits on the result
+  private batchTotals(entries: Entry[]) {
     let aliveAfter = this.alive;
     let bytes = 0;
     let sceneAfter = this.sceneBytes;
@@ -2200,6 +2255,21 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         aliveAfter += (entry.r!.isDeleted ? 0 : 1) - (before?.r && !before.r.isDeleted ? 1 : 0);
       }
     }
+    return { aliveAfter, bytes, sceneAfter };
+  }
+
+  private checkBatchResult(input: BatchInput, events: WireEvent[], output: BatchStamps, fontIds: Record<string, number>) {
+    const { ws, att, counter } = input;
+    const { entries, batchMap } = output;
+    // 4. the resulting graph: nothing alive points at something deleted or unknown
+    const problem = this.referenceProblem(entries, batchMap);
+    if (problem) {
+      const current = this.state.get(problem.target);
+      return this.refuse(ws, counter, "reference", current ? [current] : [], problem.detail);
+    }
+
+    // 5. limits on the result
+    const { aliveAfter, bytes, sceneAfter } = this.batchTotals(entries);
     if (aliveAfter > LIMITS.elements) {
       return this.refuse(ws, counter, "limit", [], "elements");
     }
@@ -2217,6 +2287,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return this.refuse(ws, counter, "limit", [], "accountPendingBytes");
     }
 
+    return this.acceptBatch(input, events, output, fontIds, bytes);
+  }
+
+  private repairBatchIndices(entries: Entry[], batchMap: Map<string, Entry>) {
     // 6. clashing fractional indices are repaired here (tabs never repair)
     const repairs: Record<string, string> = {};
     const taken = new Set<string>();
@@ -2238,6 +2312,13 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       }
     }
 
+    return repairs;
+  }
+
+  private acceptBatch(input: BatchInput, events: WireEvent[], output: BatchStamps, fontIds: Record<string, number>, bytes: number) {
+    const { ws, att, msg, counter, tab } = input;
+    const { entries, batchMap, stamps } = output;
+    const repairs = this.repairBatchIndices(entries, batchMap);
     // 7. durable before anyone hears of it (the output gate holds the answers); two rows per batch
     const seq = this.seq + 1;
     entries.forEach((entry) => (entry.seq = seq));
@@ -2526,12 +2607,23 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (!ticketHead.revision || scene.revision !== ticketHead.revision || scene.md5 !== ticketHead.md5) {
       return refuse("old");
     }
+    const entries = this.seedEntries(scene);
+    if (!entries) {
+      return refuse("invalid");
+    }
+    // the file's own record (who wrote what, what is saved, on whose behalf) comes from Drive,
+    // read with this editor's access, never from the tab: forged receipts would make other tabs drop their work
+    const record = await this.driveRecord(att);
+    return this.finishSeed(ws, att, scene, record, ticketHead, refuse, entries);
+  }
+
+  private seedEntries(scene: any) {
     const entries: Entry[] = [];
     const seen = new Set<string>();
     let bytes = 0;
     for (const event of scene.events) {
       if (!this.validEvent({ ...event, base: null }) || seen.has(eventKey(event.k, event.id))) {
-        return refuse("invalid");
+        return null;
       }
       seen.add(eventKey(event.k, event.id));
       const entry = this.seedEntry(event);
@@ -2539,16 +2631,12 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       entries.push(entry);
     }
     if (bytes > LIMITS.sceneBytes) {
-      return refuse("invalid");
+      return null;
     }
-    // the file's own record (who wrote what, what is saved, on whose behalf) comes from Drive,
-    // read with this editor's access, never from the tab: forged receipts would make other tabs drop their work
-    const record = await this.driveRecord(att);
-    if (this.seeded() || this.lifecycle().state !== "active" || ws.readyState !== WebSocket.OPEN) {
-      refuse(this.seeded() ? "seeded" : "lifecycle");
-      return this.seeded() && this.rateOk(ws, "state", STATES_PER_MINUTE) ? this.send(ws, this.welcomeState(att)) : undefined;
-    }
-    const { receipts, onBehalf } = this.seedAttribution(record, entries);
+    return entries;
+  }
+
+  private seedSavedAt(scene: any, ticketHead: Attachment["head"]) {
     const previous = this.lastSaved();
     // the saved revision's own time (a reseed doesn't make yesterday's save today's: milestone pins)
     let savedAt: number;
@@ -2557,6 +2645,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     } else {
       savedAt = isInt(ticketHead.at) ? ticketHead.at! : Date.now();
     }
+    return savedAt;
+  }
+
+  private commitSeedSnapshot(entries: Entry[], scene: any, record: any, receipts: Record<string, SavedReceipt> | null, onBehalf: unknown[] | null, savedAt: number) {
     this.seqNow = this.seq + 1;
     const seq = this.seqNow;
     entries.forEach((entry) => (entry.seq = seq));
@@ -2581,7 +2673,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         this.setMeta("onBehalf", onBehalf);
       }
     });
-    this.rebuildState();
+  }
+
+  private notifySeeders(ws: WebSocket) {
     // the seeder has it all; everyone who waited gets it now
     for (const { ws: other, att: info } of this.readySockets()) {
       if (other === ws) {
@@ -2592,6 +2686,18 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         this.send(other, this.welcomeState(info));
       }
     }
+  }
+
+  private finishSeed(ws: WebSocket, att: Attachment, scene: any, record: any, ticketHead: Attachment["head"], refuse: (reason: string) => void, entries: Entry[]) {
+    if (this.seeded() || this.lifecycle().state !== "active" || ws.readyState !== WebSocket.OPEN) {
+      refuse(this.seeded() ? "seeded" : "lifecycle");
+      return this.seeded() && this.rateOk(ws, "state", STATES_PER_MINUTE) ? this.send(ws, this.welcomeState(att)) : undefined;
+    }
+    const { receipts, onBehalf } = this.seedAttribution(record, entries);
+    const savedAt = this.seedSavedAt(scene, ticketHead);
+    this.commitSeedSnapshot(entries, scene, record, receipts, onBehalf, savedAt);
+    this.rebuildState();
+    this.notifySeeders(ws);
   }
 
   private seedEntry(event: any) {
@@ -3272,7 +3378,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
    *   confirmed-access times                          15 minutes
    *   one-time tickets, collision losers, keep-local permissions, expired watch records: when they run out
    */
-  private async retention() {
+  private async retention() { // NOSONAR S7503: async preserves rejected promises when synchronous work throws
     const now = Date.now();
     const horizon = now - REPLAY_HORIZON_MS;
     this.q("DELETE FROM nonces WHERE until < ?", now);
@@ -3575,6 +3681,37 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return;
     }
     const owner = this.meta("owner");
+    const candidates = await this.verificationCandidates(owner, oneTime);
+    if (!candidates) {
+      return;
+    }
+    for (const { sub, token } of candidates) {
+      const file = await getFile(this.genv, token, this.fileId);
+      if (file.status === 200) {
+        if (file.data.trashed) {
+          this.toTrashNow();
+        } else {
+          this.confirmed(sub);
+          await this.moveWatch(token, sub);
+        }
+        this.finishAccessVerification();
+        return;
+      }
+      if (isTransient(problemOf(file))) {
+        this.schedule("verify", Date.now() + 60_000);
+        return;
+      }
+      if (this.verificationRefused(file, sub, owner)) {
+        return;
+      }
+    }
+    // no one could tell: keep everything, ask a tab (the owner's first), look again later
+    this.setError("access-unknown");
+    this.requestToken(owner);
+    this.schedule("verify", Date.now() + 15 * 60_000);
+  }
+
+  private async verificationCandidates(owner: string | null, oneTime?: { sub: string; token: string }) {
     const candidates: Array<{ sub: string; token: string }> = oneTime ? [oneTime] : [];
     for (const row of this.q("SELECT author FROM tokens WHERE expires > ?", Date.now())) {
       if (candidates.some((c) => c.sub === row.author)) {
@@ -3585,7 +3722,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         candidates.push({ sub: String(row.author), token: access.token });
       } else if (access.problem === "unreachable") {
         this.schedule("verify", Date.now() + 60_000);
-        return;
+        return null;
       }
     }
     const last = this.lastAccessToken();
@@ -3593,41 +3730,29 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       candidates.push(last);
     }
     candidates.sort((a, b) => (a.sub === owner ? 0 : 1) - (b.sub === owner ? 0 : 1));
-    for (const { sub, token } of candidates) {
-      const file = await getFile(this.genv, token, this.fileId);
-      if (file.status === 200) {
-        if (file.data.trashed) {
-          this.toTrashNow();
-        } else {
-          this.confirmed(sub);
-          await this.moveWatch(token, sub);
-        }
-        this.setMeta("verifyWanted", null);
-        if (this.meta("error") === "access-unknown") {
-          this.setError(null);
-        }
-        return;
-      }
-      if (isTransient(problemOf(file))) {
-        this.schedule("verify", Date.now() + 60_000);
-        return;
-      }
-      if (file.status === 404 && sub === owner) {
-        this.deleted();
-        return;
-      }
-      // this person lost access themselves
-      if (this.pending.some((batch) => batch.author === sub)) {
-        this.markBlocked(sub, "access");
-      }
-      if (this.lastAccess?.sub === sub) {
-        this.lastAccess = null;
-      }
+    return candidates;
+  }
+
+  private finishAccessVerification() {
+    this.setMeta("verifyWanted", null);
+    if (this.meta("error") === "access-unknown") {
+      this.setError(null);
     }
-    // no one could tell: keep everything, ask a tab (the owner's first), look again later
-    this.setError("access-unknown");
-    this.requestToken(owner);
-    this.schedule("verify", Date.now() + 15 * 60_000);
+  }
+
+  private verificationRefused(file: DriveAnswer, sub: string, owner: string | null) {
+    if (file.status === 404 && sub === owner) {
+      this.deleted();
+      return true;
+    }
+    // this person lost access themselves
+    if (this.pending.some((batch) => batch.author === sub)) {
+      this.markBlocked(sub, "access");
+    }
+    if (this.lastAccess?.sub === sub) {
+      this.lastAccess = null;
+    }
+    return false;
   }
 
   /** the watch's maker lost access: their channel ends (stopped if `sub` made it); the next renewal by an editor makes a new one */
@@ -3782,75 +3907,120 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     }
     const skip = new Set<string>();
     let versions = 0;
-    let merges = 0;
+    const round = { merges: 0 };
     while (versions < MAX_VERSIONS_PER_ROUND) {
       const group = this.planGroup(skip);
       if (!group) {
         break;
       }
-      const author = group[0].author;
-      const access = await this.accessFor(author);
-      if ("problem" in access) {
-        if (access.problem === "unreachable") {
-          return this.retryLater("google-unreachable");
-        }
-        this.markBlocked(author, "token");
-        skip.add(author);
-        continue;
-      }
-      const file = await getFile(this.genv, access.token, this.fileId);
-      if (file.status !== 200) {
-        const problem = problemOf(file);
-        if (isTransient(problem) || problem === "other") {
-          return this.retryLater(problem);
-        }
-        // Google answers "not found" also when access was removed: for an author who made edits, that is lost access
-        this.markBlocked(author, problem === "token" ? "token" : "access");
-        skip.add(author);
-        continue;
-      }
-      this.confirmed(author);
-      if (file.data.trashed) {
-        this.toTrashNow();
+      const result = await this.saveGroup(group, skip, round); // NOSONAR S9382: each group depends on the previous Drive save and replanning
+      if (result === "stop") {
         return;
       }
-      if (file.data.capabilities?.canEdit === false) {
-        this.markBlocked(author, "access");
-        skip.add(author);
-        continue;
-      }
-      const key = await this.keyFrom(file);
-      if (!key) {
-        return this.retryLater(this.meta("error") || "key-missing");
-      }
-      this.setDriveName(file.data.name);
-      if (this.meta("seedCheck") === "1" && !(await this.verifySeedRecord(access.token))) {
-        return this.retryLater("google-unreachable");
-      }
-      // a version Drive has that we did not write: merged first, then the walk starts again
-      if (file.data.headRevisionId !== this.lastSaved().revision) {
-        if (++merges > 2) {
-          return this.retryLater("outside-busy");
-        }
-        if ((await this.mergeOutside(access.token, key, file.data)) === "retry") {
-          return this.retryLater("google-unreachable");
-        }
-        continue;
-      }
-      const result = await this.upload(group, access.token, key);
-      if (result === "retry") {
-        return;
-      }
-      if (result === "replan") {
-        continue;
-      }
-      if (typeof result === "object") {
-        this.markBlocked(author, result.blocked);
-        skip.add(author);
+      if (result === "next") {
         continue;
       }
       versions++;
     }
+    this.finishSaveRound(versions);
+  }
+
+  private saveAccessProblem(problem: string, author: string, skip: Set<string>): SaveStep {
+    if (problem === "unreachable") {
+      this.retryLater("google-unreachable");
+      return "stop";
+    }
+    this.markBlocked(author, "token");
+    skip.add(author);
+    return "next";
+  }
+
+  private saveFileProblem(file: DriveAnswer, author: string, skip: Set<string>): SaveStep {
+    const problem = problemOf(file);
+    if (isTransient(problem) || problem === "other") {
+      this.retryLater(problem);
+      return "stop";
+    }
+    // Google answers "not found" also when access was removed: for an author who made edits, that is lost access
+    this.markBlocked(author, problem === "token" ? "token" : "access");
+    skip.add(author);
+    return "next";
+  }
+
+  private saveFilePermission(file: DriveAnswer, author: string, skip: Set<string>): SaveStep | null {
+    if (file.data.trashed) {
+      this.toTrashNow();
+      return "stop";
+    }
+    if (file.data.capabilities?.canEdit === false) {
+      this.markBlocked(author, "access");
+      skip.add(author);
+      return "next";
+    }
+    return null;
+  }
+
+  private async mergeForSave(token: string, key: SceneKey, file: DriveAnswer, round: { merges: number }): Promise<SaveStep> {
+    if (++round.merges > 2) {
+      this.retryLater("outside-busy");
+      return "stop";
+    }
+    if ((await this.mergeOutside(token, key, file.data)) === "retry") {
+      this.retryLater("google-unreachable");
+      return "stop";
+    }
+    return "next";
+  }
+
+  private savedGroupResult(result: "ok" | "retry" | "replan" | { blocked: BlockedAuthor["reason"] }, author: string, skip: Set<string>): SaveStep {
+    if (result === "retry") {
+      return "stop";
+    }
+    if (result === "replan") {
+      return "next";
+    }
+    if (typeof result === "object") {
+      this.markBlocked(author, result.blocked);
+      skip.add(author);
+      return "next";
+    }
+    return "saved";
+  }
+
+  private async saveGroup(group: Batch[], skip: Set<string>, round: { merges: number }): Promise<SaveStep> {
+    const author = group[0].author;
+    const access = await this.accessFor(author);
+    if ("problem" in access) {
+      return this.saveAccessProblem(access.problem, author, skip);
+    }
+    const file = await getFile(this.genv, access.token, this.fileId);
+    if (file.status !== 200) {
+      return this.saveFileProblem(file, author, skip);
+    }
+    this.confirmed(author);
+    const permission = this.saveFilePermission(file, author, skip);
+    if (permission !== null) {
+      return permission;
+    }
+    const key = await this.keyFrom(file);
+    if (!key) {
+      this.retryLater(this.meta("error") || "key-missing");
+      return "stop";
+    }
+    this.setDriveName(file.data.name);
+    if (this.meta("seedCheck") === "1" && !(await this.verifySeedRecord(access.token))) {
+      this.retryLater("google-unreachable");
+      return "stop";
+    }
+    // a version Drive has that we did not write: merged first, then the walk starts again
+    if (file.data.headRevisionId !== this.lastSaved().revision) {
+      return this.mergeForSave(access.token, key, file, round);
+    }
+    const result = await this.upload(group, access.token, key);
+    return this.savedGroupResult(result, author, skip);
+  }
+
+  private finishSaveRound(versions: number) {
     if (versions) {
       this.setMeta("failures", null);
       if (["google-unreachable", "rate-limited", "drive-full", "save-failed", "outside-busy"].includes(this.meta("error") || "")) {
@@ -4111,64 +4281,90 @@ export class SceneRoom extends DurableObject<SceneEnv> {
    */
   private async recoverSaves(oneTime?: { sub: string; token: string }): Promise<boolean> {
     for (const row of this.q("SELECT * FROM saves WHERE state IN ('prepared', 'audit', 'repair') ORDER BY at")) {
-      const access = (await this.accessFor(String(row.author))) as { token?: string; problem?: string };
-      let token = access.token ?? oneTime?.token ?? null;
-      if (!token) {
-        const other = await this.anyAccess();
-        if (other === "unreachable" || access.problem === "unreachable") {
-          this.retryLater("google-unreachable");
-          return false;
-        }
-        token = other?.token ?? null;
-      }
-      if (!token) {
-        this.setMeta("needCredential", "1");
-        this.requestToken();
-        this.schedule("save", Date.now() + 15 * 60_000);
-        return false;
-      }
-      const file = await getFile(this.genv, token, this.fileId);
-      if (file.status !== 200) {
-        this.retryLater(problemOf(file));
-        return false;
-      }
-      const key = await this.keyFrom(file);
-      if (!key) {
-        return false;
-      }
-      if (row.state === "prepared") {
-        const revisions = await listRevisions(this.genv, token, this.fileId);
-        if (!Array.isArray(revisions)) {
-          this.retryLater(problemOf(revisions));
-          return false;
-        }
-        const baseAt = revisions.findIndex((rev) => rev.id === row.base);
-        const found = revisions.slice(baseAt + 1).find((rev) => rev.md5Checksum === row.md5);
-        if (!found) {
-          this.q("DELETE FROM saves WHERE op = ?", row.op);
-          continue;
-        }
-        const seqs = new Set<number>(JSON.parse(String(row.batches)));
-        const group = this.pending.filter((batch) => seqs.has(batch.seq));
-        const last = new Map<string, Entry>();
-        group.forEach((batch) => batch.entries.forEach((entry) => last.set(keyOf(entry), entry)));
-        const meta = JSON.parse(String(row.meta || "{}"));
-        this.commitSave(
-          String(row.op),
-          group,
-          last,
-          { revision: found.id, md5: String(row.md5) },
-          meta.receipts ?? this.receiptsWith(group),
-          meta.onBehalf ?? this.metaJson("onBehalf", []),
-          meta.repairOf,
-        );
-      }
-      const done = row.state === "repair" ? await this.repairUpload(String(row.op), token, key) : await this.audit(String(row.op), token, key);
-      if (!done) {
+      if (!(await this.recoverSave(row, oneTime))) { // NOSONAR S9382: recover durable saves in their recorded order
         return false;
       }
     }
     this.setMeta("needCredential", null);
+    return true;
+  }
+
+  private async recoveryToken(row: Record<string, any>, oneTime?: { sub: string; token: string }) {
+    const access = (await this.accessFor(String(row.author))) as { token?: string; problem?: string };
+    let token = access.token ?? oneTime?.token ?? null;
+    if (!token) {
+      const other = await this.anyAccess();
+      if (other === "unreachable" || access.problem === "unreachable") {
+        this.retryLater("google-unreachable");
+        return null;
+      }
+      token = other?.token ?? null;
+    }
+    if (!token) {
+      this.setMeta("needCredential", "1");
+      this.requestToken();
+      this.schedule("save", Date.now() + 15 * 60_000);
+      return null;
+    }
+    return token;
+  }
+
+  private async recoverPreparedSave(row: Record<string, any>, token: string): Promise<boolean | "missing"> {
+    const revisions = await listRevisions(this.genv, token, this.fileId);
+    if (!Array.isArray(revisions)) {
+      this.retryLater(problemOf(revisions));
+      return false;
+    }
+    const baseAt = revisions.findIndex((rev) => rev.id === row.base);
+    const found = revisions.slice(baseAt + 1).find((rev) => rev.md5Checksum === row.md5);
+    if (!found) {
+      this.q("DELETE FROM saves WHERE op = ?", row.op);
+      return "missing";
+    }
+    const seqs = new Set<number>(JSON.parse(String(row.batches)));
+    const group = this.pending.filter((batch) => seqs.has(batch.seq));
+    const last = new Map<string, Entry>();
+    group.forEach((batch) => batch.entries.forEach((entry) => last.set(keyOf(entry), entry)));
+    const meta = JSON.parse(String(row.meta || "{}"));
+    this.commitSave(
+      String(row.op),
+      group,
+      last,
+      { revision: found.id, md5: String(row.md5) },
+      meta.receipts ?? this.receiptsWith(group),
+      meta.onBehalf ?? this.metaJson("onBehalf", []),
+      meta.repairOf,
+    );
+    return true;
+  }
+
+  private async recoverSave(row: Record<string, any>, oneTime?: { sub: string; token: string }): Promise<boolean> {
+    const token = await this.recoveryToken(row, oneTime);
+    if (!token) {
+      return false;
+    }
+    const file = await getFile(this.genv, token, this.fileId);
+    if (file.status !== 200) {
+      this.retryLater(problemOf(file));
+      return false;
+    }
+    const key = await this.keyFrom(file);
+    if (!key) {
+      return false;
+    }
+    if (row.state === "prepared") {
+      const prepared = await this.recoverPreparedSave(row, token);
+      if (prepared === "missing") {
+        return true;
+      }
+      if (!prepared) {
+        return false;
+      }
+    }
+    const done = row.state === "repair" ? await this.repairUpload(String(row.op), token, key) : await this.audit(String(row.op), token, key);
+    if (!done) {
+      return false;
+    }
     return true;
   }
 
@@ -4203,21 +4399,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return true;
     }
     const needed = [revisions[baseAt], revisions[ours - 1]];
-    for (const rev of needed.filter((r) => !r.keepForever)) {
-      if (!(await this.pinRoom(token, revisions))) {
-        this.setError("audit-pins-full");
-        return true;
-      }
-      const pinned = await this.dcall(`${driveUrls(this.env).api}/files/${this.fileId}/revisions/${rev.id}?fields=id,keepForever`, token, {
-        method: "PATCH",
-        json: { keepForever: true },
-      });
-      if (pinned.status !== 200) {
-        return isTransient(problemOf(pinned)) ? later() : (this.setError("audit-failed"), true);
-      }
-      // recorded at once: a crash later still lets it go
-      this.setMeta("auditPins", [...this.metaJson<string[]>("auditPins", []), rev.id]);
-      this.setMeta("pins", [...this.metaJson<Pin[]>("pins", []), { rev: rev.id, kind: "audit", at: Date.now() }]);
+    const pinned = await this.pinAuditRevisions(token, revisions, needed, later);
+    if (pinned !== null) {
+      return pinned;
     }
     const [baseFile, foreignFile] = await Promise.all(needed.map((rev) => downloadFile(this.genv, token, this.fileId, rev.id)));
     await this.releaseAuditPins(token);
@@ -4246,6 +4430,26 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     // the merged changes and the obligation to save them, in one transaction
     this.commitOutside(entries, null, () => this.q("UPDATE saves SET state = 'repair' WHERE op = ?", op));
     return this.repairUpload(op, token, key);
+  }
+
+  private async pinAuditRevisions(token: string, revisions: Revision[], needed: Revision[], later: () => boolean): Promise<boolean | null> {
+    for (const rev of needed.filter((r) => !r.keepForever)) {
+      if (!(await this.pinRoom(token, revisions))) {
+        this.setError("audit-pins-full");
+        return true;
+      }
+      const pinned = await this.dcall(`${driveUrls(this.env).api}/files/${this.fileId}/revisions/${rev.id}?fields=id,keepForever`, token, {
+        method: "PATCH",
+        json: { keepForever: true },
+      });
+      if (pinned.status !== 200) {
+        return isTransient(problemOf(pinned)) ? later() : (this.setError("audit-failed"), true);
+      }
+      // recorded at once: a crash later still lets it go
+      this.setMeta("auditPins", [...this.metaJson<string[]>("auditPins", []), rev.id]);
+      this.setMeta("pins", [...this.metaJson<Pin[]>("pins", []), { rev: rev.id, kind: "audit", at: Date.now() }]);
+    }
+    return null;
   }
 
   /** the audit's repair: a version with the merged outside changes (finishes the audit when Drive has it) */
@@ -4588,11 +4792,6 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     }
     return pins;
   }
-
-
-
-
-
 
 
 

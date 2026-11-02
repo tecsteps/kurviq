@@ -7,6 +7,11 @@ const puppeteer = createRequire(import.meta.url)(new URL("../../../excalidraw/no
 const BASE = process.env.KURVIQ_URL || "http://localhost:8790";
 const SCENE = process.argv[2] || `live-smoke-${Date.now() % 100000}`;
 const EMAIL = process.argv[3] || "alice@example.test";
+let failed = 0;
+const ok = (cond, what, extra) => {
+  console.log(`${cond ? "PASS" : "FAIL"} ${what}${extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 300)}`);
+  if (!cond) failed++;
+};
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME || "/Users/fabianwesner/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
   headless: "new",
@@ -70,6 +75,8 @@ const b = await ctx.newPage();
 watch(b, "B");
 await b.goto(`${BASE}/${SCENE}`, { waitUntil: "networkidle2" });
 await sleep(5000);
+const initial = await els(a);
+ok(initial.length === 1 && JSON.stringify(await els(b)) === JSON.stringify(initial), "second tab sees the first drawing");
 log("B sees", JSON.stringify(await els(b)));
 const dumpQueue = (page) =>
   page.evaluate(
@@ -97,6 +104,8 @@ log("B queue after drag", JSON.stringify(await dumpQueue(b)));
 log("A state", await state(a));
 log("B state", await state(b));
 log("after B drag: A", JSON.stringify(await els(a)), "B", JSON.stringify(await els(b)));
+const afterB = await els(b);
+ok(afterB.length === 2 && JSON.stringify(await els(a)) === JSON.stringify(afterB), "B drawing propagates with exact ids and content");
 // A draws a second one
 await a.bringToFront();
 await draw(a, 300, 200);
@@ -104,9 +113,12 @@ await sleep(2500);
 log("after A draw: A", (await els(a)).length, "B", (await els(b)).length);
 log("A state", await state(a));
 log("B state", await state(b));
+const beforeReload = await els(a);
+ok(beforeReload.length === 3 && JSON.stringify(await els(b)) === JSON.stringify(beforeReload), "A drawing propagates with exact ids and content");
 // B reloads: persisted base + reconcile, nothing should become an offline copy
 await b.reload({ waitUntil: "networkidle2" });
 await sleep(6000);
+ok(JSON.stringify(await els(b)) === JSON.stringify(beforeReload), "reload preserves exact ids and content");
 log("B after reload", JSON.stringify(await els(b)));
 log("B state after reload", await state(b));
 // A deletes everything
@@ -121,5 +133,10 @@ log("scenes A", JSON.stringify(await names(a)), "B", JSON.stringify(await names(
 log("pills", await a.$eval(".scenes-pill", (el) => el.getAttribute("title")), "|", await b.$eval(".scenes-pill", (el) => el.getAttribute("title")));
 const banner = await b.$eval(".kq-live", (el) => el.textContent).catch(() => null);
 log("B banner", banner);
+ok((await els(a)).length === 0 && (await els(b)).length === 0, "deletion reaches both tabs");
+ok((await names(a)).length === 1 && (await names(b)).length === 1, "reload and deletion create no offline copies");
+const pending = async (page) => (await dumpQueue(page)).filter((batch) => batch.state !== "acked");
+ok((await pending(a)).length === 0 && (await pending(b)).length === 0, "both queues drain (nothing unacknowledged)");
 log("queue at end", JSON.stringify(await dumpQueue(b)));
 await browser.close();
+process.exitCode = failed ? 1 : 0;
