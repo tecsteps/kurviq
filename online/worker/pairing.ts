@@ -224,26 +224,30 @@ export class Pairing extends DurableObject {
       });
     }
     if (url.pathname.startsWith("/api/scenes")) {
-      const tab = this.activeTab(via);
-      if (!tab) {
-        throw this.notOpen();
-      }
-      const headers: Record<string, string> = {};
-      request.headers.forEach((value, key) => {
-        if (key.startsWith("x-") || key === "content-type") {
-          headers[key] = value;
-        }
-      });
-      const answer = await this.send(tab.ws, {
-        type: "http",
-        request: { method: request.method, path: url.pathname + url.search, headers, body },
-      });
-      if (answer?.status >= 200 && answer.status < 300 && request.method !== "GET") {
-        this.broadcast({ type: "scene-saved", source: "agent" }, tab.ws);
-      }
-      return new Response(answer?.body ?? "", { status: answer?.status ?? 500, headers: answer?.headers ?? {} });
+      return this.sceneApi(request, url, body, via);
     }
     return json(404, { error: "Not found" });
+  }
+
+  private async sceneApi(request: Request, url: URL, body: string, via: Via): Promise<Response> {
+    const tab = this.activeTab(via);
+    if (!tab) {
+      throw this.notOpen();
+    }
+    const headers: Record<string, string> = {};
+    request.headers.forEach((value, key) => {
+      if (key.startsWith("x-") || key === "content-type") {
+        headers[key] = value;
+      }
+    });
+    const answer = await this.send(tab.ws, {
+      type: "http",
+      request: { method: request.method, path: url.pathname + url.search, headers, body },
+    });
+    if (answer?.status >= 200 && answer.status < 300 && request.method !== "GET") {
+      this.broadcast({ type: "scene-saved", source: "agent" }, tab.ws);
+    }
+    return new Response(answer?.body ?? "", { status: answer?.status ?? 500, headers: answer?.headers ?? {} });
   }
 
   /** tell the other tabs of this browser that an agent saved a scene (they sync) */

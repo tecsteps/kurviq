@@ -479,8 +479,18 @@ export const syncTemplate = (
         );
       }
     }
-    const nextHidden = [...hidden].filter((id) => templateIds.has(id)).sort();
-    if (nextHidden.join() !== [...wasHidden].sort().join()) {
+    const nextHidden = [...hidden].filter((id) => templateIds.has(id)).sort((a, b) => {
+      if (a < b) {
+        return -1;
+      }
+      return a > b ? 1 : 0;
+    });
+    if (nextHidden.join() !== [...wasHidden].sort((a, b) => {
+      if (a < b) {
+        return -1;
+      }
+      return a > b ? 1 : 0;
+    }).join()) {
       replaced.set(slide.id, withSlideData(slide, { hidden: nextHidden.length ? nextHidden : undefined }));
     }
   });

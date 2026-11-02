@@ -404,9 +404,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
    * cost counters for QA (dev-stats), memory only; only with the fake Google's
    * dev gate (FAKE_GOOGLE=1, local DEV_ORIGIN), else nothing is counted
    */
-  private devOn: boolean;
+  private readonly devOn: boolean;
   private metrics = SceneRoom.emptyMetrics();
-  private devEnv: SceneEnv | null = null;
+  private readonly devEnv: SceneEnv | null = null;
 
   private static emptyMetrics() {
     return {
@@ -2548,7 +2548,12 @@ export class SceneRoom extends DurableObject<SceneEnv> {
 
   /** an index above `index` and below the next used one (or after all, for a missing index) */
   private freeIndex(index: string | null, taken: Set<string>) {
-    const all = [...this.indices.keys(), ...taken].filter((value) => value !== "").sort();
+    const all = [...this.indices.keys(), ...taken].filter((value) => value !== "").sort((a, b) => {
+      if (a < b) {
+        return -1;
+      }
+      return a > b ? 1 : 0;
+    });
     if (index === null) {
       return indexBetween(all.at(-1) ?? null, null);
     }

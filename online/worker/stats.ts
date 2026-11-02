@@ -345,7 +345,7 @@ export class Stats extends DurableObject<StatsDoEnv> {
   private readonly keys = new Map<string, Promise<CryptoKey>>();
   private alarmAt: number | null | undefined;
   private d1Ready = false;
-  private flushMs = FLUSH_MS;
+  private readonly flushMs = FLUSH_MS;
   /** the hour estimates were last closed in (closing again only when it changes) */
   private closedAt = "";
 

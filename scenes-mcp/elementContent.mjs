@@ -15,7 +15,12 @@ const normalize = (value) => {
   }
   if (value && typeof value === "object") {
     const out = {};
-    for (const key of Object.keys(value).sort()) {
+    for (const key of Object.keys(value).sort((a, b) => {
+      if (a < b) {
+        return -1;
+      }
+      return a > b ? 1 : 0;
+    })) {
       const field = value[key];
       const empty = field === null || field === undefined || (Array.isArray(field) && !field.length);
       if (!VOLATILE.has(key) && !empty) {

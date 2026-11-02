@@ -458,13 +458,16 @@ class ScenesController {
     }
     // the app loads its initial scene asynchronously; switching scenes
     // before that would get overwritten
-    const waitForLoad = () =>
-      api.getAppState().isLoading
-        ? setTimeout(waitForLoad, 100)
-        : this.adoptInitialCanvas()
-            .then(() => this.connectInitial())
-            .finally(() => this.readyDeferred.resolve())
-            .catch((error) => console.error("[scenes] could not initialize scene", error));
+    const waitForLoad = () => {
+      if (api.getAppState().isLoading) {
+        setTimeout(waitForLoad, 100);
+        return;
+      }
+      this.adoptInitialCanvas()
+        .then(() => this.connectInitial())
+        .finally(() => this.readyDeferred.resolve())
+        .catch((error) => console.error("[scenes] could not initialize scene", error));
+    };
     waitForLoad();
     this.unsubscribeChange?.();
     this.api = api;
