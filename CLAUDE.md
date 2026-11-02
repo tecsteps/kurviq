@@ -1,5 +1,37 @@
 # Kurviq
 
+## Code quality: SonarCloud stays perfect (no-issue policy)
+
+The project `tecsteps_kurviq` (branch `main`) on SonarCloud must always show
+**A in security, reliability and maintainability, with zero open issues** and
+all hotspots reviewed. Every push to main is analysed; a change is not done
+until the analysis of its push is clean.
+
+- **After every push**, once the deploy is green (`gh run watch`), wait about a
+  minute and read the open issues:
+  `curl -s "https://sonarcloud.io/api/issues/search?componentKeys=tecsteps_kurviq&branch=main&resolved=false&ps=100"`
+  (ratings: `/api/measures/component?component=tecsteps_kurviq&branch=main&metricKeys=security_rating,reliability_rating,sqale_rating`).
+  Fix anything your change introduced or left open in the next commit, not
+  "later". Never leave known issues behind.
+- **Fix for real first**: extract helpers, flatten nested ternaries, give
+  `sort()` a compare function, mark never-reassigned members `readonly`, handle
+  promises. Behaviour must stay unchanged.
+- **`// NOSONAR <rule>: <reason>`** only for a genuine false positive or a
+  deliberate exception, always with the rule id and a one-line reason. Never to
+  silence a real finding.
+- **Secrets never go into the repo**, not even "public" keys: use `.env` locally
+  and GitHub secrets in the deploy (see `KURVIQ_GOOGLE_BROWSER_KEY`, injected at
+  build time in `scenes-plugin/vite.config.mts`). A leaked key means: new key,
+  delete the old one, rewrite history.
+- **Verify before pushing a cleanup**: `npm run typecheck` (only the 17 upstream
+  errors), `cd online && node build-worker.mjs` (the Worker is not covered by
+  typecheck), the unit tests
+  (`excalidraw/node_modules/.bin/vitest run --config scenes-plugin/test/vitest.config.mts`)
+  and, for sync, merge or Worker changes, the e2e scripts in
+  `scenes-plugin/test/e2e` and `online/test/live-server.mjs`.
+- New logic comes with unit tests; never exclude files from analysis to get
+  green. Upstream `excalidraw/` and `excalidraw-mcp/` stay untouched.
+
 ## Usage statistics
 
 kurviq.com counts how it is used: anonymous counters per hour, nothing per
