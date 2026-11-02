@@ -4,7 +4,7 @@
 // then adds { "type": "image", "fileId": "…" }, and the file goes into the
 // scene like a pasted image. The model never has to carry the image's bytes.
 
-import { createStore, del, entries, get, set } from "idb-keyval";
+import { createStore, delMany, get, keys, set } from "idb-keyval";
 
 export type UploadedFile = {
   id: string;
@@ -19,6 +19,10 @@ const store = createStore("kurviq-agent-uploads", "files");
 /** uploads kept (the oldest go first; once in a scene, the scene has its own copy) */
 const MAX_UPLOADS = 100;
 const MIME_RE = /^image\/(png|jpeg|gif|webp|svg\+xml)$/;
+/** the uploads' ids and times: pruning never loads the pictures themselves */
+const UPLOAD_INDEX = "upload-index";
+/** uploads written one at a time in this tab (the index is read and written whole) */
+let uploadWrites: Promise<unknown> = Promise.resolve();
 
 /** the picture's size, from the browser */
 const naturalSize = (dataURL: string) =>
@@ -40,16 +44,29 @@ export const keepUpload = async (file: { id: string; mimeType: string; dataURL: 
   }
   const size = await naturalSize(file.dataURL);
   const entry: UploadedFile = { ...file, ...size, created: Date.now() };
-  await set(file.id, entry, store);
-  const all = await entries<string, UploadedFile>(store);
-  if (all.length > MAX_UPLOADS) {
-    all.sort((a, b) => a[1].created - b[1].created);
-    await Promise.all(all.slice(0, all.length - MAX_UPLOADS).map(([key]) => del(key, store)));
-  }
+  const write = uploadWrites.then(async () => {
+    await set(file.id, entry, store);
+    // before the index existed: the stored uploads, as the oldest (their keys only, not the pictures)
+    const index =
+      (await get<Record<string, number>>(UPLOAD_INDEX, store)) ??
+      Object.fromEntries((await keys(store)).filter((key) => String(key) !== UPLOAD_INDEX).map((key) => [String(key), 0]));
+    index[file.id] = entry.created;
+    const byAge = Object.entries(index).sort((a, b) => a[1] - b[1]);
+    const drop = byAge.slice(0, Math.max(0, byAge.length - MAX_UPLOADS)).map(([id]) => id);
+    drop.forEach((id) => delete index[id]);
+    if (drop.length) {
+      await delMany(drop, store);
+    }
+    await set(UPLOAD_INDEX, index, store);
+  });
+  uploadWrites = write.catch(() => {});
+  await write;
   return entry;
 };
 
-export const getUpload = (id: string) => get<UploadedFile>(id, store).catch(() => undefined);
+/** an upload by its id (only real ids: the store also holds the index) */
+export const getUpload = (id: string) =>
+  /^[0-9a-f]{40}$/.test(id) ? get<UploadedFile>(id, store).catch(() => undefined) : Promise.resolve(undefined);
 
 /** an Excalidraw file record of an upload */
 const asFile = ({ id, mimeType, dataURL, created }: UploadedFile) => ({ id, mimeType, dataURL, created });
