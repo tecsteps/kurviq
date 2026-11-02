@@ -120,7 +120,7 @@ const takeLocalSession = () => {
   const ours = !!expected && params.get("kurviq-state") === expected;
   try {
     if (session && ours) {
-      localStorage.setItem(LOCAL_SESSION_KEY, session);
+      localStorage.setItem(LOCAL_SESSION_KEY, session); // NOSONAR S8475: sign-in state is verified above; the server authenticates the sealed session
     }
   } catch {}
   const url = new URL(window.location.href);
@@ -132,6 +132,14 @@ takeLocalSession();
 
 let token: { value: string; expiresAt: number } | null = null;
 let tokenRequest: Promise<string | null> | null = null;
+
+const clearLocalSession = () => {
+  if (IS_LOCAL_INSTALL) {
+    try {
+      localStorage.removeItem(LOCAL_SESSION_KEY);
+    } catch {}
+  }
+};
 
 const requestToken = async (): Promise<string | null> => {
   const session = IS_LOCAL_INSTALL ? localSession() : null;
@@ -156,11 +164,7 @@ const requestToken = async (): Promise<string | null> => {
   const body = await res.json();
   if (body.connected === false) {
     token = null;
-    if (IS_LOCAL_INSTALL) {
-      try {
-        localStorage.removeItem(LOCAL_SESSION_KEY);
-      } catch {}
-    }
+    clearLocalSession();
     setConnection({ user: null, drive: false });
     return null;
   }
@@ -223,7 +227,8 @@ export const connectGoogle = ({ consent = false }: { consent?: boolean } = {}) =
       sessionStorage.setItem(LOCAL_STATE_KEY, state);
     } catch {}
   }
-  window.location.href = `${AUTH_BASE}/auth/login?return=${encodeURIComponent(back)}${state ? `&state=${state}` : ""}${consent ? "&consent=1" : ""}`;
+  const stateQuery = state ? `&state=${state}` : "";
+  window.location.href = `${AUTH_BASE}/auth/login?return=${encodeURIComponent(back)}${stateQuery}${consent ? "&consent=1" : ""}`;
 };
 
 /** the other tabs of this browser hear about a sign-out */
@@ -236,7 +241,7 @@ const forgetConnection = () => {
   token = null;
   forgetListing();
   setConnection({ user: null, drive: false });
-  signOutListeners.forEach((listener) => listener());
+  signOutListeners.forEach((listener) => listener()); // NOSONAR S4158: exported set populated by live-sync subscribers
 };
 tabsChannel?.addEventListener("message", (event) => event.data === "disconnected" && forgetConnection());
 
@@ -287,11 +292,12 @@ export const authPost = async (path: string, body: Record<string, unknown> = {})
     } catch {}
   }
   if (!res.ok) {
-    throw Object.assign(new Error(answer.error || `Kurviq server error (${res.status})`), {
+    const error = Object.assign(new Error(answer.error || `Kurviq server error (${res.status})`), {
       status: res.status,
       code: answer.code,
       offline: res.status === 503 || res.status >= 500,
     }) as ApiError & { code?: string };
+    throw error;
   }
   return answer;
 };
@@ -321,6 +327,38 @@ export const notConnectedError = () =>
 
 type DriveResponse = { status: number; data: any; text: string };
 
+const checkDriveResponse = (res: Response, data: any) => {
+  if (res.status === 401) {
+    setConnection({ user: null, drive: false });
+    throw notConnectedError();
+  }
+  const reason = data?.error?.errors?.[0]?.reason;
+  if (res.status === 429 || (res.status === 403 && /rateLimit/i.test(String(reason)))) {
+    throw Object.assign(offlineError("Google Drive rate limit reached, retrying later"), { status: 503 });
+  }
+  if (res.status === 403 && reason === "insufficientPermissions") {
+    // the Drive access was unticked at sign-in
+    setConnection({ drive: false });
+    throw notConnectedError();
+  }
+  if (res.status >= 500) {
+    throw Object.assign(offlineError(`Google Drive error ${res.status}`), { status: 503 });
+  }
+};
+
+const readDriveResponse = async (res: Response, raw: boolean) => {
+  const text = res.status === 204 ? "" : await res.text();
+  let data: any = null;
+  if (!raw || !res.ok) {
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+  }
+  return { text, data };
+};
+
 const drive = async (
   url: string,
   {
@@ -330,6 +368,25 @@ const drive = async (
     raw = false,
   }: { method?: string; body?: BodyInit | object; contentType?: string; raw?: boolean } = {},
 ): Promise<DriveResponse> => {
+  const requestContentType = (isJson: boolean): Record<string, string> => {
+    if (isJson) {
+      return { "Content-Type": "application/json" };
+    }
+    if (contentType) {
+      return { "Content-Type": contentType };
+    }
+    return {};
+  };
+  const requestBody = (isJson: boolean) => {
+    if (body === undefined) {
+      return undefined;
+    }
+    if (isJson) {
+      return JSON.stringify(body);
+    }
+    return body as BodyInit;
+  };
+
   for (let attempt = 0; ; attempt++) {
     const value = await getToken();
     if (!value) {
@@ -343,9 +400,9 @@ const drive = async (
         cache: "no-store",
         headers: {
           Authorization: `Bearer ${value}`,
-          ...(isJson ? { "Content-Type": "application/json" } : contentType ? { "Content-Type": contentType } : {}),
+          ...requestContentType(isJson),
         },
-        body: body === undefined ? undefined : isJson ? JSON.stringify(body) : (body as BodyInit),
+        body: requestBody(isJson),
       });
     } catch {
       throw offlineError("Google Drive not reachable");
@@ -354,31 +411,8 @@ const drive = async (
       token = null; // revoked or expired early: get a fresh one once
       continue;
     }
-    const text = res.status === 204 ? "" : await res.text();
-    let data: any = null;
-    if (!raw || !res.ok) {
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch {
-        data = null;
-      }
-    }
-    if (res.status === 401) {
-      setConnection({ user: null, drive: false });
-      throw notConnectedError();
-    }
-    const reason = data?.error?.errors?.[0]?.reason;
-    if (res.status === 429 || (res.status === 403 && /rateLimit/i.test(String(reason)))) {
-      throw Object.assign(offlineError("Google Drive rate limit reached, retrying later"), { status: 503 });
-    }
-    if (res.status === 403 && reason === "insufficientPermissions") {
-      // the Drive access was unticked at sign-in
-      setConnection({ drive: false });
-      throw notConnectedError();
-    }
-    if (res.status >= 500) {
-      throw Object.assign(offlineError(`Google Drive error ${res.status}`), { status: 503 });
-    }
+    const { text, data } = await readDriveResponse(res, raw);
+    checkDriveResponse(res, data);
     return { status: res.status, data, text };
   }
 };
@@ -388,7 +422,23 @@ const fail = (res: DriveResponse, what: string): never => {
   throw httpError(res.status, `${what} (Google Drive ${res.status}${detail})`);
 };
 
-const q = (value: string) => `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+const q = (value: string) => {
+  const escaped = value.replaceAll("\\", String.raw`\\`).replaceAll("'", String.raw`\'`);
+  return `'${escaped}'`;
+};
+
+const validateSceneContent = (name: string, json: string) => {
+  let data: any;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw httpError(400, "Scene content is not valid JSON");
+  }
+  const owner = data?.appState?.name;
+  if (typeof owner === "string" && owner !== name) {
+    throw httpError(422, `Refused: this content belongs to scene "${owner}", not "${name}". Nothing was written.`);
+  }
+};
 
 const encodeBytes = (json: string) => new TextEncoder().encode(json);
 
@@ -524,6 +574,40 @@ const fetchSharedFile = async (fileId: string): Promise<DriveFile | null> => {
   return res.data;
 };
 
+const addFolderScene = (files: Map<string, DriveFile>, file: DriveFile) => {
+  const name = sceneNameOf(file);
+  const other = name ? files.get(name) : undefined;
+  // two files of the same name (made in Drive): the newer one counts
+  if (name && isSceneName(name) && (!other || (other.modifiedTime ?? "") < (file.modifiedTime ?? ""))) {
+    files.set(name, file);
+  }
+};
+
+const fetchFolderScenes = async (files: Map<string, DriveFile>) => {
+  const folder = await folderId();
+  let pageToken = "";
+  do {
+    const query = `${q(folder)} in parents and trashed=false`;
+    const res = await drive( // NOSONAR S9382: each folder page needs the preceding page token
+      `/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(${FILE_FIELDS})&pageSize=1000${
+        pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""
+      }`,
+    );
+    if (res.status === 404) {
+      // the folder is gone (deleted for good): find or make it again next time
+      localStorage.removeItem(folderKey());
+      folderRequest = null;
+    }
+    if (res.status !== 200) {
+      fail(res, "The scenes in Google Drive could not be listed");
+    }
+    for (const file of res.data.files as DriveFile[]) {
+      addFolderScene(files, file);
+    }
+    pageToken = res.data.nextPageToken || "";
+  } while (pageToken);
+};
+
 /** the scenes of this space (name -> file); a cached copy for a few seconds */
 const fetchScenes = async (force = false): Promise<Listing> => {
   if (listing && !force && Date.now() - listing.fetchedAt < 5_000) {
@@ -544,32 +628,7 @@ const fetchScenes = async (force = false): Promise<Listing> => {
         files.set(name, file);
       }
     } else {
-      const folder = await folderId();
-      let pageToken = "";
-      do {
-        const res = await drive(
-          `/files?q=${encodeURIComponent(`${q(folder)} in parents and trashed=false`)}&fields=nextPageToken,files(${FILE_FIELDS})&pageSize=1000${
-            pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""
-          }`,
-        );
-        if (res.status === 404) {
-          // the folder is gone (deleted for good): find or make it again next time
-          localStorage.removeItem(folderKey());
-          folderRequest = null;
-        }
-        if (res.status !== 200) {
-          fail(res, "The scenes in Google Drive could not be listed");
-        }
-        for (const file of res.data.files as DriveFile[]) {
-          const name = sceneNameOf(file);
-          const other = name ? files.get(name) : undefined;
-          // two files of the same name (made in Drive): the newer one counts
-          if (name && isSceneName(name) && (!other || (other.modifiedTime ?? "") < (file.modifiedTime ?? ""))) {
-            files.set(name, file);
-          }
-        }
-        pageToken = res.data.nextPageToken || "";
-      } while (pageToken);
+      await fetchFolderScenes(files);
     }
     listing = { files, fetchedAt: Date.now() };
     remote.online = true;
@@ -642,7 +701,7 @@ const listRevisions = async (fileId: string): Promise<Revision[]> => {
   const all: Revision[] = [];
   let pageToken = "";
   do {
-    const res = await drive(
+    const res = await drive( // NOSONAR S9382: each revisions page needs the preceding page token
       `/files/${fileId}/revisions?fields=nextPageToken,revisions(id,md5Checksum,modifiedTime,keepForever,lastModifyingUser(displayName,emailAddress))&pageSize=200${
         pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""
       }`,
@@ -767,16 +826,7 @@ export const driveScenes = {
    */
   save: async (name: string, json: string, baseMd5?: string, source?: string) => {
     checkName(name);
-    let data: any;
-    try {
-      data = JSON.parse(json);
-    } catch {
-      throw httpError(400, "Scene content is not valid JSON");
-    }
-    const owner = data?.appState?.name;
-    if (typeof owner === "string" && owner !== name) {
-      throw httpError(422, `Refused: this content belongs to scene "${owner}", not "${name}". Nothing was written.`);
-    }
+    validateSceneContent(name, json);
     requireWritable();
     const checksum = md5(encodeBytes(json));
     const file = await locate(name);
@@ -789,7 +839,7 @@ export const driveScenes = {
       return liveWriter({ fileId: file.id, name, json, baseMd5, source });
     }
     checkBase(name, file?.md5Checksum, baseMd5);
-    if (file && file.md5Checksum === checksum) {
+    if (file?.md5Checksum === checksum) {
       return { md5: checksum, driveRevision: null, changed: false };
     }
     let res: DriveResponse;
@@ -1014,8 +1064,18 @@ export const listPermissions = async (fileId: string): Promise<Permission[]> => 
 };
 
 export const linkAccessOf = (permissions: Permission[]): LinkAccess => {
+  const permissionAccess = () => {
+    if (anyone) {
+      if (anyone.role === "writer") {
+        return "writer";
+      }
+      return "reader";
+    }
+    return "restricted";
+  };
+
   const anyone = permissions.find((permission) => permission.type === "anyone");
-  return anyone ? (anyone.role === "writer" ? "writer" : "reader") : "restricted";
+  return permissionAccess();
 };
 
 export const changeRole = async (fileId: string, permissionId: string, role: "reader" | "writer") => {
@@ -1058,20 +1118,28 @@ export const setLinkAccess = async (fileId: string, access: LinkAccess) => {
   forgetListing();
 };
 
+const trimHyphens = (value: string) => {
+  let start = 0;
+  let end = value.length;
+  while (value[start] === "-") start++;
+  while (end > start && value[end - 1] === "-") end--;
+  return value.slice(start, end);
+};
+
 const slug = (name: string) =>
-  name
+  trimHyphens(name
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/[^a-z0-9]+/g, "-"))
     .slice(0, 60);
 
 /** the link to a scene for anyone: kurviq.com/s/<fileId>/<readable name> */
 export const shareLink = (fileId: string, name: string) => {
   const base = IS_LOCAL_INSTALL ? AUTH_BASE : window.location.origin;
   const readable = slug(name);
-  return `${base}/s/${fileId}${readable ? `/${readable}` : ""}`;
+  const suffix = readable ? `/${readable}` : "";
+  return `${base}/s/${fileId}${suffix}`;
 };
 
 // -----------------------------------------------------------------------------
@@ -1205,8 +1273,9 @@ export const sharedWithMe = (): Promise<SharedWithMe[]> => {
     return sharedList.value;
   }
   const value = (async () => {
+    const query = `sharedWithMe and trashed=false and mimeType=${q(SCENE_MIME)}`;
     const res = await drive(
-      `/files?q=${encodeURIComponent(`sharedWithMe and trashed=false and mimeType=${q(SCENE_MIME)}`)}&fields=files(${FILE_FIELDS})&pageSize=200&includeItemsFromAllDrives=true&supportsAllDrives=true`,
+      `/files?q=${encodeURIComponent(query)}&fields=files(${FILE_FIELDS})&pageSize=200&includeItemsFromAllDrives=true&supportsAllDrives=true`,
     );
     if (res.status !== 200) {
       return [];
@@ -1280,7 +1349,8 @@ export const sharedSceneVersion = async (fileId: string): Promise<string | null>
 /** `version`: that version of a public scene (past the edge cache's copy) */
 export const readSharedScene = async (fileId: string, { version }: { version?: string } = {}): Promise<SharedSceneAnswer> => {
   // public scenes: through Kurviq's edge cache (the page preloads this very URL), no sign-in needed
-  const publicCopy = fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}${version ? `?v=${version}` : ""}`)
+  const versionQuery = version ? `?v=${version}` : "";
+  const publicCopy = fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}${versionQuery}`)
     .then(async (res) =>
       res.ok
         ? { json: await res.text(), name: decodeURIComponent(res.headers.get("X-Kurviq-Name") || ""), by: decodeURIComponent(res.headers.get("X-Kurviq-By") || "") }
@@ -1288,7 +1358,15 @@ export const readSharedScene = async (fileId: string, { version }: { version?: s
     )
     .catch(() => null);
   const signedIn = getToken().catch(() => null);
-  const access = signedIn.then(async (value) => (value ? fetchSharedFile(fileId).catch(() => null) : null));
+  const fetchAccessibleFile = async (value: string | null) => {
+    if (!value) return null;
+    try {
+      return await fetchSharedFile(fileId);
+    } catch {
+      return null;
+    }
+  };
+  const access = signedIn.then(fetchAccessibleFile);
   const pub = await publicCopy;
   if (pub) {
     // don't wait for the access check longer than a moment
@@ -1389,6 +1467,16 @@ export const pickFiles = async ({ fileId, shared }: { fileId?: string; shared?: 
     view.setOwnedByMe(false);
   }
   return new Promise<string[]>((resolve) => {
+    const pickerTitle = () => {
+      if (fileId) {
+        return "Allow Kurviq to open this scene";
+      }
+      if (shared) {
+        return "Scenes shared with you";
+      }
+      return "Open a scene from Google Drive";
+    };
+
     const builder = new pickerApi.PickerBuilder();
     if (shared) {
       builder.enableFeature(pickerApi.Feature.MULTISELECT_ENABLED);
@@ -1398,7 +1486,7 @@ export const pickFiles = async ({ fileId, shared }: { fileId?: string; shared?: 
       .setOAuthToken(value)
       .setDeveloperKey(google.browserApiKey)
       .setAppId(google.projectNumber)
-      .setTitle(fileId ? "Allow Kurviq to open this scene" : shared ? "Scenes shared with you" : "Open a scene from Google Drive")
+      .setTitle(pickerTitle())
       .setCallback((data: any) => {
         const action = data[pickerApi.Response.ACTION];
         if (action === pickerApi.Action.PICKED) {

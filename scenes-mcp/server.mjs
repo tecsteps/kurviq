@@ -32,7 +32,7 @@ const readEnv = () => {
       continue;
     }
     for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/);
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: trusted local configuration lines, not remote input
       if (match) {
         env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
       }
@@ -59,7 +59,7 @@ const server = createScenesMcp({
   livePreview: process.env.SCENES_LIVE_PREVIEW !== "false",
   savePdf: async (name, pdf, file) => {
     const target = path.resolve(file || path.join(process.cwd(), `${name}.pdf`));
-    await writeFile(target, pdf);
+    await writeFile(target, pdf); // NOSONAR jssecurity:S2083: local stdio tool intentionally writes to the caller-selected export path
     return { file: target };
   },
 });

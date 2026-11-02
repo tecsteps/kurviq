@@ -41,7 +41,7 @@ const edit = (page, props) =>
   page.evaluate((props) => {
     const s = window.__live.current();
     const el = s.surface.elements().find((e) => !e.isDeleted);
-    s.surface.edit({ elements: [{ ...el, ...props, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }] });
+    s.surface.edit({ elements: [{ ...el, ...props, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }] }); // NOSONAR S2245: not security relevant (Excalidraw versionNonce)
     s.collect();
     return s.flush();
   }, props);
@@ -58,14 +58,14 @@ const draw = async (page, x, y) => {
 const owner = await signIn(OWNER, `/${SCENE}`);
 await sleep(3000);
 await draw(owner, 500, 400);
-for (let i = 0; i < 25 && !(await state(owner)).includes("phase=ready"); i++) await sleep(1000);
+for (let i = 0; i < 25 && !(await state(owner)).includes("phase=ready"); i++) await sleep(1000); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 log("owner", await state(owner));
 const fileId = await owner.evaluate(() => window.__live.current().fileId);
 log("fileId", fileId);
 await admin("share", { fileId, email: GUEST, role: "writer" });
 await admin("grant", { fileId, email: GUEST });
 const guest = await signIn(GUEST, `/${SCENE}`, `f:${fileId}`);
-for (let i = 0; i < 20 && !(await state(guest)).includes("phase=ready"); i++) await sleep(1000);
+for (let i = 0; i < 20 && !(await state(guest)).includes("phase=ready"); i++) await sleep(1000); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 log("guest", await state(guest));
 // the same element at the same moment: owner moves it, guest recolors it
 await Promise.all([edit(owner, { x: 900 }), edit(guest, { strokeColor: "#e03131" })]);

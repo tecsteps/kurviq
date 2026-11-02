@@ -51,8 +51,14 @@ if (typeof window !== "undefined") {
   const input = () => {
     lastInput = Date.now();
   };
-  window.addEventListener("pointerdown", () => ((pointerDown = true), input()), true);
-  window.addEventListener("pointerup", () => ((pointerDown = false), input()), true);
+  window.addEventListener("pointerdown", () => {
+    pointerDown = true;
+    input();
+  }, true);
+  window.addEventListener("pointerup", () => {
+    pointerDown = false;
+    input();
+  }, true);
   window.addEventListener("keydown", input, true);
   window.addEventListener("wheel", input, { capture: true, passive: true });
 }
@@ -78,7 +84,7 @@ const autoReload = (serverBuild: string) => {
   let tries = 0;
   try {
     const last = JSON.parse(sessionStorage.getItem(AUTO_KEY) || "null");
-    if (last && last.server === serverBuild && Date.now() - last.at < 3 * 60_000) {
+    if (last?.server === serverBuild && Date.now() - last.at < 3 * 60_000) {
       tries = last.tries;
     }
   } catch {}
@@ -104,7 +110,7 @@ const autoReload = (serverBuild: string) => {
       window.location.reload();
       return;
     }
-    reloadApp();
+    reloadApp().catch((error) => console.error("[version] background operation failed", error));
   }, 400);
 };
 

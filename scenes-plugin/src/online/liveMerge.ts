@@ -3,8 +3,6 @@
 // which elements belong together, receipts. No browser or editor APIs, so
 // they are tested on their own (scenes-plugin/test).
 
-import { sameContent } from "../../../scenes-mcp/elementContent.mjs";
-
 import type { Base, Receipt } from "./liveProtocol";
 
 type El = { id: string; version: number; versionNonce: number; [key: string]: any };
@@ -32,7 +30,7 @@ export const sameState = (a: Record<string, any> | null | undefined, b: Record<s
 
 export const stampOf = (el: { version: number; versionNonce: number }): Base => ({ v: el.version, n: el.versionNonce });
 
-export const randomNonce = () => Math.floor(Math.random() * 2 ** 31);
+export const randomNonce = () => Math.floor(Math.random() * 2 ** 31); // NOSONAR S2245: not security relevant (Excalidraw's versionNonce)
 
 /**
  * A live collision: someone else's change (`current`) was accepted first.
@@ -197,6 +195,40 @@ export const withoutDanglingRefs = (el: El, exists: (id: string) => boolean): El
   return next;
 };
 
+const alive = (el: El | undefined) => (el && !el.isDeleted ? el : undefined);
+
+/**
+ * With the writer's base: whether `el` is the writer's change. False when
+ * the writer didn't change it, or when someone else changed it meanwhile
+ * (a clash, noted in `clashes`, unless both made the same change).
+ */
+const writerChanged = (el: El, now: El | undefined, before: Map<string, El>, clashes: string[]) => {
+  const was = alive(before.get(el.id));
+  if (was && contentEqual(was, el)) {
+    return false; // not the writer's change
+  }
+  if (!contentEqual(alive(now) ?? null, was ?? null)) {
+    if (!contentEqual(alive(now) ?? null, el)) {
+      clashes.push(el.id);
+    }
+    return false;
+  }
+  return true;
+};
+
+/** with the writer's base: whether the writer deleted `el` (false for a clash, noted in `clashes`) */
+const writerDeleted = (el: El, before: Map<string, El>, clashes: string[]) => {
+  const was = alive(before.get(el.id));
+  if (!was) {
+    return false; // added by someone else meanwhile: not the writer's to delete
+  }
+  if (!contentEqual(was, el)) {
+    clashes.push(el.id); // the writer deleted what someone changed meanwhile
+    return false;
+  }
+  return true;
+};
+
 /**
  * A whole new state of the scene (an agent's save) against the live one:
  * the elements that differ, stamped above what the scene has, plus deletions
@@ -211,20 +243,10 @@ export const liveDifference = (current: readonly El[], next: readonly El[], base
   const before = base ? new Map(base.map((el) => [el.id, el])) : null;
   const changed: El[] = [];
   const clashes: string[] = [];
-  const alive = (el: El | undefined) => (el && !el.isDeleted ? el : undefined);
   for (const el of next) {
     const now = byId.get(el.id);
-    if (before) {
-      const was = alive(before.get(el.id));
-      if (was && contentEqual(was, el)) {
-        continue; // not the writer's change
-      }
-      if (!contentEqual(alive(now) ?? null, was ?? null)) {
-        if (!contentEqual(alive(now) ?? null, el)) {
-          clashes.push(el.id);
-        }
-        continue;
-      }
+    if (before && !writerChanged(el, now, before, clashes)) {
+      continue;
     }
     if (now && !!now.isDeleted === !!el.isDeleted && contentEqual(now, el)) {
       continue;
@@ -235,15 +257,8 @@ export const liveDifference = (current: readonly El[], next: readonly El[], base
     if (el.isDeleted || nextIds.has(el.id)) {
       continue;
     }
-    if (before) {
-      const was = alive(before.get(el.id));
-      if (!was) {
-        continue; // added by someone else meanwhile: not the writer's to delete
-      }
-      if (!contentEqual(was, el)) {
-        clashes.push(el.id); // the writer deleted what someone changed meanwhile
-        continue;
-      }
+    if (before && !writerDeleted(el, before, clashes)) {
+      continue;
     }
     changed.push({ ...el, isDeleted: true, version: el.version + 1, versionNonce: randomNonce() });
   }
@@ -254,6 +269,14 @@ export const liveDifference = (current: readonly El[], next: readonly El[], base
 // content, order included
 // -----------------------------------------------------------------------------
 
+/** the default sort order: by UTF-16 code units */
+const byCodeUnits = (a: string, b: string) => {
+  if (a < b) {
+    return -1;
+  }
+  return a > b ? 1 : 0;
+};
+
 const normalize = (value: unknown): unknown => {
   if (typeof value === "number") {
     return Math.round(value * 100) / 100;
@@ -263,7 +286,7 @@ const normalize = (value: unknown): unknown => {
   }
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort()) {
+    for (const key of Object.keys(value).sort(byCodeUnits)) {
       const field = (value as Record<string, unknown>)[key];
       const empty = field === null || field === undefined || (Array.isArray(field) && !field.length);
       if (!VOLATILE.has(key) && !empty) {

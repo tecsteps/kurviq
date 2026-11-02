@@ -153,7 +153,7 @@ describe("whole-scene writes against the state the writer read", () => {
     const clash = liveDifference(current, [el("a", { x: 5 }), el("b", { x: 3 })], read);
     expect(clash.clashes).toEqual(["b"]);
     // a layer move alone is a change
-    expect(liveDifference([el("a", { index: "a1" })], [el("a", { index: "a3" })]).length).toBe(1);
+    expect(liveDifference([el("a", { index: "a1" })], [el("a", { index: "a3" })])).toHaveLength(1);
   });
 });
 

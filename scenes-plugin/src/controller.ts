@@ -22,7 +22,7 @@ import { hashElementsVersion, hashString } from "@excalidraw/element";
 
 import { mergeFontLists, registerSceneFonts, withFonts } from "./fonts";
 import { scenesApi } from "./api";
-import { connection, driveScenes, listPermissions, setLiveWriters, sharedFileId } from "./online/drive";
+import { connection, driveScenes, setLiveWriters, sharedFileId } from "./online/drive";
 import { liveDifference } from "./online/liveMerge";
 import { liveSync } from "./online/liveSync";
 import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
@@ -215,7 +215,7 @@ export const withSceneName = (json: string, name: string) => {
   if (data.appState?.name === name) {
     return json;
   }
-  return JSON.stringify({ ...data, appState: { ...(data.appState || {}), name } });
+  return JSON.stringify({ ...data, appState: { ...data.appState, name } });
 };
 
 /** the files (image data) of these elements, nothing else */
@@ -239,11 +239,30 @@ const timestamp = () => {
   )}.${pad(d.getMinutes())}`;
 };
 
+const keepLocalRefusal = (name: string, reason: string) => {
+  if (reason === "shared") return `"${name}" is shared with others (or not yours): it can't be taken out of Drive. "Keep a local copy" makes a copy only in this browser instead.`;
+  if (reason === "connected") return `"${name}" is open somewhere else right now: close it there first, or keep a local copy`;
+  if (reason === "others-pending") return `Someone else's changes to "${name}" aren't in Drive yet: try again in a minute, or keep a local copy`;
+  if (reason === "offline") return "Kurviq's server is not reachable: try again online";
+  if (reason === "unsent") return `Your latest changes to "${name}" aren't on Kurviq's server yet: try again in a moment`;
+  return `"${name}" can't be taken out of Drive now (${reason})`;
+};
+
+const unknownDriveStatus = (base: string | null, dirty: boolean): SyncStatus => {
+  if (!base) return "local";
+  return dirty ? "ahead" : "synced";
+};
+
+const conflictChanges = (base: any, current: any) => {
+  if (!current) return ["deleted"];
+  return base ? changedFields(base, current) : ["added"];
+};
+
 class ScenesController {
   private api: ExcalidrawImperativeAPI | null = null;
   private unsubscribeChange: (() => void) | null = null;
   private meta: ScenesMeta = loadMeta();
-  private listeners = new Set<() => void>();
+  private readonly listeners = new Set<() => void>();
   private lastVersionKey = "";
   private lastLiveKey = "";
   private lastChangeAt = 0;
@@ -293,6 +312,39 @@ class ScenesController {
         },
         remove: ({ fileId, name }) => this.liveTrash(fileId, name),
       });
+    }
+  }
+
+  private driveStatusOf(name: string, meta: SceneMeta | undefined): SyncStatus {
+    const dirty = this.isDirty(name);
+    const base = meta?.baseMd5 ?? null;
+    const remote = this.remoteMd5Of(name);
+    if (remote === undefined) {
+      // Drive state unknown (offline since start)
+      return unknownDriveStatus(base, dirty);
+    }
+    if (!remote) {
+      return base && dirty ? "ahead" : "local";
+    }
+    if (!base) {
+      // in Drive, never synced locally
+      return dirty ? "diverged" : "behind";
+    }
+    if (remote === base) {
+      return dirty ? "ahead" : "synced";
+    }
+    return dirty ? "diverged" : "behind";
+  }
+
+  private requireCompleteLocalCopy(name: string, data: any) {
+    const fonts = new Set((data.kurviqFonts || []).map((font: any) => font.id));
+    const incomplete = (data.elements || []).some(
+      (el: any) =>
+        !el.isDeleted &&
+        ((el.type === "image" && el.fileId && !data.files?.[el.fileId]?.dataURL) || (el.fontFamily >= 2000 && el.fontFamily < 9000 && !fonts.has(el.fontFamily))),
+    );
+    if (incomplete) {
+      throw new Error(`Not every picture or font of "${name}" is in this browser yet: it stays in Drive (open it, wait until everything shows, try again)`);
     }
   }
 
@@ -381,7 +433,7 @@ class ScenesController {
   // lifecycle
   // ---------------------------------------------------------------------------
 
-  private readyDeferred = (() => {
+  private readonly readyDeferred = (() => {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
       resolve = r;
@@ -411,8 +463,9 @@ class ScenesController {
         ? setTimeout(waitForLoad, 100)
         : this.adoptInitialCanvas()
             .then(() => this.connectInitial())
-            .finally(() => this.readyDeferred.resolve());
-    waitForLoad();
+            .finally(() => this.readyDeferred.resolve())
+            .catch((error) => console.error("[scenes] could not initialize scene", error));
+    void waitForLoad();
     this.unsubscribeChange?.();
     this.api = api;
     this.unsubscribeChange = api.onChange((elements, appState) =>
@@ -451,7 +504,7 @@ class ScenesController {
   }
 
   /** the restored canvas is the current scene: a live one connects now */
-  private async connectInitial() {
+  private async connectInitial() { // NOSONAR S7503: async preserves rejected promises for synchronous connection failures
     this.connectLive();
   }
 
@@ -460,7 +513,7 @@ class ScenesController {
     if (this.timers.length) {
       return;
     }
-    this.ready.then(() => this.syncNow({ refresh: true }));
+    this.ready.then(() => this.syncNow({ refresh: true })).catch((error) => console.error("[scenes] could not start sync", error));
     this.timers.push(
       window.setInterval(() => this.syncNow({ refresh: true }), POLL_MS),
       window.setInterval(() => this.maybePushCurrent(), 5_000),
@@ -532,11 +585,11 @@ class ScenesController {
   /** leaving the tab: push right away instead of waiting for idle */
   private onVisibility = () => {
     if (document.visibilityState === "hidden") {
-      liveSync.current()?.flush();
+      liveSync.current()?.flush().catch((error) => console.error("[scenes] could not flush live scene", error));
     }
     if (document.visibilityState === "hidden" && this.state.dirty) {
       this.pushCurrentNow = true;
-      this.syncNow();
+      void this.syncNow();
     }
   };
 
@@ -552,7 +605,7 @@ class ScenesController {
     }
     // cheap check first, onChange fires on every pointer move
     const versionKey = `${hashElementsVersion(elements)}:${appState.viewBackgroundColor}`;
-    if (LIVE_CAPABLE && liveSync.current() && liveSync.current()!.fileId === this.fileIdOf(this.meta.current)) {
+    if (LIVE_CAPABLE && liveSync.current()?.fileId === this.fileIdOf(this.meta.current)) {
       // live sync diffs the canvas when something changed or a gesture started / ended
       const liveKey = [
         versionKey,
@@ -608,7 +661,8 @@ class ScenesController {
   // ---------------------------------------------------------------------------
 
   private sceneMeta(name: string): SceneMeta {
-    return (this.meta.scenes[name] ??= { baseMd5: null, dirty: false });
+    this.meta.scenes[name] ??= { baseMd5: null, dirty: false };
+    return this.meta.scenes[name];
   }
 
   /** per-scene override (undefined = follows the global switch) */
@@ -680,24 +734,7 @@ class ScenesController {
     if (meta?.renamedFrom) {
       return "ahead";
     }
-    const dirty = this.isDirty(name);
-    const base = meta?.baseMd5 ?? null;
-    const remote = this.remoteMd5Of(name);
-    if (remote === undefined) {
-      // Drive state unknown (offline since start)
-      return base ? (dirty ? "ahead" : "synced") : "local";
-    }
-    if (!remote) {
-      return base && dirty ? "ahead" : "local";
-    }
-    if (!base) {
-      // in Drive, never synced locally
-      return dirty ? "diverged" : "behind";
-    }
-    if (remote === base) {
-      return dirty ? "ahead" : "synced";
-    }
-    return dirty ? "diverged" : "behind";
+    return this.driveStatusOf(name, meta);
   }
 
   private buildList(): SceneListItem[] {
@@ -773,7 +810,7 @@ class ScenesController {
     const changed = this.signedIn !== on;
     this.signedIn = on;
     if (changed) {
-      this.ready.then(() => this.connectLive());
+      this.ready.then(() => this.connectLive()).catch((error) => console.error("[scenes] could not connect live scene", error));
     }
   };
 
@@ -798,7 +835,7 @@ class ScenesController {
       if (name === UNTITLED || !meta.localOnly || meta.keptLocal) {
         continue;
       }
-      const json = await this.localJson(name);
+      const json = await this.localJson(name); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
       if (json && !isEmptyJson(json)) {
         found.push({ name, ticked: !!meta.moveOnSignIn });
       }
@@ -833,7 +870,7 @@ class ScenesController {
     this.persistMeta();
     this.refresh();
     this.log("info", `"${name}" is only in this browser now${inDrive ? " (removed from Google Drive)" : ""}`);
-    this.syncNow({ refresh: true });
+    void this.syncNow({ refresh: true });
   };
 
   /**
@@ -858,17 +895,7 @@ class ScenesController {
       session.resumeEditing(); // refused: the scene goes on as before
       throw Object.assign(
         new Error(
-          answer.reason === "shared"
-            ? `"${name}" is shared with others (or not yours): it can't be taken out of Drive. "Keep a local copy" makes a copy only in this browser instead.`
-            : answer.reason === "connected"
-            ? `"${name}" is open somewhere else right now: close it there first, or keep a local copy`
-            : answer.reason === "others-pending"
-            ? `Someone else's changes to "${name}" aren't in Drive yet: try again in a minute, or keep a local copy`
-            : answer.reason === "offline"
-            ? "Kurviq's server is not reachable: try again online"
-            : answer.reason === "unsent"
-            ? `Your latest changes to "${name}" aren't on Kurviq's server yet: try again in a moment`
-            : `"${name}" can't be taken out of Drive now (${answer.reason})`,
+          keepLocalRefusal(name, answer.reason),
         ),
         { keepLocalCopy: answer.reason !== "offline" && answer.reason !== "unsent" },
       );
@@ -879,15 +906,7 @@ class ScenesController {
       const json = withSceneName(answer.json, name);
       // complete: every picture and font the scene uses is in it
       const data = JSON.parse(json);
-      const fonts = new Set((data.kurviqFonts || []).map((font: any) => font.id));
-      const incomplete = (data.elements || []).some(
-        (el: any) =>
-          !el.isDeleted &&
-          ((el.type === "image" && el.fileId && !data.files?.[el.fileId]?.dataURL) || (el.fontFamily >= 2000 && el.fontFamily < 9000 && !fonts.has(el.fontFamily))),
-      );
-      if (incomplete) {
-        throw new Error(`Not every picture or font of "${name}" is in this browser yet: it stays in Drive (open it, wait until everything shows, try again)`);
-      }
+      this.requireCompleteLocalCopy(name, data);
       // stored in IndexedDB and read back, also for the open scene (the canvas alone is not durable)
       await setSnapshot(name, { json, baseline: null, dirty: true });
       if ((await getSnapshot(name))?.json !== json) {
@@ -936,7 +955,7 @@ class ScenesController {
     if (name === this.meta.current) {
       this.pushCurrentNow = true;
     }
-    this.syncNow();
+    void this.syncNow();
   };
 
   /** the user's answer at sign-in: these go to Drive, the others stay here (not asked again) */
@@ -950,7 +969,7 @@ class ScenesController {
     }
     this.persistMeta();
     for (const name of toDrive) {
-      await this.putInDrive(name).catch((error) => this.log("error", `"${name}" not put in Drive: ${error.message}`));
+      await this.putInDrive(name).catch((error) => this.log("error", `"${name}" not put in Drive: ${error.message}`)); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
     }
   };
 
@@ -970,7 +989,7 @@ class ScenesController {
     this.persistMeta();
     this.refresh();
     if (mode === "newest") {
-      this.syncNow(); // open conflicts settle now
+      void this.syncNow(); // open conflicts settle now
     }
   };
 
@@ -980,7 +999,7 @@ class ScenesController {
     this.setState({ autoSync: on });
     this.log("info", `Auto-sync ${on ? "on" : "off"}`);
     if (on) {
-      this.syncNow({ refresh: true });
+      void this.syncNow({ refresh: true });
     }
   };
 
@@ -1010,7 +1029,7 @@ class ScenesController {
     this.setState({ remote: null, conflict: null });
     this.recomputeDirty();
     this.refresh();
-    this.syncNow({ refresh: true });
+    void this.syncNow({ refresh: true });
   };
 
   /** per-scene override; undefined = follow the global switch */
@@ -1024,7 +1043,7 @@ class ScenesController {
     this.persistMeta();
     this.refresh();
     if (this.autoSyncFor(name)) {
-      this.syncNow();
+      void this.syncNow();
     }
   };
 
@@ -1063,18 +1082,20 @@ class ScenesController {
       }
       this.persistMeta();
       this.refresh();
-      this.log(
-        "info",
-        on
-          ? `"${name}" is local only now: not synced to Drive${this.remoteMd5Of(name) ? " (the copy there stays as it is)" : ""}`
-          : `"${name}" is synced with Drive again`,
-      );
+      let message: string;
+      if (on) {
+        const suffix = this.remoteMd5Of(name) ? " (the copy there stays as it is)" : "";
+        message = `"${name}" is local only now: not synced to Drive${suffix}`;
+      } else {
+        message = `"${name}" is synced with Drive again`;
+      }
+      this.log("info", message);
     }).then(() => {
       if (!on && this.autoSyncFor(name)) {
         if (name === this.meta.current) {
           this.pushCurrentNow = true;
         }
-        this.syncNow();
+        void this.syncNow();
       }
     });
 
@@ -1124,7 +1145,7 @@ class ScenesController {
   /** the open scene's live connection, if it is live */
   liveCurrent(): LiveScene | null {
     const scene = liveSync.current();
-    return scene && scene.fileId === this.fileIdOf(this.meta.current) && this.isLive(this.meta.current) ? scene : null;
+    return scene?.fileId === this.fileIdOf(this.meta.current) && this.isLive(this.meta.current) ? scene : null;
   }
 
   /** the open scene is a Drive scene: connect it to its Durable Object (or disconnect) */
@@ -1219,29 +1240,33 @@ class ScenesController {
 
   private liveLifecycle(fileId: string, state: string) {
     const name = this.sceneOfFile(fileId) ?? "this scene";
-    const text =
-      state === "trashed"
-        ? `"${name}" is in Drive's trash: it isn't saved any more (Save as… keeps your version as a new scene)`
-        : state === "deleted"
-        ? `"${name}" was deleted for good in Drive (Save as… keeps your version as a new scene)`
-        : state === "access"
-        ? `You no longer have access to "${name}" in Drive: your changes stay in this browser`
-        : state === "local"
-        ? `"${name}" is kept only in a browser now`
-        : `"${name}": ${state}`;
+    let text: string;
+    if (state === "trashed") {
+      text = `"${name}" is in Drive's trash: it isn't saved any more (Save as… keeps your version as a new scene)`;
+    } else if (state === "deleted") {
+      text = `"${name}" was deleted for good in Drive (Save as… keeps your version as a new scene)`;
+    } else if (state === "access") {
+      text = `You no longer have access to "${name}" in Drive: your changes stay in this browser`;
+    } else if (state === "local") {
+      text = `"${name}" is kept only in a browser now`;
+    } else {
+      text = `"${name}": ${state}`;
+    }
     this.log("error", text);
   }
 
   /** an offline copy / local copy: a new local-only scene under a free name */
   private async saveLiveCopy(name: string, json: string) {
     let free = name;
-    for (let i = 2; this.exists(free); i++) {
+    let i = 2;
+    while (this.exists(free)) {
       free = `${name} ${i}`;
+      i++;
     }
     await this.createLocalOnly(free, json);
     // read back: the live engine drops the original changes only once the copy is really stored
     const stored = await getSnapshot(free);
-    if (!stored || stored.json !== withSceneName(json, free)) {
+    if (stored?.json !== withSceneName(json, free)) {
       throw new Error(`The copy "${free}" could not be stored in this browser`);
     }
     return free;
@@ -1275,6 +1300,13 @@ class ScenesController {
       throw conflict(changed.clashes);
     }
     const files = Object.values(data.files || {}) as BinaryFileData[];
+    const settings = this.liveWriteSettings(data, base, session);
+    await session.agentEdit(changed, files, undefined, settings as any);
+    const after = await this.rememberLiveSnapshot(session, { agent: !!source?.startsWith("agent") });
+    return { md5: after, driveRevision: after, changed: changed.length > 0 || !!settings };
+  };
+
+  private liveWriteSettings(data: any, base: any, session: LiveScene) {
     // scene settings (background, grid): those the writer changed against what it read, on top of the current ones
     const settingsOf = (appState: any) => {
       const restored = restoreAppState(appState, null);
@@ -1298,10 +1330,8 @@ class ScenesController {
         }
       }
     }
-    await session.agentEdit(changed, files, undefined, settings as any);
-    const after = await this.rememberLiveSnapshot(session, { agent: !!source?.startsWith("agent") });
-    return { md5: after, driveRevision: after, changed: changed.length > 0 || !!settings };
-  };
+    return settings;
+  }
 
   /** the session's current document under its exact revision id (agents name it as their base) */
   rememberLiveSnapshot = async (session: LiveScene, { agent = false } = {}) => {
@@ -1430,7 +1460,7 @@ class ScenesController {
     const api = this.requireApi();
     const data = json ? JSON.parse(json) : {};
     // its custom fonts (the canvas redraws once they are loaded)
-    registerSceneFonts(data);
+    registerSceneFonts(data).catch((error) => console.error("[scenes] could not load scene fonts", error));
     const elements = restoreElements(data.elements, null, { repairBindings: true });
     const restoredAppState = restoreAppState(data.appState, null);
     const files: BinaryFiles = data.files || {};
@@ -1597,18 +1627,7 @@ class ScenesController {
       });
   }
 
-  private async openInner(name: string | null, { stash = true, force = false } = {}) {
-      if (name === this.meta.current && !force) {
-        return;
-      }
-      this.releaseOpenLock();
-      ++this.openToken; // a pending check of the previous scene must not apply
-      if (stash) {
-        await this.stashCurrent();
-      }
-      // the canvas is about to show another scene: the previous scene's live connection lets go first
-      liveSync.detachCanvas();
-
+  private async loadOpeningScene(name: string | null) {
       const snapshot = await getSnapshot(name);
       let json: string | null = null;
       let baseline: number | null = null;
@@ -1639,6 +1658,23 @@ class ScenesController {
         json = latest.json;
         loadedMd5 = latest.md5;
       }
+
+    return { json, baseline, loadedMd5, checkDrive };
+  }
+
+  private async openInner(name: string | null, { stash = true, force = false } = {}) {
+      if (name === this.meta.current && !force) {
+        return;
+      }
+      this.releaseOpenLock();
+      ++this.openToken; // a pending check of the previous scene must not apply
+      if (stash) {
+        await this.stashCurrent();
+      }
+      // the canvas is about to show another scene: the previous scene's live connection lets go first
+      liveSync.detachCanvas();
+
+      const { json, baseline, loadedMd5, checkDrive } = await this.loadOpeningScene(name);
 
       this.applyScene(json, name);
       this.meta.current = name;
@@ -1802,6 +1838,33 @@ class ScenesController {
     }
   }
 
+  private async saveAs(targetName: string, keepLocal: boolean, localOnly: boolean | undefined) {
+    if (this.exists(targetName)) {
+      throw new Error(`A scene named "${targetName}" already exists`);
+    }
+    const api = this.requireApi();
+    const { json } = this.serializeCurrent();
+    if (this.meta.current === null) {
+      // the untitled draft becomes a named scene
+      delete this.meta.scenes[UNTITLED];
+      await deleteSnapshot(null);
+    } else {
+      // "save as": the previous scene keeps its state
+      await this.stashCurrent();
+    }
+    this.meta.current = targetName;
+    this.meta.baseline = null;
+    this.meta.scenes[targetName] = keepLocal
+      ? { baseMd5: null, dirty: true, localOnly: true, ...(localOnly === undefined ? this.madeSignedOut() : {}) }
+      : this.claimName(targetName, true);
+    // "save as": the copy is a new scene, the live connection stays with the original
+    liveSync.detachCanvas();
+    api.updateScene({ appState: { name: targetName }, captureUpdate: CaptureUpdateAction.NEVER });
+    await setSnapshot(targetName, { json, baseline: null, dirty: true });
+    this.persistMeta();
+    this.setState({ current: targetName, dirty: true });
+  }
+
   /**
    * Push the active scene now. With `name`: name an untitled scene, or
    * "save as" under a new name.
@@ -1817,30 +1880,7 @@ class ScenesController {
       }
       this.validateName(targetName);
       if (targetName !== this.meta.current) {
-        if (this.exists(targetName)) {
-          throw new Error(`A scene named "${targetName}" already exists`);
-        }
-        const api = this.requireApi();
-        const { json } = this.serializeCurrent();
-        if (this.meta.current === null) {
-          // the untitled draft becomes a named scene
-          delete this.meta.scenes[UNTITLED];
-          await deleteSnapshot(null);
-        } else {
-          // "save as": the previous scene keeps its state
-          await this.stashCurrent();
-        }
-        this.meta.current = targetName;
-        this.meta.baseline = null;
-        this.meta.scenes[targetName] = keepLocal
-          ? { baseMd5: null, dirty: true, localOnly: true, ...(localOnly === undefined ? this.madeSignedOut() : {}) }
-          : this.claimName(targetName, true);
-        // "save as": the copy is a new scene, the live connection stays with the original
-        liveSync.detachCanvas();
-        api.updateScene({ appState: { name: targetName }, captureUpdate: CaptureUpdateAction.NEVER });
-        await setSnapshot(targetName, { json, baseline: null, dirty: true });
-        this.persistMeta();
-        this.setState({ current: targetName, dirty: true });
+        await this.saveAs(targetName, keepLocal, localOnly);
       }
       if (this.isLocalOnly(targetName)) {
         return { name: targetName, localOnly: true }; // the browser keeps it, nothing to push
@@ -1856,7 +1896,7 @@ class ScenesController {
           `"${targetName}" has conflicting changes in Drive: resolve them in the Scenes sidebar`,
         );
       }
-      return { name: targetName, ...(result || {}) };
+      return { name: targetName, ...result };
     });
 
   // ---------------------------------------------------------------------------
@@ -1866,16 +1906,7 @@ class ScenesController {
   private syncing = false;
   private syncAgain = false;
 
-  /** check Drive and (with auto-sync) push / pull / merge what's needed */
-  syncNow = async ({ refresh = false }: { refresh?: boolean } = {}) => {
-    await this.ready;
-    if (this.syncing) {
-      this.syncAgain = true;
-      return;
-    }
-    this.syncing = true;
-    this.setState({ sync: { ...this.state.sync, running: true } });
-    try {
+  private async refreshSyncListing(refresh: boolean) {
       let listing;
       try {
         listing = await scenesApi.list(refresh);
@@ -1884,7 +1915,7 @@ class ScenesController {
           this.setState({
             sync: { ...this.state.sync, serverReachable: true, driveOnline: false, notConnected: true, lastError: null },
           });
-          return;
+          return false;
         }
         if (this.state.sync.serverReachable !== false) {
           this.log("error", "Scenes server not reachable: working locally");
@@ -1892,7 +1923,7 @@ class ScenesController {
         this.setState({
           sync: { ...this.state.sync, serverReachable: false, lastError: error.message },
         });
-        return;
+        return false;
       }
       const wasOnline = this.state.sync.driveOnline;
       this.applyListing(listing.scenes);
@@ -1911,19 +1942,77 @@ class ScenesController {
         if (wasOnline !== false) {
           this.log("error", `Drive not reachable: working locally (${listing.remote.lastError})`);
         }
-        return;
+        return false;
       }
       if (wasOnline === false) {
         this.log("info", "Drive reachable again");
       }
 
+    return true;
+  }
+
+  private async pullReadOnlyScenes() {
+    // Drive lets this user read the space, not change it: only pull
+    for (const item of this.state.list) {
+      if (item.name !== null && !this.isLive(item.name) && this.statusOf(item.name) === "behind" && !this.isDirty(item.name)) {
+        await this.exclusive(() => this.pullScene(item.name!)); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
+      }
+    }
+  }
+
+  private async pushListedScene(name: string, status: SyncStatus, adopt: boolean) {
+    if (name === this.meta.current && !this.pushDue()) {
+      return;
+    }
+    const json = await this.localJson(name);
+    if (status === "local" && json && isEmptyJson(json)) {
+      return; // don't publish empty new scenes automatically
+    }
+    await this.exclusive(() => this.pushScene(name));
+    if (adopt && this.meta.scenes[name]?.baseMd5) {
+      delete this.meta.scenes[name].adopt;
+      this.persistMeta();
+    }
+  }
+
+  private async syncListedScene(item: SceneListItem) {
+    const name = item.name;
+    if (name === null || !this.autoSyncFor(name) || this.isLive(name)) {
+      return; // live scenes save through their Durable Object
+    }
+    const status = this.statusOf(name);
+    const adopt = !!this.meta.scenes[name]?.adopt;
+    if (adopt && status !== "local") {
+      // Drive has it: its copy counts from now on (pulled below, or merged if changed here)
+      delete this.meta.scenes[name].adopt;
+      this.persistMeta();
+    }
+    if (status === "behind") {
+      await this.exclusive(() => this.pullScene(name));
+    } else if (status === "ahead" || (status === "local" && (this.isDirty(name) || adopt))) {
+      await this.pushListedScene(name, status, adopt);
+    } else if (status === "diverged") {
+      await this.exclusive(() => this.mergeScene(name));
+    } else if (status === "conflict" && this.conflictOutdated(name)) {
+      // Drive moved on, or found by an older merge: maybe it merges now
+      await this.exclusive(() => this.mergeScene(name));
+    }
+  }
+
+  /** check Drive and (with auto-sync) push / pull / merge what's needed */
+  syncNow = async ({ refresh = false }: { refresh?: boolean } = {}) => {
+    await this.ready;
+    if (this.syncing) {
+      this.syncAgain = true;
+      return;
+    }
+    this.syncing = true;
+    this.setState({ sync: { ...this.state.sync, running: true } });
+    try {
+      if (!(await this.refreshSyncListing(refresh))) return;
+
       if (this.state.sync.readOnly) {
-        // Drive lets this user read the space, not change it: only pull
-        for (const item of this.state.list) {
-          if (item.name !== null && !this.isLive(item.name) && this.statusOf(item.name) === "behind" && !this.isDirty(item.name)) {
-            await this.exclusive(() => this.pullScene(item.name!));
-          }
-        }
+        await this.pullReadOnlyScenes();
         return;
       }
 
@@ -1934,38 +2023,7 @@ class ScenesController {
       await this.exclusive(async () => this.dropScenesDeletedInDrive());
 
       for (const item of this.state.list) {
-        const name = item.name;
-        if (name === null || !this.autoSyncFor(name) || this.isLive(name)) {
-          continue; // live scenes save through their Durable Object
-        }
-        const status = this.statusOf(name);
-        const adopt = !!this.meta.scenes[name]?.adopt;
-        if (adopt && status !== "local") {
-          // Drive has it: its copy counts from now on (pulled below, or merged if changed here)
-          delete this.meta.scenes[name].adopt;
-          this.persistMeta();
-        }
-        if (status === "behind") {
-          await this.exclusive(() => this.pullScene(name));
-        } else if (status === "ahead" || (status === "local" && (this.isDirty(name) || adopt))) {
-          if (name === this.meta.current && !this.pushDue()) {
-            continue;
-          }
-          const json = await this.localJson(name);
-          if (status === "local" && json && isEmptyJson(json)) {
-            continue; // don't publish empty new scenes automatically
-          }
-          await this.exclusive(() => this.pushScene(name));
-          if (adopt && this.meta.scenes[name]?.baseMd5) {
-            delete this.meta.scenes[name].adopt;
-            this.persistMeta();
-          }
-        } else if (status === "diverged") {
-          await this.exclusive(() => this.mergeScene(name));
-        } else if (status === "conflict" && this.conflictOutdated(name)) {
-          // Drive moved on, or found by an older merge: maybe it merges now
-          await this.exclusive(() => this.mergeScene(name));
-        }
+        await this.syncListedScene(item); // NOSONAR S9382: in order on purpose (each scene updates sync metadata)
       }
     } catch (error: any) {
       console.error(error);
@@ -1975,7 +2033,7 @@ class ScenesController {
       this.setState({ sync: { ...this.state.sync, running: false } });
       if (this.syncAgain) {
         this.syncAgain = false;
-        this.syncNow();
+        void this.syncNow();
       }
     }
   };
@@ -1989,7 +2047,7 @@ class ScenesController {
       if (!meta.localOnly || !this.state.remote?.some((scene) => scene.name === name)) {
         continue;
       }
-      const json = await this.localJson(name);
+      const json = await this.localJson(name); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
       if (json && !isEmptyJson(json)) {
         continue;
       }
@@ -2018,7 +2076,7 @@ class ScenesController {
   private maybePushCurrent() {
     const name = this.meta.current;
     if (name !== null && this.state.dirty && this.autoSyncFor(name) && !this.isLive(name) && this.pushDue()) {
-      this.syncNow();
+      void this.syncNow();
     }
   }
 
@@ -2041,31 +2099,23 @@ class ScenesController {
     this.connectLive();
   }
 
-  /** push local content; on "Drive changed meanwhile" merge instead */
-  private async pushScene(name: string, { manual = false } = {}) {
+  private canPushToDrive(name: string, manual: boolean) {
     if (this.isLocalOnly(name)) {
-      return null; // never leaves this browser
+      return false; // never leaves this browser
     }
     if (this.isLive(name)) {
-      return null; // its Durable Object saves it: never a second writer
+      return false; // its Durable Object saves it: never a second writer
     }
     if (this.state.sync.readOnly) {
       if (manual) {
         throw new Error(`Saved in this browser only. Read only: ${this.state.sync.readOnly}`);
       }
-      return null;
+      return false;
     }
-    if (this.meta.scenes[name]?.renamedFrom) {
-      // the rename has to reach Drive before the content can
-      await this.pushPendingRename(name);
-      if (this.meta.scenes[name]?.renamedFrom) {
-        if (manual) {
-          throw new Error(`Saved locally. The rename of "${name}" is not in Drive yet, will retry`);
-        }
-        return null;
-      }
-    }
-    const isCurrent = name === this.meta.current;
+    return true;
+  }
+
+  private canPushCanvas(name: string, manual: boolean, isCurrent: boolean) {
     if (isCurrent && this.requireApi().getAppState().name !== name) {
       // the canvas shows another scene's drawing: never push it under this name
       const message = `Not saved to Drive: this tab's canvas belongs to "${this.requireApi().getAppState().name}", not "${name}". Reload the tab.`;
@@ -2073,65 +2123,56 @@ class ScenesController {
       if (manual) {
         throw new Error(message);
       }
+      return false;
+    }
+    return true;
+  }
+
+  private async handlePushError(name: string, manual: boolean, meta: SceneMeta, apiError: ApiError) {
+    if (apiError.status === 409) {
+      meta.remoteMd5 = apiError.remoteMd5 ?? null;
+      this.updateRemoteMd5(name, apiError.remoteMd5 ?? null);
+      this.log("info", `"${name}" changed in Drive meanwhile, merging`);
+      await this.mergeScene(name, { pushAfter: true });
       return null;
     }
-    const canvas = isCurrent ? this.serializeCurrent() : null;
-    const stored = canvas ? canvas.json : await this.localJson(name);
-    if (stored === null) {
-      return null;
-    }
-    if (!manual && isEmptyJson(stored) && (await this.refuseEmptyPush(name))) {
-      return null;
-    }
-    // the file names its scene (the server rejects content of another scene);
-    // stored copies may still carry an old name (e.g. from before a rename)
-    const json = withSceneName(stored, name);
-    const meta = this.sceneMeta(name);
-    const remote = this.remoteMd5Of(name);
-    const base = remote === null ? "none" : meta.baseMd5 ?? "none";
-    let result;
-    try {
-      result = await scenesApi.save(name, json, base);
-    } catch (error) {
-      const apiError = error as ApiError;
-      if (apiError.status === 409) {
-        meta.remoteMd5 = apiError.remoteMd5 ?? null;
-        this.updateRemoteMd5(name, apiError.remoteMd5 ?? null);
-        this.log("info", `"${name}" changed in Drive meanwhile, merging`);
-        await this.mergeScene(name, { pushAfter: true });
-        return null;
-      }
-      if (apiError.notConnected) {
-        this.setState({ sync: { ...this.state.sync, driveOnline: false, notConnected: true } });
-        if (manual) {
-          throw new Error("Saved in this browser. Sign in with Google to sync it");
-        }
-        return null;
-      }
-      if (apiError.readOnly) {
-        // Drive refused for good (the sharing changed): stop pushing
-        this.setState({ sync: { ...this.state.sync, readOnly: apiError.message.replace(/^Read only: /, "") } });
-        this.log("error", apiError.message);
-        if (manual) {
-          throw new Error(`Saved in this browser only. ${apiError.message}`);
-        }
-        return null;
-      }
-      if (apiError.offline) {
-        this.setState({
-          sync: { ...this.state.sync, driveOnline: apiError.status === 0 ? this.state.sync.driveOnline : false, serverReachable: apiError.status === 0 ? false : true },
-        });
-        if (manual) {
-          throw new Error(`Saved locally. Drive not reachable, will sync when back online`);
-        }
-        return null;
-      }
-      this.log("error", `Push of "${name}" failed: ${apiError.message}`);
+    if (apiError.notConnected) {
+      this.setState({ sync: { ...this.state.sync, driveOnline: false, notConnected: true } });
       if (manual) {
-        throw apiError;
+        throw new Error("Saved in this browser. Sign in with Google to sync it");
       }
       return null;
     }
+    if (apiError.readOnly) {
+      // Drive refused for good (the sharing changed): stop pushing
+      this.setState({ sync: { ...this.state.sync, readOnly: apiError.message.replace(/^Read only: /, "") } });
+      this.log("error", apiError.message);
+      if (manual) {
+        throw new Error(`Saved in this browser only. ${apiError.message}`);
+      }
+      return null;
+    }
+    if (apiError.offline) {
+      this.setState({
+        sync: { ...this.state.sync, driveOnline: apiError.status === 0 ? this.state.sync.driveOnline : false, serverReachable: apiError.status !== 0 },
+      });
+      if (manual) {
+        throw new Error(`Saved locally. Drive not reachable, will sync when back online`);
+      }
+      return null;
+    }
+    this.log("error", `Push of "${name}" failed: ${apiError.message}`);
+    if (manual) {
+      throw apiError;
+    }
+    return null;
+  }
+
+  private async recordPushedScene(
+    name: string, json: string, meta: SceneMeta,
+    result: Awaited<ReturnType<typeof scenesApi.save>>,
+    canvas: ReturnType<ScenesController["serializeCurrent"]> | null,
+  ) {
     meta.baseMd5 = result.md5;
     meta.remoteMd5 = result.md5;
     meta.dirty = false;
@@ -2162,6 +2203,49 @@ class ScenesController {
     this.log("push", result.changed ? `Saved "${name}" to Drive` : `"${name}" already up to date`);
     this.refresh();
     return result;
+  }
+
+  private renameReachedDrive(name: string, manual: boolean) {
+    if (this.meta.scenes[name]?.renamedFrom) {
+      if (manual) {
+        throw new Error(`Saved locally. The rename of "${name}" is not in Drive yet, will retry`);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /** push local content; on "Drive changed meanwhile" merge instead */
+  private async pushScene(name: string, { manual = false } = {}) {
+    if (!this.canPushToDrive(name, manual)) return null;
+    if (this.meta.scenes[name]?.renamedFrom) {
+      // the rename has to reach Drive before the content can
+      await this.pushPendingRename(name);
+      if (!this.renameReachedDrive(name, manual)) return null;
+    }
+    const isCurrent = name === this.meta.current;
+    if (!this.canPushCanvas(name, manual, isCurrent)) return null;
+    const canvas = isCurrent ? this.serializeCurrent() : null;
+    const stored = canvas ? canvas.json : await this.localJson(name);
+    if (stored === null) {
+      return null;
+    }
+    if (!manual && isEmptyJson(stored) && (await this.refuseEmptyPush(name))) {
+      return null;
+    }
+    // the file names its scene (the server rejects content of another scene);
+    // stored copies may still carry an old name (e.g. from before a rename)
+    const json = withSceneName(stored, name);
+    const meta = this.sceneMeta(name);
+    const remote = this.remoteMd5Of(name);
+    const base = remote === null ? "none" : meta.baseMd5 ?? "none";
+    let result;
+    try {
+      result = await scenesApi.save(name, json, base);
+    } catch (error) {
+      return this.handlePushError(name, manual, meta, error as ApiError);
+    }
+    return this.recordPushedScene(name, json, meta, result, canvas);
   }
 
   /** Drive has a newer version and there are no local changes */
@@ -2229,6 +2313,90 @@ class ScenesController {
     return true;
   }
 
+  private async mergeBase(name: string, meta: SceneMeta) {
+    let base: any = null;
+    if (meta.baseMd5) {
+      try {
+        base = JSON.parse((await scenesApi.load(name, meta.baseMd5)).json);
+      } catch {
+        base = null; // unknown base: everything that differs counts as changed
+      }
+    }
+    return base;
+  }
+
+  private async applyMergedScene(
+    name: string, mine: any, theirsData: any, theirs: { json: string; md5: string },
+    merged: ReturnType<typeof mergeElements>, meta: SceneMeta, unchanged: () => Promise<boolean>,
+    settled: string[], pushAfter: boolean,
+  ) {
+    await registerSceneFonts(theirsData);
+    const mergedJson = JSON.stringify({
+      ...mine,
+      elements: merged.elements,
+      // only the pictures the merged scene still uses (deleted images leave no data behind)
+      files: usedFiles(merged.elements, { ...theirsData.files, ...mine.files }),
+      kurviqFonts: mergeFontLists(mine.kurviqFonts, theirsData.kurviqFonts),
+    });
+    if (!(await unchanged())) {
+      return null;
+    }
+    meta.baseMd5 = theirs.md5;
+    delete meta.conflict;
+    if (name === this.meta.current) {
+      // base is now Drive's version: dirty = merged differs from it
+      this.meta.baseline = hashJson(theirs.json);
+      this.applyScene(mergedJson, name, { keepView: true });
+      await nextFrame();
+      this.recomputeDirty();
+      meta.dirty = this.state.dirty;
+    } else {
+      await setSnapshot(name, { json: mergedJson, baseline: hashJson(theirs.json), dirty: true });
+      meta.dirty = true;
+    }
+    this.persistMeta();
+    const settledSuffix = settled.length > 5 ? ` (+${settled.length - 5})` : "";
+    const parts = [
+      merged.fromTheirs ? `${merged.fromTheirs} change(s) from Drive` : null,
+      merged.fromMine ? `${merged.fromMine} of yours` : null,
+      settled.length
+        ? `changed on both sides, newer edit kept: ${settled.slice(0, 5).join(", ")}${settledSuffix}`
+        : null,
+    ].filter(Boolean);
+    this.log("merge", `Merged "${name}": ${parts.join("; ") || "nothing new"}`);
+    this.refresh();
+    if (pushAfter && this.isDirty(name)) {
+      return this.pushScene(name);
+    }
+    return null;
+  }
+
+  private async takeNonemptyMergeSource(name: string, theirs: { json: string; md5: string }, meta: SceneMeta, unchanged: () => Promise<boolean>) {
+    if (!(await unchanged())) {
+      return null;
+    }
+    await this.writeLocal(name, theirs.json, { dirty: false });
+    meta.baseMd5 = theirs.md5;
+    meta.remoteMd5 = theirs.md5;
+    delete meta.conflict;
+    this.persistMeta();
+    this.log("pull", `"${name}" was empty here: took Drive's version`);
+    this.refresh();
+    return null;
+  }
+
+  private mergeWithPolicy(base: any, mine: any, theirsData: any, choices: Record<string, ClashChoice>) {
+    let merged = mergeElements(base?.elements, mine.elements || [], theirsData.elements || [], choices);
+    let settled: string[] = [];
+    if (merged.clashes.length && this.clashMode() === "newest") {
+      // like live collaboration: per element the newer edit wins
+      const auto = newestWins(mine.elements || [], theirsData.elements || [], merged.clashes);
+      settled = merged.clashes.map((id) => `${id}: ${auto[id] === "mine" ? "yours" : "Drive's"}`);
+      merged = mergeElements(base?.elements, mine.elements || [], theirsData.elements || [], { ...auto, ...choices });
+    }
+    return { merged, settled };
+  }
+
   /** both sides changed: three-way merge per element */
   private async mergeScene(
     name: string,
@@ -2258,14 +2426,7 @@ class ScenesController {
       return this.pullScene(name);
     }
     const meta = this.sceneMeta(name);
-    let base: any = null;
-    if (meta.baseMd5) {
-      try {
-        base = JSON.parse((await scenesApi.load(name, meta.baseMd5)).json);
-      } catch {
-        base = null; // unknown base: everything that differs counts as changed
-      }
-    }
+    const base = await this.mergeBase(name, meta);
     const mine = JSON.parse(mineJson);
     const theirsData = JSON.parse(theirs.json);
     // the merge is based on mineJson: if the scene changed while Drive was
@@ -2277,26 +2438,9 @@ class ScenesController {
     // a local copy without any elements never deletes Drive's content by a
     // merge (an editor that lost its canvas looks like "the user deleted everything")
     if (!getNonDeletedElements(mine.elements || []).length && getNonDeletedElements(theirsData.elements || []).length) {
-      if (!(await unchanged())) {
-        return null;
-      }
-      await this.writeLocal(name, theirs.json, { dirty: false });
-      meta.baseMd5 = theirs.md5;
-      meta.remoteMd5 = theirs.md5;
-      delete meta.conflict;
-      this.persistMeta();
-      this.log("pull", `"${name}" was empty here: took Drive's version`);
-      this.refresh();
-      return null;
+      return this.takeNonemptyMergeSource(name, theirs, meta, unchanged);
     }
-    let merged = mergeElements(base?.elements, mine.elements || [], theirsData.elements || [], choices);
-    let settled: string[] = [];
-    if (merged.clashes.length && this.clashMode() === "newest") {
-      // like live collaboration: per element the newer edit wins
-      const auto = newestWins(mine.elements || [], theirsData.elements || [], merged.clashes);
-      settled = merged.clashes.map((id) => `${id}: ${auto[id] === "mine" ? "yours" : "Drive's"}`);
-      merged = mergeElements(base?.elements, mine.elements || [], theirsData.elements || [], { ...auto, ...choices });
-    }
+    const { merged, settled } = this.mergeWithPolicy(base, mine, theirsData, choices);
     meta.remoteMd5 = theirs.md5;
     this.updateRemoteMd5(name, theirs.md5);
 
@@ -2311,44 +2455,7 @@ class ScenesController {
       return null;
     }
 
-    await registerSceneFonts(theirsData);
-    const mergedJson = JSON.stringify({
-      ...mine,
-      elements: merged.elements,
-      // only the pictures the merged scene still uses (deleted images leave no data behind)
-      files: usedFiles(merged.elements, { ...(theirsData.files || {}), ...(mine.files || {}) }),
-      kurviqFonts: mergeFontLists(mine.kurviqFonts, theirsData.kurviqFonts),
-    });
-    if (!(await unchanged())) {
-      return null;
-    }
-    meta.baseMd5 = theirs.md5;
-    delete meta.conflict;
-    if (name === this.meta.current) {
-      // base is now Drive's version: dirty = merged differs from it
-      this.meta.baseline = hashJson(theirs.json);
-      this.applyScene(mergedJson, name, { keepView: true });
-      await nextFrame();
-      this.recomputeDirty();
-      meta.dirty = this.state.dirty;
-    } else {
-      await setSnapshot(name, { json: mergedJson, baseline: hashJson(theirs.json), dirty: true });
-      meta.dirty = true;
-    }
-    this.persistMeta();
-    const parts = [
-      merged.fromTheirs ? `${merged.fromTheirs} change(s) from Drive` : null,
-      merged.fromMine ? `${merged.fromMine} of yours` : null,
-      settled.length
-        ? `changed on both sides, newer edit kept: ${settled.slice(0, 5).join(", ")}${settled.length > 5 ? ` (+${settled.length - 5})` : ""}`
-        : null,
-    ].filter(Boolean);
-    this.log("merge", `Merged "${name}": ${parts.join("; ") || "nothing new"}`);
-    this.refresh();
-    if (pushAfter && this.isDirty(name)) {
-      return this.pushScene(name);
-    }
-    return null;
+    return this.applyMergedScene(name, mine, theirsData, theirs, merged, meta, unchanged, settled, pushAfter);
   }
 
   private async pushPendingOps() {
@@ -2454,8 +2561,8 @@ class ScenesController {
         meta.baseMd5 = null;
         this.meta.baseline = null;
       } else {
-        await deleteSnapshot(name);
-        await deleteAgentBaseline(name);
+        await deleteSnapshot(name); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
+        await deleteAgentBaseline(name); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
         delete this.meta.scenes[name];
         this.log("pull", `"${name}" was deleted in Drive, removed here too`);
       }
@@ -2510,6 +2617,48 @@ class ScenesController {
     return name === this.meta.current || !!(await getSnapshot(name));
   }
 
+  private async renameInDrive(driveName: string, from: string, to: string, next: SceneMeta) {
+    try {
+      const result = await scenesApi.rename(driveName, to);
+      next.remoteMd5 = result.md5;
+      this.updateRemoteMd5(driveName, null);
+      this.updateRemoteMd5(to, result.md5);
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError.status === 404) {
+        next.baseMd5 = null; // not in Drive (anymore): just a local scene
+      } else if (!apiError.offline) {
+        throw apiError;
+      } else if (!(await this.hasLocalContent(from))) {
+        throw new Error(`"${from}" was never downloaded to this browser and Drive is not reachable. Try again online`);
+      } else {
+        next.renamedFrom = driveName; // Drive follows when reachable
+      }
+    }
+  }
+
+  private async renameLiveScene(from: string, to: string, liveFile: string) {
+    const session = from === this.meta.current ? this.liveCurrent() : await liveSync.session(liveFile, from).catch(() => null);
+    if (!session) {
+      throw new Error(`"${from}" can't be renamed while Kurviq's server is not reachable: try again online`);
+    }
+    session.rename(to);
+    const remote = this.state.remote?.find((scene) => scene.name === from);
+    if (remote) {
+      this.setState({ remote: this.state.remote!.map((scene) => (scene === remote ? { ...scene, name: to } : scene)) });
+    }
+  }
+
+  private async moveRenamedSnapshot(from: string, to: string) {
+    if (from !== this.meta.current) {
+      const snapshot = await getSnapshot(from);
+      if (snapshot) {
+        await setSnapshot(to, snapshot);
+        await deleteSnapshot(from);
+      }
+    }
+  }
+
   rename = (from: string, to: string) =>
     this.withBusy("saving", async () => {
       to = to.trim();
@@ -2526,17 +2675,12 @@ class ScenesController {
       // local-only scenes are renamed here only (a copy in Drive keeps its name)
       const liveFile = this.liveFileId(from);
       // a live scene's rename is an event like any other: its DO renames the file
-      const driveName = meta?.localOnly || liveFile ? null : meta?.renamedFrom ?? (this.remoteMd5Of(from) ? from : null);
+      let driveName: string | null = null;
+      if (!meta?.localOnly && !liveFile) {
+        driveName = meta?.renamedFrom ?? (this.remoteMd5Of(from) ? from : null);
+      }
       if (liveFile) {
-        const session = from === this.meta.current ? this.liveCurrent() : await liveSync.session(liveFile, from).catch(() => null);
-        if (!session) {
-          throw new Error(`"${from}" can't be renamed while Kurviq's server is not reachable: try again online`);
-        }
-        session.rename(to);
-        const remote = this.state.remote?.find((scene) => scene.name === from);
-        if (remote) {
-          this.setState({ remote: this.state.remote!.map((scene) => (scene === remote ? { ...scene, name: to } : scene)) });
-        }
+        await this.renameLiveScene(from, to, liveFile);
       }
       const next: SceneMeta = { ...(meta ?? { baseMd5: null, dirty: false }) };
       if (meta?.localOnly && meta.baseMd5) {
@@ -2546,32 +2690,10 @@ class ScenesController {
       delete next.renamedFrom;
 
       if (driveName) {
-        try {
-          const result = await scenesApi.rename(driveName, to);
-          next.remoteMd5 = result.md5;
-          this.updateRemoteMd5(driveName, null);
-          this.updateRemoteMd5(to, result.md5);
-        } catch (error) {
-          const apiError = error as ApiError;
-          if (apiError.status === 404) {
-            next.baseMd5 = null; // not in Drive (anymore): just a local scene
-          } else if (!apiError.offline) {
-            throw apiError;
-          } else if (!(await this.hasLocalContent(from))) {
-            throw new Error(`"${from}" was never downloaded to this browser and Drive is not reachable. Try again online`);
-          } else {
-            next.renamedFrom = driveName; // Drive follows when reachable
-          }
-        }
+        await this.renameInDrive(driveName, from, to, next);
       }
 
-      if (from !== this.meta.current) {
-        const snapshot = await getSnapshot(from);
-        if (snapshot) {
-          await setSnapshot(to, snapshot);
-          await deleteSnapshot(from);
-        }
-      }
+      await this.moveRenamedSnapshot(from, to);
       delete this.meta.scenes[from];
       this.meta.scenes[to] = next;
       delete this.meta.pendingDeletes[to];
@@ -2582,11 +2704,12 @@ class ScenesController {
       await moveAgentBaseline(from, to);
       this.persistMeta();
       this.setState({ current: this.meta.current });
+      const driveSuffix = driveName ? " (also in Drive)" : "";
       this.log(
         "info",
         next.renamedFrom
           ? `Renamed "${from}" to "${to}", in Drive once it is reachable`
-          : `Renamed "${from}" to "${to}"${driveName ? " (also in Drive)" : ""}`,
+          : `Renamed "${from}" to "${to}"${driveSuffix}`,
       );
     });
 
@@ -2697,11 +2820,12 @@ class ScenesController {
       await deleteAgentBaseline(name);
       this.persistMeta();
       this.refresh();
+      const driveSuffix = driveMd5 ? " (also in Drive)" : "";
       this.log(
         "info",
         queued
           ? `Deleted "${name}", in Drive once it is reachable`
-          : `Deleted "${name}"${driveMd5 ? " (also in Drive)" : ""}`,
+          : `Deleted "${name}"${driveSuffix}`,
       );
     });
 
@@ -2712,12 +2836,9 @@ class ScenesController {
       await this.refreshListing();
       this.requireScene(name);
       this.requireFreeName(to);
-      let json = await this.localJson(name);
-      if (json === null) {
-        json = (await scenesApi.load(this.meta.scenes[name]?.renamedFrom ?? name)).json;
-      }
+      let json = (await this.localJson(name)) ?? (await scenesApi.load(this.meta.scenes[name]?.renamedFrom ?? name)).json;
       const data = JSON.parse(json);
-      json = JSON.stringify({ ...data, appState: { ...(data.appState || {}), name: to } });
+      json = JSON.stringify({ ...data, appState: { ...data.appState, name: to } });
       await setSnapshot(to, { json, baseline: null, dirty: true });
       const { autoSync, localOnly } = this.meta.scenes[name] ?? {};
       this.meta.scenes[to] = localOnly
@@ -2734,7 +2855,7 @@ class ScenesController {
         this.setState({ busy: "saving" });
       }
       this.refresh();
-      this.syncNow(); // auto-sync pushes the copy
+      void this.syncNow(); // auto-sync pushes the copy
     });
 
   // ---------------------------------------------------------------------------
@@ -2783,7 +2904,7 @@ class ScenesController {
         );
       }
       json = withSceneName(json, name);
-      this.meta.scenes[name] = { ...(this.meta.scenes[name] ?? {}), baseMd5: null, dirty: true, localOnly: true };
+      this.meta.scenes[name] = { ...this.meta.scenes[name], baseMd5: null, dirty: true, localOnly: true };
       if (name === this.meta.current) {
         await this.writeLocal(name, json, { dirty: true });
       } else {
@@ -2869,7 +2990,7 @@ class ScenesController {
   restoreVersion = (json: string) => {
     const api = this.requireApi();
     const data = JSON.parse(json);
-    registerSceneFonts(data);
+    registerSceneFonts(data).catch((error) => console.error("[scenes] could not load scene fonts", error));
     const old = restoreElements(data.elements, null, { repairBindings: true });
     const current = api.getSceneElementsIncludingDeleted();
     const byId = new Map(current.map((el) => [el.id, el]));
@@ -2878,7 +2999,7 @@ class ScenesController {
     const bump = <T extends ExcalidrawElement>(el: T, base: ExcalidrawElement | undefined): T => ({
       ...el,
       version: Math.max(el.version, base?.version ?? 0) + 1,
-      versionNonce: Math.floor(Math.random() * 2 ** 31),
+      versionNonce: Math.floor(Math.random() * 2 ** 31), // NOSONAR S2245: not security relevant (Excalidraw element version nonce)
       updated: now,
     });
     const elements = [
@@ -2912,8 +3033,8 @@ class ScenesController {
           base: be ?? null,
           mine: me ?? null,
           theirs: te ?? null,
-          mineChanged: me ? (be ? changedFields(be, me) : ["added"]) : ["deleted"],
-          theirsChanged: te ? (be ? changedFields(be, te) : ["added"]) : ["deleted"],
+          mineChanged: conflictChanges(be, me),
+          theirsChanged: conflictChanges(be, te),
         };
       }),
     };
@@ -2977,7 +3098,7 @@ class ScenesController {
       this.log("info", `Your version of "${name}" was kept as "${copyName}"`);
     });
     await this.takeTheirs(name);
-    this.syncNow();
+    void this.syncNow();
     return copyName;
   };
 }

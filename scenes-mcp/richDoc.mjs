@@ -66,7 +66,16 @@ export const marksOf = (run) => {
 // Scenes come from anywhere (shared links, files, agents, the clipboard), so
 // formatting is checked value by value: it ends up in HTML and in links.
 /** a CSS color: #hex, rgb()/rgba() with numbers, or a color name */
-const COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\(\s*[\d.]+%?\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?\s*(,\s*[\d.]+%?\s*)?\)|[a-z]{3,30})$/i;
+const COLOR_CHANNEL = /^\s*[\d.]+%?\s*$/;
+const isColor = (value) => {
+  if (/^#[0-9a-f]{3,8}$/i.test(value) || /^[a-z]{3,30}$/i.test(value)) {
+    return true;
+  }
+  const rgb = /^rgba?\(([\s\S]*)\)$/i.exec(value);
+  if (!rgb) return false;
+  const channels = rgb[1].split(",");
+  return (channels.length === 3 || channels.length === 4) && channels.every((channel) => COLOR_CHANNEL.test(channel));
+};
 
 /** links only to the web and to mail (no javascript:, data: …) */
 export const safeLink = (value) => {
@@ -74,10 +83,10 @@ export const safeLink = (value) => {
     return null;
   }
   const link = value.trim();
-  return /^(https?:\/\/|mailto:)/i.test(link) && !/[\u0000-\u001f\s<>"]/.test(link) ? link : null;
+  return /^(https?:\/\/|mailto:)/i.test(link) && !/[\u0000-\u0008\u000e-\u001f\s<>"]/.test(link) ? link : null;
 };
 
-const cleanMark = (key, value) => {
+const cleanMark = (key, value) => { // NOSONAR S3800: mark values intentionally have different types (flags, colors, sizes and links)
   switch (key) {
     case "b":
     case "i":
@@ -86,7 +95,7 @@ const cleanMark = (key, value) => {
       return value === true ? true : undefined;
     case "c":
     case "h":
-      return typeof value === "string" && COLOR_RE.test(value.trim()) ? value.trim() : undefined;
+      return typeof value === "string" && isColor(value.trim()) ? value.trim() : undefined;
     case "a":
       return safeLink(value) ?? undefined;
     case "z":
@@ -117,7 +126,7 @@ export const normalizeDoc = (doc) => ({
       if (!run.t) {
         continue;
       }
-      const last = runs[runs.length - 1];
+      const last = runs.at(-1);
       if (last && sameMarks(last, run)) {
         last.t += run.t;
       } else {
@@ -181,14 +190,21 @@ export const richDocOf = (element, originalText = element?.originalText) => {
   return plainOf(clean) === originalText ? clean : null;
 };
 
-const escapeMd = (text) => text.replace(/([*_~[\]{}\\])/g, "\\$1");
+const escapeMd = (text) => text.replace(/([*_~[\]{}\\])/g, String.raw`\$1`);
+
+const markdownPrefix = (para) => {
+  if (para.k === "ul") return "- ";
+  if (para.k === "ol") return "1. ";
+  if (para.k === "todo") return para.x ? "[x] " : "[ ] ";
+  return "";
+};
 
 /** a doc as the markdown-like text docFromMarkdown reads */
 export const markdownOf = (doc) =>
   doc.p
     .map((para) => {
       const indent = para.k ? "  ".repeat(para.d || 0) : "";
-      const prefix = para.k === "ul" ? "- " : para.k === "ol" ? "1. " : para.k === "todo" ? (para.x ? "[x] " : "[ ] ") : "";
+      const prefix = markdownPrefix(para);
       const body = para.r
         .map((run) => {
           let text = escapeMd(run.t);

@@ -39,10 +39,16 @@ const packageOf = (file) => {
   return null;
 };
 
-const licenseOf = (data) =>
-  typeof data.license === "string"
-    ? data.license
-    : data.license?.type || (Array.isArray(data.licenses) ? data.licenses.map((l) => l.type || l).join(" OR ") : "see package");
+const licenseOf = (data) => {
+  if (typeof data.license === "string") {
+    return data.license;
+  }
+  if (data.license?.type) {
+    return data.license.type;
+  }
+  const licenses = Array.isArray(data.licenses) ? data.licenses.map((l) => l.type || l).join(" OR ") : "see package";
+  return licenses;
+};
 
 const repoOf = (data) => {
   const repo = typeof data.repository === "string" ? data.repository : data.repository?.url;
@@ -73,13 +79,17 @@ const FONTS = [
 
 const RULE = "-".repeat(78);
 
-/**
- * @param {object} options
- * @param {string} options.title what this file covers
- * @param {string[]} options.files absolute paths of the modules in the bundle
- * @param {boolean} [options.fonts] include the fonts
- */
-export const thirdPartyNotices = ({ title, files, fonts = false }) => {
+const addMcpPackages = (packages) => {
+  const deps = JSON.parse(readFileSync(path.join(EXCALIDRAW_MCP, "package.json"), "utf8")).dependencies || {};
+  for (const name of Object.keys(deps)) {
+    const dir = path.join(EXCALIDRAW_MCP, "node_modules", name);
+    if (existsSync(path.join(dir, "package.json")) && !packages.has(name)) {
+      packages.set(name, { dir, data: JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) });
+    }
+  }
+};
+
+const noticePackages = (files) => {
   const packages = new Map();
   let usesExcalidraw = false;
   let usesExcalidrawMcp = false;
@@ -103,14 +113,20 @@ export const thirdPartyNotices = ({ title, files, fonts = false }) => {
   }
   // excalidraw-mcp's dist is a bundle of its own: its dependencies are in it
   if (usesExcalidrawMcp) {
-    const deps = JSON.parse(readFileSync(path.join(EXCALIDRAW_MCP, "package.json"), "utf8")).dependencies || {};
-    for (const name of Object.keys(deps)) {
-      const dir = path.join(EXCALIDRAW_MCP, "node_modules", name);
-      if (existsSync(path.join(dir, "package.json")) && !packages.has(name)) {
-        packages.set(name, { dir, data: JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) });
-      }
-    }
+    addMcpPackages(packages);
   }
+
+  return { packages, usesExcalidraw, usesExcalidrawMcp };
+};
+
+/**
+ * @param {object} options
+ * @param {string} options.title what this file covers
+ * @param {string[]} options.files absolute paths of the modules in the bundle
+ * @param {boolean} [options.fonts] include the fonts
+ */
+export const thirdPartyNotices = ({ title, files, fonts = false }) => {
+  const { packages, usesExcalidraw, usesExcalidrawMcp } = noticePackages(files);
 
   const sections = [];
   if (usesExcalidraw) {
@@ -125,10 +141,10 @@ export const thirdPartyNotices = ({ title, files, fonts = false }) => {
   }
   for (const { dir, data } of [...packages.values()].sort((a, b) => a.data.name.localeCompare(b.data.name))) {
     const texts = readLicenseFiles(dir);
+    const version = data.version ? ` ${data.version}` : "";
+    const notice = texts.length ? texts.join("\n\n") : `Licensed under ${licenseOf(data)} (no license file in the package).`;
     sections.push(
-      `${data.name}${data.version ? ` ${data.version}` : ""} (${licenseOf(data)})\n${repoOf(data)}\n\n${
-        texts.length ? texts.join("\n\n") : `Licensed under ${licenseOf(data)} (no license file in the package).`
-      }`.trim(),
+      `${data.name}${version} (${licenseOf(data)})\n${repoOf(data)}\n\n${notice}`.trim(),
     );
   }
   if (fonts) {

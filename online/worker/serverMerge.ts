@@ -10,7 +10,7 @@
 
 import { generateKeyBetween } from "fractional-indexing";
 
-import { aadOf, elementOf, eventKey, NAME_ID, readableOf, SETTINGS_ID } from "../../scenes-plugin/src/online/liveProtocol";
+import { aadOf, elementOf, eventKey, NAME_ID, SETTINGS_ID } from "../../scenes-plugin/src/online/liveProtocol";
 import type { EventKind, Readable, Receipt, WireEvent } from "../../scenes-plugin/src/online/liveProtocol";
 
 /** one subject's state as the Durable Object keeps it (readable part, ciphertext, stamp, who and when) */
@@ -57,7 +57,7 @@ export const randomNonce = () => crypto.getRandomValues(new Uint32Array(1))[0] >
 export const toBase64 = (bytes: Uint8Array) => {
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); // NOSONAR S7758: base64 encodes single bytes, not Unicode code points
   }
   return btoa(binary);
 };
@@ -66,7 +66,7 @@ export const fromBase64 = (text: string) => {
   const binary = atob(text);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+    bytes[i] = binary.charCodeAt(i); // NOSONAR S7758: base64 encodes single bytes, not Unicode code points
   }
   return bytes;
 };
@@ -156,6 +156,30 @@ const withReadableReferences = (element: any, r: Readable) => {
   return element;
 };
 
+const repairElementGraph = (el: any, alive: Map<string, any>) => {
+  let cut = 0;
+  for (const field of ["containerId", "frameId"]) {
+    if (el[field] && !alive.has(el[field])) {
+      el[field] = null;
+      cut++;
+    }
+  }
+  for (const field of ["startBinding", "endBinding"]) {
+    if (el[field]?.elementId && !alive.has(el[field].elementId)) {
+      el[field] = null;
+      cut++;
+    }
+  }
+  if (Array.isArray(el.boundElements)) {
+    const kept = el.boundElements
+      .filter((b: any) => alive.has(String(b?.id)))
+      .map((b: any) => ({ ...b, type: alive.get(String(b.id)).type === "text" ? "text" : "arrow" }));
+    cut += el.boundElements.length - kept.length;
+    el.boundElements = kept.length ? kept : null;
+  }
+  return cut;
+};
+
 /**
  * The saved graph never dangles: a reference to an element that is not
  * alive in this file is cut (container, frame, bindings, bound elements);
@@ -170,25 +194,7 @@ export const repairGraph = (plain: Map<string, { k: EventKind; value: any }>) =>
   }
   let cut = 0;
   for (const el of alive.values()) {
-    for (const field of ["containerId", "frameId"]) {
-      if (el[field] && !alive.has(el[field])) {
-        el[field] = null;
-        cut++;
-      }
-    }
-    for (const field of ["startBinding", "endBinding"]) {
-      if (el[field]?.elementId && !alive.has(el[field].elementId)) {
-        el[field] = null;
-        cut++;
-      }
-    }
-    if (Array.isArray(el.boundElements)) {
-      const kept = el.boundElements
-        .filter((b: any) => alive.has(String(b?.id)))
-        .map((b: any) => ({ ...b, type: alive.get(String(b.id)).type === "text" ? "text" : "arrow" }));
-      cut += el.boundElements.length - kept.length;
-      el.boundElements = kept.length ? kept : null;
-    }
+    cut += repairElementGraph(el, alive);
   }
   return cut;
 };
@@ -214,7 +220,15 @@ const canonical = (value: any, top = false): any => {
   }
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort()) {
+    for (const key of Object.keys(value).sort((a, b) => {
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      return 0;
+    })) {
       const field = value[key];
       if ((top && STAMPS.has(key)) || field === null || field === undefined || (Array.isArray(field) && !field.length)) {
         continue;
@@ -248,7 +262,13 @@ export const DEFAULT_SETTINGS = { viewBackgroundColor: "#ffffff", gridSize: 20, 
 
 const byIndex = (a: any, b: any) => {
   const [x, y] = [a.index ?? "", b.index ?? ""];
-  return x < y ? -1 : x > y ? 1 : 0;
+  if (x < y) {
+    return -1;
+  }
+  if (x > y) {
+    return 1;
+  }
+  return 0;
 };
 
 export type FileMeta = {
@@ -257,6 +277,40 @@ export type FileMeta = {
   receipts: Record<string, Receipt & { at?: number }>;
   authors: Record<string, string>;
   onBehalf: Array<{ by: string; for: string; at: number }>;
+};
+
+const collectUnreferencedAssets = (plain: Map<string, { k: EventKind; value: any }>, fonts: Map<number, any>, files: Record<string, unknown>, takeFont: (id: number) => void, referencedFiles: Set<string>, referencedFonts: Set<number>) => {
+  for (const { k, value } of plain.values()) {
+    if (k === "file" && value?.id && !referencedFiles.has(value.id)) {
+      files[value.id] = value;
+    }
+  }
+  for (const id of fonts.keys()) {
+    if (!referencedFonts.has(id)) {
+      takeFont(id);
+    }
+  }
+};
+
+const collectSceneAssets = (plain: Map<string, { k: EventKind; value: any }>, elements: any[], fonts: Map<number, any>, files: Record<string, unknown>, takeFont: (id: number) => void) => {
+  const referencedFiles = new Set<string>();
+  const referencedFonts = new Set<number>();
+  for (const { k, value } of plain.values()) {
+    if (k === "el") {
+      value.fileId && referencedFiles.add(value.fileId);
+      typeof value.fontFamily === "number" && referencedFonts.add(value.fontFamily);
+    }
+  }
+  for (const el of elements) {
+    const file = el.fileId ? plain.get(eventKey("file", el.fileId)) : undefined;
+    if (file) {
+      files[el.fileId] = file.value;
+    }
+    if (typeof el.fontFamily === "number" && fonts.has(el.fontFamily)) {
+      takeFont(el.fontFamily);
+    }
+  }
+  collectUnreferencedAssets(plain, fonts, files, takeFont, referencedFiles, referencedFonts);
 };
 
 /**
@@ -291,33 +345,7 @@ export const buildSceneFile = (plain: Map<string, { k: EventKind; value: any }>,
     const { family, faces, source } = fonts.get(id);
     usedFonts.set(id, { family, id, faces, source });
   };
-  const referencedFiles = new Set<string>();
-  const referencedFonts = new Set<number>();
-  for (const { k, value } of plain.values()) {
-    if (k === "el") {
-      value.fileId && referencedFiles.add(value.fileId);
-      typeof value.fontFamily === "number" && referencedFonts.add(value.fontFamily);
-    }
-  }
-  for (const el of elements) {
-    const file = el.fileId ? plain.get(eventKey("file", el.fileId)) : undefined;
-    if (file) {
-      files[el.fileId] = file.value;
-    }
-    if (typeof el.fontFamily === "number" && fonts.has(el.fontFamily)) {
-      takeFont(el.fontFamily);
-    }
-  }
-  for (const { k, value } of plain.values()) {
-    if (k === "file" && value?.id && !referencedFiles.has(value.id)) {
-      files[value.id] = value;
-    }
-  }
-  for (const id of fonts.keys()) {
-    if (!referencedFonts.has(id)) {
-      takeFont(id);
-    }
-  }
+  collectSceneAssets(plain, elements, fonts, files, takeFont);
   const pick = (key: keyof typeof DEFAULT_SETTINGS) => settings?.[key] ?? DEFAULT_SETTINGS[key];
   const data: Record<string, unknown> = {
     type: "excalidraw",
@@ -339,14 +367,7 @@ export const buildSceneFile = (plain: Map<string, { k: EventKind; value: any }>,
   return { json: JSON.stringify(data, null, 2), name };
 };
 
-/** a scene file from Drive → its subjects (eventKey → kind, id, plain value); fonts need their hash (async) */
-export const subjectsOfFile = async (json: string, driveName: string | null, hashFont: (font: any) => Promise<string>) => {
-  const data = JSON.parse(json);
-  if (!data || typeof data !== "object" || !Array.isArray(data.elements)) {
-    throw new Error("not a scene file");
-  }
-  const out = new Map<string, { k: EventKind; id: string; value: any }>();
-  const elements = data.elements.filter((el: any) => validElement(el) && !el.isDeleted);
+const restoreFileIndices = (elements: any[]) => {
   // files from apps that don't keep fractional indices: the array order is the z-order
   if (elements.some((el: any) => typeof el.index !== "string")) {
     let previous: string | null = null;
@@ -355,6 +376,25 @@ export const subjectsOfFile = async (json: string, driveName: string | null, has
       previous = el.index;
     }
   }
+};
+
+const takeFileSubjects = (data: any, out: Map<string, { k: EventKind; id: string; value: any }>) => {
+  for (const [id, file] of Object.entries<any>(data.files && typeof data.files === "object" ? data.files : {})) {
+    if (file && typeof file.dataURL === "string") {
+      out.set(eventKey("file", id), { k: "file", id, value: { ...file, id } });
+    }
+  }
+};
+
+/** a scene file from Drive → its subjects (eventKey → kind, id, plain value); fonts need their hash (async) */
+export const subjectsOfFile = async (json: string, driveName: string | null, hashFont: (font: any) => Promise<string>) => {
+  const data = JSON.parse(json);
+  if (!data || typeof data !== "object" || !Array.isArray(data.elements)) {
+    throw new Error("not a scene file");
+  }
+  const out = new Map<string, { k: EventKind; id: string; value: any }>();
+  const elements = data.elements.filter((el: any) => validElement(el) && !el.isDeleted);
+  restoreFileIndices(elements);
   for (const el of elements) {
     out.set(eventKey("el", el.id), { k: "el", id: el.id, value: el });
   }
@@ -364,14 +404,10 @@ export const subjectsOfFile = async (json: string, driveName: string | null, has
     id: SETTINGS_ID,
     value: Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map((key) => [key, app[key] ?? (DEFAULT_SETTINGS as any)[key]])),
   });
-  for (const [id, file] of Object.entries<any>(data.files && typeof data.files === "object" ? data.files : {})) {
-    if (file && typeof file.dataURL === "string") {
-      out.set(eventKey("file", id), { k: "file", id, value: { ...file, id } });
-    }
-  }
+  takeFileSubjects(data, out);
   for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
     if (font && typeof font.id === "number" && Array.isArray(font.faces)) {
-      const hash = await hashFont(font);
+      const hash = await hashFont(font); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       out.set(eventKey("font", hash), { k: "font", id: hash, value: font });
     }
   }
@@ -381,7 +417,7 @@ export const subjectsOfFile = async (json: string, driveName: string | null, has
   return out;
 };
 
-export { readableOf };
+export { readableOf } from "../../scenes-plugin/src/online/liveProtocol";
 
 // -----------------------------------------------------------------------------
 // element order: clashing fractional indices

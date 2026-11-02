@@ -168,7 +168,7 @@ const OWN_TAB = "~do";
 const CHUNK = 512 * 1024;
 const KEY_LEASE_MS = 60_000;
 const CLEANUP_AFTER_MS = 10 * 60_000;
-const TRASH_KEEP_MS = 7 * 24 * 3600_000;
+const TRASH_KEEP_MS = 7 * 24 * 3_600_000;
 const CLOSING_MS = 5 * 60_000;
 /** a connection that hasn't said hello after this long is closed */
 const HELLO_WITHIN_MS = 60_000;
@@ -185,8 +185,8 @@ const RECEIPT_EXTRA_MAX = 20_000;
  * How long "sign out everywhere" is remembered: as long as a session signed in
  * before it could still be presented (cookies live up to 400 days)
  */
-const REVOCATION_KEPT_MS = 400 * 24 * 3600_000;
-const DAY_MS = 24 * 3600_000;
+const REVOCATION_KEPT_MS = 400 * 24 * 3_600_000;
+const DAY_MS = 24 * 3_600_000;
 /** changes of an author who can't be saved as: discarded this long after they became blocked, if nobody accepted them */
 const BLOCKED_KEPT_MS = 90 * DAY_MS;
 /** connections of one account to one scene; slots kept free for editors (viewers can't take the last ones) */
@@ -201,7 +201,7 @@ const STATES_PER_MINUTE = 3;
 /** after a sharing change: proofs this short until the next renewal (the DO checks access meanwhile) */
 const RECHECK_PROOF_MS = 60_000;
 /** an author who lost access: their changes can only be discarded, automatically after this */
-const ACCESS_LOST_KEPT_MS = 7 * 24 * 3600_000;
+const ACCESS_LOST_KEPT_MS = 7 * 24 * 3_600_000;
 /** frames.ts: parts of at most this size */
 const PART_SIZE = 256 * 1024;
 /** messages being assembled: per connection, and their reserved size across the object */
@@ -259,7 +259,15 @@ const validBase = (base: unknown): base is Base | null =>
   base === null || (!!base && typeof base === "object" && isInt((base as Base).v) && Number.isSafeInteger((base as Base).n));
 
 /** a cipher's length limit per kind (images are big, the rest small) */
-const maxCipher = (k: EventKind) => (k === "file" ? Math.ceil(LIMITS.fileBytes * 1.4) + 4096 : k === "font" ? 8 * 1024 * 1024 : 2 * 1024 * 1024);
+const maxCipher = (k: EventKind) => {
+  if (k === "file") {
+    return Math.ceil(LIMITS.fileBytes * 1.4) + 4096;
+  }
+  if (k === "font") {
+    return 8 * 1024 * 1024;
+  }
+  return 2 * 1024 * 1024;
+};
 
 /** custom font ids (scenes-plugin/src/fonts.ts) */
 const FONT_ID_MIN = 2000;
@@ -272,6 +280,26 @@ const sizeOf = (entry: Entry) => entry.c.length + (entry.r ? JSON.stringify(entr
 /** unsaved batches per scene (rows, memory) */
 const MAX_PENDING_BATCHES = 20_000;
 
+const addStateTouches = (state: Entry | undefined, find: (id: string) => Entry | undefined, out: Set<string>) => {
+  const r = state?.r;
+  if (r) {
+    for (const id of referencesOf(r)) {
+      out.add(id);
+      find(id)?.r?.groupIds.forEach((group) => out.add(`g:${group}`));
+    }
+    r.groupIds.forEach((group) => out.add(`g:${group}`));
+    if (r.fileId) {
+      out.add(eventKey("file", r.fileId));
+    }
+    if (r.fontFamily !== null && r.fontFamily >= FONT_ID_MIN) {
+      out.add(`f#${r.fontFamily}`);
+    }
+  }
+  if (state?.k === "font" && state.fontId !== undefined) {
+    out.add(`f#${state.fontId}`);
+  }
+};
+
 /**
  * What an entry touches, before and after the change: itself, what it
  * refers to and the groups of what it refers to (a group id names all its
@@ -283,31 +311,17 @@ const touchesOf = (entry: Entry, before: Entry | undefined, lookup: (id: string)
     [entry, lookup],
     [before, lookupBefore],
   ] as const) {
-    const r = state?.r;
-    if (r) {
-      for (const id of referencesOf(r)) {
-        out.add(id);
-        find(id)?.r?.groupIds.forEach((group) => out.add(`g:${group}`));
-      }
-      r.groupIds.forEach((group) => out.add(`g:${group}`));
-      if (r.fileId) {
-        out.add(eventKey("file", r.fileId));
-      }
-      if (r.fontFamily !== null && r.fontFamily >= FONT_ID_MIN) {
-        out.add(`f#${r.fontFamily}`);
-      }
-    }
-    if (state?.k === "font" && state.fontId !== undefined) {
-      out.add(`f#${state.fontId}`);
-    }
+    addStateTouches(state, find, out);
   }
   return [...out];
 };
 
 const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
+const EMPTY_RECEIPT: Receipt = { mark: 0, extra: [] };
+
 /** counters as a contiguous mark plus the exceptions above it */
-const receiptOf = (counters: Iterable<number>, from: Receipt = { mark: 0, extra: [] }): Receipt => {
+const receiptOf = (counters: Iterable<number>, from: Receipt = EMPTY_RECEIPT): Receipt => {
   const set = new Set<number>(from.extra);
   for (const counter of counters) {
     if (counter > from.mark) {
@@ -343,11 +357,12 @@ const receiptMinus = (known: Receipt, minus: Set<number>): Receipt => {
       extra.push(c);
     }
   }
-  return { mark, extra: extra.sort((a, b) => a - b) };
+  extra.sort((a, b) => a - b);
+  return { mark, extra };
 };
 
 export class SceneRoom extends DurableObject<SceneEnv> {
-  private sql: SqlStorage;
+  private readonly sql: SqlStorage;
 
   // the scene, in memory (rebuilt from SQLite when the object wakes)
   private loaded = false;
@@ -906,7 +921,12 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (Date.now() - this.num("needTokenAt") < 60_000) {
       return;
     }
-    const rank = (att: Attachment) => (att.sub === prefer ? 0 : att.role === "edit" ? 1 : 2);
+    const rank = (att: Attachment) => {
+      if (att.sub === prefer) {
+        return 0;
+      }
+      return att.role === "edit" ? 1 : 2;
+    };
     const sockets = this.readySockets().sort((a, b) => rank(a.att) - rank(b.att));
     if (sockets[0]) {
       this.setMeta("needTokenAt", String(Date.now()));
@@ -1084,6 +1104,15 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       waiting: false,
       head: { revision: claims.head?.revision ?? null, md5: claims.head?.md5 ?? null, at: claims.head?.at ?? null },
     } satisfies Attachment);
+    this.confirmConnection(claims);
+    this.setMeta("watchStop", null);
+    this.schedule("watch-stop", null);
+    this.schedule("cleanup", null);
+    this.scheduleSweep();
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  private confirmConnection(claims: Claims) {
     this.names.set(claims.sub, claims.person);
     this.confirmed(claims.sub);
     if (claims.owner) {
@@ -1097,11 +1126,6 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (this.seeded() && claims.head.revision && !this.isOwnRevision(claims.head.revision)) {
       this.wantOutsideCheck();
     }
-    this.setMeta("watchStop", null);
-    this.schedule("watch-stop", null);
-    this.schedule("cleanup", null);
-    this.scheduleSweep();
-    return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
   private ensureGeneration() {
@@ -1149,7 +1173,8 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const known = this.meta("keyId");
     const watch = await this.watchNeeded(typeof body.sub === "string" ? body.sub : "");
     if (known) {
-      return { key: !found ? "missing" : found !== known ? "changed" : "ok", keyId: known, watch };
+      const key = this.knownKeyStatus(found, known);
+      return { key, keyId: known, watch };
     }
     if (found) {
       this.setMeta("keyId", found);
@@ -1165,6 +1190,16 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const id = crypto.randomUUID();
     this.setMeta("keyLease", { id, until: Date.now() + KEY_LEASE_MS });
     return { key: "lease", lease: id, watch };
+  }
+
+  private knownKeyStatus(found: string | null, known: string) {
+    let key = "ok";
+    if (!found) {
+      key = "missing";
+    } else if (found !== known) {
+      key = "changed";
+    }
+    return key;
   }
 
   private keyDone(body: any) {
@@ -1185,7 +1220,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return null;
     }
     const channel = this.metaJson<{ id: string; expiration: number } | null>("channel", null);
-    if (channel && channel.expiration > Date.now() + 2 * 3600_000) {
+    if (channel && channel.expiration > Date.now() + 2 * 3_600_000) {
       return null;
     }
     const reserved = this.metaJson<{ id: string; secret: string; until: number } | null>("channelPending", null);
@@ -1214,7 +1249,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     });
     this.setMeta("channelPending", null);
     // only its creator may stop a channel: handed back when that is the same person
-    return { ok: true, stop: old && old.creator === reserved.creator ? { id: old.id, resourceId: old.resourceId } : null };
+    return { ok: true, stop: old?.creator === reserved.creator ? { id: old.id, resourceId: old.resourceId } : null };
   }
 
   /** a tab renewed its access proof (every 10 minutes, or after renew-now) */
@@ -1230,6 +1265,22 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return { ok: false };
     }
     const recheckAt = this.num("recheckAt");
+    const found = this.renewAttachments(body, claims, unconfirmed, recheckAt);
+    this.confirmRenewal(body, claims);
+    this.setDriveName(body.name);
+    const lifecycle = this.lifecycle().state;
+    if (body.trashed === true && lifecycle === "active") {
+      await this.toTrash();
+    } else if (body.trashed === false && (lifecycle === "trashed" || lifecycle === "deleted")) {
+      this.restored();
+    } else if (this.seeded() && body.head?.revision && !this.isOwnRevision(body.head.revision)) {
+      this.wantOutsideCheck();
+    }
+    this.scheduleSweep();
+    return { ok: found, watch: await this.watchNeeded(claims.sub) };
+  }
+
+  private renewAttachments(body: any, claims: Claims, unconfirmed: boolean, recheckAt: number) {
     let found = false;
     for (const { ws, att } of this.sockets()) {
       if (att.tab !== body.tab || att.sub !== claims.sub) {
@@ -1246,6 +1297,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         keyId: claims.keyId,
       } satisfies Attachment);
     }
+    return found;
+  }
+
+  private confirmRenewal(body: any, claims: Claims) {
     if (body.confirmed !== false) {
       this.confirmed(claims.sub);
       this.setRevoked(claims.sub, false);
@@ -1259,17 +1314,6 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (claims.role === "edit" && body.confirmed !== false) {
       this.unblock(claims.sub, true);
     }
-    this.setDriveName(body.name);
-    const lifecycle = this.lifecycle().state;
-    if (body.trashed === true && lifecycle === "active") {
-      await this.toTrash();
-    } else if (body.trashed === false && (lifecycle === "trashed" || lifecycle === "deleted")) {
-      this.restored();
-    } else if (this.seeded() && body.head?.revision && !this.isOwnRevision(body.head.revision)) {
-      this.wantOutsideCheck();
-    }
-    this.scheduleSweep();
-    return { ok: found, watch: await this.watchNeeded(claims.sub) };
   }
 
   /** a renewal was refused (access removed in Drive): that tab's connection ends */
@@ -1325,10 +1369,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
   }
 
   private async recheckAccess() {
-    for (const sub of new Set(this.sockets().map(({ att }) => att.sub))) {
+    for (const sub of new Set<string>(this.sockets().map(({ att }) => att.sub))) {
       let token: string | null = null;
       if (this.q("SELECT 1 FROM tokens WHERE author = ?", sub).length) {
-        const access = await this.accessFor(sub);
+        const access = await this.accessFor(sub); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
         token = "token" in access ? access.token : null;
       }
       if (!token && this.lastAccessToken()?.sub === sub) {
@@ -1337,22 +1381,26 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       if (!token) {
         continue; // their short proof decides
       }
-      const file = await getFile(this.genv, token, this.fileId, "id,capabilities(canEdit)");
-      if (file.status === 200) {
-        if (file.data.capabilities?.canEdit === false) {
-          for (const { ws, att } of this.sockets()) {
-            if (att.sub === sub && att.role === "edit") {
-              ws.serializeAttachment({ ...att, role: "read", token: undefined });
-            }
+      const file = await getFile(this.genv, token, this.fileId, "id,capabilities(canEdit)"); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
+      this.recheckedAccess(sub, file);
+    }
+  }
+
+  private recheckedAccess(sub: string, file: DriveAnswer) {
+    if (file.status === 200) {
+      if (file.data.capabilities?.canEdit === false) {
+        for (const { ws, att } of this.sockets()) {
+          if (att.sub === sub && att.role === "edit") {
+            ws.serializeAttachment({ ...att, role: "read", token: undefined });
           }
         }
-        continue;
       }
-      if (!isTransient(problemOf(file))) {
-        this.setRevoked(sub, true);
-        for (const ws of this.ctx.getWebSockets(`sub:${sub}`)) {
-          this.close(ws, "access");
-        }
+      return;
+    }
+    if (!isTransient(problemOf(file))) {
+      this.setRevoked(sub, true);
+      for (const ws of this.ctx.getWebSockets(`sub:${sub}`)) {
+        this.close(ws, "access");
       }
     }
   }
@@ -1601,7 +1649,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
    * account, 48 MB across the object; an unfinished one is dropped two
    * minutes after it began (swept across all connections, not only the sender's)
    */
-  private assemble(ws: WebSocket, att: Attachment, raw: string): any | null {
+  private assemble(ws: WebSocket, att: Attachment, raw: string): any {
     if (raw.length > PART_SIZE * 6 + 1024) {
       throw new Error("message too big");
     }
@@ -1739,11 +1787,16 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (["presence", "decide", "keep-local", "keep-local-done", "trash"].includes(message.type) && !this.rateOk(ws, "control", CONTROL_PER_MINUTE)) {
       return;
     }
+    if (message.type === "seed") {
+      return await this.onSeed(ws, att, message);
+    }
+    return this.dispatchMessage(ws, att, message);
+  }
+
+  private dispatchMessage(ws: WebSocket, att: Attachment, message: any) {
     switch (message.type) {
       case "batch":
         return this.onBatch(ws, att, message);
-      case "seed":
-        return await this.onSeed(ws, att, message);
       case "decide":
         return this.onDecide(ws, att, message);
       case "presence":
@@ -1807,9 +1860,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
   private onHello(ws: WebSocket, att: Attachment, hello: any) {
     // one hello per connection (a second one would be a full state on demand)
     if (att.ready) {
-      try {
-        ws.close(1008, "one hello per connection");
-      } catch {}
+      this.rejectHello(ws, "one hello per connection");
       return;
     }
     if (
@@ -1822,9 +1873,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       !isStrOrNull(hello.generation, 100) ||
       !isStrOrNull(hello.revision, 200)
     ) {
-      try {
-        ws.close(1008, "invalid hello");
-      } catch {}
+      this.rejectHello(ws, "invalid hello");
       return;
     }
     const lifecycle = this.lifecycle();
@@ -1836,17 +1885,13 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const now = Date.now();
     const row = this.q("SELECT author, mark, extra FROM tabs WHERE tab = ?", tab)[0];
     // a tab id belongs to one account (tabs never send as someone else)
-    if (row && row.author && row.author !== att.sub) {
-      try {
-        ws.close(1008, "tab of another account");
-      } catch {}
+    if (row?.author && row.author !== att.sub) {
+      this.rejectHello(ws, "tab of another account");
       return;
     }
     // and one account uses a bounded number of tab ids
     if (!row && this.q("SELECT COUNT(*) AS n FROM tabs WHERE author = ? AND seen > ?", att.sub, now - DAY_MS)[0].n >= TABS_PER_ACCOUNT) {
-      try {
-        ws.close(1008, "too many tabs");
-      } catch {}
+      this.rejectHello(ws, "too many tabs");
       return;
     }
     this.q(
@@ -1860,22 +1905,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const known = this.knownCounters(tab);
     const generation = this.meta("generation")!;
     const saved = this.lastSaved();
-    let mode: "events" | "state" | "seed" | "wait";
-    let events: StampedBatch[] | undefined;
-    let state: WireScene | undefined;
-    if (!this.seeded()) {
-      mode = att.role === "edit" && lifecycle.state === "active" && this.meta("keyId") ? "seed" : "wait";
-    } else if (hello.generation === generation && hello.seq >= this.num("maxDeleted") && hello.seq <= this.seq) {
-      mode = "events";
-      events = this.pending.filter((batch) => batch.seq > hello.seq).map((batch) => this.stamped(batch, batch.entries.map((e) => wireOf(e))));
-    } else if (hello.generation === null && hello.revision && hello.revision === saved.revision) {
-      // loaded exactly the last save: what is not in it yet
-      mode = "events";
-      events = this.pending.map((batch) => this.stamped(batch, batch.entries.map((e) => wireOf(e))));
-    } else {
-      mode = "state";
-      state = this.fullState();
-    }
+    const { mode, events, state } = this.helloReplay(att, hello, lifecycle, generation, saved);
     ws.serializeAttachment({ ...att, tab, openToken: hello.openToken, ready: true, waiting: mode === "seed" || mode === "wait" });
     this.send(ws, {
       type: "welcome",
@@ -1904,6 +1934,32 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     }
     this.broadcastStatus();
     this.scheduleSweep();
+  }
+
+  private helloReplay(att: Attachment, hello: any, lifecycle: ReturnType<SceneRoom["lifecycle"]>, generation: string, saved: ReturnType<SceneRoom["lastSaved"]>) {
+    let mode: "events" | "state" | "seed" | "wait";
+    let events: StampedBatch[] | undefined;
+    let state: WireScene | undefined;
+    if (!this.seeded()) {
+      mode = att.role === "edit" && lifecycle.state === "active" && this.meta("keyId") ? "seed" : "wait";
+    } else if (hello.generation === generation && hello.seq >= this.num("maxDeleted") && hello.seq <= this.seq) {
+      mode = "events";
+      events = this.pending.filter((batch) => batch.seq > hello.seq).map((batch) => this.stamped(batch, batch.entries.map((e) => wireOf(e))));
+    } else if (hello.generation === null && hello.revision && hello.revision === saved.revision) {
+      // loaded exactly the last save: what is not in it yet
+      mode = "events";
+      events = this.pending.map((batch) => this.stamped(batch, batch.entries.map((e) => wireOf(e))));
+    } else {
+      mode = "state";
+      state = this.fullState();
+    }
+    return { mode, events, state };
+  }
+
+  private rejectHello(ws: WebSocket, reason: string) {
+    try {
+      ws.close(1008, reason);
+    } catch {}
   }
 
   private savedReceipts(): Record<string, Receipt> {
@@ -1949,7 +2005,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const minute = Math.floor(Date.now() / 60_000);
     const counters = this.rateBySocket.get(ws) ?? {};
     this.rateBySocket.set(ws, counters);
-    const mine = counters[kind]?.minute === minute ? counters[kind] : (counters[kind] = { minute, count: 0 });
+    if (counters[kind]?.minute !== minute) {
+      counters[kind] = { minute, count: 0 };
+    }
+    const mine = counters[kind];
     mine.count++;
     if (mine.count > limit) {
       return false;
@@ -2097,7 +2156,12 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         stamps[key] = { v: cur.v, n: cur.n };
         continue;
       }
-      const v = cur ? cur.v + 1 : event.k === "el" ? Math.max(1, cleanReadable(event.r, event.id)!.version) : 1;
+      let v = 1;
+      if (cur) {
+        v = cur.v + 1;
+      } else if (event.k === "el") {
+        v = Math.max(1, cleanReadable(event.r, event.id)!.version);
+      }
       const n = randomNonce();
       const entry: Entry = { k: event.k, id: event.id, c: event.c, v, n, a: att.pseudonym, seq: 0, t: tab, u: counter };
       if (event.k === "el") {
@@ -2309,7 +2373,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         }
       }
     }
-    for (const [key, entry] of [...this.snap]) {
+    for (const [key, entry] of this.snap) {
       if (entry.k === "file" && named.has(entry.id) && !inUse.has(entry.id) && !carried.has(entry.id)) {
         this.snap.delete(key);
         if (this.state.get(key) === entry) {
@@ -2321,12 +2385,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
   }
 
   private referenceProblem(entries: Entry[], batchMap: Map<string, Entry>): { target: string; detail: string } | null {
-    const fontIds = new Set<number>();
-    for (const entry of [...this.state.values(), ...entries]) {
-      if (entry.k === "font" && entry.fontId !== undefined) {
-        fontIds.add(entry.fontId);
-      }
-    }
+    const fontIds = this.referenceFontIds(entries);
     const deleted = new Set<string>();
     for (const entry of entries) {
       const r = entry.r;
@@ -2340,25 +2399,55 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         }
         continue;
       }
-      for (const field of REF_FIELDS) {
-        const target = r[field];
-        if (target && !this.isAlive(target, batchMap)) {
-          return { target, detail: `${entry.id}:${field}:${target}` };
-        }
+      const edgeProblem = this.elementReferenceProblem(entry, r, before, batchMap);
+      if (edgeProblem) {
+        return edgeProblem;
       }
-      for (const target of r.boundIds) {
-        if (!before?.boundIds.includes(target) && !this.isAlive(target, batchMap)) {
-          return { target, detail: `${entry.id}:boundElements:${target}` };
-        }
-      }
-      // a new picture, or an element that comes back (its picture may have been dropped, see dropUnusedFiles)
-      if (r.fileId && (r.fileId !== before?.fileId || !before || before.isDeleted) && !batchMap.has(eventKey("file", r.fileId)) && !this.state.has(eventKey("file", r.fileId))) {
-        return { target: eventKey("file", r.fileId), detail: `${entry.id}:fileId:${r.fileId}` };
-      }
-      if (r.fontFamily !== null && r.fontFamily >= FONT_ID_MIN && r.fontFamily !== before?.fontFamily && !fontIds.has(r.fontFamily)) {
-        return { target: `font#${r.fontFamily}`, detail: `${entry.id}:fontFamily:${r.fontFamily}` };
+      const problem = this.assetReferenceProblem(entry, r, before, batchMap, fontIds);
+      if (problem) {
+        return problem;
       }
     }
+    return this.deletedReferenceProblem(deleted, batchMap);
+  }
+
+  private referenceFontIds(entries: Entry[]) {
+    const fontIds = new Set<number>();
+    for (const entry of [...this.state.values(), ...entries]) {
+      if (entry.k === "font" && entry.fontId !== undefined) {
+        fontIds.add(entry.fontId);
+      }
+    }
+    return fontIds;
+  }
+
+  private elementReferenceProblem(entry: Entry, r: Readable, before: Readable | undefined, batchMap: Map<string, Entry>): { target: string; detail: string } | null {
+    for (const field of REF_FIELDS) {
+      const target = r[field];
+      if (target && !this.isAlive(target, batchMap)) {
+        return { target, detail: `${entry.id}:${field}:${target}` };
+      }
+    }
+    for (const target of r.boundIds) {
+      if (!before?.boundIds.includes(target) && !this.isAlive(target, batchMap)) {
+        return { target, detail: `${entry.id}:boundElements:${target}` };
+      }
+    }
+    return null;
+  }
+
+  private assetReferenceProblem(entry: Entry, r: Readable, before: Readable | undefined, batchMap: Map<string, Entry>, fontIds: Set<number>): { target: string; detail: string } | null {
+    // a new picture, or an element that comes back (its picture may have been dropped, see dropUnusedFiles)
+    if (r.fileId && (r.fileId !== before?.fileId || !before || before.isDeleted) && !batchMap.has(eventKey("file", r.fileId)) && !this.state.has(eventKey("file", r.fileId))) {
+      return { target: eventKey("file", r.fileId), detail: `${entry.id}:fileId:${r.fileId}` };
+    }
+    if (r.fontFamily !== null && r.fontFamily >= FONT_ID_MIN && r.fontFamily !== before?.fontFamily && !fontIds.has(r.fontFamily)) {
+      return { target: `font#${r.fontFamily}`, detail: `${entry.id}:fontFamily:${r.fontFamily}` };
+    }
+    return null;
+  }
+
+  private deletedReferenceProblem(deleted: Set<string>, batchMap: Map<string, Entry>): { target: string; detail: string } | null {
     if (deleted.size) {
       // reverse references: what still points at a deleted element
       for (const [key, entry] of this.state) {
@@ -2378,9 +2467,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
 
   /** an index above `index` and below the next used one (or after all, for a missing index) */
   private freeIndex(index: string | null, taken: Set<string>) {
-    const all = [...this.indices.keys(), ...taken].filter((value) => value !== "").sort();
+    const all = [...this.indices.keys(), ...taken].filter((value) => value !== "").sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     if (index === null) {
-      return indexBetween(all[all.length - 1] ?? null, null);
+      return indexBetween(all.at(-1) ?? null, null);
     }
     const above = all.find((value) => value > index) ?? null;
     return indexBetween(index, above);
@@ -2445,18 +2534,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         return refuse("invalid");
       }
       seen.add(eventKey(event.k, event.id));
-      const entry: Entry = { k: event.k, id: event.id, c: event.c, v: 1, n: randomNonce(), a: null, seq: 0 };
-      if (event.k === "el") {
-        entry.r = cleanReadable(event.r, event.id)!;
-        entry.v = entry.r.version;
-        entry.n = entry.r.versionNonce;
-      } else if (event.v && isInt(event.v.v) && Number.isSafeInteger(event.v.n)) {
-        entry.v = event.v.v;
-        entry.n = event.v.n;
-      }
-      if (event.k === "font") {
-        entry.fontId = event.fontId;
-      }
+      const entry = this.seedEntry(event);
       bytes += sizeOf(entry);
       entries.push(entry);
     }
@@ -2470,22 +2548,15 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       refuse(this.seeded() ? "seeded" : "lifecycle");
       return this.seeded() && this.rateOk(ws, "state", STATES_PER_MINUTE) ? this.send(ws, this.welcomeState(att)) : undefined;
     }
-    const kurviq = record ?? {};
-    const authors: Record<string, unknown> = kurviq.authors && typeof kurviq.authors === "object" ? kurviq.authors : {};
-    for (const entry of entries) {
-      const author = authors[entry.id];
-      entry.a = entry.k === "el" && typeof author === "string" && author.length <= 40 ? author : null;
-    }
-    const receipts = record ? this.seedReceipts(kurviq.receipts) : null;
-    const onBehalf = Array.isArray(kurviq.onBehalf)
-      ? kurviq.onBehalf
-          .filter((item: any) => item && typeof item.by === "string" && typeof item.for === "string" && isInt(item.at))
-          .slice(-ON_BEHALF_KEPT)
-          .map((item: any) => ({ by: item.by.slice(0, 40), for: item.for.slice(0, 40), at: item.at }))
-      : null;
+    const { receipts, onBehalf } = this.seedAttribution(record, entries);
     const previous = this.lastSaved();
     // the saved revision's own time (a reseed doesn't make yesterday's save today's: milestone pins)
-    const savedAt = previous.revision === scene.revision && previous.at ? previous.at : isInt(ticketHead.at) ? ticketHead.at! : Date.now();
+    let savedAt: number;
+    if (previous.revision === scene.revision && previous.at) {
+      savedAt = previous.at;
+    } else {
+      savedAt = isInt(ticketHead.at) ? ticketHead.at! : Date.now();
+    }
     this.seqNow = this.seq + 1;
     const seq = this.seqNow;
     entries.forEach((entry) => (entry.seq = seq));
@@ -2523,13 +2594,51 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     }
   }
 
+  private seedEntry(event: any) {
+    const entry: Entry = { k: event.k, id: event.id, c: event.c, v: 1, n: randomNonce(), a: null, seq: 0 };
+    if (event.k === "el") {
+      entry.r = cleanReadable(event.r, event.id)!;
+      entry.v = entry.r.version;
+      entry.n = entry.r.versionNonce;
+    } else if (event.v && isInt(event.v.v) && Number.isSafeInteger(event.v.n)) {
+      entry.v = event.v.v;
+      entry.n = event.v.n;
+    }
+    if (event.k === "font") {
+      entry.fontId = event.fontId;
+    }
+    return entry;
+  }
+
+  private seedAttribution(record: any, entries: Entry[]) {
+    const kurviq = record ?? {};
+    const authors: Record<string, unknown> = kurviq.authors && typeof kurviq.authors === "object" ? kurviq.authors : {};
+    for (const entry of entries) {
+      const author = authors[entry.id];
+      entry.a = entry.k === "el" && typeof author === "string" && author.length <= 40 ? author : null;
+    }
+    const receipts = record ? this.seedReceipts(kurviq.receipts) : null;
+    const onBehalf = this.seedOnBehalf(kurviq);
+    return { receipts, onBehalf };
+  }
+
+  private seedOnBehalf(kurviq: any) {
+    const onBehalf = Array.isArray(kurviq.onBehalf)
+      ? kurviq.onBehalf
+          .filter((item: any) => item && typeof item.by === "string" && typeof item.for === "string" && isInt(item.at))
+          .slice(-ON_BEHALF_KEPT)
+          .map((item: any) => ({ by: item.by.slice(0, 40), for: item.for.slice(0, 40), at: item.at }))
+      : null;
+    return onBehalf;
+  }
+
   /**
    * The seeded file's `kurviq` record, read from Drive with the seeding
    * editor's own access (their sealed token), only if the bytes are exactly
    * the ticket's revision (its md5); null: not readable now (the first save
    * round takes it then), {}: the file has none
    */
-  private async driveRecord(att: Attachment): Promise<any | null> {
+  private async driveRecord(att: Attachment): Promise<any> {
     if (!att.token || !att.head.md5) {
       return null;
     }
@@ -2585,22 +2694,26 @@ export class SceneRoom extends DurableObject<SceneEnv> {
               .slice(-ON_BEHALF_KEPT)
           : null,
       );
-      let changed = false;
-      for (const entry of this.snap.values()) {
-        if (entry.k === "el" && entry.seq <= this.num("maxDeleted")) {
-          const author = typeof authors[entry.id] === "string" && (authors[entry.id] as string).length <= 40 ? (authors[entry.id] as string) : null;
-          if (entry.a !== author && entry.a !== "outside") {
-            entry.a = author;
-            changed = true;
-          }
-        }
-      }
-      if (changed) {
-        this.writeSnapshot();
-      }
+      this.restoreSeedAuthors(authors);
       this.setMeta("seedCheck", null);
     });
     return true;
+  }
+
+  private restoreSeedAuthors(authors: Record<string, unknown>) {
+    let changed = false;
+    for (const entry of this.snap.values()) {
+      if (entry.k === "el" && entry.seq <= this.num("maxDeleted")) {
+        const author = typeof authors[entry.id] === "string" && (authors[entry.id] as string).length <= 40 ? (authors[entry.id] as string) : null;
+        if (entry.a !== author && entry.a !== "outside") {
+          entry.a = author;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      this.writeSnapshot();
+    }
   }
 
   /** receipts from a seeded file: kept as they were (with their time), merged with what we still had */
@@ -2777,22 +2890,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     this.pending = this.pending.filter((b) => !goneSet.has(b));
     this.rebuildState();
     const seq = this.seq + 1;
-    const entries: Entry[] = [];
-    for (const key of new Set(gone.flatMap((b) => b.entries.map(keyOf)))) {
-      const old = before.get(key)!;
-      const back = this.state.get(key);
-      if (back === old) {
-        continue;
-      }
-      const v = old.v + 1;
-      const n = randomNonce();
-      if (back) {
-        entries.push({ ...back, v, n, seq, t: OWN_TAB, u: seq, ...(back.r ? { r: { ...back.r, version: v, versionNonce: n } } : {}) });
-      } else if (old.r) {
-        // a new element of the discarded changes: deleted (nothing of it is kept)
-        entries.push({ k: "el", id: old.id, c: "", v, n, a: by.pseudonym, seq, t: OWN_TAB, u: seq, r: { ...old.r, isDeleted: true, version: v, versionNonce: n } });
-      }
-    }
+    const entries = this.discardRepairEntries(gone, before, seq, by);
     const lookup = (id: string) => this.state.get(id);
     const repair: Batch = {
       seq,
@@ -2844,6 +2942,26 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         }
       }
     }
+  }
+
+  private discardRepairEntries(gone: Batch[], before: Map<string, Entry>, seq: number, by: { pseudonym: string }) {
+    const entries: Entry[] = [];
+    for (const key of new Set(gone.flatMap((b) => b.entries.map(keyOf)))) {
+      const old = before.get(key)!;
+      const back = this.state.get(key);
+      if (back === old) {
+        continue;
+      }
+      const v = old.v + 1;
+      const n = randomNonce();
+      if (back) {
+        entries.push({ ...back, v, n, seq, t: OWN_TAB, u: seq, ...(back.r ? { r: { ...back.r, version: v, versionNonce: n } } : {}) });
+      } else if (old.r) {
+        // a new element of the discarded changes: deleted (nothing of it is kept)
+        entries.push({ k: "el", id: old.id, c: "", v, n, a: by.pseudonym, seq, t: OWN_TAB, u: seq, r: { ...old.r, isDeleted: true, version: v, versionNonce: n } });
+      }
+    }
+    return entries;
   }
 
   /** after 7 days: changes nobody's work depends on go to the next editor who connects */
@@ -3081,7 +3199,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       for (const { kind, at } of due) {
         this.runningKind = String(kind);
         try {
-          await this.runTimer(String(kind));
+          await this.runTimer(String(kind)); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
         } catch (error: any) {
           // never content: the kind and the error's message
           console.warn(`[scene] ${kind} failed: ${error?.message ?? error}`);
@@ -3170,27 +3288,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       }
       this.checkpointSeq();
       this.q("DELETE FROM tabs WHERE seen < ?", horizon);
-      const receipts = this.metaJson<Record<string, SavedReceipt>>("receipts", {});
-      for (const [tab, receipt] of Object.entries(receipts)) {
-        if (receipt.at < horizon) {
-          delete receipts[tab];
-        }
-      }
-      this.setMeta("receipts", Object.keys(receipts).length ? receipts : null);
-      const forgotten = this.metaJson<Record<string, number>>("forgotten", {});
-      for (const [sub, at] of Object.entries(forgotten)) {
-        if (now - at > REVOCATION_KEPT_MS) {
-          delete forgotten[sub];
-        }
-      }
-      this.setMeta("forgotten", Object.keys(forgotten).length ? forgotten : null);
-      const revokedMarks = this.metaJson<Record<string, number>>("revoked", {});
-      for (const [sub, at] of Object.entries(revokedMarks)) {
-        if (now - at > DAY_MS) {
-          delete revokedMarks[sub];
-        }
-      }
-      this.setMeta("revoked", Object.keys(revokedMarks).length ? revokedMarks : null);
+      this.pruneAccountHistory(now, horizon);
       const confirmed = this.metaJson<Record<string, number>>("confirmed", {});
       for (const [sub, at] of Object.entries(confirmed)) {
         if (now - at > CONFIRMED_FRESH_MS) {
@@ -3223,6 +3321,30 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       this.meta("forgotten") ||
       this.meta("confirmed");
     this.schedule("retention", left ? now + DAY_MS : null);
+  }
+
+  private pruneAccountHistory(now: number, horizon: number) {
+    const receipts = this.metaJson<Record<string, SavedReceipt>>("receipts", {});
+    for (const [tab, receipt] of Object.entries(receipts)) {
+      if (receipt.at < horizon) {
+        delete receipts[tab];
+      }
+    }
+    this.setMeta("receipts", Object.keys(receipts).length ? receipts : null);
+    const forgotten = this.metaJson<Record<string, number>>("forgotten", {});
+    for (const [sub, at] of Object.entries(forgotten)) {
+      if (now - at > REVOCATION_KEPT_MS) {
+        delete forgotten[sub];
+      }
+    }
+    this.setMeta("forgotten", Object.keys(forgotten).length ? forgotten : null);
+    const revokedMarks = this.metaJson<Record<string, number>>("revoked", {});
+    for (const [sub, at] of Object.entries(revokedMarks)) {
+      if (now - at > DAY_MS) {
+        delete revokedMarks[sub];
+      }
+    }
+    this.setMeta("revoked", Object.keys(revokedMarks).length ? revokedMarks : null);
   }
 
   /**
@@ -3511,7 +3633,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
   /** the watch's maker lost access: their channel ends (stopped if `sub` made it); the next renewal by an editor makes a new one */
   private async moveWatch(token: string, sub: string) {
     const channel = this.metaJson<{ id: string; resourceId: string; creator?: string } | null>("channel", null);
-    if (channel && channel.creator === sub) {
+    if (channel?.creator === sub) {
       await this.dcall(`${driveUrls(this.env).api}/channels/stop`, token, { method: "POST", json: { id: channel.id, resourceId: channel.resourceId } });
     }
     this.setMeta("channel", null);
@@ -3529,7 +3651,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const answer = (reason: string) => this.send(ws, { type: "keep-local", ok: false, reason });
     const allowed = () => {
       const ok = this.metaJson<{ sub: string; until: number } | null>("keepLocalOk", null);
-      if (!ok || ok.sub !== att.sub || ok.until < Date.now()) {
+      if (ok?.sub !== att.sub || ok.until < Date.now()) {
         return "shared";
       }
       if (this.sweep().some((other) => other.ws !== ws)) {
@@ -3612,25 +3734,30 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       }
     }
     for (const candidate of candidates) {
-      const blockedKeys = new Set<string>();
-      const group: Batch[] = [];
-      let ended = false;
-      for (const batch of this.pending) {
-        const mine = batch.author === candidate.author;
-        if (mine && batch.via !== candidate.via) {
-          ended = true;
-        }
-        if (mine && !ended && batch.via === candidate.via && !batch.touches.some((key) => blockedKeys.has(key))) {
-          group.push(batch);
-        } else {
-          batch.touches.forEach((key) => blockedKeys.add(key));
-        }
-      }
+      const group = this.groupFor(candidate);
       if (group.length) {
         return group;
       }
     }
     return null;
+  }
+
+  private groupFor(candidate: { author: string; via: string }) {
+    const blockedKeys = new Set<string>();
+    const group: Batch[] = [];
+    let ended = false;
+    for (const batch of this.pending) {
+      const mine = batch.author === candidate.author;
+      if (mine && batch.via !== candidate.via) {
+        ended = true;
+      }
+      if (mine && !ended && batch.via === candidate.via && !batch.touches.some((key) => blockedKeys.has(key))) {
+        group.push(batch);
+      } else {
+        batch.touches.forEach((key) => blockedKeys.add(key));
+      }
+    }
+    return group;
   }
 
   private async saveRound() {
@@ -3769,7 +3896,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const bad: Entry[] = [];
     for (const [k, entry] of entries) {
       try {
-        const value = await plainOf(key, entry);
+        const value = await plainOf(key, entry); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
         if (entry.k === "el" && !validElement(value)) {
           throw new Error("invalid element");
         }
@@ -3836,20 +3963,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     const pseudonym = group[0]?.pseudonym ?? this.pseudonymOfSub(author) ?? "kurviq";
     const op = crypto.randomUUID();
     const receipts = this.receiptsWith(group);
-    const authors: Record<string, string> = {};
-    for (const entry of next.values()) {
-      if (entry.k === "el" && entry.a && !entry.r?.isDeleted) {
-        authors[entry.id] = entry.a;
-      }
-    }
-    const onBehalf = this.metaJson<Array<{ by: string; for: string; at: number }>>("onBehalf", []);
-    for (const behalf of new Set(group.map((batch) => batch.behalf).filter((value): value is string => !!value))) {
-      onBehalf.push({ by: pseudonym, for: behalf, at: Date.now() });
-    }
-    if (behalfOutside) {
-      onBehalf.push({ by: pseudonym, for: "outside", at: Date.now() });
-    }
-    const keptOnBehalf = onBehalf.slice(-ON_BEHALF_KEPT);
+    const { authors, keptOnBehalf } = this.uploadAttribution(next, group, pseudonym, behalfOutside);
     const { json: text, name } = buildSceneFile(plain, { op, receipts, authors, onBehalf: keptOnBehalf });
     const bytes = new TextEncoder().encode(text);
     const md5 = await md5Hex(bytes);
@@ -3861,12 +3975,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     // the head right before uploading: a write that landed since the round's check is merged first
     const head = await getFile(this.genv, token, this.fileId, "headRevisionId");
     if (head.status !== 200) {
-      const problem = problemOf(head);
-      if (problem === "token" || problem === "access" || problem === "not-picked") {
-        return { blocked: problem === "token" ? "token" : "access" };
-      }
-      this.retryLater(isTransient(problem) ? problem : "save-failed");
-      return "retry";
+      return this.failedUpload(head);
     }
     if (head.data?.headRevisionId !== base.revision) {
       return "replan";
@@ -3893,16 +4002,11 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         return "retry";
       }
       this.q("DELETE FROM saves WHERE op = ?", op);
-      const problem = problemOf(answer);
-      if (problem === "token" || problem === "access" || problem === "not-picked") {
-        return { blocked: problem === "token" ? "token" : "access" };
-      }
-      this.retryLater(isTransient(problem) ? problem : "save-failed");
-      return "retry";
+      return this.failedUpload(answer);
     }
     const revision = String(answer.data.headRevisionId);
     this.lastAccess = { sub: author, token, expiresAt: this.access.get(author)?.expiresAt ?? Date.now() + 30 * 60_000 };
-    this.commitSave(op, group, last, revision, String(answer.data.md5Checksum || md5), receipts, keptOnBehalf, repairOf);
+    this.commitSave(op, group, last, { revision, md5: String(answer.data.md5Checksum || md5) }, receipts, keptOnBehalf, repairOf);
     this.setDriveName(answer.data.name);
     this.crashPoint("after-commit");
     await this.audit(op, token, key);
@@ -3910,16 +4014,43 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     return "ok";
   }
 
+  private failedUpload(answer: DriveAnswer): "retry" | { blocked: BlockedAuthor["reason"] } {
+    const problem = problemOf(answer);
+    if (problem === "token" || problem === "access" || problem === "not-picked") {
+      return { blocked: problem === "token" ? "token" : "access" };
+    }
+    this.retryLater(isTransient(problem) ? problem : "save-failed");
+    return "retry";
+  }
+
+  private uploadAttribution(next: Map<string, Entry>, group: Batch[], pseudonym: string, behalfOutside: boolean) {
+    const authors: Record<string, string> = {};
+    for (const entry of next.values()) {
+      if (entry.k === "el" && entry.a && !entry.r?.isDeleted) {
+        authors[entry.id] = entry.a;
+      }
+    }
+    const onBehalf = this.metaJson<Array<{ by: string; for: string; at: number }>>("onBehalf", []);
+    for (const behalf of new Set(group.map((batch) => batch.behalf).filter((value): value is string => !!value))) {
+      onBehalf.push({ by: pseudonym, for: behalf, at: Date.now() });
+    }
+    if (behalfOutside) {
+      onBehalf.push({ by: pseudonym, for: "outside", at: Date.now() });
+    }
+    const keptOnBehalf = onBehalf.slice(-ON_BEHALF_KEPT);
+    return { authors, keptOnBehalf };
+  }
+
   private commitSave(
     op: string,
     group: Batch[],
     last: Map<string, Entry>,
-    revision: string,
-    md5: string,
+    head: { revision: string; md5: string },
     receipts: Record<string, SavedReceipt>,
     onBehalf: unknown[],
     repairOf?: string | null,
   ) {
+    const { revision, md5 } = head;
     const seqs = new Set(group.map((batch) => batch.seq));
     this.ctx.storage.transactionSync(() => {
       last.forEach((entry, k) => this.snap.set(k, entry));
@@ -4026,8 +4157,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
           String(row.op),
           group,
           last,
-          found.id,
-          String(row.md5),
+          { revision: found.id, md5: String(row.md5) },
           meta.receipts ?? this.receiptsWith(group),
           meta.onBehalf ?? this.metaJson("onBehalf", []),
           meta.repairOf,
@@ -4165,7 +4295,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       if (!oldest) {
         return false;
       }
-      await this.dcall(`${driveUrls(this.env).api}/files/${this.fileId}/revisions/${oldest.rev}`, token, { method: "DELETE" });
+      await this.dcall(`${driveUrls(this.env).api}/files/${this.fileId}/revisions/${oldest.rev}`, token, { method: "DELETE" }); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
       pins = pins.filter((pin) => pin !== oldest);
       this.setMeta("pins", pins);
     }
@@ -4306,10 +4436,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         } else {
           const element = { ...change.value, version: v, versionNonce: n };
           entry.r = readableOf(element);
-          entry.c = await encryptContent(key, "el", change.id, contentOf(element));
+          entry.c = await encryptContent(key, "el", change.id, contentOf(element)); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
         }
       } else {
-        entry.c = await encryptContent(key, change.k, change.id, change.value);
+        entry.c = await encryptContent(key, change.k, change.id, change.value); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
         if (change.k === "font") {
           entry.fontId = change.value.id;
         }
@@ -4327,23 +4457,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
    * `alsoInTransaction`: written atomically with it (the audit's obligation).
    */
   private commitOutside(entries: Entry[], head: { revision: string; md5: string } | null, alsoInTransaction?: () => void) {
-    const deletedIds = new Set(entries.filter((entry) => entry.r?.isDeleted).map((entry) => entry.id));
-    if (deletedIds.size) {
-      const incoming = new Map(entries.map((entry) => [keyOf(entry), entry]));
-      const stillUsed = new Set<string>();
-      for (const [key, current] of this.state) {
-        const r = (incoming.get(key) ?? current).r;
-        if (!r || r.isDeleted || deletedIds.has(key)) {
-          continue;
-        }
-        for (const id of [r.containerId, r.frameId, r.startId, r.endId, ...r.boundIds]) {
-          if (id && deletedIds.has(id)) {
-            stillUsed.add(id);
-          }
-        }
-      }
-      entries = entries.filter((entry) => !(entry.r?.isDeleted && stillUsed.has(entry.id)));
-    }
+    entries = this.protectOutsideReferences(entries);
     const pendingKeys = new Set(this.pending.flatMap((batch) => batch.entries.map(keyOf)));
     this.seqNow = this.seq + 1;
     const seq = this.seqNow;
@@ -4388,6 +4502,27 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     }
   }
 
+  private protectOutsideReferences(entries: Entry[]) {
+    const deletedIds = new Set(entries.filter((entry) => entry.r?.isDeleted).map((entry) => entry.id));
+    if (deletedIds.size) {
+      const incoming = new Map(entries.map((entry) => [keyOf(entry), entry]));
+      const stillUsed = new Set<string>();
+      for (const [key, current] of this.state) {
+        const r = (incoming.get(key) ?? current).r;
+        if (!r || r.isDeleted || deletedIds.has(key)) {
+          continue;
+        }
+        for (const id of [r.containerId, r.frameId, r.startId, r.endId, ...r.boundIds]) {
+          if (id && deletedIds.has(id)) {
+            stillUsed.add(id);
+          }
+        }
+      }
+      entries = entries.filter((entry) => !(entry.r?.isDeleted && stillUsed.has(entry.id)));
+    }
+    return entries;
+  }
+
   // ---------------------------------------------------------------------------
   // pins: one milestone per edit day, the latest agent mark, at most 30 of Kurviq's
   // ---------------------------------------------------------------------------
@@ -4418,9 +4553,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (base.revision && base.at && dayOf(base.at) !== dayOf(Date.now()) && this.meta("pinDay") !== dayOf(base.at)) {
       if (!pins.some((pin) => pin.rev === base.revision) && (await makeRoom())) {
         const answer = await keep(base.revision, true);
-        if (answer.status === 200) {
-          pins.push({ rev: base.revision, kind: "day", at: Date.now() });
-        }
+        this.addDayPin(answer, pins, base.revision);
       }
       this.setMeta("pinDay", dayOf(base.at));
     }
@@ -4432,16 +4565,42 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         }
         if (previous) {
           // un-pinning the previous mark; if Drive doesn't allow it, agent marks are no longer pinned at all
-          if ((await keep(previous.rev, false)).status === 200) {
-            pins = pins.filter((pin) => pin !== previous);
-          } else {
-            this.setMeta("agentPins", "off");
-            previous.kind = "day";
-          }
+          pins = this.unpinPreviousResult(await keep(previous.rev, false), pins, previous);
         }
       }
       await patchFile(this.genv, token, this.fileId, { appProperties: { agentRev: revision, agentAt: new Date().toISOString() } });
     }
     this.setMeta("pins", pins);
   }
+
+  private addDayPin(answer: DriveAnswer, pins: Pin[], revision: string) {
+    if (answer.status === 200) {
+      pins.push({ rev: revision, kind: "day", at: Date.now() });
+    }
+  }
+
+  private unpinPreviousResult(answer: DriveAnswer, pins: Pin[], previous: Pin) {
+    if (answer.status === 200) {
+      pins = pins.filter((pin) => pin !== previous);
+    } else {
+      this.setMeta("agentPins", "off");
+      previous.kind = "day";
+    }
+    return pins;
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }

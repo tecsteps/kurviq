@@ -34,7 +34,7 @@ const hexToRgb = (color: string) => {
     return null;
   }
   const full = hex.length === 3 ? hex.replace(/./g, "$&$&") : hex;
-  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  return [0, 2, 4].map((i) => Number.parseInt(full.slice(i, i + 2), 16));
 };
 
 const luminance = ([r, g, b]: number[]) => {
@@ -108,7 +108,7 @@ const colorOfImage = async (image: any, box: Box, files: BinaryFiles) => {
     return null;
   }
   const img = await loadImage(image.fileId, file.dataURL);
-  if (!img || !img.naturalWidth) {
+  if (!img?.naturalWidth) {
     return null;
   }
   const part = intersection(box, [image.x, image.y, image.x + image.width, image.y + image.height]);
@@ -149,7 +149,8 @@ const colorOfImage = async (image: any, box: Box, files: BinaryFiles) => {
 
 const preview = (text: string) => {
   const line = text.replace(/\s+/g, " ").trim();
-  return `"${line.length > 40 ? `${line.slice(0, 37)}…` : line}"`;
+  const shown = line.length > 40 ? `${line.slice(0, 37)}…` : line;
+  return `"${shown}"`;
 };
 
 export const checkDeck = async (
@@ -175,8 +176,12 @@ export const checkDeck = async (
     const any = el as any;
     if (el.type === "text" && !any.containerId && !el.angle) {
       const size = measureText(any.text, getFontString(any), any.lineHeight);
-      const x =
-        any.textAlign === "right" ? el.x + el.width - size.width : any.textAlign === "center" ? el.x + (el.width - size.width) / 2 : el.x;
+      let x = el.x;
+      if (any.textAlign === "right") {
+        x = el.x + el.width - size.width;
+      } else if (any.textAlign === "center") {
+        x = el.x + (el.width - size.width) / 2;
+      }
       box = [x, el.y, x + size.width, el.y + size.height];
     }
     measured.set(el.id, box);
@@ -223,7 +228,7 @@ export const checkDeck = async (
         })()));
 
   const report: any[] = [];
-  for (const [index, slide] of slides.entries()) {
+  const checkSlide = async (index: number, slide: (typeof slides)[number]) => {
     const number = index + 1;
     const data = slideData(slide);
     const frameBox: Box = [slide.x, slide.y, slide.x + slide.width, slide.y + slide.height];
@@ -232,77 +237,85 @@ export const checkDeck = async (
     const add = (kind: string, message: string, id?: string) =>
       ignores(id ? map.get(id) : slide, kind) || issues.push({ slide: number, kind, message, ...(id ? { id } : {}) });
 
-    // cut off at the slide edge (frames clip their content)
-    for (const el of own) {
-      if (isDecoration(el, slide.id)) {
-        continue;
-      }
-      const [x1, y1, x2, y2] = boxOf(el);
-      const out = Math.max(frameBox[0] - x1, frameBox[1] - y1, x2 - frameBox[2], y2 - frameBox[3]);
-      // a text's box includes line spacing above and below the letters
-      const tolerance = el.type === "text" ? Math.max(2, (el as any).fontSize * 0.2) : 2;
-      if (out > tolerance) {
-        add("clipped", `${el.type} ${el.id}${el.type === "text" ? ` ${preview((el as any).text)}` : ""} sticks out of the slide by ${round(out)}px and is cut off`, el.id);
-      }
-    }
-
-    // drawn on the slide but not part of it: not shown in presentations / PDF, no click steps
-    for (const el of elements) {
-      if (el.frameId || el.type === "frame" || (el as any).containerId) {
-        continue;
-      }
-      const box = boxOf(el);
-      if (area(intersection(box, frameBox)) > area(box) * 0.5 && area(box) > 0) {
-        add("not-in-slide", `${el.type} ${el.id} lies on this slide but isn't part of it (frameId missing): presentations and PDFs leave it out`, el.id);
-      }
-    }
-
-    // text that doesn't fit its shape
-    for (const el of content) {
-      const any = el as any;
-      if (el.type === "text" && any.containerId) {
-        const container = map.get(any.containerId);
-        if (!container || container.type === "arrow") {
+    const checkClipping = () => {
+      // cut off at the slide edge (frames clip their content)
+      for (const el of own) {
+        if (isDecoration(el, slide.id)) {
           continue;
         }
-        const dims: any = refreshTextDimensions(any, container, map) || {};
-        const height = dims.height ?? el.height;
-        const max = getBoundTextMaxHeight(container, { ...any, ...dims });
-        if (height > max + 1) {
-          add("overflow", `label ${preview(any.text)} of ${container.id} needs ${round(height)}px but the shape has room for ${round(max)}px: make the shape taller or the text shorter`, el.id);
-        }
-      } else if (el.type === "text" && !el.angle) {
-        // a free text bigger than its own box: the browser cuts it off at the box
-        // (renders and PDFs don't), e.g. after a font change measured with another font
-        const dims: any = refreshTextDimensions(any, null, map, any.originalText ?? any.text) || {};
-        const width =
-          any.autoResize === false
-            ? (refreshTextDimensions({ ...any, autoResize: true }, null, map, dims.text ?? any.text) as any)?.width ?? el.width
-            : dims.width ?? el.width;
-        const height = dims.height ?? el.height;
-        if (width > el.width + 2 || height > el.height + 2) {
-          add(
-            "text-box",
-            `text ${preview(any.text)} needs ${round(width)}×${round(height)}px but its box is ${round(el.width)}×${round(el.height)}px: the user's browser cuts it off. Update it with "autoResize": true (one line, grows with the text) or a "width" (wraps at it)`,
-            el.id,
-          );
+        const [x1, y1, x2, y2] = boxOf(el);
+        const out = Math.max(frameBox[0] - x1, frameBox[1] - y1, x2 - frameBox[2], y2 - frameBox[3]);
+        // a text's box includes line spacing above and below the letters
+        const tolerance = el.type === "text" ? Math.max(2, (el as any).fontSize * 0.2) : 2;
+        if (out > tolerance) {
+          const label = el.type === "text" ? ` ${preview((el as any).text)}` : "";
+          add("clipped", `${el.type} ${el.id}${label} sticks out of the slide by ${round(out)}px and is cut off`, el.id);
         }
       }
-    }
-
+    };
+    checkClipping();
+    const checkSlideMembership = () => {
+      // drawn on the slide but not part of it: not shown in presentations / PDF, no click steps
+      for (const el of elements) {
+        if (el.frameId || el.type === "frame" || (el as any).containerId) {
+          continue;
+        }
+        const box = boxOf(el);
+        if (area(intersection(box, frameBox)) > area(box) * 0.5 && area(box) > 0) {
+          add("not-in-slide", `${el.type} ${el.id} lies on this slide but isn't part of it (frameId missing): presentations and PDFs leave it out`, el.id);
+        }
+      }
+    };
+    checkSlideMembership();
+    const checkTextFit = () => {
+      // text that doesn't fit its shape
+      const checkTextElement = (el: ExcalidrawElement) => {
+        const any = el as any;
+        if (el.type === "text" && any.containerId) {
+          const container = map.get(any.containerId);
+          if (!container || container.type === "arrow") {
+            return;
+          }
+          const dims: any = refreshTextDimensions(any, container, map) || {};
+          const height = dims.height ?? el.height;
+          const max = getBoundTextMaxHeight(container, { ...any, ...dims });
+          if (height > max + 1) {
+            add("overflow", `label ${preview(any.text)} of ${container.id} needs ${round(height)}px but the shape has room for ${round(max)}px: make the shape taller or the text shorter`, el.id);
+          }
+        } else if (el.type === "text" && !el.angle) {
+          // a free text bigger than its own box: the browser cuts it off at the box
+          // (renders and PDFs don't), e.g. after a font change measured with another font
+          const dims: any = refreshTextDimensions(any, null, map, any.originalText ?? any.text) || {};
+          const width =
+            any.autoResize === false
+              ? (refreshTextDimensions({ ...any, autoResize: true }, null, map, dims.text ?? any.text) as any)?.width ?? el.width
+              : dims.width ?? el.width;
+          const height = dims.height ?? el.height;
+          if (width > el.width + 2 || height > el.height + 2) {
+            add(
+              "text-box",
+              `text ${preview(any.text)} needs ${round(width)}×${round(height)}px but its box is ${round(el.width)}×${round(el.height)}px: the user's browser cuts it off. Update it with "autoResize": true (one line, grows with the text) or a "width" (wraps at it)`,
+              el.id,
+            );
+          }
+        }
+      };
+      for (const el of content) {
+        checkTextElement(el);
+      }
+    };
+    checkTextFit();
     // overlapping text (and text over pictures)
     const texts = own.filter((el) => el.type === "text" && !isDecoration(el, slide.id));
     const blockers = own.filter((el) => el.type === "image");
-    for (let i = 0; i < texts.length; i++) {
-      const a = texts[i] as any;
-      const boxA = boxOf(a);
-      for (const b of [...texts.slice(i + 1), ...blockers] as any[]) {
+    const checkOverlaps = () => {
+      const checkOverlap = (a: any, boxA: Box, b: any) => {
         if (a.containerId && a.containerId === b.containerId) {
-          continue;
+          return;
         }
         // text on a picture is fine when drawn above it (its contrast is checked below)
         if (b.type === "image" && elements.indexOf(b) < elements.indexOf(a)) {
-          continue;
+          return;
         }
         const boxB = boxOf(b);
         const shared = area(intersection(boxA, boxB));
@@ -315,36 +328,50 @@ export const checkDeck = async (
             a.id,
           );
         }
-      }
-    }
-
-    // readability: size and contrast against what's behind the text
-    for (const el of texts as any[]) {
-      // formatted text: each piece in its own size and color
-      const doc = richDocOf(el);
-      const pieces: Array<{ size: number; color: string; text: string }> = doc
-        ? doc.p.flatMap((para) =>
-            para.r.map((run) => ({
-              size: Math.round(el.fontSize * (run.z || 1)),
-              color: run.c || (run.a ? LINK_COLOR : el.strokeColor),
-              text: run.t,
-            })),
-          )
-        : [{ size: el.fontSize, color: el.strokeColor, text: el.text }];
-      const smallest = pieces.reduce((min, piece) => (piece.size < min.size ? piece : min), pieces[0]);
-      if (smallest && smallest.size < MIN_FONT) {
-        add("small-text", `text ${preview(smallest.text)} is ${smallest.size}px: hard to read on a projector (use ${MIN_FONT}px or more)`, el.id);
-      }
-      const box = boxOf(el);
-      const behind = await colorBehind(el, slide.id);
-      for (const piece of behind ? pieces.filter((p, i) => pieces.findIndex((q) => q.color === p.color && q.size >= 28 === p.size >= 28) === i) : []) {
-        const ratio = contrast(piece.color, behind!.color);
-        const needed = piece.size >= 28 ? 3 : 4.5;
-        if (ratio !== null && ratio < needed) {
-          add("contrast", `text ${preview(piece.text)} (${piece.color} on ${behind!.label}) has contrast ${ratio.toFixed(1)}:1, below ${needed}:1`, el.id);
-          break;
+      };
+      for (let i = 0; i < texts.length; i++) {
+        const a = texts[i] as any;
+        const boxA = boxOf(a);
+        for (const b of [...texts.slice(i + 1), ...blockers] as any[]) {
+          checkOverlap(a, boxA, b);
         }
       }
+    };
+    checkOverlaps();
+    // readability: size and contrast against what's behind the text
+    const checkReadability = async (el: any) => {
+      // formatted text: each piece in its own size and color
+      const checkTextSize = () => {
+        const doc = richDocOf(el);
+        const pieces: Array<{ size: number; color: string; text: string }> = doc
+          ? doc.p.flatMap((para) =>
+              para.r.map((run) => ({
+                size: Math.round(el.fontSize * (run.z || 1)),
+                color: run.c || (run.a ? LINK_COLOR : el.strokeColor),
+                text: run.t,
+              })),
+            )
+          : [{ size: el.fontSize, color: el.strokeColor, text: el.text }];
+        const smallest = pieces.reduce((min, piece) => (piece.size < min.size ? piece : min), pieces[0]);
+        if (smallest && smallest.size < MIN_FONT) {
+          add("small-text", `text ${preview(smallest.text)} is ${smallest.size}px: hard to read on a projector (use ${MIN_FONT}px or more)`, el.id);
+        }
+        return pieces;
+      };
+      const pieces = checkTextSize();
+      const box = boxOf(el);
+      const behind = await colorBehind(el, slide.id);
+      const checkContrast = () => {
+        for (const piece of behind ? pieces.filter((p, i) => pieces.findIndex((q) => q.color === p.color && q.size >= 28 === p.size >= 28) === i) : []) {
+          const ratio = contrast(piece.color, behind!.color);
+          const needed = piece.size >= 28 ? 3 : 4.5;
+          if (ratio !== null && ratio < needed) {
+            add("contrast", `text ${preview(piece.text)} (${piece.color} on ${behind!.label}) has contrast ${ratio.toFixed(1)}:1, below ${needed}:1`, el.id);
+            break;
+          }
+        }
+      };
+      checkContrast();
       // covered by a filled shape drawn on top of it
       const z = elements.indexOf(el);
       const cover = elements.find(
@@ -362,57 +389,69 @@ export const checkDeck = async (
       if (!slideData(el).copyOf && /\{(page|total|title|deck|date)\}/.test(el.text)) {
         add("placeholder", `text ${preview(el.text)} uses a placeholder: those are only filled in template elements`, el.id);
       }
+    };
+    for (const el of texts as any[]) {
+      await checkReadability(el);
     }
 
-    // click steps
-    const steps = new Set<number>();
-    for (const el of content) {
-      const step = elementStep(el, map);
-      if (step > 0) {
-        steps.add(step);
-      }
-    }
-    for (const el of elements) {
-      if (!el.frameId && (slideData(el).step ?? 0) > 0 && area(intersection(boxOf(el), frameBox)) > 0) {
-        add("step-ignored", `${el.type} ${el.id} has step ${slideData(el).step} but isn't part of the slide, so it never hides`, el.id);
-      }
-    }
-    // a connector showing before what it connects points at nothing
-    for (const el of content as any[]) {
-      if (el.type !== "arrow" && el.type !== "line") {
-        continue;
-      }
-      const own = elementStep(el, map);
-      for (const binding of [el.startBinding, el.endBinding]) {
-        const target = binding?.elementId && map.get(binding.elementId);
-        if (target && elementStep(target, map) > own) {
-          add(
-            "step-order",
-            `${el.type} ${el.id} appears at click ${own} but connects ${target.type} ${target.id}, which only appears at click ${elementStep(target, map)}`,
-            el.id,
-          );
+    const checkClickSteps = () => {
+      // click steps
+      const steps = new Set<number>();
+      for (const el of content) {
+        const step = elementStep(el, map);
+        if (step > 0) {
+          steps.add(step);
         }
       }
-    }
-    const sorted = [...steps].sort((a, b) => a - b);
-    sorted.forEach((step, i) => {
-      if (step !== i + 1) {
-        add("step-gap", `click steps are ${sorted.join(", ")}: click ${i + 1} reveals nothing`);
+      for (const el of elements) {
+        if (!el.frameId && (slideData(el).step ?? 0) > 0 && area(intersection(boxOf(el), frameBox)) > 0) {
+          add("step-ignored", `${el.type} ${el.id} has step ${slideData(el).step} but isn't part of the slide, so it never hides`, el.id);
+        }
       }
-    });
+      const checkConnectorSteps = () => {
+        // a connector showing before what it connects points at nothing
+        for (const el of content as any[]) {
+          if (el.type !== "arrow" && el.type !== "line") {
+            continue;
+          }
+          const own = elementStep(el, map);
+          for (const binding of [el.startBinding, el.endBinding]) {
+            const target = binding?.elementId && map.get(binding.elementId);
+            if (target && elementStep(target, map) > own) {
+              add(
+                "step-order",
+                `${el.type} ${el.id} appears at click ${own} but connects ${target.type} ${target.id}, which only appears at click ${elementStep(target, map)}`,
+                el.id,
+              );
+            }
+          }
+        }
+      };
+      checkConnectorSteps();
+      const sorted = [...steps].sort((a, b) => a - b);
+      sorted.forEach((step, i) => {
+        if (step !== i + 1) {
+          add("step-gap", `click steps are ${sorted.join(", ")}: click ${i + 1} reveals nothing`);
+        }
+      });
 
-    if (!data.notes?.trim()) {
-      add("notes", "no speaker notes");
-    }
-    if (slide.width !== 1920 || slide.height !== 1080) {
-      add("size", `slide is ${round(slide.width)}×${round(slide.height)}, not 1920×1080 (16:9)`);
-    }
-    for (const other of frames) {
-      if (other.id !== slide.id && area(intersection(frameBox, boxOf(other))) > 0) {
-        add("frames-overlap", `slide overlaps frame "${(other as any).name ?? other.id}"`);
+      return sorted;
+    };
+    const sorted = checkClickSteps();
+    const checkSlideMetadata = () => {
+      if (!data.notes?.trim()) {
+        add("notes", "no speaker notes");
       }
-    }
-
+      if (slide.width !== 1920 || slide.height !== 1080) {
+        add("size", `slide is ${round(slide.width)}×${round(slide.height)}, not 1920×1080 (16:9)`);
+      }
+      for (const other of frames) {
+        if (other.id !== slide.id && area(intersection(frameBox, boxOf(other))) > 0) {
+          add("frames-overlap", `slide overlaps frame "${(other as any).name ?? other.id}"`);
+        }
+      }
+    };
+    checkSlideMetadata();
     report.push({
       slide: number,
       id: slide.id,
@@ -425,22 +464,27 @@ export const checkDeck = async (
       ...(data.template === false ? { template: false } : {}),
       ...(data.hidden?.length ? { templateElementsRemoved: data.hidden.length } : {}),
     });
+  };
+  for (const [index, slide] of slides.entries()) {
+    await checkSlide(index, slide);
   }
 
-  // a label must be on the same slide as its shape (else it is left out there)
-  for (const el of elements as any[]) {
-    const container = el.containerId && map.get(el.containerId);
-    if (container && (container.frameId ?? null) !== (el.frameId ?? null)) {
-      const number = slides.findIndex((slide) => slide.id === container.frameId) + 1;
-      issues.push({
-        slide: number || null,
-        id: el.id,
-        kind: "label-frame",
-        message: `label ${el.id} ${preview(el.text)} is not part of the slide its shape ${container.id} is on: it won't show there when presenting or in PDFs (set its frameId to ${JSON.stringify(container.frameId ?? null)})`,
-      });
+  const checkLabelFrames = () => {
+    // a label must be on the same slide as its shape (else it is left out there)
+    for (const el of elements as any[]) {
+      const container = el.containerId && map.get(el.containerId);
+      if (container && (container.frameId ?? null) !== (el.frameId ?? null)) {
+        const number = slides.findIndex((slide) => slide.id === container.frameId) + 1;
+        issues.push({
+          slide: number || null,
+          id: el.id,
+          kind: "label-frame",
+          message: `label ${el.id} ${preview(el.text)} is not part of the slide its shape ${container.id} is on: it won't show there when presenting or in PDFs (set its frameId to ${JSON.stringify(container.frameId ?? null)})`,
+        });
+      }
     }
-  }
-
+  };
+  checkLabelFrames();
   const stray = elements.filter(
     (el) => !el.frameId && el.type !== "frame" && !(el as any).containerId && !frames.some((f) => area(intersection(boxOf(el), boxOf(f))) > 0),
   );
@@ -458,13 +502,14 @@ export const checkDeck = async (
   for (const issue of issues) {
     counts[issue.kind] = (counts[issue.kind] || 0) + 1;
   }
+  const findings = Object.entries(counts).map(([kind, n]) => `${n} ${kind}`).join(", ");
   return {
     deck,
     slides: report,
     ...(template ? { template: { id: template.id, transition: getTransition(elements) } } : {}),
     issues,
     summary: issues.length
-      ? `${issues.length} findings: ${Object.entries(counts).map(([kind, n]) => `${n} ${kind}`).join(", ")}`
+      ? `${issues.length} findings: ${findings}`
       : "No findings: the deck looks clean.",
   };
 };

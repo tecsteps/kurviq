@@ -108,7 +108,7 @@ export const createRichEditable = (
     while (node && node.parentNode !== root) {
       node = node.parentNode;
     }
-    return node && node.nodeType === 1 ? (node as HTMLElement) : null;
+    return node?.nodeType === 1 ? (node as HTMLElement) : null;
   };
 
   const domToPos = (node: Node, offset: number): Pos => {
@@ -127,7 +127,7 @@ export const createRichEditable = (
     const range = ownerDocument.createRange();
     range.setStart(para, 0);
     range.setEnd(node, offset);
-    const o = range.toString().replace(/​/g, "").length;
+    const o = range.toString().replaceAll("​", "").length;
     return { p: Math.max(0, p), o: Math.min(o, paraText(doc.p[Math.max(0, p)]).length) };
   };
 
@@ -386,6 +386,29 @@ export const createRichEditable = (
     );
   };
 
+  const indentPlain = (delta: 1 | -1, from: Pos, to: Pos) => {
+    // plain paragraphs: 4 spaces at their start
+    let next = doc;
+    let shiftFrom = 0;
+    let shiftTo = 0;
+    const indentParagraph = (p: number) => {
+      if (delta > 0) {
+        next = insertText(next, { p, o: 0 }, "    ", marksAt(next, { p, o: 0 })).doc;
+        if (p === from.p) shiftFrom = 4;
+        if (p === to.p) shiftTo = 4;
+      } else {
+        const spaces = /^ {0,4}/.exec(paraText(next.p[p]))![0].length;
+        next = deleteRange(next, { p, o: 0 }, { p, o: spaces });
+        if (p === from.p) shiftFrom = -Math.min(spaces, from.o);
+        if (p === to.p) shiftTo = -Math.min(spaces, to.o);
+      }
+    };
+    for (let p = from.p; p <= to.p; p++) {
+      indentParagraph(p);
+    }
+    apply(next, { p: from.p, o: from.o + shiftFrom }, { p: to.p, o: to.o + shiftTo });
+  };
+
   const indent = (delta: 1 | -1) => {
     const { from, to } = readSelection();
     const paras = doc.p.slice(from.p, to.p + 1);
@@ -400,23 +423,7 @@ export const createRichEditable = (
       );
       return;
     }
-    // plain paragraphs: 4 spaces at their start
-    let next = doc;
-    let shiftFrom = 0;
-    let shiftTo = 0;
-    for (let p = from.p; p <= to.p; p++) {
-      if (delta > 0) {
-        next = insertText(next, { p, o: 0 }, "    ", marksAt(next, { p, o: 0 })).doc;
-        if (p === from.p) shiftFrom = 4;
-        if (p === to.p) shiftTo = 4;
-      } else {
-        const spaces = paraText(next.p[p]).match(/^ {0,4}/)![0].length;
-        next = deleteRange(next, { p, o: 0 }, { p, o: spaces });
-        if (p === from.p) shiftFrom = -Math.min(spaces, from.o);
-        if (p === to.p) shiftTo = -Math.min(spaces, to.o);
-      }
-    }
-    apply(next, { p: from.p, o: from.o + shiftFrom }, { p: to.p, o: to.o + shiftTo });
+    indentPlain(delta, from, to);
   };
 
   const stepSize = (direction: 1 | -1) => {
@@ -471,6 +478,64 @@ export const createRichEditable = (
 
   const mod = (event: KeyboardEvent) => (isMac ? event.metaKey : event.ctrlKey);
 
+  const markShortcut = (event: KeyboardEvent, key: string) => {
+    if (!event.shiftKey && key === "b") toggleMark("b");
+    else if (!event.shiftKey && key === "i") toggleMark("i");
+    else if (!event.shiftKey && key === "u") toggleMark("u");
+    else if (event.shiftKey && (key === "x" || key === "s")) toggleMark("s");
+    else return false;
+    return true;
+  };
+
+  const listShortcut = (event: KeyboardEvent, code: string) => {
+    if (event.shiftKey && code === "Digit7") toggleList("ol");
+    else if (event.shiftKey && code === "Digit8") toggleList("ul");
+    else if (event.shiftKey && code === "Digit9") toggleList("todo");
+    else return false;
+    return true;
+  };
+
+  const formatShortcut = (event: KeyboardEvent, code: string, key: string) => {
+    if (!event.shiftKey && key === "k") toolbar?.openLink();
+    else if (event.shiftKey && key === "h") toolbar?.toggleHighlight();
+    else if (code === "Backslash") clearFormatting();
+    else return false;
+    return true;
+  };
+
+  const historyShortcut = (event: KeyboardEvent, code: string, key: string) => {
+    if (!event.shiftKey && key === "z") undo();
+    else if ((event.shiftKey && key === "z") || (!isMac && key === "y")) redo();
+    else if (event.shiftKey && (code === "Period" || code === "Comma") && comparePos(readSelection().from, readSelection().to)) {
+      // the selection's size (with nothing selected, the whole text's: Excalidraw's)
+      stepSize(code === "Period" ? 1 : -1);
+    } else return false;
+    return true;
+  };
+
+  const backspace = () => {
+    const { from, to } = readSelection();
+    const para = doc.p[from.p];
+    if (!comparePos(from, to) && from.o === 0 && para.k) {
+      // at a list item's start: it stops being one
+      const { k: _k, d: _d, x: _x, ...rest } = para;
+      apply(setParagraphs(doc, from.p, from.p, () => rest), from);
+    } else if (!comparePos(from, to) && from.o === 0 && from.p > 0) {
+      // at a line's start: it joins the line above, with its own formatting (the browser's merge
+      // would lose it); an empty line above just goes, the line keeps its paragraph style too
+      const above = doc.p[from.p - 1];
+      if (!paraText(above)) {
+        apply({ ...doc, p: doc.p.filter((_, i) => i !== from.p - 1) }, { p: from.p - 1, o: 0 });
+      } else {
+        const end = { p: from.p - 1, o: paraText(above).length };
+        apply(deleteRange(doc, end, from), end);
+      }
+    } else {
+      return false;
+    }
+    return true;
+  };
+
   root.addEventListener("keydown", (event) => {
     if (event.isComposing) {
       return;
@@ -479,44 +544,11 @@ export const createRichEditable = (
     const code = event.code;
     const key = event.key.toLowerCase();
     if (mod(event) && !event.altKey) {
-      if (!event.shiftKey && key === "b") toggleMark("b");
-      else if (!event.shiftKey && key === "i") toggleMark("i");
-      else if (!event.shiftKey && key === "u") toggleMark("u");
-      else if (event.shiftKey && (key === "x" || key === "s")) toggleMark("s");
-      else if (event.shiftKey && code === "Digit7") toggleList("ol");
-      else if (event.shiftKey && code === "Digit8") toggleList("ul");
-      else if (event.shiftKey && code === "Digit9") toggleList("todo");
-      else if (!event.shiftKey && key === "k") toolbar?.openLink();
-      else if (event.shiftKey && key === "h") toolbar?.toggleHighlight();
-      else if (code === "Backslash") clearFormatting();
-      else if (!event.shiftKey && key === "z") undo();
-      else if ((event.shiftKey && key === "z") || (!isMac && key === "y")) redo();
-      else if (event.shiftKey && (code === "Period" || code === "Comma") && comparePos(readSelection().from, readSelection().to)) {
-        // the selection's size (with nothing selected, the whole text's: Excalidraw's)
-        stepSize(code === "Period" ? 1 : -1);
-      } else handled = false;
+      handled = markShortcut(event, key) || listShortcut(event, code) || formatShortcut(event, code, key) || historyShortcut(event, code, key);
     } else if (event.key === "Tab" && !event.altKey && !mod(event)) {
       indent(event.shiftKey ? -1 : 1);
     } else if (event.key === "Backspace" && !mod(event) && !event.altKey) {
-      const { from, to } = readSelection();
-      const para = doc.p[from.p];
-      if (!comparePos(from, to) && from.o === 0 && para.k) {
-        // at a list item's start: it stops being one
-        const { k: _k, d: _d, x: _x, ...rest } = para;
-        apply(setParagraphs(doc, from.p, from.p, () => rest), from);
-      } else if (!comparePos(from, to) && from.o === 0 && from.p > 0) {
-        // at a line's start: it joins the line above, with its own formatting (the browser's merge
-        // would lose it); an empty line above just goes, the line keeps its paragraph style too
-        const above = doc.p[from.p - 1];
-        if (!paraText(above)) {
-          apply({ ...doc, p: doc.p.filter((_, i) => i !== from.p - 1) }, { p: from.p - 1, o: 0 });
-        } else {
-          const end = { p: from.p - 1, o: paraText(above).length };
-          apply(deleteRange(doc, end, from), end);
-        }
-      } else {
-        handled = false;
-      }
+      handled = backspace();
     } else {
       handled = false;
     }
@@ -655,7 +687,7 @@ export const createRichEditable = (
         } catch {}
       }
       if (text) {
-        insert(text.replace(/\r\n?/g, "\n").replace(/\t/g, "    "));
+        insert(text.replace(/\r\n?/g, "\n").replaceAll("\t", "    "));
       }
     },
     true,
@@ -675,10 +707,10 @@ export const createRichEditable = (
     }
     // a click on a checkbox ticks it
     const para = target.closest?.(".rt-p[data-k=todo]") as HTMLElement | null;
-    if (para && para.parentNode === root) {
+    if (para?.parentNode === root) {
       const rect = para.getBoundingClientRect();
       const zoom = app.state.zoom?.value ?? 1;
-      const indentPx = parseFloat(getComputedStyle(para).paddingLeft || "0") * zoom;
+      const indentPx = Number.parseFloat(getComputedStyle(para).paddingLeft || "0") * zoom;
       if (event.clientX < rect.left + indentPx) {
         event.preventDefault();
         toggleChecked(Array.prototype.indexOf.call(root.children, para));

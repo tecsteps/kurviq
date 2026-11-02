@@ -88,6 +88,10 @@
   }
 
   .scenes-switcher__clear {
+    position: absolute;
+    top: 50%;
+    right: 0.45rem;
+    transform: translateY(-50%);
     display: grid;
     place-items: center;
     width: 1.3rem;
@@ -105,13 +109,6 @@
       background: var(--color-primary-light, rgba(105, 101, 219, 0.2));
       color: var(--color-primary);
     }
-  }
-
-  .scenes-switcher__clear {
-    position: absolute;
-    top: 50%;
-    right: 0.45rem;
-    transform: translateY(-50%);
   }
 
   .scenes-switcher__list {
@@ -202,6 +199,9 @@
   }
 
   .scenes-switcher__manage {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
     margin-top: 0.3rem;
     padding: 0.5rem 0.6rem;
     border: none;
@@ -284,12 +284,6 @@
       border-color: var(--color-primary);
       background: var(--color-primary-light, var(--color-surface-high));
     }
-  }
-
-  .scenes-switcher__manage {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
   }
 
   .scenes-switcher__manage-icon {
@@ -542,6 +536,10 @@
   }
 
   .scenes-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.4rem;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -657,13 +655,6 @@
     word-break: break-word;
   }
 
-  .scenes-list-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.4rem;
-  }
-
   .scenes-list {
     list-style: none;
     margin: 0;
@@ -671,9 +662,6 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-  }
-
-  @media (hover: none) {
   }
 
   // the scene panel's actions: Save, then icons (tooltips name them), Delete at the end
@@ -947,7 +935,6 @@
       }
     }
 
-
     &__label {
       display: flex;
       flex-direction: column;
@@ -1074,7 +1061,7 @@
 // hide the "Try Excalidraw+" promo banner (top-right and mobile nav)
 .excalidraw .plus-banner,
 .plus-banner {
-  display: none !important;
+  display: none !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
 }
 
 // QuickTip (index.tsx): on the page itself (portal), outside .excalidraw

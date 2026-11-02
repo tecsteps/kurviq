@@ -121,13 +121,13 @@ const useAttachController = () => {
   useEffect(() => {
     if (api) {
       // fonts the user added (also for the scene that is about to show)
-      loadFontLibrary();
+      loadFontLibrary().catch((error) => console.error("[scenes] Font library could not be loaded", error));
       scenesController.attach(api);
       connectLive();
       if (!IS_RENDERER) {
         startDrive();
         deck.attach(api);
-        connectRouter();
+        connectRouter().catch((error) => console.error("[scenes] Routing could not be connected", error));
         scenesController.startSync();
       }
       // unmounted (e.g. a crash while rendering; the editor then hands out
@@ -239,32 +239,66 @@ const ScenePlace = ({
   /** clickable: the cloud / laptop moves it in or out of Drive, the lock shares it */
   actions?: boolean;
 }) => {
+  const browserLocationTitle = () => {
+    if (item.name === null) {
+      return "Only in this browser: not saved yet";
+    }
+    if (item.localOnly) {
+      return "Only in this browser, not synced";
+    }
+    if (signedIn) {
+      return "Saved in this browser, not in Google Drive yet";
+    }
+    return "Only in this browser (not signed in with Google)";
+  };
+  const driveActionTitle = () => {
+    if (inDrive) {
+      return `${where.title}. Click to keep it only in this browser`;
+    }
+    if (signedIn) {
+      return `${where.title}. Click to put it in Google Drive`;
+    }
+    return `${where.title}. Click to sign in with Google and sync it`;
+  };
+  const privateLocationTitle = () => {
+    if (inDrive) {
+      if (owner) {
+        return `Shared with you by ${owner}`;
+      }
+      return "Private: only you and the people you share it with";
+    }
+    return "Private: only you, in this browser";
+  };
+  const sharingAction = () => {
+    if (mine && inDrive) {
+      return { title: `${who.title}. Click to share it`, onClick: () => openShareDialog(item.name!) };
+    }
+    if (mine) {
+      return { title: `${who.title}. To share it, put it in Google Drive first` };
+    }
+    return {};
+  };
+
   const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
   const inDrive = item.name !== null && !item.localOnly && item.inDrive;
+  const driveLocationTitle = () => {
+    const driveOwner = owner ? `In ${owner}'s Google Drive` : "In your Google Drive";
+    const driveStatus = item.status === "synced" ? "" : ` (${STATUS[item.status].label.toLowerCase()})`;
+    return `${driveOwner}${driveStatus}`;
+  };
   const where = inDrive
     ? {
         kind: "drive" as const,
-        title: `${owner ? `In ${owner}'s Google Drive` : "In your Google Drive"}${item.status === "synced" ? "" : ` (${STATUS[item.status].label.toLowerCase()})`}`,
+        title: driveLocationTitle(),
       }
     : {
         kind: "browser" as const,
-        title:
-          item.name === null
-            ? "Only in this browser: not saved yet"
-            : item.localOnly
-            ? "Only in this browser, not synced"
-            : signedIn
-            ? "Saved in this browser, not in Google Drive yet"
-            : "Only in this browser (not signed in with Google)",
+        title: browserLocationTitle(),
       };
   const mine = actions && !owner && item.name !== null && IS_ONLINE;
   const whereAction = mine
     ? {
-        title: inDrive
-          ? `${where.title}. Click to keep it only in this browser`
-          : signedIn
-          ? `${where.title}. Click to put it in Google Drive`
-          : `${where.title}. Click to sign in with Google and sync it`,
+        title: driveActionTitle(),
         onClick: () => toggleDrive(item.name!, inDrive, signedIn),
       }
     : {};
@@ -273,18 +307,9 @@ const ScenePlace = ({
       ? { kind: "public" as const, title: "Anyone with the link can view it" }
       : {
           kind: "private" as const,
-          title: inDrive
-            ? owner
-              ? `Shared with you by ${owner}`
-              : "Private: only you and the people you share it with"
-            : "Private: only you, in this browser",
+          title: privateLocationTitle(),
         };
-  const whoAction =
-    mine && inDrive
-      ? { title: `${who.title}. Click to share it`, onClick: () => openShareDialog(item.name!) }
-      : mine
-      ? { title: `${who.title}. To share it, put it in Google Drive first` }
-      : {};
+  const whoAction = sharingAction();
   return (
     <span className="scenes-places">
       <PlaceIcon {...where} {...whereAction} />
@@ -311,6 +336,31 @@ const StatusBadge = ({ status, compact }: { status: SyncStatus; compact?: boolea
 // -----------------------------------------------------------------------------
 
 export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
+  const pillStatus = () => {
+    if (state.checking) {
+      return (
+        <QuickTip tip="Local copy, read-only while Drive is checked" className="scenes-pill__status" label={false}>
+          checking…
+        </QuickTip>
+      );
+    }
+    if (state.opening && current === null) {
+      return <span className="scenes-pill__status">opening…</span>;
+    }
+    if (
+      (busy === "saving" || state.sync.running) &&
+      // a local-only scene never syncs, and nothing syncs while signed out
+      !currentItem?.localOnly &&
+      !state.sync.notConnected
+    ) {
+      return <span className="scenes-pill__status">syncing…</span>;
+    }
+    return (
+      // "local" / "local-only": the browser icon says it
+      !["synced", "local", "local-only", "live-drive", "live-server", "live-saving"].includes(status) && <StatusBadge status={status} compact />
+    );
+  };
+
   useAttachController();
   const state = useScenes();
   const { current, busy, list } = state;
@@ -333,21 +383,7 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         <span className="scenes-pill__icon">{LoadIcon}</span>
         <span className="scenes-pill__name">{current ?? state.opening ?? UNTITLED_LABEL}</span>
         {currentItem && <ScenePlace item={currentItem} />}
-        {state.checking ? (
-          <QuickTip tip="Local copy, read-only while Drive is checked" className="scenes-pill__status" label={false}>
-            checking…
-          </QuickTip>
-        ) : state.opening && current === null ? (
-          <span className="scenes-pill__status">opening…</span>
-        ) : (busy === "saving" || state.sync.running) &&
-          // a local-only scene never syncs, and nothing syncs while signed out
-          !currentItem?.localOnly &&
-          !state.sync.notConnected ? (
-          <span className="scenes-pill__status">syncing…</span>
-        ) : (
-          // "local" / "local-only": the browser icon says it
-          !["synced", "local", "local-only", "live-drive", "live-server", "live-saving"].includes(status) && <StatusBadge status={status} compact />
-        )}
+        {pillStatus()}
         {offline && (
           <QuickTip tip="Offline: you keep working here, it syncs once you are back online" className="scenes-pill__offline" label={false}>
             offline
@@ -430,6 +466,18 @@ export const scenesTopRight =
     </>
   );
 
+const useCloseOnOutsidePointer = (onClose: () => void) => {
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (!(event.target as HTMLElement).closest?.(".scenes-switcher")) {
+        onClose();
+      }
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [onClose]);
+};
+
 /**
  * Quick switch: the scenes as a dropdown under the pill. Type to filter,
  * arrows + Enter to pick, Esc to close. The pen on the open scene manages
@@ -462,15 +510,7 @@ const SceneSwitcher = ({
     }
   }, [signedIn]);
 
-  useEffect(() => {
-    const close = (event: PointerEvent) => {
-      if (!(event.target as HTMLElement).closest?.(".scenes-switcher")) {
-        onClose();
-      }
-    };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [onClose]);
+  useCloseOnOutsidePointer(onClose);
 
   const needle = query.trim().toLowerCase();
   type Entry = { item: SceneListItem; owner: string | null } | { item?: undefined; owner: string; name: string; fileId: string };
@@ -486,9 +526,15 @@ const SceneSwitcher = ({
     others.length - others.filter((shared) => matchesFilter(shared.name, query, null)).length;
   const nameOf = (entry: Entry) => (entry.item ? entry.item.name : entry.name);
   // one list, by name (Untitled first), each scene with its space when there are several
-  items.sort((a, b) =>
-    nameOf(a) === null ? -1 : nameOf(b) === null ? 1 : nameOf(a)!.localeCompare(nameOf(b)!) || (a.item ? -1 : 1),
-  );
+  items.sort((a, b) => {
+    if (nameOf(a) === null) {
+      return -1;
+    }
+    if (nameOf(b) === null) {
+      return 1;
+    }
+    return nameOf(a)!.localeCompare(nameOf(b)!) || (a.item ? -1 : 1);
+  });
   const showOwner = others.length > 0;
   // "create" only when the text matches no scene (a sticky filter such as a
   // customer name shouldn't offer itself as a new scene every time)
@@ -509,7 +555,7 @@ const SceneSwitcher = ({
       if (!entry.item) {
         // a scene someone shared: the tab switches into its space and opens it
         const { fileId, name } = entry;
-        scenesController.leaveForReload().then(() => enterSpace(fileId, `/s/${fileId}/${encodeURIComponent(name)}`));
+        scenesController.leaveForReload().then(() => enterSpace(fileId, `/s/${fileId}/${encodeURIComponent(name)}`)).catch(ignore);
       } else if (entry.item.name !== current) {
         scenesController.open(entry.item.name).catch(ignore);
       }
@@ -546,10 +592,10 @@ const SceneSwitcher = ({
   };
 
   return (
-    <div className="scenes-switcher__menu" role="listbox" onKeyDown={onKeyDown}>
+    <div className="scenes-switcher__menu" role="listbox" tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="scenes-switcher__filter">
         <input
-          autoFocus
+          autoFocus // NOSONAR S9379: opening the switcher focuses its filter for arrow and Enter navigation
           placeholder="Filter or create a scene…"
           value={query}
           onChange={(event) => {
@@ -758,7 +804,7 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
         />
         <span className="scenes-switch__track" />
         <span className="scenes-switch__label">
-          Settle clashes automatically
+          {"Settle clashes automatically"}
           <span className="scenes-switch__hint">
             {scenesController.clashMode() === "newest"
               ? "same element changed by two people: the newer edit wins"
@@ -774,7 +820,7 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
         />
         <span className="scenes-switch__track" />
         <span className="scenes-switch__label">
-          New scenes local only
+          {"New scenes local only"}
           <span className="scenes-switch__hint">
             {scenesController.newScenesLocalOnly()
               ? "stay in this browser until you publish them"
@@ -790,7 +836,7 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
         />
         <span className="scenes-switch__track" />
         <span className="scenes-switch__label">
-          Auto-sync
+          {"Auto-sync"}
           <span className="scenes-switch__hint">
             {autoSync
               ? `saved to Drive ${IDLE_PUSH_MS / 1000}s after you stop drawing, changes from others merged in`
@@ -806,15 +852,30 @@ const currentStatusText = (
   status: SyncStatus,
   { autoSync, offline, empty }: { autoSync: boolean; offline: boolean; empty: boolean },
 ) => {
+  const aheadStatusText = () => {
+    if (offline) {
+      return "Changes not in Drive yet. Saved there when Drive is reachable";
+    }
+    if (autoSync) {
+      return `Changes not in Drive yet. Saved there ${IDLE_PUSH_MS / 1000}s after you stop drawing`;
+    }
+    return "Changes not in Drive yet (auto-sync is off for this scene: Save puts them there)";
+  };
+  const localStatusText = () => {
+    if (empty) {
+      return "New, empty scene, only in this browser";
+    }
+    if (autoSync) {
+      return "Only in this browser. Saved to Drive after a short pause";
+    }
+    return "Only in this browser. Save to put it in Drive";
+  };
+
   switch (status) {
     case "synced":
       return "Same as in Drive";
     case "ahead":
-      return offline
-        ? "Changes not in Drive yet. Saved there when Drive is reachable"
-        : autoSync
-        ? `Changes not in Drive yet. Saved there ${IDLE_PUSH_MS / 1000}s after you stop drawing`
-        : "Changes not in Drive yet (auto-sync is off for this scene: Save puts them there)";
+      return aheadStatusText();
     case "behind":
       return autoSync ? "Newer version in Drive, updating…" : "A newer version is in Drive";
     case "diverged":
@@ -824,11 +885,7 @@ const currentStatusText = (
     case "conflict":
       return "You and Drive changed the same elements";
     case "local":
-      return empty
-        ? "New, empty scene, only in this browser"
-        : autoSync
-        ? "Only in this browser. Saved to Drive after a short pause"
-        : "Only in this browser. Save to put it in Drive";
+      return localStatusText();
     case "local-only":
       return "Local only: stays in this browser, never synced to Drive. Publish puts it in Drive.";
     case "untitled":
@@ -865,6 +922,16 @@ const NameForm = ({
   onSubmit: (name: string, options: { localOnly: boolean }) => void;
   onCancel: () => void;
 }) => {
+  const namePlaceholder = () => {
+    if (prompt.mode === "duplicate") {
+      return "Name of the copy";
+    }
+    if (prompt.mode === "rename") {
+      return "New name";
+    }
+    return "Scene name";
+  };
+
   const [value, setValue] = useState(initialValue);
   const offersLocalOnly = prompt.mode === "new" || prompt.mode === "save";
   const [localOnly, setLocalOnly] = useState(() => scenesController.newScenesLocalOnly());
@@ -887,9 +954,9 @@ const NameForm = ({
       }}
     >
       <input
-        autoFocus
+        autoFocus // NOSONAR S9379: naming is the explicit action that opens this form
         className="scenes-input"
-        placeholder={prompt.mode === "duplicate" ? "Name of the copy" : prompt.mode === "rename" ? "New name" : "Scene name"}
+        placeholder={namePlaceholder()}
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
@@ -903,7 +970,7 @@ const NameForm = ({
       {offersLocalOnly && (
         <label className="scenes-form__check">
           <input type="checkbox" checked={localOnly} onChange={(event) => setLocalOnly(event.target.checked)} />
-          Local only (not synced to Drive)
+          {"Local only (not synced to Drive)"}
         </label>
       )}
       <div className="scenes-row">
@@ -929,7 +996,7 @@ const ConflictBox = ({ name, clashes }: { name: string; clashes: number }) => {
       </div>
       <div className="scenes-conflict__actions">
         <button type="button" className="scenes-btn" onClick={() => scenesController.keepMine(name).catch(ignore)}>
-          Keep mine
+          {"Keep mine"}
           <span className="scenes-btn__hint">overwrite Drive</span>
         </button>
         <button
@@ -941,7 +1008,7 @@ const ConflictBox = ({ name, clashes }: { name: string; clashes: number }) => {
             }
           }}
         >
-          Take Drive's
+          {"Take Drive's"}
           <span className="scenes-btn__hint">discard mine</span>
         </button>
         <button
@@ -949,7 +1016,7 @@ const ConflictBox = ({ name, clashes }: { name: string; clashes: number }) => {
           className="scenes-btn"
           onClick={() => scenesController.keepBoth(name).then(setCopyName, ignore)}
         >
-          Keep both
+          {"Keep both"}
           <span className="scenes-btn__hint">mine as a copy</span>
         </button>
       </div>
@@ -959,16 +1026,26 @@ const ConflictBox = ({ name, clashes }: { name: string; clashes: number }) => {
 };
 
 const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean }) => {
+  const autoSyncValue = () => {
+    if (override === undefined) {
+      return "default";
+    }
+    if (override) {
+      return "on";
+    }
+    return "off";
+  };
+
   const name = item.name!;
   const override = scenesController.sceneAutoSyncOverride(name);
-  const value = override === undefined ? "default" : override ? "on" : "off";
+  const value = autoSyncValue();
   return (
     <QuickTip tip="Auto-sync for this scene" label={false}>
     <label className="scenes-scene-sync">
       <select
         aria-label="Auto-sync for this scene"
         value={value}
-        onChange={async (event) => {
+        onChange={(event) => {
           const next = event.target.value;
           try {
             scenesController.setSceneAutoSync(name, next === "default" ? undefined : next === "on");
@@ -989,17 +1066,24 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
 
 /** confirm text for deleting a scene: says exactly what will be lost */
 const confirmDelete = (item: SceneListItem) => {
+  const deleteDescription = () => {
+    if (item.localOnly) {
+      if (item.inDrive) {
+        return "It is local only: it is deleted in this browser. The older copy in Drive is not touched.";
+      }
+      return "It only exists in this browser. It will be gone.";
+    }
+    if (item.inDrive) {
+      return "It is deleted here and moved to the trash of your Google Drive (restorable there for 30 days).";
+    }
+    return "It only exists in this browser. It will be gone.";
+  };
+
   const name = item.name!;
   const unpushed = item.dirty || ["ahead", "diverged", "conflict"].includes(item.status);
   const lines = [
     `Delete “${name}”?`,
-    item.localOnly
-      ? item.inDrive
-        ? "It is local only: it is deleted in this browser. The older copy in Drive is not touched."
-        : "It only exists in this browser. It will be gone."
-      : item.inDrive
-      ? "It is deleted here and moved to the trash of your Google Drive (restorable there for 30 days)."
-      : "It only exists in this browser. It will be gone.",
+    deleteDescription(),
     unpushed && !item.localOnly ? "Its changes that are not in Drive yet are lost." : null,
   ];
   return window.confirm(lines.filter(Boolean).join("\n\n"));
@@ -1049,7 +1133,7 @@ const when = (iso: string | null, now: number) => {
 
 /** "Update scene: oredev" → "Update" (the scene is clear here) */
 const versionLabel = (version: SceneVersion) => {
-  const text = version.message.replace(/^Agent:\s*/i, "").replace(/\s*scenes?:.*$/i, "").trim() || "Change";
+  const text = version.message.replace(/^Agent:\s*/i, "").replace(/scenes?:.*$/i, "").trim() || "Change";
   const label = text[0].toUpperCase() + text.slice(1);
   return label === "Add" ? "Created" : label;
 };
@@ -1135,38 +1219,43 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
     <>
       {restored && <div className="scenes-history__restored">{restored}</div>}
       <ol className="scenes-history">
-        {shown.map((version, index) => (
-          <li key={version.driveRevision} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.driveRevision })}>
-            <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.driveRevision}>
-              <span className="scenes-history__label">
-                {versionLabel(version)}
-                {index === 0 && <span className="scenes-history__tag">latest</span>}
-                {version.agent && <span className="scenes-history__tag scenes-history__tag--agent">agent</span>}
-              </span>
-              <span className="scenes-history__meta">
-                {when(version.at, now)}
-                {version.author ? ` · ${version.author}` : ""}
-              </span>
-            </button>
-            {open === version.driveRevision && (
-              <div className="scenes-history__preview">
-                {preview?.url ? (
-                  <img src={preview.url} alt={`“${name}” as of ${version.at ?? "this version"}`} />
-                ) : preview?.error ? (
-                  <div className="scenes-history__note">Could not load it: {preview.error}</div>
-                ) : (
-                  <div className="scenes-history__note">Loading…</div>
-                )}
-                {index > 0 && preview?.json && (
-                  <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => restore(version, preview.json!)}>
-                    Restore this version
-                  </button>
-                )}
-                {index === 0 && <div className="scenes-history__note">The newest version in Drive.</div>}
-              </div>
-            )}
-          </li>
-        ))}
+        {shown.map((version, index) => {
+          const historyPreview = () => {
+            if (preview?.url) {
+              return <img src={preview.url} alt={`“${name}” as of ${version.at ?? "this version"}`} />;
+            }
+            if (preview?.error) {
+              return <div className="scenes-history__note">Could not load it: {preview.error}</div>;
+            }
+            return <div className="scenes-history__note">Loading…</div>;
+          };
+          return (
+            <li key={version.driveRevision} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.driveRevision })}>
+              <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.driveRevision}>
+                <span className="scenes-history__label">
+                  {versionLabel(version)}
+                  {index === 0 && <span className="scenes-history__tag">latest</span>}
+                  {version.agent && <span className="scenes-history__tag scenes-history__tag--agent">agent</span>}
+                </span>
+                <span className="scenes-history__meta">
+                  {when(version.at, now)}
+                  {version.author ? ` · ${version.author}` : ""}
+                </span>
+              </button>
+              {open === version.driveRevision && (
+                <div className="scenes-history__preview">
+                  {historyPreview()}
+                  {index > 0 && preview?.json && (
+                    <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => restore(version, preview.json!)}>
+                      Restore this version
+                    </button>
+                  )}
+                  {index === 0 && <div className="scenes-history__note">The newest version in Drive.</div>}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ol>
       {versions.length > shown.length && (
         <button type="button" className="scenes-link" onClick={() => setAll(true)}>
@@ -1179,17 +1268,9 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
 
 /** a panel under the scene pill (closes on Esc and a click elsewhere) */
 const Flyover = ({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) => {
-  useEffect(() => {
-    const close = (event: PointerEvent) => {
-      if (!(event.target as HTMLElement).closest?.(".scenes-switcher")) {
-        onClose();
-      }
-    };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [onClose]);
+  useCloseOnOutsidePointer(onClose);
   return (
-    <div
+    <div // NOSONAR S6819, S6847: styled non-modal flyover isolates editor shortcuts with bubbling key events
       className="scenes-flyover"
       role="dialog"
       onKeyDown={(event) => {
@@ -1237,10 +1318,44 @@ const saveAsIcon = (
 );
 
 /** states that need no words in the scene panel (the badge and its tooltip say it) */
-const QUIET_STATUS: string[] = ["synced", "live-drive", "live-server", "live-saving", "local", "local-only", "untitled"];
+const QUIET_STATUS = new Set<string>(["synced", "live-drive", "live-server", "live-saving", "local", "local-only", "untitled"]);
 
 /** the open scene: save, rename, share, sync mode, history */
 const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
+  const sceneStatus = () => {
+    if (busy === "saving") {
+      return "Saving to Google Drive…";
+    }
+    if (busy === "loading") {
+      return "Loading…";
+    }
+    if (currentItem?.pendingRename) {
+      return `Renamed here. In Drive it is still “${currentItem.pendingRename}”, renamed there once reachable`;
+    }
+    if (!withDrive && current !== null) {
+      return "Saved in this browser";
+    }
+    return currentStatusText(status, { autoSync: sceneAutoSync, offline: isOffline(state), empty });
+  };
+  const initialName = (namePrompt: Exclude<NamePrompt, null>) => {
+    if (namePrompt.mode === "saveAs" || namePrompt.mode === "duplicate") {
+      return `${current} copy`;
+    }
+    if (namePrompt.mode === "rename") {
+      return current ?? "";
+    }
+    return "";
+  };
+  const saveTip = () => {
+    if (current === null) {
+      return "Save: give it a name";
+    }
+    if (status === "local-only") {
+      return "Put it in Google Drive (synced from then on)";
+    }
+    return "Save to Google Drive now";
+  };
+
   const state = useScenes();
   const { current, busy, error, list, autoSync, conflict } = state;
   const [prompt, setPrompt] = useState<NamePrompt>(null);
@@ -1271,6 +1386,101 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
     } catch {}
   };
 
+  const sceneActions = () => (
+    <div className="scenes-actions">
+      {(withDrive || current === null) && (
+        <QuickTip tip={saveTip()} label={false}>
+          <button
+            type="button"
+            className="scenes-btn scenes-btn--primary"
+            disabled={isBusy || !!conflict}
+            onClick={() => {
+              if (current === null) {
+                return setPrompt({ mode: "save" });
+              }
+              if (status === "local-only") {
+                return scenesController
+                  .setLocalOnly(current, false)
+                  .then(() => scenesController.save())
+                  .catch(ignore);
+              }
+              return scenesController.save().catch(ignore);
+            }}
+          >
+            {save} {status === "local-only" ? "Publish" : "Save"}
+          </button>
+        </QuickTip>
+      )}
+      {current !== null && (
+        <QuickTip tip="Save as… (a copy under a new name)" label={false}>
+          <button type="button" className="scenes-icon-btn" aria-label="Save as" disabled={isBusy} onClick={() => setPrompt({ mode: "saveAs" })}>
+            {saveAsIcon}
+          </button>
+        </QuickTip>
+      )}
+      <QuickTip tip="New scene" label={false}>
+        <button type="button" className="scenes-icon-btn" aria-label="New scene" disabled={isBusy} onClick={() => setPrompt({ mode: "new" })}>
+          {PlusIcon}
+        </button>
+      </QuickTip>
+      {current !== null && currentItem && (
+        <>
+          <QuickTip tip="Rename" label={false}>
+            <button type="button" className="scenes-icon-btn" aria-label="Rename" disabled={isBusy} onClick={() => setPrompt({ mode: "rename", scene: current })}>
+              {pencilIcon}
+            </button>
+          </QuickTip>
+          <QuickTip tip="Duplicate" label={false}>
+            <button
+              type="button"
+              className="scenes-icon-btn"
+              aria-label="Duplicate"
+              disabled={isBusy}
+              onClick={() => setPrompt({ mode: "duplicate", scene: current })}
+            >
+              {DuplicateIcon}
+            </button>
+          </QuickTip>
+          <SceneSharing item={currentItem} disabled={isBusy} iconOnly />
+          <span className="scenes-actions__spacer" />
+          <QuickTip tip={currentItem.inDrive ? "Delete (also in Drive: goes to its trash)" : "Delete"} label={false}>
+            <button
+              type="button"
+              className="scenes-icon-btn scenes-icon-btn--danger"
+              aria-label="Delete"
+              disabled={isBusy}
+              onClick={() => confirmDelete(currentItem) && scenesController.remove(current).catch(ignore)}
+            >
+              {TrashIcon}
+            </button>
+          </QuickTip>
+        </>
+      )}
+    </div>
+  );
+
+  const sceneFooter = () =>
+    current !== null &&
+    !prompt && (
+      <div className="scenes-current__footer">
+        {currentItem && withDrive && !currentItem.localOnly && <SceneAutoSync item={currentItem} global={autoSync} />}
+        {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.inDrive && (
+          <button
+            type="button"
+            className="scenes-link"
+            disabled={isBusy}
+            onClick={() => {
+              if (status === "behind" || window.confirm(`Discard your local changes to "${current}" and load the version from Drive?`)) {
+                scenesController.discardLocal(current).catch(ignore);
+              }
+            }}
+          >
+            {status === "behind" ? "Load newer version" : "Discard local changes"}
+          </button>
+        )}
+      </div>
+    );
+
   return (
     <Flyover
       title={
@@ -1283,17 +1493,9 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
       onClose={onClose}
     >
       <section className="scenes-current">
-        {(busy || currentItem?.pendingRename || (withDrive && current !== null && !QUIET_STATUS.includes(status))) && (
+        {(busy || currentItem?.pendingRename || (withDrive && current !== null && !QUIET_STATUS.has(status))) && (
         <div className="scenes-current__status">
-          {busy === "saving"
-            ? "Saving to Google Drive…"
-            : busy === "loading"
-            ? "Loading…"
-            : currentItem?.pendingRename
-            ? `Renamed here. In Drive it is still “${currentItem.pendingRename}”, renamed there once reachable`
-            : !withDrive && current !== null
-            ? "Saved in this browser"
-            : currentStatusText(status, { autoSync: sceneAutoSync, offline: isOffline(state), empty })}
+          {sceneStatus()}
         </div>
         )}
 
@@ -1303,96 +1505,15 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
           <NameForm
             key={prompt.mode}
             prompt={prompt}
-            initialValue={
-              prompt.mode === "saveAs" || prompt.mode === "duplicate" ? `${current} copy` : prompt.mode === "rename" ? current ?? "" : ""
-            }
+            initialValue={initialName(prompt)}
             onSubmit={submitName}
             onCancel={() => setPrompt(null)}
           />
         ) : (
-          <div className="scenes-actions">
-            {(withDrive || current === null) && (
-              <QuickTip
-                tip={current === null ? "Save: give it a name" : status === "local-only" ? "Put it in Google Drive (synced from then on)" : "Save to Google Drive now"}
-                label={false}
-              >
-                <button
-                  type="button"
-                  className="scenes-btn scenes-btn--primary"
-                  disabled={isBusy || !!conflict}
-                  onClick={() =>
-                    current === null
-                      ? setPrompt({ mode: "save" })
-                      : status === "local-only"
-                      ? scenesController.setLocalOnly(current, false).then(() => scenesController.save()).catch(ignore)
-                      : scenesController.save().catch(ignore)
-                  }
-                >
-                  {save} {status === "local-only" ? "Publish" : "Save"}
-                </button>
-              </QuickTip>
-            )}
-            {current !== null && (
-              <QuickTip tip="Save as… (a copy under a new name)" label={false}>
-                <button type="button" className="scenes-icon-btn" aria-label="Save as" disabled={isBusy} onClick={() => setPrompt({ mode: "saveAs" })}>
-                  {saveAsIcon}
-                </button>
-              </QuickTip>
-            )}
-            <QuickTip tip="New scene" label={false}>
-              <button type="button" className="scenes-icon-btn" aria-label="New scene" disabled={isBusy} onClick={() => setPrompt({ mode: "new" })}>
-                {PlusIcon}
-              </button>
-            </QuickTip>
-            {current !== null && currentItem && (
-              <>
-                <QuickTip tip="Rename" label={false}>
-                  <button type="button" className="scenes-icon-btn" aria-label="Rename" disabled={isBusy} onClick={() => setPrompt({ mode: "rename", scene: current })}>
-                    {pencilIcon}
-                  </button>
-                </QuickTip>
-                <QuickTip tip="Duplicate" label={false}>
-                  <button type="button" className="scenes-icon-btn" aria-label="Duplicate" disabled={isBusy} onClick={() => setPrompt({ mode: "duplicate", scene: current })}>
-                    {DuplicateIcon}
-                  </button>
-                </QuickTip>
-                <SceneSharing item={currentItem} disabled={isBusy} iconOnly />
-                <span className="scenes-actions__spacer" />
-                <QuickTip tip={currentItem.inDrive ? "Delete (also in Drive: goes to its trash)" : "Delete"} label={false}>
-                  <button
-                    type="button"
-                    className="scenes-icon-btn scenes-icon-btn--danger"
-                    aria-label="Delete"
-                    disabled={isBusy}
-                    onClick={() => confirmDelete(currentItem) && scenesController.remove(current).catch(ignore)}
-                  >
-                    {TrashIcon}
-                  </button>
-                </QuickTip>
-              </>
-            )}
-          </div>
+          sceneActions()
         )}
 
-        {current !== null && !prompt && (
-          <div className="scenes-current__footer">
-            {currentItem && withDrive && !currentItem.localOnly && <SceneAutoSync item={currentItem} global={autoSync} />}
-            {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.inDrive && (
-              <button
-                type="button"
-                className="scenes-link"
-                disabled={isBusy}
-                onClick={() => {
-                  if (status === "behind" || window.confirm(`Discard your local changes to "${current}" and load the version from Drive?`)) {
-                    scenesController.discardLocal(current).catch(ignore);
-                  }
-                }}
-              >
-                {status === "behind" ? "Load newer version" : "Discard local changes"}
-              </button>
-            )}
-          </div>
-        )}
+        {sceneFooter()}
       </section>
 
       {error && <div className="scenes-error">{error}</div>}

@@ -121,19 +121,28 @@ export const recordStats = (env: StatsEnv, ctx: ExecutionContext, batch: StatsBa
 export const countStat = (env: StatsEnv, ctx: ExecutionContext, metric: string, dim = "all") => recordStats(env, ctx, { c: [[metric, dim, 1]] });
 
 const countryOf = (request: Request) => {
-  const country = String((request as { cf?: { country?: unknown } }).cf?.country ?? "");
+  const country = String((request as { cf?: { country?: unknown } }).cf?.country ?? ""); // NOSONAR S6551: Cloudflare country metadata is stringified before the strict two-character allowlist
   return /^[A-Z][A-Z0-9]$/.test(country) ? country : "XX";
 };
 
 /** desktop / mobile / tablet, from the user agent (which is not kept) */
-export const deviceOf = (ua: string) =>
-  /iPad|Tablet|PlayBook|Silk|Kindle|Android(?!.*Mobi)/i.test(ua) ? "tablet" : /Mobi|iPhone|iPod|Android|Windows Phone/i.test(ua) ? "mobile" : "desktop";
+export const deviceOf = (ua: string) => {
+  if (/iPad|Tablet|PlayBook|Silk|Kindle|Android(?!.*Mobi)/i.test(ua)) {
+    return "tablet";
+  }
+  return /Mobi|iPhone|iPod|Android|Windows Phone/i.test(ua) ? "mobile" : "desktop";
+};
 
 const isBot = (ua: string) => !ua || BOT_RE.test(ua);
 
 /** which page a navigation loads: the app (any scene), a shared scene, Kurviq's own public scene, a plain page */
 export const entryOf = (pathname: string) => {
-  const path = pathname.replace(/\.html$/, "").replace(/\/+$/, "") || "/";
+  const withoutHtml = pathname.replace(/\.html$/, "");
+  let end = withoutHtml.length;
+  while (end > 0 && withoutHtml[end - 1] === "/") {
+    end--;
+  }
+  const path = withoutHtml.slice(0, end) || "/";
   if (PLAIN_PAGES[path]) {
     return PLAIN_PAGES[path];
   }
@@ -239,13 +248,13 @@ export const routeStats = (request: Request, response: Response, env: StatsEnv, 
   const url = new URL(request.url);
   if (url.pathname === "/auth/callback") {
     // the app's sign-in (the local install's goes back with a fragment, not ?google=)
-    const done = (response.headers.get("Location") ?? "").match(/[?&]google=(connected|nodrive)\b/);
+    const done = /[?&]google=(connected|nodrive)\b/.exec(response.headers.get("Location") ?? "");
     if (done) {
       countStat(env, ctx, "sign_ins", done[1] === "connected" ? "drive" : "nodrive");
     }
     return;
   }
-  const scene = url.pathname.match(/^\/scene\/([^/]+)\/(ticket|renew)$/);
+  const scene = /^\/scene\/([^/]+)\/(ticket|renew)$/.exec(url.pathname);
   if (!scene || request.method !== "POST" || response.status !== 200 || !FILE_ID_RE.test(scene[1]) || request.headers.get("Origin") !== url.origin) {
     return;
   }
@@ -278,7 +287,12 @@ export const hllPosition = (hash: Uint8Array, p: number) => {
   const lo = view.getUint32(4);
   const index = hi >>> (32 - p);
   const restHi = (hi << p) >>> 0;
-  const rank = restHi !== 0 ? Math.clz32(restHi) + 1 : 32 - p + (lo !== 0 ? Math.clz32(lo) + 1 : 33);
+  let rank;
+  if (restHi !== 0) {
+    rank = Math.clz32(restHi) + 1;
+  } else {
+    rank = 32 - p + (lo !== 0 ? Math.clz32(lo) + 1 : 33);
+  }
   return { index, rank };
 };
 
@@ -326,7 +340,7 @@ const D1_SCHEMA = [
 type StatsDoEnv = { FEEDBACK?: D1; DEV_ORIGIN?: string; STATS_FLUSH_MS?: string };
 
 export class Stats extends DurableObject<StatsDoEnv> {
-  private sql: SqlStorage;
+  private readonly sql: SqlStorage;
   private registers = new Map<string, Uint8Array>();
   private keys = new Map<string, Promise<CryptoKey>>();
   private alarmAt: number | null | undefined;
@@ -393,8 +407,8 @@ export class Stats extends DurableObject<StatsDoEnv> {
     }
     for (const fileId of Array.isArray(batch?.s) ? batch.s.slice(0, 5) : []) {
       if (typeof fileId === "string" && FILE_ID_RE.test(fileId)) {
-        await this.hllAdd(`scenes_hour|${hour}`, day, `scene\n${hour}\n${fileId}`);
-        await this.hllAdd(`scenes_day|${day}`, day, `scene\n${fileId}`);
+        await this.hllAdd(`scenes_hour|${hour}`, day, `scene\n${hour}\n${fileId}`); // NOSONAR S9382: in order on purpose (shared HLL registers and storage)
+        await this.hllAdd(`scenes_day|${day}`, day, `scene\n${fileId}`); // NOSONAR S9382: in order on purpose (shared HLL registers and storage)
       }
     }
     // an alarm within 15 minutes covers everything just added (it reschedules itself)
@@ -447,7 +461,7 @@ export class Stats extends DurableObject<StatsDoEnv> {
 
   /** the next alarm: in 15 minutes with counts to write, else when the next estimate's period ends */
   private async schedule(now: number) {
-    if (this.alarmAt === undefined) {
+    if (this.alarmAt === undefined) { // NOSONAR S6606: null is a cached result; only undefined triggers an alarm read
       this.alarmAt = await this.ctx.storage.getAlarm();
     }
     const pending =
@@ -517,7 +531,7 @@ export class Stats extends DurableObject<StatsDoEnv> {
     }
     const today = dayOf(now);
     this.sql.exec(`DELETE FROM day_key WHERE day < ?`, today);
-    for (const day of [...this.keys.keys()]) {
+    for (const day of this.keys.keys()) {
       if (day < today) {
         this.keys.delete(day);
       }
@@ -575,7 +589,7 @@ export class Stats extends DurableObject<StatsDoEnv> {
       }
     } catch (error) {
       console.warn(`[stats] flush failed, retrying with the next alarm: ${(error as Error).message}`);
-      if (this.alarmAt === undefined) {
+      if (this.alarmAt === undefined) { // NOSONAR S6606: null is a cached result; only undefined triggers an alarm read
         this.alarmAt = await this.ctx.storage.getAlarm();
       }
       if (this.alarmAt == null) {

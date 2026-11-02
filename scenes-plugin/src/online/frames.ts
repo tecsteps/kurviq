@@ -31,7 +31,7 @@ const MAX_PENDING = 8;
  */
 export const createReceiver = () => {
   const partial = new Map<string, { parts: string[]; count: number; at: number }>();
-  return (raw: string): any | null => {
+  return (raw: string): any => {
     // a part is a slice of JSON text packed into JSON again: escaping (\" \\
     // \uXXXX) can make it several times its length, so the bound is generous;
     // the part's own content is checked below

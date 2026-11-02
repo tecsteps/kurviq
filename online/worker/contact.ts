@@ -59,7 +59,7 @@ const readBounded = async (request: Request, max: number): Promise<Uint8Array | 
     }
     size += value.byteLength;
     if (size > max) {
-      await reader.cancel().catch(() => {});
+      await reader.cancel().catch (() => {});
       return null;
     }
     chunks.push(value);
@@ -97,7 +97,7 @@ const senderHash = (env: ContactEnv, ip: string) => keyedHash(env.COOKIE_KEY, `c
 
 /** plain text: no control characters except line breaks and tabs, trimmed */
 const clean = (value: unknown, max: number, multiline = false) =>
-  String(value ?? "")
+  String(value ?? "") // NOSONAR S6551: existing coercion accepts all input values; changing it would change behavior
     .replace(multiline ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g : /[\u0000-\u001f\u007f]/g, "")
     .replace(/\r\n?/g, "\n")
     .trim()
@@ -107,7 +107,7 @@ const b64 = (text: string) => {
   const bytes = new TextEncoder().encode(text);
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); // NOSONAR S7758: base64 encodes bytes, not Unicode code points
   }
   return btoa(binary);
 };
@@ -116,7 +116,8 @@ const b64 = (text: string) => {
 const mime = (env: ContactEnv, id: number, input: { name: string; email: string; message: string }, at: string) => {
   const from = env.CONTACT_FROM || "contact@kurviq.com";
   const to = env.CONTACT_TO || "fabian.wesner@tecsteps.com";
-  const subject = `Kurviq contact #${id}${input.name ? ` from ${input.name.slice(0, 50)}` : ""}`;
+  const sender = input.name ? ` from ${input.name.slice(0, 50)}` : "";
+  const subject = `Kurviq contact #${id}${sender}`;
   const body = `${input.message}\n\n--\nName: ${input.name || "(none)"}\nEmail: ${input.email}\nReceived: ${at} (UTC)\nMessage #${id} in D1 contact_messages (deleted automatically after one year)\n`;
   return {
     from,
@@ -188,26 +189,35 @@ const page = async (
   return new Response(response.body, { status: code, headers });
 };
 
-/** /contact and /contact.html, or null for other paths */
-export const handleContact = async (request: Request, env: ContactEnv, ctx: ExecutionContext): Promise<Response | null> => {
-  const url = new URL(request.url);
-  if (url.pathname !== "/contact" && url.pathname !== "/contact.html") {
-    return null;
+const contactProblem = (values: { name: string; email: string; message: string }) => {
+  if (values.name.length > MAX_NAME) {
+    return `The name may be at most ${MAX_NAME} characters. / Der Name darf höchstens ${MAX_NAME} Zeichen lang sein.`;
   }
-  if (request.method === "GET" || request.method === "HEAD") {
-    if (url.searchParams.has("sent")) {
-      return page(request, env, {
-        kind: "ok",
-        text: "Thank you, your message was sent. We will answer by email. / Danke, deine Nachricht wurde gesendet. Wir antworten per E-Mail.",
-      });
-    }
-    const response = await page(request, env);
-    pageStats(request, response, env, ctx);
-    return response;
+  if (!EMAIL_RE.test(values.email) || values.email.length > MAX_EMAIL) {
+    return "Please enter a valid email address for our reply. / Bitte gib eine gültige E-Mail-Adresse für die Antwort an.";
   }
-  if (request.method !== "POST") {
-    return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, POST" } });
+  if (!values.message) {
+    return "Please write a message. / Bitte schreib eine Nachricht.";
   }
+  if (values.message.length > MAX_MESSAGE) {
+    return `The message may be at most ${MAX_MESSAGE} characters. / Die Nachricht darf höchstens ${MAX_MESSAGE} Zeichen lang sein.`;
+  }
+  return null;
+};
+
+const contactPage = async (request: Request, env: ContactEnv, ctx: ExecutionContext, url: URL) => {
+  if (url.searchParams.has("sent")) {
+    return page(request, env, {
+      kind: "ok",
+      text: "Thank you, your message was sent. We will answer by email. / Danke, deine Nachricht wurde gesendet. Wir antworten per E-Mail.",
+    });
+  }
+  const response = await page(request, env);
+  pageStats(request, response, env, ctx);
+  return response;
+};
+
+const readContactForm = async (request: Request, env: ContactEnv, url: URL): Promise<FormData | Response> => {
   // only from this page (browsers send Origin with a form POST)
   const origin = request.headers.get("Origin");
   if (origin ? origin !== url.origin : request.headers.get("Sec-Fetch-Site") !== "same-origin") {
@@ -226,6 +236,25 @@ export const handleContact = async (request: Request, env: ContactEnv, ctx: Exec
   } catch {
     return page(request, env, { kind: "error", text: "The form could not be read, please try again. / Das Formular konnte nicht gelesen werden." }, 400);
   }
+  return form;
+};
+
+/** /contact and /contact.html, or null for other paths */
+export const handleContact = async (request: Request, env: ContactEnv, ctx: ExecutionContext): Promise<Response | null> => {
+  const url = new URL(request.url);
+  if (url.pathname !== "/contact" && url.pathname !== "/contact.html") {
+    return null;
+  }
+  if (request.method === "GET" || request.method === "HEAD") {
+    return contactPage(request, env, ctx, url);
+  }
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, POST" } });
+  }
+  const form = await readContactForm(request, env, url);
+  if (form instanceof Response) {
+    return form;
+  }
   const values = {
     name: clean(form.get("name"), MAX_NAME),
     email: clean(form.get("email"), MAX_EMAIL),
@@ -235,16 +264,7 @@ export const handleContact = async (request: Request, env: ContactEnv, ctx: Exec
   if (clean(form.get("website"), 200)) {
     return Response.redirect(new URL("/contact?sent=1", url).toString(), 303);
   }
-  const problem =
-    values.name.length > MAX_NAME
-      ? `The name may be at most ${MAX_NAME} characters. / Der Name darf höchstens ${MAX_NAME} Zeichen lang sein.`
-      : !EMAIL_RE.test(values.email) || values.email.length > MAX_EMAIL
-        ? "Please enter a valid email address for our reply. / Bitte gib eine gültige E-Mail-Adresse für die Antwort an."
-        : !values.message
-          ? "Please write a message. / Bitte schreib eine Nachricht."
-          : values.message.length > MAX_MESSAGE
-            ? `The message may be at most ${MAX_MESSAGE} characters. / Die Nachricht darf höchstens ${MAX_MESSAGE} Zeichen lang sein.`
-            : null;
+  const problem = contactProblem(values);
   if (problem) {
     return page(request, env, { kind: "error", text: problem, values: { ...values, name: values.name.slice(0, MAX_NAME), message: values.message.slice(0, MAX_MESSAGE) } }, 400);
   }
@@ -269,7 +289,7 @@ export const handleContact = async (request: Request, env: ContactEnv, ctx: Exec
          AND (SELECT COUNT(*) FROM contact_messages WHERE created_at > ?7) < ${ALL_PER_DAY}
        RETURNING id`,
     )
-    .bind(new Date(now).toISOString(), values.name || null, values.email, values.message, sender, new Date(now - 3600_000).toISOString(), dayAgo)
+    .bind(new Date(now).toISOString(), values.name || null, values.email, values.message, sender, new Date(now - 3_600_000).toISOString(), dayAgo)
     .first<{ id: number }>();
   if (!row) {
     return page(

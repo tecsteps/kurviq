@@ -24,7 +24,7 @@ export const QuickTip = ({
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   return (
-    <span
+    <span // NOSONAR S6819: wrapper contains arbitrary icon children and mouse handlers, so it cannot be an img
       className={className}
       aria-label={label ? tip : undefined}
       role={label ? "img" : undefined}

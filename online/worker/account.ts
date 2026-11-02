@@ -25,16 +25,16 @@ import { devGate, revokeAtGoogle, unsealSceneToken } from "./auth";
 import type { AuthEnv } from "./auth";
 
 const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
-const CONNECTED_KEPT_MS = 3600_000;
-const TOKEN_ENTRY_KEPT_MS = 5 * 3600_000;
-const EPOCH_KEPT_MS = 400 * 24 * 3600_000;
+const CONNECTED_KEPT_MS = 3_600_000;
+const TOKEN_ENTRY_KEPT_MS = 5 * 3_600_000;
+const EPOCH_KEPT_MS = 400 * 24 * 3_600_000;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 type AccountEnv = AuthEnv & { SCENE: DurableObjectNamespace };
 
 export class AccountGuard extends DurableObject<AccountEnv> {
-  private sql: SqlStorage;
+  private readonly sql: SqlStorage;
 
   constructor(ctx: DurableObjectState, env: AccountEnv) {
     super(ctx, env);
@@ -83,9 +83,65 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     }
   }
 
+  private async logoutAll(body: any): Promise<Response> {
+    if (typeof body.sub !== "string" || !body.sub) {
+      return json({ error: "no account" }, 400);
+    }
+    // strictly later than every session issued so far (sessions carry their sign-in time)
+    const epoch = Math.max(Date.now(), this.epoch() + 1);
+    const scenes = this.sql
+      .exec("SELECT id FROM scenes UNION SELECT id FROM connected")
+      .toArray()
+      .map((row) => String(row.id));
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('epoch', ?)", String(epoch));
+      this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('sub', ?)", body.sub);
+      if (typeof body.retryRevoke === "string") {
+        this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('revoke', ?)", body.retryRevoke);
+      }
+      for (const id of scenes) {
+        this.sql.exec("INSERT OR REPLACE INTO revocations (id, epoch) VALUES (?, ?)", id, epoch);
+      }
+      this.sql.exec("DELETE FROM scenes");
+      this.sql.exec("DELETE FROM connected");
+    });
+    await this.ctx.storage.setAlarm(Date.now());
+    return json({ epoch, scenes });
+  }
+
+  private async connectScene(body: any, fileOk: boolean): Promise<Response> {
+    // the scene asks before it accepts a connection: refused for a sign-in older than the epoch
+    if (!fileOk) {
+      return json({ error: "bad file id" }, 400);
+    }
+    const epoch = this.epoch();
+    if (epoch && !(Number(body.iat) >= epoch)) { // NOSONAR S1940: negation also rejects NaN timestamps
+      return json({ ok: false, epoch });
+    }
+    this.sql.exec("INSERT OR REPLACE INTO connected (id, at) VALUES (?, ?)", body.fileId, Date.now());
+    await this.planPrune();
+    return json({ ok: true });
+  }
+
+  private async ageForTest(body: any): Promise<Response> {
+    const ms = Number(body.ms) || 0;
+    this.sql.exec("UPDATE connected SET at = at - ?", ms);
+    this.sql.exec("UPDATE scenes SET at = at - ?", ms);
+    if (this.epoch()) {
+      this.sql.exec("UPDATE meta SET v = ? WHERE k = 'epoch'", String(this.epoch() - ms));
+    }
+    this.prune();
+    return json({
+      epoch: this.epoch(),
+      connected: this.sql.exec("SELECT COUNT(*) AS n FROM connected").toArray()[0]?.n,
+      scenes: this.sql.exec("SELECT COUNT(*) AS n FROM scenes").toArray()[0]?.n,
+      sub: !!this.metaValue("sub"),
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url);
-    const body: any = request.method === "POST" ? await request.json().catch(() => ({})) : {};
+    const body: any = request.method === "POST" ? await request.json().catch (() => ({})) : {};
     const fileOk = typeof body.fileId === "string" && FILE_ID_RE.test(body.fileId);
     if (pathname === "/epoch") {
       // a renewal of a connected tab also keeps its index entries fresh (they run out without)
@@ -96,17 +152,7 @@ export class AccountGuard extends DurableObject<AccountEnv> {
       return json({ epoch: this.epoch() });
     }
     if (pathname === "/scene-connect") {
-      // the scene asks before it accepts a connection: refused for a sign-in older than the epoch
-      if (!fileOk) {
-        return json({ error: "bad file id" }, 400);
-      }
-      const epoch = this.epoch();
-      if (epoch && !(Number(body.iat) >= epoch)) {
-        return json({ ok: false, epoch });
-      }
-      this.sql.exec("INSERT OR REPLACE INTO connected (id, at) VALUES (?, ?)", body.fileId, Date.now());
-      await this.planPrune();
-      return json({ ok: true });
+      return this.connectScene(body, fileOk);
     }
     const ops: Record<string, string> = {
       "/scene-add": "INSERT OR REPLACE INTO scenes (id, at) VALUES (?, ?)",
@@ -126,45 +172,11 @@ export class AccountGuard extends DurableObject<AccountEnv> {
       return json({ ok: true });
     }
     if (pathname === "/logout-all") {
-      if (typeof body.sub !== "string" || !body.sub) {
-        return json({ error: "no account" }, 400);
-      }
-      // strictly later than every session issued so far (sessions carry their sign-in time)
-      const epoch = Math.max(Date.now(), this.epoch() + 1);
-      const scenes = this.sql
-        .exec("SELECT id FROM scenes UNION SELECT id FROM connected")
-        .toArray()
-        .map((row) => String(row.id));
-      this.ctx.storage.transactionSync(() => {
-        this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('epoch', ?)", String(epoch));
-        this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('sub', ?)", body.sub);
-        if (typeof body.retryRevoke === "string") {
-          this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('revoke', ?)", body.retryRevoke);
-        }
-        for (const id of scenes) {
-          this.sql.exec("INSERT OR REPLACE INTO revocations (id, epoch) VALUES (?, ?)", id, epoch);
-        }
-        this.sql.exec("DELETE FROM scenes");
-        this.sql.exec("DELETE FROM connected");
-      });
-      await this.ctx.storage.setAlarm(Date.now());
-      return json({ epoch, scenes });
+      return this.logoutAll(body);
     }
     // tests with the fake Google only: everything stored gets older by `ms`, then pruned
     if (pathname === "/dev-age" && devGate(this.env)) {
-      const ms = Number(body.ms) || 0;
-      this.sql.exec("UPDATE connected SET at = at - ?", ms);
-      this.sql.exec("UPDATE scenes SET at = at - ?", ms);
-      if (this.epoch()) {
-        this.sql.exec("UPDATE meta SET v = ? WHERE k = 'epoch'", String(this.epoch() - ms));
-      }
-      this.prune();
-      return json({
-        epoch: this.epoch(),
-        connected: this.sql.exec("SELECT COUNT(*) AS n FROM connected").toArray()[0]?.n,
-        scenes: this.sql.exec("SELECT COUNT(*) AS n FROM scenes").toArray()[0]?.n,
-        sub: !!this.metaValue("sub"),
-      });
+      return this.ageForTest(body);
     }
     return json({ error: "Not found" }, 404);
   }
@@ -175,7 +187,7 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     for (const row of this.sql.exec("SELECT id, epoch FROM revocations").toArray()) {
       try {
         const stub = this.env.SCENE.get(this.env.SCENE.idFromName(String(row.id)));
-        const res = await stub.fetch("https://scene/forget", {
+        const res = await stub.fetch("https://scene/forget", { // NOSONAR S9382: in order on purpose (preserves rendering or server operation order)
           method: "POST",
           body: JSON.stringify({ fileId: row.id, sub, epoch: row.epoch }),
         });

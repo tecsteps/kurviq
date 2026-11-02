@@ -499,7 +499,7 @@ body.slides-presenting {
   .excalidraw .welcome-screen-center,
   .excalidraw .disable-view-mode,
   .excalidraw .ToolIcon__LaserPointer {
-    display: none !important;
+    display: none !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
   }
 }
 
@@ -652,14 +652,14 @@ body.slides-presenting {
     &:hover,
     &:focus-visible {
       background: var(--color-surface-high);
-      color: var(--color-primary) !important;
+      color: var(--color-primary) !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
     }
   }
 
   // template off: yellow, so the slide stands out
   .slides-card__action--off {
     background: #fff3bf;
-    color: #8a6100 !important;
+    color: #8a6100 !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
   }
 
 }
@@ -821,7 +821,7 @@ body.slides-presenting {
 
 .excalidraw.theme--dark .slides-card__actions .slides-card__action--off {
   background: #5c4400;
-  color: #ffe08a !important;
+  color: #ffe08a !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
 }
 
 // speaker notes (notes.tsx): an icon after each slide's name on the canvas …
@@ -1023,9 +1023,9 @@ body.slides-presenting {
 
 @media (max-width: 600px) {
   .excalidraw .slides-notes-pop {
-    left: 0.75rem !important;
+    left: 0.75rem !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
     right: 0.75rem;
-    width: auto !important;
+    width: auto !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
   }
 }
 

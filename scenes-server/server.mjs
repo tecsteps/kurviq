@@ -38,11 +38,15 @@ const loadEnvFile = (file) => {
   }
   const env = {};
   for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/);
+    const match = /^\s*([\w.-]+)\s*=/.exec(line);
     if (!match) {
       continue;
     }
-    env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
+    const value = line.slice(match[0].length).trim();
+    if (/[\r\n\u2028\u2029]/.test(value)) {
+      continue;
+    }
+    env[match[1]] = value.replace(/^(['"])(.*)\1$/, "$2");
   }
   return env;
 };
@@ -165,7 +169,7 @@ const waitFor = async (predicate, timeoutMs) => {
     if (predicate()) {
       return true;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 250)); // NOSONAR S9382: in order on purpose (polling waits for the preceding observation)
   }
   return false;
 };
@@ -392,7 +396,7 @@ const corsOrigin = (res) => res.kqCorsOrigin || "null";
 const SCENE_VERSION_HEADERS = "X-Scene-Md5, X-Scene-Sha";
 
 const send = (res, status, body, type = "application/json") => {
-  res.writeHead(status, {
+  res.writeHead(status, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
     "Content-Type": type,
     "Access-Control-Allow-Origin": corsOrigin(res),
     Vary: "Origin",
@@ -428,151 +432,179 @@ const refuse = (req) => {
   return null;
 };
 
+const serveEvents = async (req, res, url) => {
+  res.writeHead(200, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": corsOrigin(res),
+    Vary: "Origin",
+  });
+  res.write(": connected\n\n");
+  const tabId = url.searchParams.get("tab") || `anon-${Date.now()}`;
+  clients.set(tabId, {
+    res,
+    connectedAt: Date.now(),
+    role: url.searchParams.get("role") === "renderer" ? "renderer" : "user",
+  });
+  const ping = setInterval(() => res.write(": ping\n\n"), 25000);
+  req.on("close", () => {
+    clearInterval(ping);
+    if (clients.get(tabId)?.res === res) {
+      clients.delete(tabId);
+      tabStates.delete(tabId);
+    }
+  });
+  return;
+};
+
+const flushTabs = async (req, res) => {
+  // before an agent reads/edits a scene: the user's tabs push their
+  // unpushed changes of it (sync only; nothing in the user's UI changes)
+  const { name } = await readJson(req);
+  const showing = [...clients.entries()]
+    .filter(([tabId, client]) => client.role !== "renderer" && tabStates.get(tabId)?.current === name)
+    .map(([tabId]) => tabId);
+  // tabs of one browser share their stored scenes: one tab is enough for the rest
+  const targets = showing.length ? showing : [activeTabId()].filter(Boolean);
+  const results = [];
+  for (const tabId of targets) {
+    try {
+      results.push(await sendCommandTo(tabId, { type: "flush", name }, 15000)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+    } catch (error) {
+      results.push({ error: error.message });
+    }
+  }
+  return send(res, 200, { tabs: targets.length, results });
+};
+
+const servePdf = async (req, res) => {
+  // JSON body: cross-site pages can't send it without CORS approval
+  if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+    return send(res, 415, { error: "Send JSON" });
+  }
+  const { html } = await readJson(req);
+  // the page must forbid scripts and network (CSP set by the app's export)
+  if (typeof html !== "string" || !html.startsWith(PDF_START)) {
+    return send(res, 400, { error: "Expected { html }" });
+  }
+  const pdf = await printPdf(html);
+  res.writeHead(200, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
+    "Content-Type": "application/pdf",
+    "Content-Length": pdf.length,
+    "Access-Control-Allow-Origin": corsOrigin(res),
+    Vary: "Origin",
+  });
+  return res.end(pdf);
+};
+
+const relayScene = async (req, res, url) => {
+  // scenes are written only by the app and the MCP tools, never by
+  // scripts calling this API directly (that bypasses merging, change
+  // tracking and the user's unsaved work)
+  if (
+    ["PUT", "POST", "DELETE"].includes(req.method) &&
+    !["app", "mcp"].includes(String(req.headers["x-scenes-client"] || ""))
+  ) {
+    return send(res, 403, {
+      error:
+        "Direct writes to the scenes server are not allowed. Agents: change scenes only with the Kurviq MCP tools (read_scene / edit_scene, save_scene for new scenes); the app syncs everything with Google Drive. If you don't have these tools, your MCP server is outdated: ask the user to restart your session.",
+    });
+  }
+  // the open tab answers (it reads and saves with the user's Google sign-in)
+  const tab = activeTabId();
+  if (!tab) {
+    throw httpError(409, `Kurviq is not open in a browser: open ${APP_URL}`);
+  }
+  const headers = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (key.startsWith("x-") || key === "content-type") {
+      headers[key] = String(value);
+    }
+  }
+  const body = req.method === "GET" || req.method === "HEAD" ? "" : await readBody(req);
+  const answer = await sendCommandTo(tab, {
+    type: "http",
+    request: { method: req.method, path: url.pathname + url.search, headers, body },
+  });
+  if (answer?.status >= 200 && answer.status < 300 && req.method !== "GET") {
+    // the other tabs sync right away
+    broadcast({ type: "scene-saved", source: "agent" });
+  }
+  res.writeHead(answer?.status ?? 500, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
+    "Content-Type": "application/json",
+    ...answer?.headers,
+    "Access-Control-Allow-Origin": corsOrigin(res),
+    "Access-Control-Expose-Headers": SCENE_VERSION_HEADERS,
+    Vary: "Origin",
+  });
+  return res.end(answer?.body ?? "");
+};
+
+const serveAppState = async (req, res) => {
+  if (req.method === "POST") {
+    const { tab, ...state } = await readJson(req);
+    if (tab) {
+      tabStates.set(tab, { ...state, at: new Date().toISOString() });
+    }
+    return send(res, 200, { ok: true });
+  }
+  return send(res, 200, appState());
+};
+
+const sendError = (res, error) => {
+  console.error(error.message);
+  return send(res, error.status || 500, {
+    error: error.message,
+    ...(error.remoteMd5 !== undefined ? { remoteMd5: error.remoteMd5 } : {}),
+    ...(error.offline ? { offline: true } : {}),
+    ...(error.exists ? { exists: true } : {}),
+  });
+};
+
+const handleRequest = async (req, res, url) => {
+  const refused = refuse(req);
+  if (refused) {
+    return send(res, 403, { error: `Forbidden: ${refused}` });
+  }
+  if (req.method === "OPTIONS") {
+    return send(res, 204, "");
+  }
+  if (url.pathname === "/api/events" && req.method === "GET") {
+    return await serveEvents(req, res, url);
+  }
+  if (url.pathname === "/api/app/state") {
+    return await serveAppState(req, res);
+  }
+  if (url.pathname === "/api/app/flush" && req.method === "POST") {
+    return await flushTabs(req, res);
+  }
+  if (url.pathname === "/api/app/command" && req.method === "POST") {
+    const command = await readJson(req);
+    const result = await sendCommand(command);
+    return send(res, 200, { ok: true, result });
+  }
+  if (url.pathname === "/api/pdf" && req.method === "POST") {
+    return await servePdf(req, res);
+  }
+  const resultMatch = /^\/api\/app\/result\/(\w+)$/.exec(url.pathname);
+  if (resultMatch && req.method === "POST") {
+    const settled = settleCommand(resultMatch[1], await readJson(req));
+    return send(res, 200, { ok: settled });
+  }
+  if (url.pathname === "/api/scenes" || url.pathname.startsWith("/api/scenes/")) {
+    return await relayScene(req, res, url);
+  }
+  return send(res, 404, { error: "Not found" });
+};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   res.kqCorsOrigin = req.headers.origin && allowedOrigins().has(req.headers.origin) ? req.headers.origin : null;
   try {
-    const refused = refuse(req);
-    if (refused) {
-      return send(res, 403, { error: `Forbidden: ${refused}` });
-    }
-    if (req.method === "OPTIONS") {
-      return send(res, 204, "");
-    }
-    if (url.pathname === "/api/events" && req.method === "GET") {
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        "Access-Control-Allow-Origin": corsOrigin(res),
-        Vary: "Origin",
-      });
-      res.write(": connected\n\n");
-      const tabId = url.searchParams.get("tab") || `anon-${Date.now()}`;
-      clients.set(tabId, {
-        res,
-        connectedAt: Date.now(),
-        role: url.searchParams.get("role") === "renderer" ? "renderer" : "user",
-      });
-      const ping = setInterval(() => res.write(": ping\n\n"), 25000);
-      req.on("close", () => {
-        clearInterval(ping);
-        if (clients.get(tabId)?.res === res) {
-          clients.delete(tabId);
-          tabStates.delete(tabId);
-        }
-      });
-      return;
-    }
-    if (url.pathname === "/api/app/state") {
-      if (req.method === "POST") {
-        const { tab, ...state } = await readJson(req);
-        if (tab) {
-          tabStates.set(tab, { ...state, at: new Date().toISOString() });
-        }
-        return send(res, 200, { ok: true });
-      }
-      return send(res, 200, appState());
-    }
-    if (url.pathname === "/api/app/flush" && req.method === "POST") {
-      // before an agent reads/edits a scene: the user's tabs push their
-      // unpushed changes of it (sync only; nothing in the user's UI changes)
-      const { name } = await readJson(req);
-      const showing = [...clients.entries()]
-        .filter(([tabId, client]) => client.role !== "renderer" && tabStates.get(tabId)?.current === name)
-        .map(([tabId]) => tabId);
-      // tabs of one browser share their stored scenes: one tab is enough for the rest
-      const targets = showing.length ? showing : [activeTabId()].filter(Boolean);
-      const results = [];
-      for (const tabId of targets) {
-        try {
-          results.push(await sendCommandTo(tabId, { type: "flush", name }, 15000));
-        } catch (error) {
-          results.push({ error: error.message });
-        }
-      }
-      return send(res, 200, { tabs: targets.length, results });
-    }
-    if (url.pathname === "/api/app/command" && req.method === "POST") {
-      const command = await readJson(req);
-      const result = await sendCommand(command);
-      return send(res, 200, { ok: true, result });
-    }
-    if (url.pathname === "/api/pdf" && req.method === "POST") {
-      // JSON body: cross-site pages can't send it without CORS approval
-      if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
-        return send(res, 415, { error: "Send JSON" });
-      }
-      const { html } = await readJson(req);
-      // the page must forbid scripts and network (CSP set by the app's export)
-      if (typeof html !== "string" || !html.startsWith(PDF_START)) {
-        return send(res, 400, { error: "Expected { html }" });
-      }
-      const pdf = await printPdf(html);
-      res.writeHead(200, {
-        "Content-Type": "application/pdf",
-        "Content-Length": pdf.length,
-        "Access-Control-Allow-Origin": corsOrigin(res),
-        Vary: "Origin",
-      });
-      return res.end(pdf);
-    }
-    const resultMatch = url.pathname.match(/^\/api\/app\/result\/(\w+)$/);
-    if (resultMatch && req.method === "POST") {
-      const settled = settleCommand(resultMatch[1], await readJson(req));
-      return send(res, 200, { ok: settled });
-    }
-    if (url.pathname === "/api/scenes" || url.pathname.startsWith("/api/scenes/")) {
-      // scenes are written only by the app and the MCP tools, never by
-      // scripts calling this API directly (that bypasses merging, change
-      // tracking and the user's unsaved work)
-      if (
-        ["PUT", "POST", "DELETE"].includes(req.method) &&
-        !["app", "mcp"].includes(String(req.headers["x-scenes-client"] || ""))
-      ) {
-        return send(res, 403, {
-          error:
-            "Direct writes to the scenes server are not allowed. Agents: change scenes only with the Kurviq MCP tools (read_scene / edit_scene, save_scene for new scenes); the app syncs everything with Google Drive. If you don't have these tools, your MCP server is outdated: ask the user to restart your session.",
-        });
-      }
-      // the open tab answers (it reads and saves with the user's Google sign-in)
-      const tab = activeTabId();
-      if (!tab) {
-        throw httpError(409, `Kurviq is not open in a browser: open ${APP_URL}`);
-      }
-      const headers = {};
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (key.startsWith("x-") || key === "content-type") {
-          headers[key] = String(value);
-        }
-      }
-      const body = req.method === "GET" || req.method === "HEAD" ? "" : await readBody(req);
-      const answer = await sendCommandTo(tab, {
-        type: "http",
-        request: { method: req.method, path: url.pathname + url.search, headers, body },
-      });
-      if (answer?.status >= 200 && answer.status < 300 && req.method !== "GET") {
-        // the other tabs sync right away
-        broadcast({ type: "scene-saved", source: "agent" });
-      }
-      res.writeHead(answer?.status ?? 500, {
-        "Content-Type": "application/json",
-        ...(answer?.headers ?? {}),
-        "Access-Control-Allow-Origin": corsOrigin(res),
-        "Access-Control-Expose-Headers": SCENE_VERSION_HEADERS,
-        Vary: "Origin",
-      });
-      return res.end(answer?.body ?? "");
-    }
-    return send(res, 404, { error: "Not found" });
+    return await handleRequest(req, res, url);
   } catch (error) {
-    console.error(error.message);
-    return send(res, error.status || 500, {
-      error: error.message,
-      ...(error.remoteMd5 !== undefined ? { remoteMd5: error.remoteMd5 } : {}),
-      ...(error.offline ? { offline: true } : {}),
-      ...(error.exists ? { exists: true } : {}),
-    });
+    return sendError(res, error);
   }
 });
 

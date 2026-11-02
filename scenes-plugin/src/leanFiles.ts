@@ -49,7 +49,7 @@ export const fillFiles = async (files: BinaryFiles | undefined, canvas: BinaryFi
       out[id] = known;
       continue;
     }
-    const upload = await getUpload(id);
+    const upload = await getUpload(id); // NOSONAR S9382: in order on purpose (preserves rendering or server operation order)
     if (upload) {
       out[id] = { id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created } as BinaryFileData;
     }

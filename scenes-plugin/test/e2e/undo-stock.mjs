@@ -37,7 +37,7 @@ const signIn = async (ctx, email, path, space) => {
   return page;
 };
 const ready = async (page) => {
-  for (let i = 0; i < 120 && (await page.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500);
+  for (let i = 0; i < 120 && (await page.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500); // NOSONAR S9382: polling, one check after the other
 };
 
 const ownerCtx = await browser.createIncognitoBrowserContext();
@@ -63,10 +63,10 @@ const make = (page, kind) =>
   page.evaluate((kind) => {
     const api = window.__scenes.getApi();
     const template = api.getSceneElements().find((e) => e.type === "rectangle");
-    const id = (p) => `${p}-${Math.random().toString(36).slice(2, 8)}`;
-    const base = { ...template, groupIds: [], frameId: null, boundElements: null, index: null, version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), isDeleted: false, strokeColor: "#1e1e1e", backgroundColor: "transparent" };
-    const x = 100 + Math.random() * 700;
-    const y = 100 + Math.random() * 400;
+    const id = (p) => `${p}-${Math.random().toString(36).slice(2, 8)}`; // NOSONAR S2245: not security relevant (test element ids)
+    const base = { ...template, groupIds: [], frameId: null, boundElements: null, index: null, version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), isDeleted: false, strokeColor: "#1e1e1e", backgroundColor: "transparent" }; // NOSONAR S2245: not security relevant (versionNonce of test data)
+    const x = 100 + Math.random() * 700; // NOSONAR S2245: not security relevant (test position)
+    const y = 100 + Math.random() * 400; // NOSONAR S2245: not security relevant (test position)
     let els;
     if (kind === "labeled") {
       const shape = { ...base, id: id("box"), x, y, width: 160, height: 80 };
@@ -92,16 +92,24 @@ const stateOf = (page, ids) =>
     const all = window.__scenes.getApi().getSceneElementsIncludingDeleted();
     return ids.map((id) => {
       const el = all.find((e) => e.id === id);
-      return !el ? "missing" : el.isDeleted ? "deleted" : `${el.strokeColor}/${el.backgroundColor}${el.type === "text" ? "/" + el.text : ""}`;
+      if (!el) return "missing";
+      if (el.isDeleted) return "deleted";
+      const text = el.type === "text" ? "/" + el.text : "";
+      return `${el.strokeColor}/${el.backgroundColor}${text}`;
     });
   }, ids);
+const modifiersOf = (combo) => {
+  if (combo === "undo") return ["Meta"];
+  if (combo === "redo") return ["Meta", "Shift"];
+  return [];
+};
 const key = async (page, combo) => {
   await page.bringToFront();
   await page.focus(".excalidraw");
-  const mods = combo === "undo" ? ["Meta"] : combo === "redo" ? ["Meta", "Shift"] : [];
-  for (const m of mods) await page.keyboard.down(m);
+  const mods = modifiersOf(combo);
+  for (const m of mods) await page.keyboard.down(m); // NOSONAR S9382: keys go down in order on purpose
   await page.keyboard.press(combo === "undo" || combo === "redo" ? "z" : combo);
-  for (const m of [...mods].reverse()) await page.keyboard.up(m);
+  for (const m of [...mods].reverse()) await page.keyboard.up(m); // NOSONAR S9382: keys go up in order on purpose
 };
 const select = (page, ids) =>
   page.evaluate((ids) => window.__scenes.getApi().updateScene({ appState: { selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) } }), ids);
@@ -111,7 +119,7 @@ const change = (page, ids, patch) =>
       const api = window.__scenes.getApi();
       api.updateScene({
         elements: api.getSceneElementsIncludingDeleted().map((e) =>
-          ids.includes(e.id) ? { ...e, ...patch, ...(patch.text ? { originalText: patch.text } : {}), version: e.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e,
+          ids.includes(e.id) ? { ...e, ...patch, ...(patch.text ? { originalText: patch.text } : {}), version: e.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e, // NOSONAR S2245: not security relevant (versionNonce of test data)
         ),
         captureUpdate: "IMMEDIATELY",
       });
@@ -128,7 +136,7 @@ const failures = [];
 const check = async (label, ids, expected, pages) => {
   await sleep(1500);
   for (const [tag, page] of pages) {
-    const got = await stateOf(page, ids);
+    const got = await stateOf(page, ids); // NOSONAR S9382: one tab after the other (bringToFront elsewhere, keep it simple and ordered)
     if (JSON.stringify(got) !== JSON.stringify(expected)) {
       failures.push(`${label} [${tag}]: ${JSON.stringify(got)} expected ${JSON.stringify(expected)}`);
     }
@@ -140,7 +148,7 @@ const runCases = async (T, O, where, withReconnect) => {
   const both = [[where, T], ["other tab", O]];
   const tag = `${where}${withReconnect ? " + reconnect" : ""}`;
   const pause = async () => (withReconnect ? reconnect(T) : sleep(1200));
-  const alive = (n) => Array(n).fill("#1e1e1e/transparent");
+  const alive = (n) => new Array(n).fill("#1e1e1e/transparent");
 
   // labeled shape: Delete → undo → redo
   let ids = await make(T, "labeled");

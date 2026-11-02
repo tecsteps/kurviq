@@ -178,7 +178,7 @@ const hash53 = (text: string, seed = 0) => {
   let h1 = 0xdeadbeef ^ seed;
   let h2 = 0x41c6ce57 ^ seed;
   for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i);
+    const ch = text.charCodeAt(i); // NOSONAR S7758: cyrb53 hashes UTF-16 code units to keep stable ids
     h1 = Math.imul(h1 ^ ch, 2654435761);
     h2 = Math.imul(h2 ^ ch, 1597334677);
   }
@@ -189,22 +189,36 @@ const hash53 = (text: string, seed = 0) => {
 
 const digits = (text: string, length: number) => {
   let out = "";
-  for (let seed = 1; out.length < length; seed++) {
+  let seed = 1;
+  while (out.length < length) {
     out += String(hash53(text, seed));
+    seed++;
   }
   return out.slice(0, length);
 };
 
-const subOf = (email: string) => `1${digits(`sub:${email}`, 20)}`;
-const permIdOf = (email: string) => `0${digits(`perm:${email}`, 19)}`;
-const rootOf = (email: string) => `0A${digits(`root:${email}`, 17)}Uk9PVA`;
+const subOf = (email: string) => {
+  const value = digits(`sub:${email}`, 20);
+  return `1${value}`;
+};
+const permIdOf = (email: string) => {
+  const value = digits(`perm:${email}`, 19);
+  return `0${value}`;
+};
+const rootOf = (email: string) => {
+  const value = digits(`root:${email}`, 17);
+  return `0A${value}Uk9PVA`;
+};
 
 const toHex = (buffer: ArrayBuffer) => [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 const md5Hex = async (bytes: Uint8Array) => toHex(await crypto.subtle.digest("MD5", bytes));
 
-const b64url = (text: string) => btoa(unescape(encodeURIComponent(text))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64url = (text: string) => {
+  const binary = encodeURIComponent(text).replaceAll(/%([0-9A-F]{2})/g, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)));
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").split("=")[0];
+};
 
-const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (char) => `&#${char.codePointAt(0)};`);
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -267,9 +281,44 @@ const indexOfBytes = (haystack: Uint8Array, needle: Uint8Array, from = 0) => {
   return -1;
 };
 
+const multipartHeaders = (part: Uint8Array) => {
+  let split = indexOfBytes(part, new TextEncoder().encode("\r\n\r\n"));
+  let skip = 4;
+  if (split < 0) {
+    split = indexOfBytes(part, new TextEncoder().encode("\n\n"));
+    skip = 2;
+  }
+  const headerText = split < 0 ? "" : new TextDecoder().decode(part.subarray(0, split));
+  const headers: Record<string, string> = {};
+  for (const line of headerText.split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon > 0) {
+      headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+    }
+  }
+  return { headers, body: split < 0 ? part : part.subarray(split + skip) };
+};
+
+const multipartPart = (body: Uint8Array, delimiter: Uint8Array, at: number) => {
+  let start = at + delimiter.length;
+  if (body[start] === 0x2d && body[start + 1] === 0x2d) {
+    return null; // closing delimiter
+  }
+  if (body[start] === 0x0d && body[start + 1] === 0x0a) start += 2;
+  else if (body[start] === 0x0a) start += 1;
+  const next = indexOfBytes(body, delimiter, start);
+  if (next < 0) {
+    return null;
+  }
+  let end = next;
+  if (body[end - 1] === 0x0a) end--;
+  if (body[end - 1] === 0x0d) end--;
+  return { start, end, next };
+};
+
 /** multipart/related: the metadata part (JSON) and the content part */
 const parseMultipart = (contentType: string, body: Uint8Array) => {
-  const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  const boundary = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
   if (!boundary) {
     return fail(invalid("Multipart upload without a boundary."));
   }
@@ -277,35 +326,10 @@ const parseMultipart = (contentType: string, body: Uint8Array) => {
   const parts: { headers: Record<string, string>; body: Uint8Array }[] = [];
   let at = indexOfBytes(body, delimiter);
   while (at >= 0) {
-    let start = at + delimiter.length;
-    if (body[start] === 0x2d && body[start + 1] === 0x2d) {
-      break; // closing delimiter
-    }
-    if (body[start] === 0x0d && body[start + 1] === 0x0a) start += 2;
-    else if (body[start] === 0x0a) start += 1;
-    const next = indexOfBytes(body, delimiter, start);
-    if (next < 0) {
-      break;
-    }
-    let end = next;
-    if (body[end - 1] === 0x0a) end--;
-    if (body[end - 1] === 0x0d) end--;
-    const part = body.subarray(start, end);
-    let split = indexOfBytes(part, new TextEncoder().encode("\r\n\r\n"));
-    let skip = 4;
-    if (split < 0) {
-      split = indexOfBytes(part, new TextEncoder().encode("\n\n"));
-      skip = 2;
-    }
-    const headerText = split < 0 ? "" : new TextDecoder().decode(part.subarray(0, split));
-    const headers: Record<string, string> = {};
-    for (const line of headerText.split(/\r?\n/)) {
-      const colon = line.indexOf(":");
-      if (colon > 0) {
-        headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
-      }
-    }
-    parts.push({ headers, body: split < 0 ? part : part.subarray(split + skip) });
+    const part = multipartPart(body, delimiter, at);
+    if (!part) break;
+    const { start, end, next } = part;
+    parts.push(multipartHeaders(body.subarray(start, end)));
     at = next;
   }
   if (parts.length < 2) {
@@ -328,6 +352,40 @@ type FieldTree = Map<string, FieldTree | true>;
 
 const parseFields = (text: string): FieldTree => {
   let at = 0;
+  const readName = () => {
+    const start = at;
+    while (at < text.length && /[A-Za-z0-9_*]/.test(text[at])) at++;
+    const name = text.slice(start, at);
+    if (!name) {
+      throw new Error(`Invalid field selection ${text}`);
+    }
+    return name;
+  };
+
+  const readSubtree = (): FieldTree | true => {
+    let sub: FieldTree | true = true;
+    if (text[at] === "(") {
+      at++;
+      sub = parseList();
+      if (text[at] !== ")") {
+        throw new Error(`Invalid field selection ${text}`);
+      }
+      at++;
+    }
+    return sub;
+  };
+
+  const mergeField = (tree: FieldTree, name: string, sub: FieldTree | true) => {
+    const old = tree.get(name);
+    let merged = sub;
+    if (old && old !== true && sub !== true) {
+      merged = new Map([...old, ...sub]);
+    } else if (old === true) {
+      merged = true;
+    }
+    tree.set(name, merged);
+  };
+
   const parseList = (): FieldTree => {
     const tree: FieldTree = new Map();
     while (at < text.length) {
@@ -335,23 +393,9 @@ const parseFields = (text: string): FieldTree => {
       if (text[at] === ")" || at >= text.length) {
         break;
       }
-      const start = at;
-      while (at < text.length && /[A-Za-z0-9_*]/.test(text[at])) at++;
-      const name = text.slice(start, at);
-      if (!name) {
-        throw new Error(`Invalid field selection ${text}`);
-      }
-      let sub: FieldTree | true = true;
-      if (text[at] === "(") {
-        at++;
-        sub = parseList();
-        if (text[at] !== ")") {
-          throw new Error(`Invalid field selection ${text}`);
-        }
-        at++;
-      }
-      const old = tree.get(name);
-      tree.set(name, old && old !== true && sub !== true ? new Map([...old, ...sub]) : old === true ? true : sub);
+      const name = readName();
+      const sub = readSubtree();
+      mergeField(tree, name, sub);
       if (text[at] === ",") {
         at++;
       } else if (at < text.length && text[at] !== ")") {
@@ -361,9 +405,9 @@ const parseFields = (text: string): FieldTree => {
     return tree;
   };
   // "a/b/c,d": treat "/" as a one-element nesting
-  const normalized = text.replace(/([A-Za-z0-9_*]+)\/([A-Za-z0-9_*/]+)/g, (_match, head: string, tail: string) => {
+  const normalized = text.replace(/(?<![A-Za-z0-9_*])([A-Za-z0-9_*]+)\/([A-Za-z0-9_*/]+)/g, (_match, head: string, tail: string) => {
     const segments = [head, ...tail.split("/")];
-    return segments.slice(0, -1).join("(") + `(${segments[segments.length - 1]}` + ")".repeat(segments.length - 1);
+    return segments.slice(0, -1).join("(") + `(${segments.at(-1)}` + ")".repeat(segments.length - 1);
   });
   text = normalized.replace(/\s+/g, "");
   return parseList();
@@ -387,7 +431,7 @@ const PERMISSION_KEYS = new Set(
   "kind,id,type,emailAddress,domain,role,view,allowFileDiscovery,displayName,photoLink,expirationTime,teamDrivePermissionDetails,permissionDetails,deleted,pendingOwner,inheritedPermissionsDisabled".split(","),
 );
 
-const checkKeys = (tree: FieldTree | true | undefined, keys: Set<string>, what: string) => {
+const checkKeys = (tree: FieldTree | true | undefined, keys: Set<string>, _what: string) => {
   if (!tree || tree === true) {
     return;
   }
@@ -396,7 +440,7 @@ const checkKeys = (tree: FieldTree | true | undefined, keys: Set<string>, what: 
       fail(invalid(`Invalid field selection ${key}`, "fields"));
     }
   }
-  void what;
+
 };
 
 const select = (value: any, tree: FieldTree | true | undefined): any => {
@@ -435,24 +479,37 @@ type Token = { type: "string" | "word" | "op" | "punct"; value: string };
 const tokenize = (text: string): Token[] => {
   const tokens: Token[] = [];
   let at = 0;
+  const readString = (char: string) => {
+    let value = "";
+    at++;
+    while (at < text.length && text[at] !== char) {
+      if (text[at] === "\\" && at + 1 < text.length) {
+        at++;
+      }
+      value += text[at++];
+    }
+    if (text[at] !== char) {
+      throw new Error("unterminated string");
+    }
+    at++;
+    tokens.push({ type: "string", value });
+  };
+
+  const readWord = (char: string) => {
+    const start = at;
+    while (at < text.length && /[A-Za-z0-9_.:-]/.test(text[at])) at++;
+    if (start === at) {
+      throw new Error(`unexpected ${char}`);
+    }
+    tokens.push({ type: "word", value: text.slice(start, at) });
+  };
+
   while (at < text.length) {
     const char = text[at];
     if (/\s/.test(char)) {
       at++;
     } else if (char === "'" || char === '"') {
-      let value = "";
-      at++;
-      while (at < text.length && text[at] !== char) {
-        if (text[at] === "\\" && at + 1 < text.length) {
-          at++;
-        }
-        value += text[at++];
-      }
-      if (text[at] !== char) {
-        throw new Error("unterminated string");
-      }
-      at++;
-      tokens.push({ type: "string", value });
+      readString(char);
     } else if ("(){}".includes(char)) {
       tokens.push({ type: "punct", value: char });
       at++;
@@ -462,12 +519,7 @@ const tokenize = (text: string): Token[] => {
       tokens.push({ type: "op", value: op });
       at += op.length;
     } else {
-      const start = at;
-      while (at < text.length && /[A-Za-z0-9_.:-]/.test(text[at])) at++;
-      if (start === at) {
-        throw new Error(`unexpected ${char}`);
-      }
-      tokens.push({ type: "word", value: text.slice(start, at) });
+      readWord(char);
     }
   }
   return tokens;
@@ -504,7 +556,7 @@ const parseQuery = (text: string): Predicate => {
   const word = (value: string) => peek()?.type === "word" && peek().value.toLowerCase() === value;
   const expect = (type: Token["type"], value?: string) => {
     const token = tokens[at++];
-    if (!token || token.type !== type || (value !== undefined && token.value !== value)) {
+    if (token?.type !== type || (value !== undefined && token.value !== value)) {
       throw new Error(`expected ${value ?? type}`);
     }
     return token.value;
@@ -549,33 +601,93 @@ const parseQuery = (text: string): Predicate => {
     }
     return term();
   };
+  const collectionTerm = (token: Token): Predicate => {
+    at++;
+    const value = token.value;
+    if (!word("in")) {
+      throw new Error("expected in");
+    }
+    at++;
+    const collection = expect("word");
+    switch (collection) {
+      case "parents":
+        return (file, ctx) => {
+          const parents: string[] = JSON.parse(file.parents);
+          return parents.includes(value) || (value === "root" && !!ctx.email && parents.includes(rootOf(ctx.email)));
+        };
+      case "owners":
+        return (file) => file.owner === value;
+      case "writers":
+        return (file, ctx) => ctx.perms(file.id).some((perm) => perm.email === value && ROLE_RANK[perm.role] >= 3);
+      case "readers":
+        return (file, ctx) => ctx.perms(file.id).some((perm) => perm.email === value);
+    }
+    throw new Error(`unknown collection ${collection}`);
+  };
+
+  const textTerm = (field: string): Predicate => {
+    if (word("contains")) {
+      at++;
+      const value = String(literal()).toLowerCase();
+      if (field === "fullText") {
+        return (file) => file.name.toLowerCase().includes(value);
+      }
+      if (field !== "name") {
+        throw new Error(`contains is not supported for ${field}`);
+      }
+      return (file) => file.name.toLowerCase().includes(value);
+    }
+    const op = expect("op");
+    const value = String(literal());
+    if (field === "visibility") {
+      return (file, ctx) => {
+        const anyone = ctx.perms(file.id).find((perm) => perm.type === "anyone");
+        let visibility = "limited";
+        if (anyone) {
+          visibility = anyone.discover ? "anyoneCanFind" : "anyoneWithLink";
+        }
+        return compare(visibility, op, value);
+      };
+    }
+    let column = "created";
+    if (field === "name") column = "name";
+    else if (field === "mimeType") column = "mime";
+    else if (field === "modifiedTime") column = "modified";
+    if ((field === "modifiedTime" || field === "createdTime") && Number.isNaN(Date.parse(value))) {
+      throw new Error(`invalid date ${value}`);
+    }
+    return (file) =>
+      field === "modifiedTime" || field === "createdTime"
+        ? compare(Date.parse((file as any)[column]), op, Date.parse(value))
+        : compare(String((file as any)[column]), op, value);
+  };
+
+  const propertyTerm = (field: string): Predicate => {
+    if (!word("has")) {
+      throw new Error("expected has");
+    }
+    at++;
+    expect("punct", "{");
+    if (expect("word") !== "key") throw new Error("expected key");
+    expect("op", "=");
+    const key = String(literal());
+    if (!word("and")) throw new Error("expected and");
+    at++;
+    if (expect("word") !== "value") throw new Error("expected value");
+    expect("op", "=");
+    const value = String(literal());
+    expect("punct", "}");
+    const column = field === "appProperties" ? "app_props" : "props";
+    return (file) => JSON.parse((file as any)[column] || "{}")[key] === value;
+  };
+
   const term = (): Predicate => {
     const token = peek();
     if (!token) {
       throw new Error("unexpected end");
     }
     if (token.type === "string") {
-      at++;
-      const value = token.value;
-      if (!word("in")) {
-        throw new Error("expected in");
-      }
-      at++;
-      const collection = expect("word");
-      switch (collection) {
-        case "parents":
-          return (file, ctx) => {
-            const parents: string[] = JSON.parse(file.parents);
-            return parents.includes(value) || (value === "root" && !!ctx.email && parents.includes(rootOf(ctx.email)));
-          };
-        case "owners":
-          return (file) => file.owner === value;
-        case "writers":
-          return (file, ctx) => ctx.perms(file.id).some((perm) => perm.email === value && ROLE_RANK[perm.role] >= 3);
-        case "readers":
-          return (file, ctx) => ctx.perms(file.id).some((perm) => perm.email === value);
-      }
-      throw new Error(`unknown collection ${collection}`);
+      return collectionTerm(token);
     }
     const field = expect("word");
     switch (field) {
@@ -599,53 +711,11 @@ const parseQuery = (text: string): Predicate => {
       case "createdTime":
       case "fullText":
       case "visibility": {
-        if (word("contains")) {
-          at++;
-          const value = String(literal()).toLowerCase();
-          if (field === "fullText") {
-            return (file) => file.name.toLowerCase().includes(value);
-          }
-          if (field !== "name") {
-            throw new Error(`contains is not supported for ${field}`);
-          }
-          return (file) => file.name.toLowerCase().includes(value);
-        }
-        const op = expect("op");
-        const value = String(literal());
-        if (field === "visibility") {
-          return (file, ctx) => {
-            const anyone = ctx.perms(file.id).find((perm) => perm.type === "anyone");
-            const visibility = anyone ? (anyone.discover ? "anyoneCanFind" : "anyoneWithLink") : "limited";
-            return compare(visibility, op, value);
-          };
-        }
-        const column = field === "name" ? "name" : field === "mimeType" ? "mime" : field === "modifiedTime" ? "modified" : "created";
-        if ((field === "modifiedTime" || field === "createdTime") && Number.isNaN(Date.parse(value))) {
-          throw new Error(`invalid date ${value}`);
-        }
-        return (file) =>
-          field === "modifiedTime" || field === "createdTime"
-            ? compare(Date.parse((file as any)[column]), op, Date.parse(value))
-            : compare(String((file as any)[column]), op, value);
+        return textTerm(field);
       }
       case "appProperties":
       case "properties": {
-        if (!word("has")) {
-          throw new Error("expected has");
-        }
-        at++;
-        expect("punct", "{");
-        if (expect("word") !== "key") throw new Error("expected key");
-        expect("op", "=");
-        const key = String(literal());
-        if (!word("and")) throw new Error("expected and");
-        at++;
-        if (expect("word") !== "value") throw new Error("expected value");
-        expect("op", "=");
-        const value = String(literal());
-        expect("punct", "}");
-        const column = field === "appProperties" ? "app_props" : "props";
-        return (file) => JSON.parse((file as any)[column] || "{}")[key] === value;
+        return propertyTerm(field);
       }
     }
     throw new Error(`unknown field ${field}`);
@@ -688,15 +758,14 @@ const titleCase = (email: string) =>
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join(" ") || email;
 
-const scopeUrl = (scope: string) =>
-  scope === "email"
-    ? "https://www.googleapis.com/auth/userinfo.email"
-    : scope === "profile"
-      ? "https://www.googleapis.com/auth/userinfo.profile"
-      : scope;
+const scopeUrl = (scope: string) => {
+  if (scope === "email") return "https://www.googleapis.com/auth/userinfo.email";
+  if (scope === "profile") return "https://www.googleapis.com/auth/userinfo.profile";
+  return scope;
+};
 
 export class FakeGoogle extends DurableObject<FakeEnv> {
-  private sql: SqlStorage;
+  private readonly sql: SqlStorage;
 
   constructor(ctx: DurableObjectState, env: FakeEnv) {
     super(ctx, env);
@@ -810,7 +879,7 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     if (path === "/" || path === "/admin" || path === "/admin/") {
       return this.help();
     }
-    const avatar = path.match(/^\/avatar\/([^/]+)\.svg$/);
+    const avatar = /^\/avatar\/([^/]+)\.svg$/.exec(path);
     if (avatar) {
       return this.avatar(decodeURIComponent(avatar[1]));
     }
@@ -824,7 +893,7 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     if (path.startsWith("/admin/")) {
       return this.admin(request, url, path.slice("/admin".length));
     }
-    const drive = path.match(/^\/(upload\/)?drive\/v3(\/.*)$/);
+    const drive = /^\/(upload\/)?drive\/v3(\/.*)$/.exec(path);
     if (drive) {
       return this.drive(request, url, drive[2], !!drive[1], path);
     }
@@ -955,73 +1024,89 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     return this.redirectWith(redirectUri, back);
   }
 
+  private authorizeSilently(params: URLSearchParams, redirectUri: string, hint: string, hinted: Row | null) {
+    if (!hint) {
+      return this.redirectWith(redirectUri, { error: "interaction_required", ...(params.has("state") ? { state: params.get("state")! } : {}) });
+    }
+    if (!hinted) {
+      return this.redirectWith(redirectUri, { error: "consent_required", ...(params.has("state") ? { state: params.get("state")! } : {}) });
+    }
+    return this.issueCode(params, this.user(hint), hinted.scope.includes(DRIVE_FILE));
+  }
+
+  private oauthAuthorize(url: URL) {
+    const params = url.searchParams;
+    const redirectUri = params.get("redirect_uri") || "";
+    try {
+      new URL(redirectUri);
+    } catch {
+      return new Response("Error 400: redirect_uri_mismatch (missing or not absolute)", { status: 400 });
+    }
+    if (!params.get("client_id")) {
+      return new Response("Error 400: invalid_request (Missing required parameter: client_id)", { status: 400 });
+    }
+    if (params.get("response_type") !== "code") {
+      return this.redirectWith(redirectUri, { error: "unsupported_response_type", ...(params.has("state") ? { state: params.get("state")! } : {}) });
+    }
+    const prompt = (params.get("prompt") || "").split(" ").filter(Boolean);
+    const hint = (params.get("login_hint") || "").trim().toLowerCase();
+    const hinted = hint ? this.one<Row>("SELECT * FROM grants WHERE email = ? AND client_id = ?", hint, params.get("client_id")) : null;
+    if (prompt.includes("none")) {
+      return this.authorizeSilently(params, redirectUri, hint, hinted);
+    }
+    return this.authorizePage(params, hint, prompt);
+  }
+
+  private oauthApprove(url: URL) {
+    const params = url.searchParams;
+    const redirectUri = params.get("redirect_uri") || "";
+    try {
+      new URL(redirectUri);
+    } catch {
+      return new Response("Error 400: redirect_uri_mismatch", { status: 400 });
+    }
+    if (params.get("cancel") === "1") {
+      return this.redirectWith(redirectUri, { error: "access_denied", ...(params.has("state") ? { state: params.get("state")! } : {}) });
+    }
+    const email = (params.get("email") || params.get("custom_email") || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
+      return new Response("Type an email address (or pick a test user).", { status: 400 });
+    }
+    // the page sends drive=1 when ticked (a form leaves unticked boxes out); scripts may leave it out
+    const drive = params.has("form") ? params.get("drive") === "1" : params.get("drive") !== "0";
+    return this.issueCode(params, this.user(email, params.get("name") || undefined), drive);
+  }
+
+  private async oauthRevoke(request: Request, url: URL) {
+    const form = request.method === "POST" ? new URLSearchParams(await request.text()) : url.searchParams;
+    const value = form.get("token") || url.searchParams.get("token") || "";
+    const access = this.one<Row>("SELECT * FROM tokens WHERE token = ?", value);
+    const grant = access
+      ? this.one<Row>("SELECT * FROM grants WHERE email = ? AND client_id = ?", access.email, access.client_id)
+      : this.one<Row>("SELECT * FROM grants WHERE refresh = ?", value);
+    if (!grant) {
+      return json(400, { error: "invalid_token", error_description: "Token expired or revoked" });
+    }
+    this.revokeGrant(grant.email, grant.client_id);
+    return json(200, {});
+  }
+
   private async oauth(request: Request, url: URL, path: string): Promise<Response> {
     if (path === "/authorize" && request.method === "GET") {
-      const params = url.searchParams;
-      const redirectUri = params.get("redirect_uri") || "";
-      try {
-        new URL(redirectUri);
-      } catch {
-        return new Response("Error 400: redirect_uri_mismatch (missing or not absolute)", { status: 400 });
-      }
-      if (!params.get("client_id")) {
-        return new Response("Error 400: invalid_request (Missing required parameter: client_id)", { status: 400 });
-      }
-      if (params.get("response_type") !== "code") {
-        return this.redirectWith(redirectUri, { error: "unsupported_response_type", ...(params.has("state") ? { state: params.get("state")! } : {}) });
-      }
-      const prompt = (params.get("prompt") || "").split(" ").filter(Boolean);
-      const hint = (params.get("login_hint") || "").trim().toLowerCase();
-      const hinted = hint ? this.one<Row>("SELECT * FROM grants WHERE email = ? AND client_id = ?", hint, params.get("client_id")) : null;
-      if (prompt.includes("none")) {
-        if (!hint) {
-          return this.redirectWith(redirectUri, { error: "interaction_required", ...(params.has("state") ? { state: params.get("state")! } : {}) });
-        }
-        if (!hinted) {
-          return this.redirectWith(redirectUri, { error: "consent_required", ...(params.has("state") ? { state: params.get("state")! } : {}) });
-        }
-        return this.issueCode(params, this.user(hint), hinted.scope.includes(DRIVE_FILE));
-      }
-      return this.authorizePage(params, hint, prompt);
+      return this.oauthAuthorize(url);
     }
     if (path === "/approve" && request.method === "GET") {
-      const params = url.searchParams;
-      const redirectUri = params.get("redirect_uri") || "";
-      try {
-        new URL(redirectUri);
-      } catch {
-        return new Response("Error 400: redirect_uri_mismatch", { status: 400 });
-      }
-      if (params.get("cancel") === "1") {
-        return this.redirectWith(redirectUri, { error: "access_denied", ...(params.has("state") ? { state: params.get("state")! } : {}) });
-      }
-      const email = (params.get("email") || params.get("custom_email") || "").trim().toLowerCase();
-      if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
-        return new Response("Type an email address (or pick a test user).", { status: 400 });
-      }
-      // the page sends drive=1 when ticked (a form leaves unticked boxes out); scripts may leave it out
-      const drive = params.has("form") ? params.get("drive") === "1" : params.get("drive") !== "0";
-      return this.issueCode(params, this.user(email, params.get("name") || undefined), drive);
+      return this.oauthApprove(url);
     }
     if (path === "/token" && request.method === "POST") {
       return this.token(request);
     }
     if (path === "/revoke" && (request.method === "POST" || request.method === "GET")) {
-      const form = request.method === "POST" ? new URLSearchParams(await request.text()) : url.searchParams;
-      const value = form.get("token") || url.searchParams.get("token") || "";
-      const access = this.one<Row>("SELECT * FROM tokens WHERE token = ?", value);
-      const grant = access
-        ? this.one<Row>("SELECT * FROM grants WHERE email = ? AND client_id = ?", access.email, access.client_id)
-        : this.one<Row>("SELECT * FROM grants WHERE refresh = ?", value);
-      if (!grant) {
-        return json(400, { error: "invalid_token", error_description: "Token expired or revoked" });
-      }
-      this.revokeGrant(grant.email, grant.client_id);
-      return json(200, {});
+      return this.oauthRevoke(request, url);
     }
     if (path === "/userinfo") {
       const caller = this.caller(request, url);
-      if (!caller || caller.kind !== "user") {
+      if (caller?.kind !== "user") {
         return json(401, { error: "invalid_request", error_description: "Invalid Credentials" });
       }
       const info = this.userInfo(caller.email, this.origin(request));
@@ -1114,11 +1199,58 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return token;
   }
 
+  private exchangeCode(form: URLSearchParams, clientId: string, origin: string) {
+    const code = this.one<Row>("SELECT * FROM codes WHERE code = ?", form.get("code") || "");
+    if (code) {
+      this.run("DELETE FROM codes WHERE code = ?", code.code);
+    }
+    if (!code || code.expires < Date.now() || code.client_id !== clientId) {
+      return json(400, { error: "invalid_grant", error_description: "Malformed auth code." });
+    }
+    if (code.redirect_uri !== (form.get("redirect_uri") || "")) {
+      return json(400, { error: "redirect_uri_mismatch", error_description: "Bad Request" });
+    }
+    const grant = this.one<Row>("SELECT * FROM grants WHERE email = ? AND client_id = ?", code.email, clientId);
+    let refresh: string | null = grant?.refresh ?? null;
+    if (code.refresh && !refresh) {
+      refresh = `1//0fake${randomId(60)}`;
+    }
+    this.run(
+      "INSERT OR REPLACE INTO grants (email, client_id, scope, refresh) VALUES (?, ?, ?, ?)",
+      code.email,
+      clientId,
+      code.scope,
+      refresh,
+    );
+    return json(200, {
+      access_token: this.newAccessToken(code.email, clientId, code.scope),
+      expires_in: ACCESS_SECONDS - 1,
+      ...(code.refresh && refresh ? { refresh_token: refresh } : {}),
+      scope: code.scope,
+      token_type: "Bearer",
+      ...(code.scope.split(" ").includes("openid") ? { id_token: this.idToken(code.email, clientId, origin) } : {}),
+    });
+  }
+
+  private exchangeRefresh(form: URLSearchParams, clientId: string, origin: string) {
+    const grant = this.one<Row>("SELECT * FROM grants WHERE refresh = ? AND client_id = ?", form.get("refresh_token") || "", clientId);
+    if (!grant) {
+      return json(400, { error: "invalid_grant", error_description: "Token has been expired or revoked." });
+    }
+    return json(200, {
+      access_token: this.newAccessToken(grant.email, clientId, grant.scope),
+      expires_in: ACCESS_SECONDS - 1,
+      scope: grant.scope,
+      token_type: "Bearer",
+      ...(grant.scope.split(" ").includes("openid") ? { id_token: this.idToken(grant.email, clientId, origin) } : {}),
+    });
+  }
+
   private async token(request: Request) {
     const form = new URLSearchParams(await request.text());
     let clientId = form.get("client_id") || "";
     let clientSecret = form.get("client_secret") || "";
-    const basic = request.headers.get("Authorization")?.match(/^Basic (.+)$/);
+    const basic = /^Basic (.+)$/.exec(request.headers.get("Authorization") ?? "");
     if (basic) {
       const [id, secret] = atob(basic[1]).split(":");
       clientId ||= decodeURIComponent(id);
@@ -1133,56 +1265,17 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const origin = this.origin(request);
     const grantType = form.get("grant_type");
     if (grantType === "authorization_code") {
-      const code = this.one<Row>("SELECT * FROM codes WHERE code = ?", form.get("code") || "");
-      if (code) {
-        this.run("DELETE FROM codes WHERE code = ?", code.code);
-      }
-      if (!code || code.expires < Date.now() || code.client_id !== clientId) {
-        return json(400, { error: "invalid_grant", error_description: "Malformed auth code." });
-      }
-      if (code.redirect_uri !== (form.get("redirect_uri") || "")) {
-        return json(400, { error: "redirect_uri_mismatch", error_description: "Bad Request" });
-      }
-      const grant = this.one<Row>("SELECT * FROM grants WHERE email = ? AND client_id = ?", code.email, clientId);
-      let refresh: string | null = grant?.refresh ?? null;
-      if (code.refresh && !refresh) {
-        refresh = `1//0fake${randomId(60)}`;
-      }
-      this.run(
-        "INSERT OR REPLACE INTO grants (email, client_id, scope, refresh) VALUES (?, ?, ?, ?)",
-        code.email,
-        clientId,
-        code.scope,
-        refresh,
-      );
-      return json(200, {
-        access_token: this.newAccessToken(code.email, clientId, code.scope),
-        expires_in: ACCESS_SECONDS - 1,
-        ...(code.refresh && refresh ? { refresh_token: refresh } : {}),
-        scope: code.scope,
-        token_type: "Bearer",
-        ...(code.scope.split(" ").includes("openid") ? { id_token: this.idToken(code.email, clientId, origin) } : {}),
-      });
+      return this.exchangeCode(form, clientId, origin);
     }
     if (grantType === "refresh_token") {
-      const grant = this.one<Row>("SELECT * FROM grants WHERE refresh = ? AND client_id = ?", form.get("refresh_token") || "", clientId);
-      if (!grant) {
-        return json(400, { error: "invalid_grant", error_description: "Token has been expired or revoked." });
-      }
-      return json(200, {
-        access_token: this.newAccessToken(grant.email, clientId, grant.scope),
-        expires_in: ACCESS_SECONDS - 1,
-        scope: grant.scope,
-        token_type: "Bearer",
-        ...(grant.scope.split(" ").includes("openid") ? { id_token: this.idToken(grant.email, clientId, origin) } : {}),
-      });
+      return this.exchangeRefresh(form, clientId, origin);
     }
     return json(400, { error: "unsupported_grant_type", error_description: `Invalid grant_type: ${grantType ?? ""}` });
   }
 
   /** who calls: a user's access token, the API key (anonymous), or null (bad/expired token) */
   private caller(request: Request, url: URL): Caller | null | "none" | "badkey" {
-    const bearer = request.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1] || url.searchParams.get("access_token");
+    const bearer = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") ?? "")?.[1] || url.searchParams.get("access_token"); // NOSONAR S8786: HTTP headers forbid line breaks, so the suffix cannot trigger repeated whitespace backtracking
     if (bearer) {
       const row = this.one<Row>("SELECT * FROM tokens WHERE token = ?", bearer.trim());
       if (!row || row.expires < Date.now()) {
@@ -1224,7 +1317,8 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (!roles.length) {
       return null;
     }
-    return roles.sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0];
+    roles.sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a]);
+    return roles[0];
   }
 
   private access(id: string, caller: Caller) {
@@ -1262,6 +1356,18 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       canAcceptOwnership: false,
       canReadLabels: false,
       canModifyLabels: false,
+    };
+  }
+
+  private contentResource(file: FileRow, folder: boolean, extension: string | undefined) {
+    return {
+      originalFilename: folder ? undefined : file.name,
+      fullFileExtension: folder ? undefined : extension,
+      fileExtension: folder ? undefined : extension,
+      md5Checksum: folder ? undefined : file.md5 ?? undefined,
+      size: folder ? undefined : String(file.size),
+      quotaBytesUsed: folder ? "0" : String(file.size),
+      headRevisionId: folder ? undefined : file.head ?? undefined,
     };
   }
 
@@ -1305,16 +1411,10 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       permissions: ROLE_RANK[role] >= 3 && caller.kind === "user" ? perms.map((perm) => this.permission(perm, origin)) : undefined,
       hasAugmentedPermissions: false,
       isAppAuthorized: caller.kind === "user",
-      originalFilename: folder ? undefined : file.name,
-      fullFileExtension: folder ? undefined : extension,
-      fileExtension: folder ? undefined : extension,
-      md5Checksum: folder ? undefined : file.md5 ?? undefined,
-      size: folder ? undefined : String(file.size),
-      quotaBytesUsed: folder ? "0" : String(file.size),
-      headRevisionId: folder ? undefined : file.head ?? undefined,
+      ...this.contentResource(file, folder, extension),
     };
     if (me && file.owner !== me) {
-      const share = perms.find((perm) => perm.email === me);
+      const share = perms.some((perm) => perm.email === me);
       out.sharingUser = share ? this.driveUser(file.owner, me, origin) : undefined;
     }
     if (file.trashed) {
@@ -1486,8 +1586,145 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         response = error.response;
       }
     }
-    this.log("request", { method: request.method, path: `${fullPath}${url.search ? `?${decodeURIComponent(url.search.slice(1)).slice(0, 300)}` : ""}`, email: email ?? (who === null ? "(bad token)" : "(api key)"), status: response.status });
+    const query = url.search ? `?${decodeURIComponent(url.search.slice(1)).slice(0, 300)}` : "";
+    this.log("request", { method: request.method, path: `${fullPath}${query}`, email: email ?? (who === null ? "(bad token)" : "(api key)"), status: response.status });
     return response;
+  }
+
+  private async watchFile(request: Request, fileId: string, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
+    const user = anonymousOnly();
+    const { file } = this.access(fileId, user);
+    const body = await parseJson(request);
+    if (!body.id || typeof body.id !== "string") {
+      return invalid("Required channel id", "id");
+    }
+    if (body.type !== "web_hook" && body.type !== "webhook") {
+      return invalid("Invalid value for type: only web_hook is supported", "type");
+    }
+    try {
+      new URL(String(body.address));
+    } catch {
+      return invalid(`Invalid push notification address '${body.address ?? ""}'`, "address");
+    }
+    if (this.one("SELECT 1 AS x FROM channels WHERE id = ?", body.id)) {
+      return googleError(400, `Channel id ${body.id} not unique`, "channelIdNotUnique");
+    }
+    const requested = body.expiration ? Number(body.expiration) : Date.now() + CHANNEL_DEFAULT_MS;
+    const expiration = Math.min(Number.isFinite(requested) ? requested : Date.now() + CHANNEL_DEFAULT_MS, Date.now() + CHANNEL_MAX_MS);
+    const resourceDigits = digits(`res:${file.id}`, 12);
+    const resourceId = `fakeRes${resourceDigits}`;
+    this.run(
+      "INSERT INTO channels (id, resource_id, file_id, token, address, expiration, email, msg) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+      body.id,
+      resourceId,
+      file.id,
+      body.token ?? null,
+      String(body.address),
+      expiration,
+      user.email,
+    );
+    const channel = this.one<Row>("SELECT * FROM channels WHERE id = ?", body.id)!;
+    this.deliver(channel, "sync", []);
+    return json(200, {
+      kind: "api#channel",
+      id: body.id,
+      resourceId,
+      resourceUri: `https://www.googleapis.com/drive/v3/files/${file.id}?alt=json&null`,
+      ...(body.token ? { token: body.token } : {}),
+      expiration: String(expiration),
+    });
+  }
+
+  private getFile(url: URL, fileId: string, caller: Caller, origin: string) {
+    if (fileId === "root" && caller.kind === "user") {
+      const root = { kind: "drive#file", id: rootOf(caller.email), name: "My Drive", mimeType: FOLDER_MIME, parents: undefined, trashed: false };
+      return json(200, select(root, fieldsOf(url, "kind,id,name,mimeType")));
+    }
+    const { file, role } = this.access(fileId, caller);
+    if (url.searchParams.get("alt") === "media") {
+      if (file.mime === FOLDER_MIME) {
+        return googleError(403, "Only files with binary content can be downloaded. Use Export with Docs Editors files.", "fileNotDownloadable", { location: "alt" });
+      }
+      return new Response(this.blob(file.md5!), { headers: { "Content-Type": file.mime, "Cache-Control": "no-store" } });
+    }
+    const fields = fieldsOf(url, "kind,id,name,mimeType");
+    checkKeys(fields, FILE_KEYS, "file");
+    return json(200, select(this.resource(file, role, caller, origin), fields));
+  }
+
+  private fileCall(request: Request, url: URL, { method, upload, fileId, caller, origin, anonymousOnly }: { method: string; upload: boolean; fileId: string; caller: Caller; origin: string; anonymousOnly: () => Extract<Caller, { kind: "user" }> }) {
+    if (method === "GET" && !upload) {
+      return this.getFile(url, fileId, caller, origin);
+    }
+    if (method === "PATCH" || (upload && method === "PUT")) {
+      return this.updateFile(request, url, anonymousOnly(), fileId, upload, origin);
+    }
+    if (method === "DELETE" && !upload) {
+      const user = anonymousOnly();
+      const { file, role } = this.access(fileId, user);
+      if (ROLE_RANK[role] < 4) {
+        return noFilePermission();
+      }
+      this.notify(file.id, "remove");
+      this.deleteFile(file.id);
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  private async stopChannel(request: Request, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
+    anonymousOnly();
+    const body = await parseJson(request);
+    const channel = this.one<Row>("SELECT * FROM channels WHERE id = ? AND resource_id = ?", String(body.id ?? ""), String(body.resourceId ?? ""));
+    if (!channel) {
+      return googleError(404, `Channel '${body.id}' not found for project 'fake'`, "notFound");
+    }
+    this.run("DELETE FROM channels WHERE id = ?", channel.id);
+    return new Response(null, { status: 204 });
+  }
+
+  private driveFileCall(request: Request, url: URL, path: string, upload: boolean, caller: Caller, origin: string, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
+    const method = request.method;
+    const fileMatch = /^\/files\/([^/]+)(\/.*)?$/.exec(path);
+    if (!fileMatch) {
+      return googleError(404, `Not Found: ${path}`, "notFound");
+    }
+    const fileId = decodeURIComponent(fileMatch[1]);
+    const rest = fileMatch[2] || "";
+
+    if (!rest) {
+      const response = this.fileCall(request, url, { method, upload, fileId, caller, origin, anonymousOnly });
+      if (response) return response;
+    }
+    if (rest === "/watch" && method === "POST") {
+      return this.watchFile(request, fileId, anonymousOnly);
+    }
+    const revisionMatch = /^\/revisions(?:\/([^/]+))?$/.exec(rest);
+    if (revisionMatch) {
+      return this.revisions(request, url, anonymousOnly(), fileId, revisionMatch[1] ? decodeURIComponent(revisionMatch[1]) : null, origin);
+    }
+    const permissionMatch = /^\/permissions(?:\/([^/]+))?$/.exec(rest);
+    if (permissionMatch) {
+      return this.permissions(request, url, anonymousOnly(), fileId, permissionMatch[1] ? decodeURIComponent(permissionMatch[1]) : null, origin);
+    }
+    return googleError(404, `Not Found: ${method} ${path}`, "notFound");
+  }
+
+  private driveResourceCall(request: Request, url: URL, path: string, upload: boolean, caller: Caller, origin: string, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
+    const method = request.method;
+    if (path === "/about" && method === "GET") {
+      const user = anonymousOnly();
+      return json(200, select({ kind: "drive#about", user: this.driveUser(user.email, user.email, origin) }, fieldsOf(url, "kind,user")));
+    }
+    if (path === "/channels/stop" && method === "POST") {
+      return this.stopChannel(request, anonymousOnly);
+    }
+    if (path === "/files" && method === "GET" && !upload) {
+      return this.listFiles(url, anonymousOnly(), origin);
+    }
+    if (path === "/files" && method === "POST") {
+      return this.createFile(request, url, anonymousOnly(), upload, origin);
+    }
+    return this.driveFileCall(request, url, path, upload, caller, origin, anonymousOnly);
   }
 
   private async driveCall(request: Request, url: URL, path: string, upload: boolean, who: ReturnType<FakeGoogle["caller"]>): Promise<Response> {
@@ -1513,7 +1750,6 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const caller = who;
     const origin = this.origin(request);
-    const method = request.method;
     if (caller.kind === "user" && !caller.scope.includes(DRIVE_FILE) && !caller.scope.includes(DRIVE_FULL)) {
       return googleError(403, "Request had insufficient authentication scopes.", "insufficientPermissions", { status: "PERMISSION_DENIED" });
     }
@@ -1524,115 +1760,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       return caller as Extract<Caller, { kind: "user" }>;
     };
 
-    if (path === "/about" && method === "GET") {
-      const user = anonymousOnly();
-      return json(200, select({ kind: "drive#about", user: this.driveUser(user.email, user.email, origin) }, fieldsOf(url, "kind,user")));
-    }
-    if (path === "/channels/stop" && method === "POST") {
-      anonymousOnly();
-      const body = await parseJson(request);
-      const channel = this.one<Row>("SELECT * FROM channels WHERE id = ? AND resource_id = ?", String(body.id ?? ""), String(body.resourceId ?? ""));
-      if (!channel) {
-        return googleError(404, `Channel '${body.id}' not found for project 'fake'`, "notFound");
-      }
-      this.run("DELETE FROM channels WHERE id = ?", channel.id);
-      return new Response(null, { status: 204 });
-    }
-    if (path === "/files" && method === "GET" && !upload) {
-      return this.listFiles(url, anonymousOnly(), origin);
-    }
-    if (path === "/files" && method === "POST") {
-      return this.createFile(request, url, anonymousOnly(), upload, origin);
-    }
-    const fileMatch = path.match(/^\/files\/([^/]+)(\/.*)?$/);
-    if (!fileMatch) {
-      return googleError(404, `Not Found: ${path}`, "notFound");
-    }
-    const fileId = decodeURIComponent(fileMatch[1]);
-    const rest = fileMatch[2] || "";
-
-    if (!rest) {
-      if (method === "GET" && !upload) {
-        if (fileId === "root" && caller.kind === "user") {
-          const root = { kind: "drive#file", id: rootOf(caller.email), name: "My Drive", mimeType: FOLDER_MIME, parents: undefined, trashed: false };
-          return json(200, select(root, fieldsOf(url, "kind,id,name,mimeType")));
-        }
-        const { file, role } = this.access(fileId, caller);
-        if (url.searchParams.get("alt") === "media") {
-          if (file.mime === FOLDER_MIME) {
-            return googleError(403, "Only files with binary content can be downloaded. Use Export with Docs Editors files.", "fileNotDownloadable", { location: "alt" });
-          }
-          return new Response(this.blob(file.md5!), { headers: { "Content-Type": file.mime, "Cache-Control": "no-store" } });
-        }
-        const fields = fieldsOf(url, "kind,id,name,mimeType");
-        checkKeys(fields, FILE_KEYS, "file");
-        return json(200, select(this.resource(file, role, caller, origin), fields));
-      }
-      if (method === "PATCH" || (upload && method === "PUT")) {
-        return this.updateFile(request, url, anonymousOnly(), fileId, upload, origin);
-      }
-      if (method === "DELETE" && !upload) {
-        const user = anonymousOnly();
-        const { file, role } = this.access(fileId, user);
-        if (ROLE_RANK[role] < 4) {
-          return noFilePermission();
-        }
-        this.notify(file.id, "remove");
-        this.deleteFile(file.id);
-        return new Response(null, { status: 204 });
-      }
-    }
-    if (rest === "/watch" && method === "POST") {
-      const user = anonymousOnly();
-      const { file } = this.access(fileId, user);
-      const body = await parseJson(request);
-      if (!body.id || typeof body.id !== "string") {
-        return invalid("Required channel id", "id");
-      }
-      if (body.type !== "web_hook" && body.type !== "webhook") {
-        return invalid("Invalid value for type: only web_hook is supported", "type");
-      }
-      try {
-        new URL(String(body.address));
-      } catch {
-        return invalid(`Invalid push notification address '${body.address ?? ""}'`, "address");
-      }
-      if (this.one("SELECT 1 AS x FROM channels WHERE id = ?", body.id)) {
-        return googleError(400, `Channel id ${body.id} not unique`, "channelIdNotUnique");
-      }
-      const requested = body.expiration ? Number(body.expiration) : Date.now() + CHANNEL_DEFAULT_MS;
-      const expiration = Math.min(Number.isFinite(requested) ? requested : Date.now() + CHANNEL_DEFAULT_MS, Date.now() + CHANNEL_MAX_MS);
-      const resourceId = `fakeRes${digits(`res:${file.id}`, 12)}`;
-      this.run(
-        "INSERT INTO channels (id, resource_id, file_id, token, address, expiration, email, msg) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-        body.id,
-        resourceId,
-        file.id,
-        body.token ?? null,
-        String(body.address),
-        expiration,
-        user.email,
-      );
-      const channel = this.one<Row>("SELECT * FROM channels WHERE id = ?", body.id)!;
-      this.deliver(channel, "sync", []);
-      return json(200, {
-        kind: "api#channel",
-        id: body.id,
-        resourceId,
-        resourceUri: `https://www.googleapis.com/drive/v3/files/${file.id}?alt=json&null`,
-        ...(body.token ? { token: body.token } : {}),
-        expiration: String(expiration),
-      });
-    }
-    const revisionMatch = rest.match(/^\/revisions(?:\/([^/]+))?$/);
-    if (revisionMatch) {
-      return this.revisions(request, url, anonymousOnly(), fileId, revisionMatch[1] ? decodeURIComponent(revisionMatch[1]) : null, origin);
-    }
-    const permissionMatch = rest.match(/^\/permissions(?:\/([^/]+))?$/);
-    if (permissionMatch) {
-      return this.permissions(request, url, anonymousOnly(), fileId, permissionMatch[1] ? decodeURIComponent(permissionMatch[1]) : null, origin);
-    }
-    return googleError(404, `Not Found: ${method} ${path}`, "notFound");
+    return this.driveResourceCall(request, url, path, upload, caller, origin, anonymousOnly);
   }
 
   private listFiles(url: URL, caller: Extract<Caller, { kind: "user" }>, origin: string) {
@@ -1660,18 +1788,13 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       .filter((entry): entry is { file: FileRow; role: string } => !!entry.role && predicate(entry.file, ctx));
     const orderBy = (url.searchParams.get("orderBy") || "").split(",").map((part) => part.trim()).filter(Boolean);
     if (orderBy.length) {
-      const keyOf = (file: FileRow, key: string) =>
-        key === "name" || key === "name_natural"
-          ? file.name.toLowerCase()
-          : key === "createdTime"
-            ? file.created
-            : key === "modifiedTime" || key === "modifiedByMeTime" || key === "recency" || key === "viewedByMeTime"
-              ? file.modified
-              : key === "folder"
-                ? file.mime === FOLDER_MIME
-                  ? "0"
-                  : "1"
-                : "";
+      const keyOf = (file: FileRow, key: string) => {
+        if (key === "name" || key === "name_natural") return file.name.toLowerCase();
+        if (key === "createdTime") return file.created;
+        if (key === "modifiedTime" || key === "modifiedByMeTime" || key === "recency" || key === "viewedByMeTime") return file.modified;
+        if (key === "folder") return file.mime === FOLDER_MIME ? "0" : "1";
+        return "";
+      };
       visible.sort((a, b) => {
         for (const part of orderBy) {
           const [key, direction] = part.split(/\s+/);
@@ -1706,6 +1829,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
   }
 
   /** upload bodies: { metadata, content?, contentType } */
+
   private async uploadBody(request: Request, url: URL, upload: boolean) {
     if (!upload) {
       return { metadata: await parseJson(request), content: null as Uint8Array | null, contentType: "" };
@@ -1768,7 +1892,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     checkKeys(fields, FILE_KEYS, "file");
     const { metadata, content, contentType } = await this.uploadBody(request, url, upload);
     const mime = String(metadata.mimeType || contentType || "application/octet-stream");
-    if (mime === FOLDER_MIME && content && content.length) {
+    if (mime === FOLDER_MIME && content?.length) {
       return invalid("A folder can't have content.", "mimeType");
     }
     const parents = this.checkParents(Array.isArray(metadata.parents) && metadata.parents.length ? metadata.parents.map(String) : ["root"], caller);
@@ -1822,13 +1946,8 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     this.gcBlobs();
   }
 
-  private async updateFile(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, fileId: string, upload: boolean, origin: string) {
-    const fields = fieldsOf(url, "kind,id,name,mimeType");
-    checkKeys(fields, FILE_KEYS, "file");
-    const { file, role } = this.access(fileId, caller);
-    const { metadata, content, contentType } = await this.uploadBody(request, url, upload);
+  private fileUpdatePermission(file: FileRow, role: string, metadata: Row, content: Uint8Array | null, url: URL) {
     const rank = ROLE_RANK[role];
-    const changed = new Set<string>();
     let trashState: "trash" | "untrash" | null = null;
     if (metadata.trashed !== undefined && !!metadata.trashed !== !!file.trashed) {
       // in My Drive only the owner moves a file to (or out of) the bin
@@ -1845,17 +1964,10 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (editsOther && (rank < 3 || (file.trashed && !trashState))) {
       return noFilePermission();
     }
-    if (trashState) {
-      this.run("UPDATE files SET trashed = ?, version = version + 1 WHERE id = ?", trashState === "trash" ? 1 : 0, file.id);
-    }
-    if (metadata.name !== undefined && String(metadata.name) !== file.name) {
-      this.run("UPDATE files SET name = ? WHERE id = ?", String(metadata.name), file.id);
-      changed.add("properties");
-    }
-    if (metadata.description !== undefined) {
-      this.run("UPDATE files SET description = ? WHERE id = ?", metadata.description === null ? null : String(metadata.description), file.id);
-      changed.add("properties");
-    }
+    return trashState;
+  }
+
+  private updateFileMaps(file: FileRow, metadata: Row, changed: Set<string>) {
     for (const [key, column] of [
       ["appProperties", "app_props"],
       ["properties", "props"],
@@ -1873,6 +1985,20 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         changed.add("properties");
       }
     }
+    return null;
+  }
+
+  private updateFileProperties(file: FileRow, metadata: Row, url: URL, caller: Extract<Caller, { kind: "user" }>, changed: Set<string>) {
+    if (metadata.name !== undefined && String(metadata.name) !== file.name) {
+      this.run("UPDATE files SET name = ? WHERE id = ?", String(metadata.name), file.id);
+      changed.add("properties");
+    }
+    if (metadata.description !== undefined) {
+      this.run("UPDATE files SET description = ? WHERE id = ?", metadata.description === null ? null : String(metadata.description), file.id);
+      changed.add("properties");
+    }
+    const mapError = this.updateFileMaps(file, metadata, changed);
+    if (mapError) return mapError;
     const add = (url.searchParams.get("addParents") || "").split(",").filter(Boolean);
     const remove = (url.searchParams.get("removeParents") || "").split(",").filter(Boolean);
     if (add.length || remove.length) {
@@ -1888,6 +2014,24 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       this.run("UPDATE files SET mime = ? WHERE id = ?", mime, file.id);
       changed.add("properties");
     }
+    return mime;
+  }
+
+  private async updateFile(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, fileId: string, upload: boolean, origin: string) {
+    const fields = fieldsOf(url, "kind,id,name,mimeType");
+    checkKeys(fields, FILE_KEYS, "file");
+    const { file, role } = this.access(fileId, caller);
+    const { metadata, content, contentType } = await this.uploadBody(request, url, upload);
+    const changed = new Set<string>();
+    const permission = this.fileUpdatePermission(file, role, metadata, content, url);
+    if (permission instanceof Response) return permission;
+    const trashState = permission;
+    if (trashState) {
+      this.run("UPDATE files SET trashed = ?, version = version + 1 WHERE id = ?", trashState === "trash" ? 1 : 0, file.id);
+    }
+    const properties = this.updateFileProperties(file, metadata, url, caller, changed);
+    if (properties instanceof Response) return properties;
+    const mime = properties;
     if (content !== null) {
       if (file.mime === FOLDER_MIME) {
         return invalid("A folder can't have content.");
@@ -1922,6 +2066,42 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     };
   }
 
+  private listRevisions(url: URL, method: string, file: FileRow, caller: Extract<Caller, { kind: "user" }>, origin: string) {
+    if (method !== "GET") {
+      return googleError(404, "Not Found", "notFound");
+    }
+    const fields = fieldsOf(url, "kind,nextPageToken,revisions(kind,id,mimeType,modifiedTime)");
+    checkKeys(fields.get("revisions"), REVISION_KEYS, "revision");
+    const all = this.all<Row>("SELECT * FROM revisions WHERE file_id = ? ORDER BY seq", file.id);
+    const pageSize = Math.min(Math.max(Number(url.searchParams.get("pageSize") || 200) || 200, 1), 1000);
+    const offset = url.searchParams.get("pageToken") ? Number(atob(url.searchParams.get("pageToken")!).replace(/^o:/, "")) || 0 : 0;
+    const body: Row = {
+      kind: "drive#revisionList",
+      revisions: all.slice(offset, offset + pageSize).map((revision) => this.revisionResource(revision, file, caller.email, origin)),
+    };
+    if (offset + pageSize < all.length) {
+      body.nextPageToken = btoa(`o:${offset + pageSize}`);
+    }
+    return json(200, select(body, fields));
+  }
+
+  private async patchRevision(request: Request, url: URL, revision: Row, file: FileRow, caller: Extract<Caller, { kind: "user" }>, origin: string) {
+    const body = await parseJson(request);
+    const fields = fieldsOf(url, "kind,id,mimeType,modifiedTime");
+    if (body.keepForever !== undefined) {
+      const keep = !!body.keepForever;
+      if (keep && !revision.keep) {
+        const kept = this.one<{ n: number }>("SELECT COUNT(*) AS n FROM revisions WHERE file_id = ? AND keep = 1", file.id)!.n;
+        if (kept >= KEEP_FOREVER_MAX) {
+          return googleError(403, `A file can have at most ${KEEP_FOREVER_MAX} revisions kept forever.`, "keepForeverLimitExceeded");
+        }
+      }
+      this.run("UPDATE revisions SET keep = ? WHERE file_id = ? AND id = ?", keep ? 1 : 0, file.id, revision.id);
+    }
+    const saved = this.one<Row>("SELECT * FROM revisions WHERE file_id = ? AND id = ?", file.id, revision.id)!;
+    return json(200, select(this.revisionResource(saved, file, caller.email, origin), fields));
+  }
+
   private async revisions(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, fileId: string, revisionId: string | null, origin: string) {
     const { file, role } = this.access(fileId, caller);
     if (file.mime === FOLDER_MIME) {
@@ -1933,22 +2113,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const method = request.method;
     if (!revisionId) {
-      if (method !== "GET") {
-        return googleError(404, "Not Found", "notFound");
-      }
-      const fields = fieldsOf(url, "kind,nextPageToken,revisions(kind,id,mimeType,modifiedTime)");
-      checkKeys(fields.get("revisions"), REVISION_KEYS, "revision");
-      const all = this.all<Row>("SELECT * FROM revisions WHERE file_id = ? ORDER BY seq", file.id);
-      const pageSize = Math.min(Math.max(Number(url.searchParams.get("pageSize") || 200) || 200, 1), 1000);
-      const offset = url.searchParams.get("pageToken") ? Number(atob(url.searchParams.get("pageToken")!).replace(/^o:/, "")) || 0 : 0;
-      const body: Row = {
-        kind: "drive#revisionList",
-        revisions: all.slice(offset, offset + pageSize).map((revision) => this.revisionResource(revision, file, caller.email, origin)),
-      };
-      if (offset + pageSize < all.length) {
-        body.nextPageToken = btoa(`o:${offset + pageSize}`);
-      }
-      return json(200, select(body, fields));
+      return this.listRevisions(url, method, file, caller, origin);
     }
     const revision = this.one<Row>("SELECT * FROM revisions WHERE file_id = ? AND id = ?", file.id, revisionId);
     if (!revision) {
@@ -1963,20 +2128,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       return json(200, select(this.revisionResource(revision, file, caller.email, origin), fields));
     }
     if (method === "PATCH") {
-      const body = await parseJson(request);
-      const fields = fieldsOf(url, "kind,id,mimeType,modifiedTime");
-      if (body.keepForever !== undefined) {
-        const keep = !!body.keepForever;
-        if (keep && !revision.keep) {
-          const kept = this.one<{ n: number }>("SELECT COUNT(*) AS n FROM revisions WHERE file_id = ? AND keep = 1", file.id)!.n;
-          if (kept >= KEEP_FOREVER_MAX) {
-            return googleError(403, `A file can have at most ${KEEP_FOREVER_MAX} revisions kept forever.`, "keepForeverLimitExceeded");
-          }
-        }
-        this.run("UPDATE revisions SET keep = ? WHERE file_id = ? AND id = ?", keep ? 1 : 0, file.id, revision.id);
-      }
-      const saved = this.one<Row>("SELECT * FROM revisions WHERE file_id = ? AND id = ?", file.id, revision.id)!;
-      return json(200, select(this.revisionResource(saved, file, caller.email, origin), fields));
+      return this.patchRevision(request, url, revision, file, caller, origin);
     }
     if (method === "DELETE") {
       if (revision.id === file.head) {
@@ -1987,6 +2139,88 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       return new Response(null, { status: 204 });
     }
     return googleError(404, "Not Found", "notFound");
+  }
+
+  private permissionRequestError(newRole: string, type: string, url: URL, role: string) {
+    if (!["reader", "commenter", "writer", "owner"].includes(newRole)) {
+      return googleError(400, `Invalid permission role: ${newRole}`, "invalidSharingRequest", { location: "role" });
+    }
+    if (newRole === "owner" && (type !== "user" || url.searchParams.get("transferOwnership") !== "true")) {
+      return googleError(403, "The transferOwnership parameter must be enabled when the permission role is 'owner'.", "forbidden");
+    }
+    if (newRole === "owner" && ROLE_RANK[role] < 4) {
+      return noFilePermission();
+    }
+    return null;
+  }
+
+  private insertUserPermission(body: Row, newRole: string, file: FileRow, url: URL, caller: Extract<Caller, { kind: "user" }>) {
+    const email = String(body.emailAddress || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
+      return googleError(400, "A valid email address is required for user permissions.", "invalidSharingRequest", { location: "permission.emailAddress" });
+    }
+    this.user(email);
+    const id = permIdOf(email);
+    if (newRole === "owner") {
+      this.run("UPDATE perms SET role = 'writer' WHERE file_id = ? AND role = 'owner'", file.id);
+      this.run("UPDATE files SET owner = ? WHERE id = ?", email, file.id);
+    }
+    this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, id, newRole, email);
+    if (url.searchParams.get("sendNotificationEmail") !== "false") {
+      this.log("mail", { to: email, from: caller.email, fileId: file.id, name: file.name, role: newRole, message: url.searchParams.get("emailMessage") || "" });
+    }
+    return id;
+  }
+
+  private async createPermission(request: Request, url: URL, { file, role, canShare, caller, origin, fields, one }: { file: FileRow; role: string; canShare: boolean; caller: Extract<Caller, { kind: "user" }>; origin: string; fields: FieldTree; one: (id: string) => Row | null }) {
+    if (!canShare) {
+      return noFilePermission();
+    }
+    const body = await parseJson(request);
+    const type = String(body.type || "");
+    const newRole = String(body.role || "");
+    const error = this.permissionRequestError(newRole, type, url, role);
+    if (error) return error;
+    let id: string;
+    if (type === "anyone") {
+      id = body.allowFileDiscovery ? "anyone" : "anyoneWithLink";
+      this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
+      this.run("INSERT INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'anyone', ?, NULL, ?)", file.id, id, newRole, body.allowFileDiscovery ? 1 : 0);
+    } else if (type === "user") {
+      const result = this.insertUserPermission(body, newRole, file, url, caller);
+      if (result instanceof Response) return result;
+      id = result;
+    } else {
+      return googleError(400, `The fake Google supports permission types user and anyone, not '${type}'.`, "invalidSharingRequest", { location: "type" });
+    }
+    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
+    this.notify(file.id, "update", ["permissions"]);
+    return json(200, select(this.permission(one(id)!, origin), fields));
+  }
+
+  private async patchPermission(request: Request, url: URL, { file, role, canShare, caller, origin, fields, one }: { file: FileRow; role: string; canShare: boolean; caller: Extract<Caller, { kind: "user" }>; origin: string; fields: FieldTree; one: (id: string) => Row | null }, perm: Row) {
+    if (!canShare) {
+      return noFilePermission();
+    }
+    const body = await parseJson(request);
+    const newRole = String(body.role || perm.role);
+    if (!["reader", "commenter", "writer", "owner"].includes(newRole)) {
+      return googleError(400, `Invalid permission role: ${newRole}`, "invalidSharingRequest", { location: "role" });
+    }
+    if (perm.role === "owner" && newRole !== "owner") {
+      return googleError(403, "The owner of a file can't be downgraded; transfer the ownership first.", "cannotModifyOwner");
+    }
+    if (newRole === "owner" && perm.role !== "owner") {
+      if (url.searchParams.get("transferOwnership") !== "true" || ROLE_RANK[role] < 4 || perm.type !== "user") {
+        return googleError(403, "The transferOwnership parameter must be enabled when the permission role is 'owner'.", "forbidden");
+      }
+      this.run("UPDATE perms SET role = 'writer' WHERE file_id = ? AND role = 'owner'", file.id);
+      this.run("UPDATE files SET owner = ? WHERE id = ?", perm.email, file.id);
+    }
+    this.run("UPDATE perms SET role = ? WHERE file_id = ? AND id = ?", newRole, file.id, perm.id);
+    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
+    this.notify(file.id, "update", ["permissions"]);
+    return json(200, select(this.permission(one(perm.id)!, origin), fields));
   }
 
   private async permissions(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, fileId: string, permissionId: string | null, origin: string) {
@@ -2002,47 +2236,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const fields = fieldsOf(url, "kind,id,type,role");
     checkKeys(fields, PERMISSION_KEYS, "permission");
     if (!permissionId && method === "POST") {
-      if (!canShare) {
-        return noFilePermission();
-      }
-      const body = await parseJson(request);
-      const type = String(body.type || "");
-      const newRole = String(body.role || "");
-      if (!["reader", "commenter", "writer", "owner"].includes(newRole)) {
-        return googleError(400, `Invalid permission role: ${newRole}`, "invalidSharingRequest", { location: "role" });
-      }
-      if (newRole === "owner" && (type !== "user" || url.searchParams.get("transferOwnership") !== "true")) {
-        return googleError(403, "The transferOwnership parameter must be enabled when the permission role is 'owner'.", "forbidden");
-      }
-      if (newRole === "owner" && ROLE_RANK[role] < 4) {
-        return noFilePermission();
-      }
-      let id: string;
-      if (type === "anyone") {
-        id = body.allowFileDiscovery ? "anyone" : "anyoneWithLink";
-        this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
-        this.run("INSERT INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'anyone', ?, NULL, ?)", file.id, id, newRole, body.allowFileDiscovery ? 1 : 0);
-      } else if (type === "user") {
-        const email = String(body.emailAddress || "").trim().toLowerCase();
-        if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
-          return googleError(400, "A valid email address is required for user permissions.", "invalidSharingRequest", { location: "permission.emailAddress" });
-        }
-        this.user(email);
-        id = permIdOf(email);
-        if (newRole === "owner") {
-          this.run("UPDATE perms SET role = 'writer' WHERE file_id = ? AND role = 'owner'", file.id);
-          this.run("UPDATE files SET owner = ? WHERE id = ?", email, file.id);
-        }
-        this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, id, newRole, email);
-        if (url.searchParams.get("sendNotificationEmail") !== "false") {
-          this.log("mail", { to: email, from: caller.email, fileId: file.id, name: file.name, role: newRole, message: url.searchParams.get("emailMessage") || "" });
-        }
-      } else {
-        return googleError(400, `The fake Google supports permission types user and anyone, not '${type}'.`, "invalidSharingRequest", { location: "type" });
-      }
-      this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-      this.notify(file.id, "update", ["permissions"]);
-      return json(200, select(this.permission(one(id)!, origin), fields));
+      return this.createPermission(request, url, { file, role, canShare, caller, origin, fields, one });
     }
     const perm = permissionId ? one(permissionId) : null;
     if (!perm) {
@@ -2053,28 +2247,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const self = perm.type === "user" && perm.email === caller.email;
     if (method === "PATCH") {
-      if (!canShare) {
-        return noFilePermission();
-      }
-      const body = await parseJson(request);
-      const newRole = String(body.role || perm.role);
-      if (!["reader", "commenter", "writer", "owner"].includes(newRole)) {
-        return googleError(400, `Invalid permission role: ${newRole}`, "invalidSharingRequest", { location: "role" });
-      }
-      if (perm.role === "owner" && newRole !== "owner") {
-        return googleError(403, "The owner of a file can't be downgraded; transfer the ownership first.", "cannotModifyOwner");
-      }
-      if (newRole === "owner" && perm.role !== "owner") {
-        if (url.searchParams.get("transferOwnership") !== "true" || ROLE_RANK[role] < 4 || perm.type !== "user") {
-          return googleError(403, "The transferOwnership parameter must be enabled when the permission role is 'owner'.", "forbidden");
-        }
-        this.run("UPDATE perms SET role = 'writer' WHERE file_id = ? AND role = 'owner'", file.id);
-        this.run("UPDATE files SET owner = ? WHERE id = ?", perm.email, file.id);
-      }
-      this.run("UPDATE perms SET role = ? WHERE file_id = ? AND id = ?", newRole, file.id, perm.id);
-      this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-      this.notify(file.id, "update", ["permissions"]);
-      return json(200, select(this.permission(one(perm.id)!, origin), fields));
+      return this.patchPermission(request, url, { file, role, canShare, caller, origin, fields, one }, perm);
     }
     if (method === "DELETE") {
       if (!canShare && !self) {
@@ -2118,6 +2291,144 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     };
   }
 
+  private async adminWrite(body: Row, origin: string, need: (key: string) => string, fileOf: () => FileRow) {
+    const email = this.user(need("email"));
+    const content = typeof body.content === "string" ? body.content : JSON.stringify(body.content ?? "");
+    const bytes = new TextEncoder().encode(content);
+    let file: FileRow;
+    if (body.fileId) {
+      file = fileOf();
+      const own = this.perms(file.id).find((perm) => perm.email === email);
+      const anyone = this.perms(file.id).find((perm) => perm.type === "anyone");
+      if (Math.max(ROLE_RANK[own?.role] ?? 0, ROLE_RANK[anyone?.role] ?? 0) < 3) {
+        return json(403, { error: `${email} can't edit this file` });
+      }
+      const changed = new Set<string>(["content"]);
+      if (body.name !== undefined && String(body.name) !== file.name) {
+        this.run("UPDATE files SET name = ? WHERE id = ?", String(body.name), file.id);
+        changed.add("properties");
+      }
+      if (body.appProperties) {
+        const merged = { ...JSON.parse(file.app_props || "{}") };
+        Object.entries(body.appProperties as Row).forEach(([key, value]) => {
+          if (value === null) delete merged[key];
+          else merged[key] = String(value);
+        });
+        this.run("UPDATE files SET app_props = ? WHERE id = ?", JSON.stringify(merged), file.id);
+        changed.add("properties");
+      }
+      await this.writeContent(this.file(file.id)!, bytes, String(body.mimeType || file.mime), email);
+      this.notify(file.id, "update", [...changed]);
+    } else {
+      const parents = Array.isArray(body.parents) && body.parents.length ? body.parents.map(String) : [rootOf(email)];
+      file = this.insertFile({
+        email,
+        name: String(body.name || "Untitled.excalidraw"),
+        mime: String(body.mimeType || "application/vnd.excalidraw+json"),
+        parents,
+        appProps: body.appProperties ?? {},
+      });
+      await this.writeContent(file, bytes, file.mime, email);
+    }
+    return json(200, this.adminFile(this.file(file.id)!, origin));
+  }
+
+  private adminShare(body: Row, origin: string, need: (key: string) => string, fileOf: () => FileRow) {
+    const file = fileOf();
+    const role = String(body.role || "reader");
+    if (!["reader", "commenter", "writer"].includes(role)) {
+      return json(400, { error: "role: reader, commenter or writer" });
+    }
+    if (body.anyone) {
+      this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
+      this.run("INSERT INTO perms (file_id, id, type, role, email, discover) VALUES (?, 'anyoneWithLink', 'anyone', ?, NULL, 0)", file.id, role);
+    } else {
+      const email = this.user(need("email"));
+      if (email === file.owner) {
+        return json(400, { error: "that's the owner" });
+      }
+      this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, permIdOf(email), role, email);
+    }
+    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
+    this.notify(file.id, "update", ["permissions"]);
+    return json(200, this.adminFile(file, origin));
+  }
+
+  private adminUnshare(body: Row, origin: string, need: (key: string) => string, fileOf: () => FileRow) {
+    const file = fileOf();
+    if (body.anyone) {
+      this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
+    } else {
+      this.run("DELETE FROM perms WHERE file_id = ? AND email = ? AND role != 'owner'", file.id, need("email").toLowerCase());
+    }
+    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
+    this.notify(file.id, "update", ["permissions"]);
+    this.dropChannelsWithoutAccess(file.id);
+    return json(200, this.adminFile(file, origin));
+  }
+
+  private adminGrant(origin: string, path: string, need: (key: string) => string, fileOf: () => FileRow) {
+    const file = fileOf();
+    const email = this.user(need("email"));
+    if (path === "/grant") this.run("INSERT OR IGNORE INTO app_access (email, file_id) VALUES (?, ?)", email, file.id);
+    else this.run("DELETE FROM app_access WHERE email = ? AND file_id = ?", email, file.id);
+    return json(200, { ok: true, appAccess: this.adminFile(file, origin).appAccess });
+  }
+
+  private adminTrash(origin: string, path: string, fileOf: () => FileRow) {
+    const file = fileOf();
+    const trash = path === "/trash";
+    if (!!file.trashed !== trash) {
+      this.run("UPDATE files SET trashed = ?, version = version + 1 WHERE id = ?", trash ? 1 : 0, file.id);
+      this.notify(file.id, trash ? "trash" : "untrash");
+    }
+    return json(200, this.adminFile(this.file(file.id)!, origin));
+  }
+
+  private adminPurgeRevisions(body: Row, fileOf: () => FileRow) {
+    const file = fileOf();
+    const keep = Math.max(1, Number(body.keep ?? 1));
+    const unkept = this.all<{ id: string }>("SELECT id FROM revisions WHERE file_id = ? AND keep = 0 AND id != ? ORDER BY seq DESC", file.id, file.head ?? "");
+    const drop = unkept.slice(Math.max(0, keep - 1));
+    drop.forEach((row) => this.run("DELETE FROM revisions WHERE file_id = ? AND id = ?", file.id, row.id));
+    this.gcBlobs();
+    return json(200, { purged: drop.map((row) => row.id) });
+  }
+
+  private adminFaults(body: Row, path: string) {
+    const count = Math.max(1, Number(body.count ?? 1));
+    let status: number | null = 503;
+    if (body.status) status = Number(body.status);
+    else if (body.delayMs) status = null;
+    this.run(
+      "INSERT INTO faults (remaining, status, reason, delay_ms, email, path, method, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      count,
+      status,
+      body.reason ?? null,
+      Number(body.delayMs ?? 0),
+      body.email ? String(body.email).toLowerCase() : null,
+      body.path ?? null,
+      body.method ? String(body.method).toUpperCase() : null,
+      body.target ?? "drive",
+    );
+    return json(200, { faults: this.all<Row>("SELECT * FROM faults ORDER BY id") });
+  }
+
+  private adminExpireTokens(body: Row) {
+    if (body.email) this.run("UPDATE tokens SET expires = ? WHERE email = ?", Date.now() - 1, String(body.email).toLowerCase());
+    else this.run("UPDATE tokens SET expires = ?", Date.now() - 1);
+    return json(200, { ok: true });
+  }
+
+  private adminLog(body: Row) {
+    const limit = Math.min(Number(body.limit ?? 100) || 100, 3000);
+    const rows = body.kind
+      ? this.all<Row>("SELECT * FROM log WHERE kind = ? ORDER BY id DESC LIMIT ?", String(body.kind), limit)
+      : this.all<Row>("SELECT * FROM log WHERE kind NOT LIKE 'inbox:%' ORDER BY id DESC LIMIT ?", limit);
+    rows.reverse();
+    return json(200, { log: rows.map((row) => ({ at: row.at, kind: row.kind, ...JSON.parse(row.data) })) });
+  }
+
   private async admin(request: Request, url: URL, path: string): Promise<Response> {
     const origin = this.origin(request);
     const method = request.method;
@@ -2132,7 +2443,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       const file = this.file(need("fileId"));
       return file ?? fail(json(404, { error: `no file ${body.fileId}` }));
     };
-    const inbox = path.match(/^\/inbox\/([A-Za-z0-9_.-]+)$/);
+    const inbox = /^\/inbox\/([A-Za-z0-9_.-]+)$/.exec(path);
     if (inbox) {
       const kind = `inbox:${inbox[1]}`;
       if (method === "DELETE") {
@@ -2180,93 +2491,12 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         });
       }
       case "POST /grant":
-      case "POST /ungrant": {
-        const file = fileOf();
-        const email = this.user(need("email"));
-        if (path === "/grant") this.run("INSERT OR IGNORE INTO app_access (email, file_id) VALUES (?, ?)", email, file.id);
-        else this.run("DELETE FROM app_access WHERE email = ? AND file_id = ?", email, file.id);
-        return json(200, { ok: true, appAccess: this.adminFile(file, origin).appAccess });
-      }
-      case "POST /write": {
-        const email = this.user(need("email"));
-        const content = typeof body.content === "string" ? body.content : JSON.stringify(body.content ?? "");
-        const bytes = new TextEncoder().encode(content);
-        let file: FileRow;
-        if (body.fileId) {
-          file = fileOf();
-          const own = this.perms(file.id).find((perm) => perm.email === email);
-          const anyone = this.perms(file.id).find((perm) => perm.type === "anyone");
-          if (Math.max(ROLE_RANK[own?.role] ?? 0, ROLE_RANK[anyone?.role] ?? 0) < 3) {
-            return json(403, { error: `${email} can't edit this file` });
-          }
-          const changed = new Set<string>(["content"]);
-          if (body.name !== undefined && String(body.name) !== file.name) {
-            this.run("UPDATE files SET name = ? WHERE id = ?", String(body.name), file.id);
-            changed.add("properties");
-          }
-          if (body.appProperties) {
-            const merged = { ...JSON.parse(file.app_props || "{}") };
-            Object.entries(body.appProperties as Row).forEach(([key, value]) => (value === null ? delete merged[key] : (merged[key] = String(value))));
-            this.run("UPDATE files SET app_props = ? WHERE id = ?", JSON.stringify(merged), file.id);
-            changed.add("properties");
-          }
-          await this.writeContent(this.file(file.id)!, bytes, String(body.mimeType || file.mime), email);
-          this.notify(file.id, "update", [...changed]);
-        } else {
-          const parents = Array.isArray(body.parents) && body.parents.length ? body.parents.map(String) : [rootOf(email)];
-          file = this.insertFile({
-            email,
-            name: String(body.name || "Untitled.excalidraw"),
-            mime: String(body.mimeType || "application/vnd.excalidraw+json"),
-            parents,
-            appProps: body.appProperties ?? {},
-          });
-          await this.writeContent(file, bytes, file.mime, email);
-        }
-        return json(200, this.adminFile(this.file(file.id)!, origin));
-      }
-      case "POST /share": {
-        const file = fileOf();
-        const role = String(body.role || "reader");
-        if (!["reader", "commenter", "writer"].includes(role)) {
-          return json(400, { error: "role: reader, commenter or writer" });
-        }
-        if (body.anyone) {
-          this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
-          this.run("INSERT INTO perms (file_id, id, type, role, email, discover) VALUES (?, 'anyoneWithLink', 'anyone', ?, NULL, 0)", file.id, role);
-        } else {
-          const email = this.user(need("email"));
-          if (email === file.owner) {
-            return json(400, { error: "that's the owner" });
-          }
-          this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, permIdOf(email), role, email);
-        }
-        this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-        this.notify(file.id, "update", ["permissions"]);
-        return json(200, this.adminFile(file, origin));
-      }
-      case "POST /unshare": {
-        const file = fileOf();
-        if (body.anyone) {
-          this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
-        } else {
-          this.run("DELETE FROM perms WHERE file_id = ? AND email = ? AND role != 'owner'", file.id, need("email").toLowerCase());
-        }
-        this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-        this.notify(file.id, "update", ["permissions"]);
-        this.dropChannelsWithoutAccess(file.id);
-        return json(200, this.adminFile(file, origin));
-      }
+      case "POST /ungrant": return this.adminGrant(origin, path, need, fileOf);
+      case "POST /write": return this.adminWrite(body, origin, need, fileOf);
+      case "POST /share": return this.adminShare(body, origin, need, fileOf);
+      case "POST /unshare": return this.adminUnshare(body, origin, need, fileOf);
       case "POST /trash":
-      case "POST /untrash": {
-        const file = fileOf();
-        const trash = path === "/trash";
-        if (!!file.trashed !== trash) {
-          this.run("UPDATE files SET trashed = ?, version = version + 1 WHERE id = ?", trash ? 1 : 0, file.id);
-          this.notify(file.id, trash ? "trash" : "untrash");
-        }
-        return json(200, this.adminFile(this.file(file.id)!, origin));
-      }
+      case "POST /untrash": return this.adminTrash(origin, path, fileOf);
       case "POST /delete": {
         const file = fileOf();
         this.notify(file.id, "remove");
@@ -2284,51 +2514,19 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
           })),
         });
       }
-      case "POST /purge-revisions": {
-        const file = fileOf();
-        const keep = Math.max(1, Number(body.keep ?? 1));
-        const unkept = this.all<{ id: string }>("SELECT id FROM revisions WHERE file_id = ? AND keep = 0 AND id != ? ORDER BY seq DESC", file.id, file.head ?? "");
-        const drop = unkept.slice(Math.max(0, keep - 1));
-        drop.forEach((row) => this.run("DELETE FROM revisions WHERE file_id = ? AND id = ?", file.id, row.id));
-        this.gcBlobs();
-        return json(200, { purged: drop.map((row) => row.id) });
-      }
-      case "POST /expire-tokens": {
-        if (body.email) this.run("UPDATE tokens SET expires = ? WHERE email = ?", Date.now() - 1, String(body.email).toLowerCase());
-        else this.run("UPDATE tokens SET expires = ?", Date.now() - 1);
-        return json(200, { ok: true });
-      }
+      case "POST /purge-revisions": return this.adminPurgeRevisions(body, fileOf);
+      case "POST /expire-tokens": return this.adminExpireTokens(body);
       case "POST /revoke": {
         this.revokeGrant(need("email").toLowerCase());
         return json(200, { ok: true });
       }
-      case "POST /faults": {
-        const count = Math.max(1, Number(body.count ?? 1));
-        this.run(
-          "INSERT INTO faults (remaining, status, reason, delay_ms, email, path, method, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-          count,
-          body.status ? Number(body.status) : body.delayMs ? null : 503,
-          body.reason ?? null,
-          Number(body.delayMs ?? 0),
-          body.email ? String(body.email).toLowerCase() : null,
-          body.path ?? null,
-          body.method ? String(body.method).toUpperCase() : null,
-          body.target ?? "drive",
-        );
-        return json(200, { faults: this.all<Row>("SELECT * FROM faults ORDER BY id") });
-      }
+      case "POST /faults": return this.adminFaults(body, path);
       case "GET /faults":
         return json(200, { faults: this.all<Row>("SELECT * FROM faults ORDER BY id") });
       case "DELETE /faults":
         this.run("DELETE FROM faults");
         return json(200, { ok: true });
-      case "GET /log": {
-        const limit = Math.min(Number(body.limit ?? 100) || 100, 3000);
-        const rows = body.kind
-          ? this.all<Row>("SELECT * FROM log WHERE kind = ? ORDER BY id DESC LIMIT ?", String(body.kind), limit)
-          : this.all<Row>("SELECT * FROM log WHERE kind NOT LIKE 'inbox:%' ORDER BY id DESC LIMIT ?", limit);
-        return json(200, { log: rows.reverse().map((row) => ({ at: row.at, kind: row.kind, ...JSON.parse(row.data) })) });
-      }
+      case "GET /log": return this.adminLog(body);
       case "GET /channels":
         return json(200, { channels: this.all<Row>("SELECT * FROM channels ORDER BY expiration") });
     }

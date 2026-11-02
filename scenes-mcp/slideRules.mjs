@@ -36,7 +36,7 @@ export const canon = (value) => {
   }
   if (value && typeof value === "object") {
     return `{${Object.keys(value)
-      .sort()
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
       .map((key) => `${JSON.stringify(key)}:${canon(value[key])}`)
       .join(",")}}`;
   }
@@ -78,29 +78,39 @@ const TRACKED = Object.keys(CHANGE_NAMES);
 const round2 = (value) => Math.round(value * 100) / 100;
 
 /** a free text's x where it is anchored (its right edge when right-aligned …): text of another width keeps it */
-export const anchorX = (el) =>
-  el.type === "text" && !el.containerId ? (el.textAlign === "right" ? el.x + el.width : el.textAlign === "center" ? el.x + el.width / 2 : el.x) : el.x;
+export const anchorX = (el) => {
+  if (el.type === "text" && !el.containerId) {
+    if (el.textAlign === "right") return el.x + el.width;
+    if (el.textAlign === "center") return el.x + el.width / 2;
+  }
+  return el.x;
+};
 
 /**
  * The tracked values of an element on a slide: positions relative to the
  * slide (moving or reordering slides changes nothing), a text's size left
  * out where Excalidraw measures it.
  */
+const trackedValue = (el, slide, key) => {
+  let value;
+  if (key === "x") {
+    value = el.containerId ? undefined : round2(anchorX(el) - slide.x);
+  } else if (key === "y") {
+    value = el.containerId ? undefined : round2(el.y - slide.y);
+  } else if (key === "width" || key === "height") {
+    value = el.type === "text" && (el.containerId || key === "height" || el.autoResize !== false) ? undefined : round2(el[key]);
+  } else if (key === "rich") {
+    value = el.customData?.rich;
+  } else {
+    value = el[key];
+  }
+  return value;
+};
+
 export const tracked = (el, slide) => {
   const values = {};
   for (const key of TRACKED) {
-    let value;
-    if (key === "x") {
-      value = el.containerId ? undefined : round2(anchorX(el) - slide.x);
-    } else if (key === "y") {
-      value = el.containerId ? undefined : round2(el.y - slide.y);
-    } else if (key === "width" || key === "height") {
-      value = el.type === "text" && (el.containerId || key === "height" || el.autoResize !== false) ? undefined : round2(el[key]);
-    } else if (key === "rich") {
-      value = el.customData?.rich;
-    } else {
-      value = el[key];
-    }
+    const value = trackedValue(el, slide, key);
     if (value !== undefined || key === "rich") {
       values[key] = value ?? null;
     }

@@ -40,7 +40,7 @@ for (let i = 0; i < 10; i++) {
   await A.keyboard.press("Escape");
   if (await A.evaluate(() => window.__scenes?.getApi()?.getSceneElements().length ?? 0).catch(() => 0)) break;
 }
-for (let i = 0; i < 90 && (await A.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500);
+for (let i = 0; i < 90 && (await A.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 if ((await A.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready") {
   log("not live:", A.url(), await A.evaluate(() => JSON.stringify({ live: !!window.__live, scenes: !!window.__scenes, current: window.__scenes?.getState().current, list: window.__scenes?.getState().list.map((i) => `${i.name}:${i.status}`) })).catch((e) => e.message));
   process.exit(2);
@@ -55,12 +55,12 @@ const ids = await A.evaluate(() => {
   const fileId = Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => b.toString(16).padStart(2, "0")).join("");
   api.addFiles([{ id: fileId, mimeType: "image/png", dataURL: png, created: Date.now() }]);
   const base = { ...rect, groupIds: [], frameId: null, boundElements: null, index: null, version: 1, versionNonce: 1 };
-  const frame = { ...base, id: "frame-" + Math.random().toString(36).slice(2, 8), type: "frame", name: "Slide", x: 600, y: 100, width: 500, height: 400, roundness: null };
+  const frame = { ...base, id: "frame-" + Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => (b % 36).toString(36)).join(""), type: "frame", name: "Slide", x: 600, y: 100, width: 500, height: 400, roundness: null };
   const els = [
-    { ...base, id: "img-" + Math.random().toString(36).slice(2, 8), type: "image", fileId, status: "saved", scale: [1, 1], crop: null, x: 100, y: 100, width: 60, height: 60, roundness: null },
+    { ...base, id: "img-" + Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => (b % 36).toString(36)).join(""), type: "image", fileId, status: "saved", scale: [1, 1], crop: null, x: 100, y: 100, width: 60, height: 60, roundness: null },
     frame,
-    { ...base, id: "rectf-" + Math.random().toString(36).slice(2, 8), x: 650, y: 150, frameId: frame.id },
-    { ...base, id: "imgf-" + Math.random().toString(36).slice(2, 8), type: "image", fileId, status: "saved", scale: [1, 1], crop: null, x: 800, y: 200, width: 60, height: 60, roundness: null, frameId: frame.id },
+    { ...base, id: "rectf-" + Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => (b % 36).toString(36)).join(""), x: 650, y: 150, frameId: frame.id },
+    { ...base, id: "imgf-" + Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => (b % 36).toString(36)).join(""), type: "image", fileId, status: "saved", scale: [1, 1], crop: null, x: 800, y: 200, width: 60, height: 60, roundness: null, frameId: frame.id },
   ];
   api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...els], captureUpdate: "IMMEDIATELY" });
   return { rect: rect.id, img: els[0].id, rectInFrame: els[2].id, imgInFrame: els[3].id };
@@ -69,13 +69,14 @@ await sleep(2500);
 const B = await ctx.newPage();
 watch(B, "B");
 await B.goto(`${BASE}/${SCENE}`, { waitUntil: "load" });
-for (let i = 0; i < 60 && (await B.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500);
+for (let i = 0; i < 60 && (await B.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 await A.bringToFront();
 
 const alive = (page, id) =>
   page.evaluate((id) => {
     const el = window.__scenes.getApi().getSceneElementsIncludingDeleted().find((e) => e.id === id);
-    return el ? (el.isDeleted ? "deleted" : "alive") : "missing";
+    if (!el) return "missing";
+    return el.isDeleted ? "deleted" : "alive";
   }, id);
 let P = A; // the tab that deletes and undoes
 const press = async (combo) => {
@@ -102,7 +103,8 @@ const driveState = async (id) =>
       const { token } = await (await fetch("/auth/token", { method: "POST" })).json();
       const res = await fetch(`/fake-google/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
       const el = (JSON.parse(await res.text()).elements || []).find((e) => e.id === id);
-      return el ? (el.isDeleted ? "deleted" : "alive") : "missing";
+      if (!el) return "missing";
+    return el.isDeleted ? "deleted" : "alive";
     },
     await A.evaluate(() => window.__live.current().fileId),
     id,
@@ -114,13 +116,11 @@ const cycle = async (P0, what, id, group, reconnect = false) => {
   const A = P0;
   // moved first like a drag does (many local versions; the DO's answer re-stamps it lower)
   for (let step = 0; step < 15; step++) {
-    await A.evaluate((id) => {
+    await A.evaluate((id) => { // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
       const api = window.__scenes.getApi();
-      const el = api.getSceneElements().find((e) => e.id === id);
-      api.updateScene({ elements: api.getSceneElementsIncludingDeleted().map((e) => (e.id === id ? { ...e, x: e.x + 2, version: e.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) } : e)), captureUpdate: "EVENTUALLY" });
-      void el;
+      api.updateScene({ elements: api.getSceneElementsIncludingDeleted().map((e) => (e.id === id ? { ...e, x: e.x + 2, version: e.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) } : e)), captureUpdate: "EVENTUALLY" }); // NOSONAR S2245: not security relevant (Excalidraw versionNonce)
     }, id);
-    await sleep(20);
+    await sleep(20); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
   }
   await sleep(1500);
   log(what, "versions after the move: canvas", await A.evaluate((id) => window.__scenes.getApi().getSceneElements().find((e) => e.id === id)?.version, id));
@@ -139,7 +139,7 @@ const cycle = async (P0, what, id, group, reconnect = false) => {
   if (reconnect) {
     // a reconnect after the delete was answered: the welcome replays this tab's own batches
     await A.evaluate(() => window.__live.current().dropConnection());
-    for (let i = 0; i < 40 && (await A.evaluate(() => window.__live.current().phase)) !== "ready"; i++) await sleep(250);
+    for (let i = 0; i < 40 && (await A.evaluate(() => window.__live.current().phase)) !== "ready"; i++) await sleep(250); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
   }
   const other = P0 === B ? GA : B;
   const afterDelete = [await alive(A, id), await alive(other, id)];
@@ -160,14 +160,14 @@ const cycle = async (P0, what, id, group, reconnect = false) => {
   if (final.join() !== "alive,alive") failures.push(`${what}: second undo ${final}`);
 };
 for (const [what, id] of Object.entries(ids)) {
-  await cycle(A, what, id);
+  await cycle(A, what, id); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 }
 // the second tab loaded the scene (not made in it): the same there, with an image grouped with its label
 const grouped = await B.evaluate(() => {
   const api = window.__scenes.getApi();
   const img = api.getSceneElements().find((e) => e.type === "image" && !e.frameId);
-  const group = "g-" + Math.random().toString(36).slice(2, 8);
-  const label = { ...img, id: "label-" + Math.random().toString(36).slice(2, 8), type: "text", text: "New SaaS", originalText: "New SaaS", fontSize: 20, fontFamily: 5, textAlign: "left", verticalAlign: "top", containerId: null, autoResize: true, lineHeight: 1.25, y: img.y + 70, width: 90, height: 25, fileId: undefined, status: undefined, scale: undefined, crop: undefined, groupIds: [group], index: null, version: 1, versionNonce: 3 };
+  const group = "g-" + Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => (b % 36).toString(36)).join("");
+  const label = { ...img, id: "label-" + Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => (b % 36).toString(36)).join(""), type: "text", text: "New SaaS", originalText: "New SaaS", fontSize: 20, fontFamily: 5, textAlign: "left", verticalAlign: "top", containerId: null, autoResize: true, lineHeight: 1.25, y: img.y + 70, width: 90, height: 25, fileId: undefined, status: undefined, scale: undefined, crop: undefined, groupIds: [group], index: null, version: 1, versionNonce: 3 };
   api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted().map((e) => (e.id === img.id ? { ...e, groupIds: [group], version: e.version + 1, versionNonce: 5 } : e)), label], captureUpdate: "IMMEDIATELY" });
   return { img: img.id, label: label.id, group };
 });
@@ -178,9 +178,9 @@ await cycle(A, "A:image, reconnect between delete and undo", ids.img, null, true
 await cycle(B, "B:grouped, reconnect between delete and undo", grouped.img, grouped.group, true);
 P = A;
 // the saved Drive file after the save round
-for (let i = 0; i < 40 && (await A.evaluate(() => window.__live.current().stage())) !== "drive"; i++) await sleep(3000);
+for (let i = 0; i < 40 && (await A.evaluate(() => window.__live.current().stage())) !== "drive"; i++) await sleep(3000); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 for (const [what, id] of Object.entries(ids)) {
-  const saved = await driveState(id);
+  const saved = await driveState(id); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
   log(what, "in Drive:", saved);
   if (saved !== "alive") failures.push(`${what}: Drive has it ${saved}`);
 }

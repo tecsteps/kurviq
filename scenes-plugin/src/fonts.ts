@@ -39,7 +39,7 @@ export type CustomFont = {
 const ID_BASE = 2000;
 const ID_RANGE = 7000;
 const DATA_RE = /^data:(font\/(woff2|woff|ttf|otf|sfnt)|application\/(font-woff2?|x-font-ttf|x-font-otf|vnd\.ms-opentype|octet-stream));base64,[A-Za-z0-9+/=]+$/;
-const RANGE_RE = /^[Uu]\+[0-9A-Fa-f?]+(-[0-9A-Fa-f]+)?(\s*,\s*[Uu]\+[0-9A-Fa-f?]+(-[0-9A-Fa-f]+)?)*$/;
+const RANGE_RE = /^u\+[0-9a-f?]+(-[0-9a-f]+)?(\s*,\s*u\+[0-9a-f?]+(-[0-9a-f]+)?)*$/i;
 
 /** Excalidraw's own font names: a custom font may not take one over */
 const BUILT_IN = new Set(Object.keys(FONT_FAMILY).map((name) => name.toLowerCase()));

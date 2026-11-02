@@ -10,7 +10,7 @@ const listeners = new Set<() => void>();
 
 const makeKey = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").split("=")[0]; // NOSONAR S7758: base64 encoding uses binary bytes, not Unicode code points
 };
 
 const read = () => {

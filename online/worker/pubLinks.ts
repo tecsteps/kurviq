@@ -66,15 +66,71 @@ const canEdit = async (env: PubEnv, token: string, fileId: string): Promise<true
     return file.data?.capabilities?.canEdit && !file.data.trashed ? true : "no-access";
   }
   const problem = problemOf(file);
-  return problem === "unreachable" ? "unreachable" : problem === "token" ? "signed-out" : "no-access";
+  if (problem === "unreachable") {
+    return "unreachable";
+  }
+  return problem === "token" ? "signed-out" : "no-access";
 };
 
-export const handlePubApi = async (request: Request, env: PubEnv): Promise<Response | null> => {
-  const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/pub(?:\/([^/]+))?\/?$/);
-  if (!match) {
-    return null;
+const readPubLink = async (name: string | null, url: URL, db: D1, env: PubEnv, json: PubJson) => {
+  if (name) {
+    const fileId = await pubFile(env, name);
+    return fileId ? json(200, { fileId }) : json(404, { error: "No such short link" });
   }
+  const fileId = url.searchParams.get("file") ?? "";
+  if (!FILE_ID_RE.test(fileId)) {
+    return json(400, { error: "file: a Drive file id" });
+  }
+  const row = await db.prepare("SELECT name FROM pub_links WHERE file_id = ?").bind(fileId).first<{ name: string }>();
+  return json(200, { name: row?.name ?? null });
+};
+
+const claimPubLink = async (request: Request, env: PubEnv, db: D1, token: string, json: PubJson, refuse: PubRefuse) => {
+  const text = await request.text();
+  if (text.length > 2000) {
+    return json(413, { error: "Too long" });
+  }
+  let body: any = null;
+  try {
+    body = JSON.parse(text);
+  } catch { }
+  const fileId = String(body?.fileId ?? "");
+  const wanted = String(body?.name ?? "");
+  if (!FILE_ID_RE.test(fileId)) {
+    return json(400, { error: "fileId: a Drive file id" });
+  }
+  const problem = pubNameProblem(wanted);
+  if (problem) {
+    return json(400, { error: problem, code: "invalid" });
+  }
+  const holder = await db.prepare("SELECT file_id FROM pub_links WHERE name = ?").bind(wanted).first<{ file_id: string }>();
+  if (holder && holder.file_id !== fileId) {
+    return json(409, { error: `kurviq.com/pub/${wanted} is already taken`, code: "taken" });
+  }
+  if (holder) {
+    return json(200, { name: wanted });
+  }
+  const verdict = await canEdit(env, token, fileId);
+  if (verdict !== true) {
+    return refuse(verdict);
+  }
+  try {
+    // one name per file: its old one is freed in the same step
+    await db.batch([
+      db.prepare("DELETE FROM pub_links WHERE file_id = ?").bind(fileId),
+      db.prepare("INSERT INTO pub_links (name, file_id, created_at) VALUES (?, ?, ?)").bind(wanted, fileId, new Date().toISOString()),
+    ]);
+  } catch {
+    // someone else took it a moment ago (the name is the primary key)
+    return json(409, { error: `kurviq.com/pub/${wanted} is already taken`, code: "taken" });
+  }
+  return json(200, { name: wanted });
+};
+
+type PubJson = (status: number, body: unknown) => Response;
+type PubRefuse = (verdict: Exclude<Awaited<ReturnType<typeof canEdit>>, true>) => Response;
+
+const pubHeaders = (request: Request, env: PubEnv, url: URL) => {
   const origin = request.headers.get("Origin");
   // Kurviq's pages, and the local install (it signs in through kurviq.com)
   const trusted = !origin || origin === url.origin || isLocalOrigin(origin) || (!!env.DEV_ORIGIN && origin === env.DEV_ORIGIN);
@@ -83,6 +139,29 @@ export const handlePubApi = async (request: Request, env: PubEnv): Promise<Respo
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Vary", "Origin");
   }
+  return { origin, trusted, headers };
+};
+
+const deletePubLink = async (name: string, env: PubEnv, db: D1, token: string, json: PubJson, refuse: PubRefuse) => {
+  const fileId = await pubFile(env, name);
+  if (!fileId) {
+    return json(200, { name: null });
+  }
+  const verdict = await canEdit(env, token, fileId);
+  if (verdict !== true) {
+    return refuse(verdict);
+  }
+  await db.prepare("DELETE FROM pub_links WHERE name = ? AND file_id = ?").bind(name, fileId).run();
+  return json(200, { name: null });
+};
+
+export const handlePubApi = async (request: Request, env: PubEnv): Promise<Response | null> => {
+  const url = new URL(request.url);
+  const match = /^\/api\/pub(?:\/([^/]+))?\/?$/.exec(url.pathname);
+  if (!match) {
+    return null;
+  }
+  const { origin, trusted, headers } = pubHeaders(request, env, url);
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers });
   if (request.method === "OPTIONS") {
     headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE");
@@ -97,86 +176,33 @@ export const handlePubApi = async (request: Request, env: PubEnv): Promise<Respo
   const name = match[1] ? decodeURIComponent(match[1]).toLowerCase() : null;
 
   if (request.method === "GET") {
-    if (name) {
-      const fileId = await pubFile(env, name);
-      return fileId ? json(200, { fileId }) : json(404, { error: "No such short link" });
-    }
-    const fileId = url.searchParams.get("file") ?? "";
-    if (!FILE_ID_RE.test(fileId)) {
-      return json(400, { error: "file: a Drive file id" });
-    }
-    const row = await db.prepare("SELECT name FROM pub_links WHERE file_id = ?").bind(fileId).first<{ name: string }>();
-    return json(200, { name: row?.name ?? null });
+    return readPubLink(name, url, db, env, json);
   }
 
   // changes: only from Kurviq's pages, with the person's Google access token
   if (!trusted || !origin) {
     return json(403, { error: "Forbidden" });
   }
-  const token = (request.headers.get("Authorization") ?? "").match(/^Bearer (\S{10,4096})$/)?.[1];
+  const token = /^Bearer (\S{10,4096})$/.exec(request.headers.get("Authorization") ?? "")?.[1];
   if (!token) {
     return json(401, { error: "Sign in with Google to make a short link", code: "signed-out" });
   }
-  const refuse = (verdict: Exclude<Awaited<ReturnType<typeof canEdit>>, true>) =>
-    verdict === "unreachable"
-      ? json(503, { error: "Google is not reachable: try again in a moment" })
-      : verdict === "signed-out"
-        ? json(401, { error: "Your sign-in has expired: sign in again", code: "signed-out" })
-        : json(403, { error: "Only someone who can edit this scene can change its short link" });
+  const refuse = (verdict: Exclude<Awaited<ReturnType<typeof canEdit>>, true>) => {
+    if (verdict === "unreachable") {
+      return json(503, { error: "Google is not reachable: try again in a moment" });
+    }
+    if (verdict === "signed-out") {
+      return json(401, { error: "Your sign-in has expired: sign in again", code: "signed-out" });
+    }
+    return json(403, { error: "Only someone who can edit this scene can change its short link" });
+  };
 
   if (request.method === "POST" && !name) {
-    const text = await request.text();
-    if (text.length > 2000) {
-      return json(413, { error: "Too long" });
-    }
-    let body: any = null;
-    try {
-      body = JSON.parse(text);
-    } catch {}
-    const fileId = String(body?.fileId ?? "");
-    const wanted = String(body?.name ?? "");
-    if (!FILE_ID_RE.test(fileId)) {
-      return json(400, { error: "fileId: a Drive file id" });
-    }
-    const problem = pubNameProblem(wanted);
-    if (problem) {
-      return json(400, { error: problem, code: "invalid" });
-    }
-    const holder = await db.prepare("SELECT file_id FROM pub_links WHERE name = ?").bind(wanted).first<{ file_id: string }>();
-    if (holder && holder.file_id !== fileId) {
-      return json(409, { error: `kurviq.com/pub/${wanted} is already taken`, code: "taken" });
-    }
-    if (holder) {
-      return json(200, { name: wanted });
-    }
-    const verdict = await canEdit(env, token, fileId);
-    if (verdict !== true) {
-      return refuse(verdict);
-    }
-    try {
-      // one name per file: its old one is freed in the same step
-      await db.batch([
-        db.prepare("DELETE FROM pub_links WHERE file_id = ?").bind(fileId),
-        db.prepare("INSERT INTO pub_links (name, file_id, created_at) VALUES (?, ?, ?)").bind(wanted, fileId, new Date().toISOString()),
-      ]);
-    } catch {
-      // someone else took it a moment ago (the name is the primary key)
-      return json(409, { error: `kurviq.com/pub/${wanted} is already taken`, code: "taken" });
-    }
-    return json(200, { name: wanted });
+    return claimPubLink(request, env, db, token, json, refuse);
   }
 
   if (request.method === "DELETE" && name) {
-    const fileId = await pubFile(env, name);
-    if (!fileId) {
-      return json(200, { name: null });
-    }
-    const verdict = await canEdit(env, token, fileId);
-    if (verdict !== true) {
-      return refuse(verdict);
-    }
-    await db.prepare("DELETE FROM pub_links WHERE name = ? AND file_id = ?").bind(name, fileId).run();
-    return json(200, { name: null });
+    return deletePubLink(name, env, db, token, json, refuse);
   }
   return json(405, { error: "Not allowed" });
 };

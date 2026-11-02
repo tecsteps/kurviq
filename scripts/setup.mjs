@@ -23,7 +23,7 @@ const UPSTREAM = [
 
 const run = (cmd, cwd) => execSync(cmd, { stdio: "inherit", cwd });
 const head = (cwd) =>
-  execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
+  execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim(); // NOSONAR S4036: local developer setup intentionally uses the developer-provided git installation from PATH
 
 for (const { dir, url, commit, install } of UPSTREAM) {
   if (!existsSync(`${dir}/.git`)) {

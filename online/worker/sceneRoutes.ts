@@ -60,8 +60,8 @@ const ROUTE_BODY_BYTES = 32 * 1024;
 const TICKET = "kq_scene_ticket";
 const PROOF = "kq_scene_proof";
 /** while Google is unreachable, proofs are extended at most this long after the last real check */
-const OUTAGE_GRACE_MS = 2 * 3600_000;
-const WATCH_MS = 24 * 3600_000;
+const OUTAGE_GRACE_MS = 2 * 3_600_000;
+const WATCH_MS = 24 * 3_600_000;
 const FILE_FIELDS = "id,name,trashed,ownedByMe,headRevisionId,md5Checksum,modifiedTime,capabilities(canEdit),appProperties";
 
 type Ctx = {
@@ -220,6 +220,10 @@ const sceneKey = async (ctx: Ctx, fileId: string, token: string, file: any, role
     default:
       return { code: "scene-error", watch };
   }
+  return finishSceneKey(ctx, fileId, token, prep, watch);
+};
+
+const finishSceneKey = async (ctx: Ctx, fileId: string, token: string, prep: any, watch: { id: string; token: string } | null | undefined) => {
   // under the lease: maybe an earlier attempt wrote one meanwhile
   const again = await getFile(ctx.env, token, fileId, "appProperties");
   if (again.status !== 200) {
@@ -231,7 +235,7 @@ const sceneKey = async (ctx: Ctx, fileId: string, token: string, file: any, role
   if (existing && !existing.copy) {
     ({ key, keyId } = existing);
   } else {
-    key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))); // NOSONAR S7758: base64 needs one binary character per random byte
     keyId = await keyIdOf(key);
     const written = await patchFile(ctx.env, token, fileId, {
       appProperties: { [KEY_PROPERTY]: keyProperty(keyId, fileId, key), kurviqSync: LIVE_MARKER },
@@ -287,6 +291,13 @@ const fileProblem = (ctx: Ctx, file: { status: number; data: any; text: string }
 // routes
 // -----------------------------------------------------------------------------
 
+const keyFailureStatus = (code: string | undefined) => {
+  if (code === "no-key-yet") return 200;
+  if (code === "google-unreachable") return 503;
+  if (code === "no-access") return 403;
+  return 409;
+};
+
 const ticket = async (ctx: Ctx, fileId: string) => {
   if (!ctx.env.TOKEN_KEY || !ctx.env.PSEUDONYM_KEY) {
     return fail(ctx, 503, "not-configured", "Live sync is not configured on this server");
@@ -307,7 +318,7 @@ const ticket = async (ctx: Ctx, fileId: string) => {
   const key = await sceneKey(ctx, fileId, session.a, file.data, role, session.sub!);
   await keepWatch(ctx, fileId, session.a, key.watch);
   if (!("key" in key) || !key.key) {
-    const status = key.code === "no-key-yet" ? 200 : key.code === "google-unreachable" ? 503 : key.code === "no-access" ? 403 : 409;
+    const status = keyFailureStatus(key.code);
     return answer(ctx, status, { enabled: false, code: key.code, error: `Live sync can't start yet: ${key.code}` });
   }
   const claims = await claimsOf(ctx, "ticket", fileId, session, file.data, role, key.keyId);
@@ -342,7 +353,7 @@ const connect = async (ctx: Ctx, fileId: string) => {
     return new Response("Forbidden", { status: 403 });
   }
   const claims = await unseal<Claims>(ctx.env, ctx.url.searchParams.get("ticket") ?? undefined, TICKET);
-  if (!claims || claims.kind !== "ticket" || claims.fileId !== fileId || claims.exp <= Date.now() || claims.protocol !== LIVE_PROTOCOL) {
+  if (claims?.kind !== "ticket" || claims.fileId !== fileId || claims.exp <= Date.now() || claims.protocol !== LIVE_PROTOCOL) {
     return new Response("Invalid or expired ticket", { status: 403 });
   }
   // a ticket issued before "sign out everywhere" opens nothing any more
@@ -355,10 +366,29 @@ const connect = async (ctx: Ctx, fileId: string) => {
   return sceneStub(ctx.env, fileId).fetch("https://scene/live", { headers });
 };
 
+const renewSignInFailure = async (ctx: Ctx, fileId: string, old: Claims, tab: string, who: Response, extend: () => Promise<Response>) => {
+  if (who.status === 401) {
+    await toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab });
+  }
+  return who.status === 503 ? extend() : who;
+};
+
+/** Google down: extend the old proof at most 2 h after the last real check. */
+const extendProof = async (ctx: Ctx, fileId: string, old: Claims, tab: string) => {
+  const epoch = await accountEpoch(ctx.env, old.sub, fileId);
+  const until = Math.min(Date.now() + PROOF_VALID_MS, old.checkedAt + OUTAGE_GRACE_MS);
+  if (old.exp <= Date.now() || until <= Date.now() || (epoch && old.iat < epoch)) {
+    return fail(ctx, 503, "google-unreachable", "Google is not reachable");
+  }
+  const proof: Claims = { ...old, exp: until };
+  await toScene(ctx.env, fileId, "/renew", { tab, claims: proof, confirmed: false });
+  return answer(ctx, 200, { proof: await seal(ctx.env, proof, PROOF), expiresAt: until, role: proof.role, extended: true });
+};
+
 const renew = async (ctx: Ctx, fileId: string) => {
   const old = await unseal<Claims>(ctx.env, typeof ctx.body.proof === "string" ? ctx.body.proof : undefined, PROOF);
   const tab = typeof ctx.body.tab === "string" ? ctx.body.tab.slice(0, 64) : "";
-  if (!old || old.kind !== "proof" || old.fileId !== fileId || !tab) {
+  if (old?.kind !== "proof" || old.fileId !== fileId || !tab) {
     return fail(ctx, 400, "bad-proof", "Not an access proof of this scene");
   }
   ctx.touch = fileId;
@@ -366,23 +396,10 @@ const renew = async (ctx: Ctx, fileId: string) => {
   if (!session || (session.sub && session.sub !== old.sub)) {
     return fail(ctx, 401, "signed-out", "Not signed in");
   }
-  /** Google down (5xx, timeouts only): the old proof is extended, at most 2 h after the last real check */
-  const extend = async () => {
-    const epoch = await accountEpoch(ctx.env, old.sub, fileId);
-    const until = Math.min(Date.now() + PROOF_VALID_MS, old.checkedAt + OUTAGE_GRACE_MS);
-    if (old.exp <= Date.now() || until <= Date.now() || (epoch && old.iat < epoch)) {
-      return fail(ctx, 503, "google-unreachable", "Google is not reachable");
-    }
-    const proof: Claims = { ...old, exp: until };
-    await toScene(ctx.env, fileId, "/renew", { tab, claims: proof, confirmed: false });
-    return answer(ctx, 200, { proof: await seal(ctx.env, proof, PROOF), expiresAt: until, role: proof.role, extended: true });
-  };
+  const extend = () => extendProof(ctx, fileId, old, tab);
   const who = await signedIn(ctx);
   if (who instanceof Response) {
-    if (who.status === 401) {
-      await toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab });
-    }
-    return who.status === 503 ? extend() : who;
+    return renewSignInFailure(ctx, fileId, old, tab, who, extend);
   }
   const file = await getFile(ctx.env, who.session.a, fileId, FILE_FIELDS);
   if (file.status !== 200) {
@@ -500,7 +517,7 @@ const logoutAll = async (ctx: Ctx) => {
   }
   // the account guard tells every scene (stored tokens, open connections) and retries until each confirmed;
   // a revocation Google didn't confirm is retried there too (the refresh token sealed, for 30 days at most)
-  const retryRevoke = revoked ? null : await sealSceneToken(ctx.env, "revoke-at-google", sub, session.r, session.iat ?? 0, Date.now() + 30 * 24 * 3600_000);
+  const retryRevoke = revoked ? null : await sealSceneToken(ctx.env, "revoke-at-google", sub, session.r, session.iat ?? 0, Date.now() + 30 * 24 * 3_600_000);
   const res = await accountStub(ctx.env, sub).fetch("https://account/logout-all", { method: "POST", body: JSON.stringify({ sub, retryRevoke }) });
   const { scenes = [], epoch } = (await res.json().catch(() => ({}))) as { scenes?: string[]; epoch?: number };
   // at once as well (the guard's retries are the guarantee; telling a scene twice does no harm)
@@ -508,38 +525,8 @@ const logoutAll = async (ctx: Ctx) => {
   return answer(ctx, 200, { ok: revoked, scenes: scenes.length });
 };
 
-export const handleSceneRoutes = async (request: Request, env: SceneRoutesEnv): Promise<Response | null> => {
-  const url = new URL(request.url);
-  const scene = url.pathname.match(/^\/scene\/([^/]+)\/(ticket|live|renew|reconcile|keep-local)$/);
-  const isLogoutAll = url.pathname === "/auth/logout-all";
-  if (url.pathname === "/drive/notify") {
-    return request.method === "POST" ? notify(request, env) : new Response("Method not allowed", { status: 405 });
-  }
-  const dev = url.pathname.match(/^\/scene\/([^/]+)\/(dev-age|dev-stats|dev-crash|dev-expire|dev-drop-tabs|dev-account-age)$/);
-  if (!scene && !isLogoutAll && !dev) {
-    return null;
-  }
-  const origin = request.headers.get("Origin");
-  const ctx: Ctx = { request, env, url, origin, local: false, body: {}, cookies: [] };
-  ctx.local = isLocalOrigin(origin) && !sameSite(ctx);
-  if (request.method === "OPTIONS" && ctx.local) {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": origin!,
-        "Access-Control-Allow-Methods": "POST",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Max-Age": "86400",
-        Vary: "Origin",
-      },
-    });
-  }
-  if (scene && !FILE_ID_RE.test(scene[1])) {
-    return fail(ctx, 404, "not-found", "Not a Drive file id");
-  }
-  // tests with the fake Google only (FAKE_GOOGLE=1 and a local DEV_ORIGIN, never in production):
-  // dev-age ages blocked authors (24 h / 7 day rules), dev-stats counts rows written, dev-crash stops an upload midway
-  if (dev && request.method === "POST" && devGate(env, request) && FILE_ID_RE.test(dev[1])) {
+const handleSceneDevelopment = async (ctx: Ctx, dev: RegExpExecArray) => {
+  const { request, env } = ctx;
     const body: any = await request.json().catch(() => ({}));
     if (dev[2] === "dev-account-age") {
       // the signed-in account's guard (cookie session)
@@ -551,18 +538,35 @@ export const handleSceneRoutes = async (request: Request, env: SceneRoutesEnv): 
       return answer(ctx, 200, await res.json());
     }
     return answer(ctx, 200, await toScene(env, dev[1], `/${dev[2]}`, body && typeof body === "object" ? body : {}));
+};
+
+const dispatchSceneAction = async (ctx: Ctx, scene: RegExpExecArray | null, isLogoutAll: boolean) => {
+  try {
+    if (isLogoutAll) {
+      return await logoutAll(ctx);
+    }
+    const [, fileId, action] = scene!;
+    if (action === "ticket") {
+      return await ticket(ctx, fileId);
+    }
+    if (action === "renew") {
+      return await renew(ctx, fileId);
+    }
+    if (action === "keep-local") {
+      return await keepLocal(ctx, fileId);
+    }
+    return await reconcile(ctx, fileId);
+  } catch (error: any) {
+    // the account guard (or another of our objects) couldn't be asked: nothing is handed out
+    if (error?.status === 503) {
+      return fail(ctx, 503, "unavailable", "Try again in a moment");
+    }
+    throw error;
   }
-  if (dev) {
-    return fail(ctx, 404, "not-found", "Not found");
-  }
-  if (scene?.[2] === "live") {
-    return connect(ctx, scene[1]).catch((error) => {
-      if (error?.status === 503) {
-        return new Response("Try again in a moment", { status: 503 });
-      }
-      throw error;
-    });
-  }
+};
+
+const handleSceneAction = async (ctx: Ctx, scene: RegExpExecArray | null, isLogoutAll: boolean) => {
+  const { request, env } = ctx;
   if (request.method !== "POST") {
     return fail(ctx, 405, "method", "POST only");
   }
@@ -588,26 +592,53 @@ export const handleSceneRoutes = async (request: Request, env: SceneRoutesEnv): 
   if (!ctx.body || typeof ctx.body !== "object") {
     ctx.body = {};
   }
-  try {
-    if (isLogoutAll) {
-      return await logoutAll(ctx);
-    }
-    const [, fileId, action] = scene!;
-    if (action === "ticket") {
-      return await ticket(ctx, fileId);
-    }
-    if (action === "renew") {
-      return await renew(ctx, fileId);
-    }
-    if (action === "keep-local") {
-      return await keepLocal(ctx, fileId);
-    }
-    return await reconcile(ctx, fileId);
-  } catch (error: any) {
-    // the account guard (or another of our objects) couldn't be asked: nothing is handed out
-    if (error?.status === 503) {
-      return fail(ctx, 503, "unavailable", "Try again in a moment");
-    }
-    throw error;
+  return dispatchSceneAction(ctx, scene, isLogoutAll);
+};
+
+export const handleSceneRoutes = async (request: Request, env: SceneRoutesEnv): Promise<Response | null> => {
+  const url = new URL(request.url);
+  const scene = /^\/scene\/([^/]+)\/(ticket|live|renew|reconcile|keep-local)$/.exec(url.pathname);
+  const isLogoutAll = url.pathname === "/auth/logout-all";
+  if (url.pathname === "/drive/notify") {
+    return request.method === "POST" ? notify(request, env) : new Response("Method not allowed", { status: 405 });
   }
+  const dev = /^\/scene\/([^/]+)\/(dev-age|dev-stats|dev-crash|dev-expire|dev-drop-tabs|dev-account-age)$/.exec(url.pathname);
+  if (!scene && !isLogoutAll && !dev) {
+    return null;
+  }
+  const origin = request.headers.get("Origin");
+  const ctx: Ctx = { request, env, url, origin, local: false, body: {}, cookies: [] };
+  ctx.local = isLocalOrigin(origin) && !sameSite(ctx);
+  if (request.method === "OPTIONS" && ctx.local) {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": origin!,
+        "Access-Control-Allow-Methods": "POST",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400",
+        Vary: "Origin",
+      },
+    });
+  }
+  if (scene && !FILE_ID_RE.test(scene[1])) {
+    return fail(ctx, 404, "not-found", "Not a Drive file id");
+  }
+  // tests with the fake Google only (FAKE_GOOGLE=1 and a local DEV_ORIGIN, never in production):
+  // dev-age ages blocked authors (24 h / 7 day rules), dev-stats counts rows written, dev-crash stops an upload midway
+  if (dev && request.method === "POST" && devGate(env, request) && FILE_ID_RE.test(dev[1])) {
+    return handleSceneDevelopment(ctx, dev);
+  }
+  if (dev) {
+    return fail(ctx, 404, "not-found", "Not found");
+  }
+  if (scene?.[2] === "live") {
+    return connect(ctx, scene[1]).catch((error) => {
+      if (error?.status === 503) {
+        return new Response("Try again in a moment", { status: 503 });
+      }
+      throw error;
+    });
+  }
+  return handleSceneAction(ctx, scene, isLogoutAll);
 };

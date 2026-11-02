@@ -47,7 +47,7 @@ export const applyMarkdownUpdate = (el: any, patch: Record<string, any>) => {
     return { ...rest, text, customData: { ...customData, rich: customData.rich ?? null } };
   }
   if (typeof patch.text === "string" && !patch.customData?.rich) {
-    return { ...patch, customData: { ...(patch.customData || {}), rich: null } };
+    return { ...patch, customData: { ...patch.customData, rich: null } };
   }
   return patch;
 };

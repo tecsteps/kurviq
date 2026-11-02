@@ -48,7 +48,7 @@ export const onceForRequest = async <T,>(
     return run();
   }
   const inFlight = running.get(requestId);
-  if (inFlight) {
+  if (inFlight !== undefined) {
     return inFlight.then((result) => ({ ...result, alreadyApplied: "This request was already being applied; this is its result." }));
   }
   // claimed before the first await: a retry arriving meanwhile joins this one
@@ -94,9 +94,15 @@ export const keepPayload = async ({ id, json }: { id: string; json: string }) =>
   await set(id, { at: Date.now(), json }, payloads);
   prune(payloads, MAX_PAYLOADS).catch(() => {});
   const add = Array.isArray(parsed) ? parsed : parsed.add;
+  let addCount: number | string = 0;
+  if (Array.isArray(add)) {
+    addCount = add.length;
+  } else if (typeof add === "string") {
+    addCount = "(JSON string)";
+  }
   return {
     payloadId: id,
-    add: Array.isArray(add) ? add.length : typeof add === "string" ? "(JSON string)" : 0,
+    add: addCount,
     update: Array.isArray(parsed.update) ? parsed.update.length : 0,
     delete: Array.isArray(parsed.delete) ? parsed.delete.length : 0,
   };

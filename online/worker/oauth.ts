@@ -138,9 +138,9 @@ export const unauthorized = (origin: string, invalid = false) =>
   );
 
 /** the pairing a request's bearer token belongs to: a string, "invalid", or null (no token) */
-export const bearerPairing = async (request: Request, env: AuthEnv): Promise<string | "invalid" | null> => {
+export const bearerPairing = async (request: Request, env: AuthEnv): Promise<string | null> => {
   const header = request.headers.get("Authorization") || "";
-  const match = header.match(/^Bearer\s+(\S+)$/i);
+  const match = /^Bearer\s+(\S+)$/i.exec(header);
   if (!match) {
     return null;
   }
@@ -214,13 +214,13 @@ const errorPage = (message: string) =>
   page("Can't connect", `<h1>This agent can't connect</h1><p class="error">${escapeHtml(message)}</p>`, "none", 400);
 
 /** the browser side of "Allow": reads this browser's agent key (only Kurviq's own pages can) */
-const approveScript = `
+const approveScript = String.raw`
 const params = JSON.parse(document.getElementById("params").textContent);
 const KEY = "kurviq-agent-key";
 const read = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
 const makeKey = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
-  return btoa(String.fromCharCode(...bytes)).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 const $ = (id) => document.getElementById(id);
 const hasKey = !!read();
@@ -303,7 +303,7 @@ const authorizePage = async (url: URL, env: AuthEnv) => {
 <p id="error" class="error" hidden></p>
 <p id="done" hidden>Allowed. You can close this page and go back to your agent.</p>
 <p style="font-size:14px;margin-top:16px">You can sign out every agent at any time in Kurviq: MCP → Sign out all agents.</p>
-<script type="application/json" id="params">${JSON.stringify(params).replace(/</g, "\\u003c")}</script>
+<script type="application/json" id="params">${JSON.stringify(params).replaceAll("<", String.raw`\u003c`)}</script>
 <script nonce="${nonce}">${approveScript}</script>`,
     nonce,
   );
@@ -313,7 +313,7 @@ const readBody = async (request: Request): Promise<Record<string, string>> => {
   const type = request.headers.get("Content-Type") || "";
   if (type.includes("application/json")) {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(body).map(([key, value]) => [key, String(value ?? "")]));
+    return Object.fromEntries(Object.entries(body).map(([key, value]) => [key, String(value ?? "")])); // NOSONAR S6551: JSON values deliberately use the same String coercion as form values
   }
   return Object.fromEntries(new URLSearchParams(await request.text()));
 };
@@ -328,6 +328,95 @@ const issueTokens = async (env: AuthEnv, pairing: string, client: string) => ({
 
 const pkceMatches = async (verifier: string, challenge: string) =>
   /^[A-Za-z0-9._~-]{43,128}$/.test(verifier) && b64url(await sha256(verifier)) === challenge;
+
+const registerClient = async (request: Request, env: AuthEnv) => {
+  const body = (await request.json().catch(() => null)) as { redirect_uris?: unknown; client_name?: unknown } | null;
+  const uris = Array.isArray(body?.redirect_uris) ? body!.redirect_uris.map(String) : [];
+  if (!uris.length || uris.length > 10 || !uris.every(allowedRedirect)) {
+    return oauthError(400, "invalid_redirect_uri", "redirect_uris: one or more https or loopback (http://localhost) addresses");
+  }
+  const name = String(body?.client_name ?? "").slice(0, 80); // NOSONAR S6551: the client display name deliberately accepts the existing String coercion
+  const clientId = await seal(env, { r: uris, n: name } satisfies Client, "oauth-client");
+  return json(201, {
+    client_id: clientId,
+    client_id_issued_at: now(),
+    redirect_uris: uris,
+    client_name: name || undefined,
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  });
+};
+
+const approveClient = async (request: Request, env: AuthEnv, url: URL) => {
+  // only Kurviq's own approval page (and it needs the browser's agent key anyway)
+  // (browsers say where a request comes from: Sec-Fetch-Site can't be set by a page)
+  const sameOrigin = request.headers.get("Sec-Fetch-Site") === "same-origin" || request.headers.get("Origin") === url.origin;
+  if (!sameOrigin) {
+    return oauthError(403, "forbidden", "Not from Kurviq's approval page");
+  }
+  const body = await readBody(request);
+  const client = await unseal<Client>(env, body.client_id, "oauth-client");
+  if (!client || !redirectMatches(client.r, body.redirect_uri || "")) {
+    return oauthError(400, "invalid_client", "Unknown agent or return address");
+  }
+  if (!KEY_RE.test(body.key || "") || !body.code_challenge) {
+    return oauthError(400, "invalid_request", "Missing agent access or PKCE challenge");
+  }
+  const code = await seal(
+    env,
+    {
+      p: await pairingName(body.key),
+      c: await clientTag(body.client_id),
+      r: body.redirect_uri,
+      cc: body.code_challenge,
+      e: now() + CODE_SECONDS,
+    } satisfies Code,
+    "oauth-code",
+  );
+  const target = new URL(body.redirect_uri);
+  target.searchParams.set("code", code);
+  if (body.state) {
+    target.searchParams.set("state", body.state);
+  }
+  return json(200, { redirect: target.toString() });
+};
+
+const exchangeCode = async (env: AuthEnv, body: Record<string, string>) => {
+  const code = await unseal<Code>(env, body.code, "oauth-code");
+  if (!code || code.e <= now()) {
+    return oauthError(400, "invalid_grant", "The code expired or is not valid: sign in again");
+  }
+  if (code.c !== (await clientTag(body.client_id || "")) || code.r !== body.redirect_uri) {
+    return oauthError(400, "invalid_grant", "The code was issued to another client or return address");
+  }
+  if (!(await pkceMatches(body.code_verifier || "", code.cc))) {
+    return oauthError(400, "invalid_grant", "PKCE verification failed");
+  }
+  return json(200, await issueTokens(env, code.p, code.c));
+};
+
+const exchangeRefresh = async (env: AuthEnv, body: Record<string, string>) => {
+  const grant = await unseal<Grant>(env, body.refresh_token, "oauth-refresh");
+  if (!grant || grant.e <= now()) {
+    return oauthError(400, "invalid_grant", "The refresh token expired or is not valid: sign in again");
+  }
+  if (body.client_id && grant.c !== (await clientTag(body.client_id))) {
+    return oauthError(400, "invalid_grant", "The refresh token belongs to another client");
+  }
+  return json(200, await issueTokens(env, grant.p, grant.c));
+};
+
+const exchangeToken = async (request: Request, env: AuthEnv) => {
+  const body = await readBody(request);
+  if (body.grant_type === "authorization_code") {
+    return exchangeCode(env, body);
+  }
+  if (body.grant_type === "refresh_token") {
+    return exchangeRefresh(env, body);
+  }
+  return oauthError(400, "unsupported_grant_type", "authorization_code or refresh_token");
+};
 
 /** the OAuth routes; null for any other request */
 export const handleOAuth = async (request: Request, env: AuthEnv): Promise<Response | null> => {
@@ -353,22 +442,7 @@ export const handleOAuth = async (request: Request, env: AuthEnv): Promise<Respo
   }
 
   if (path === "/oauth/register" && request.method === "POST") {
-    const body = (await request.json().catch(() => null)) as { redirect_uris?: unknown; client_name?: unknown } | null;
-    const uris = Array.isArray(body?.redirect_uris) ? body!.redirect_uris.map(String) : [];
-    if (!uris.length || uris.length > 10 || !uris.every(allowedRedirect)) {
-      return oauthError(400, "invalid_redirect_uri", "redirect_uris: one or more https or loopback (http://localhost) addresses");
-    }
-    const name = String(body?.client_name ?? "").slice(0, 80);
-    const clientId = await seal(env, { r: uris, n: name } satisfies Client, "oauth-client");
-    return json(201, {
-      client_id: clientId,
-      client_id_issued_at: now(),
-      redirect_uris: uris,
-      client_name: name || undefined,
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-    });
+    return registerClient(request, env);
   }
 
   if ((path === "/mcp/oauth/authorize" || path === "/oauth/authorize") && request.method === "GET") {
@@ -376,65 +450,11 @@ export const handleOAuth = async (request: Request, env: AuthEnv): Promise<Respo
   }
 
   if (path === "/oauth/approve" && request.method === "POST") {
-    // only Kurviq's own approval page (and it needs the browser's agent key anyway)
-    // (browsers say where a request comes from: Sec-Fetch-Site can't be set by a page)
-    const sameOrigin = request.headers.get("Sec-Fetch-Site") === "same-origin" || request.headers.get("Origin") === url.origin;
-    if (!sameOrigin) {
-      return oauthError(403, "forbidden", "Not from Kurviq's approval page");
-    }
-    const body = await readBody(request);
-    const client = await unseal<Client>(env, body.client_id, "oauth-client");
-    if (!client || !redirectMatches(client.r, body.redirect_uri || "")) {
-      return oauthError(400, "invalid_client", "Unknown agent or return address");
-    }
-    if (!KEY_RE.test(body.key || "") || !body.code_challenge) {
-      return oauthError(400, "invalid_request", "Missing agent access or PKCE challenge");
-    }
-    const code = await seal(
-      env,
-      {
-        p: await pairingName(body.key),
-        c: await clientTag(body.client_id),
-        r: body.redirect_uri,
-        cc: body.code_challenge,
-        e: now() + CODE_SECONDS,
-      } satisfies Code,
-      "oauth-code",
-    );
-    const target = new URL(body.redirect_uri);
-    target.searchParams.set("code", code);
-    if (body.state) {
-      target.searchParams.set("state", body.state);
-    }
-    return json(200, { redirect: target.toString() });
+    return approveClient(request, env, url);
   }
 
   if (path === "/oauth/token" && request.method === "POST") {
-    const body = await readBody(request);
-    if (body.grant_type === "authorization_code") {
-      const code = await unseal<Code>(env, body.code, "oauth-code");
-      if (!code || code.e <= now()) {
-        return oauthError(400, "invalid_grant", "The code expired or is not valid: sign in again");
-      }
-      if (code.c !== (await clientTag(body.client_id || "")) || code.r !== body.redirect_uri) {
-        return oauthError(400, "invalid_grant", "The code was issued to another client or return address");
-      }
-      if (!(await pkceMatches(body.code_verifier || "", code.cc))) {
-        return oauthError(400, "invalid_grant", "PKCE verification failed");
-      }
-      return json(200, await issueTokens(env, code.p, code.c));
-    }
-    if (body.grant_type === "refresh_token") {
-      const grant = await unseal<Grant>(env, body.refresh_token, "oauth-refresh");
-      if (!grant || grant.e <= now()) {
-        return oauthError(400, "invalid_grant", "The refresh token expired or is not valid: sign in again");
-      }
-      if (body.client_id && grant.c !== (await clientTag(body.client_id))) {
-        return oauthError(400, "invalid_grant", "The refresh token belongs to another client");
-      }
-      return json(200, await issueTokens(env, grant.p, grant.c));
-    }
-    return oauthError(400, "unsupported_grant_type", "authorization_code or refresh_token");
+    return exchangeToken(request, env);
   }
 
   return oauthError(404, "not_found", "Unknown OAuth endpoint");

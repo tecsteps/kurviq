@@ -97,7 +97,14 @@ const exportPdf = async (
     deck: name,
     background: api().getAppState().viewBackgroundColor,
   });
-  const suffix = spec === "all" ? "" : frames.length === 1 ? ` - slide ${deck.getState().slides.findIndex((s) => s.id === frames[0].id) + 1}` : ` - slides ${spec.replace(/\s+/g, "")}`;
+  let suffix = "";
+  if (spec !== "all") {
+    if (frames.length === 1) {
+      suffix = ` - slide ${deck.getState().slides.findIndex((s) => s.id === frames[0].id) + 1}`;
+    } else {
+      suffix = ` - slides ${spec.replace(/\s+/g, "")}`;
+    }
+  }
   let blob: Blob;
   try {
     setBusy("Printing PDF…");
@@ -128,7 +135,12 @@ const PdfPanel = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const shown = slides.filter((s) => includeSkipped || !s.skip).length;
-  const spec = choice === "all" ? "all" : choice === "current" ? String((current?.index ?? 0) + 1) : pick;
+  let spec = pick;
+  if (choice === "all") {
+    spec = "all";
+  } else if (choice === "current") {
+    spec = String((current?.index ?? 0) + 1);
+  }
   return (
     <section className="slides-details slides-pdf">
       <label className="slides-check">
@@ -141,7 +153,7 @@ const PdfPanel = () => {
       </label>
       <label className="slides-check">
         <input type="radio" checked={choice === "pick"} onChange={() => setChoice("pick")} />
-        Slides
+        {"Slides"}
         <input
           className="slides-input slides-pdf__pick"
           placeholder="e.g. 1, 3-5"
@@ -153,12 +165,12 @@ const PdfPanel = () => {
       {choice === "all" && slides.some((s) => s.skip) && (
         <label className="slides-check">
           <input type="checkbox" checked={includeSkipped} onChange={(event) => setIncludeSkipped(event.target.checked)} />
-          Include skipped slides
+          {"Include skipped slides"}
         </label>
       )}
       <label className="slides-check">
         <input type="checkbox" checked={compress} onChange={(event) => setCompress(event.target.checked)} />
-        Smaller file (no visible loss)
+        {"Smaller file (no visible loss)"}
       </label>
       <div className="slides-row">
         <button
@@ -286,7 +298,7 @@ const SlideList = () => {
           <span className="slides-add__plus" aria-hidden="true">
             +
           </span>
-          Add slide
+          {"Add slide"}
         </button>
       </li>
       {slides.map((slide) => (
@@ -499,7 +511,7 @@ const SlideDetails = ({ id }: { id: string }) => {
       </button>
       <label className="slides-check">
         <input type="checkbox" checked={slide.skip} onChange={(event) => patchSlideData(api(), new Map([[id, { skip: event.target.checked || undefined }]]))} />
-        Hidden (not presented, not in the PDF)
+        {"Hidden (not presented, not in the PDF)"}
       </label>
       <label className="slides-check">
         <input
@@ -507,7 +519,7 @@ const SlideDetails = ({ id }: { id: string }) => {
           checked={slide.template}
           onChange={(event) => patchSlideData(api(), new Map([[id, { template: event.target.checked ? undefined : false }]]))}
         />
-        Show template (header, footer, logo…)
+        {"Show template (header, footer, logo…)"}
       </label>
       <div className="slides-row">
         <button type="button" className="slides-btn" onClick={() => presenter.start(id)}>
@@ -548,7 +560,9 @@ const describe = (members: readonly Element[], elements: readonly Element[]) => 
     return `Group (${members.length})`;
   }
   const el = members[0];
-  return el.type === "image" ? "Picture" : el.type === "freedraw" ? "Drawing" : el.type.charAt(0).toUpperCase() + el.type.slice(1);
+  if (el.type === "image") return "Picture";
+  if (el.type === "freedraw") return "Drawing";
+  return el.type.charAt(0).toUpperCase() + el.type.slice(1);
 };
 
 /** select elements on the canvas (whole groups as groups) */
@@ -916,7 +930,7 @@ export const SlidesSidebar = () => {
   const state = useDeck();
   const { slides, activeId } = state;
   const tab = useSyncExternalStore(slidesTab.subscribe, slidesTab.get);
-  const active = slides.find((s) => s.id === activeId) ? activeId : null;
+  const active = slides.some((s) => s.id === activeId) ? activeId : null;
   const tabs = TABS.filter((entry) => !entry.online || IS_ONLINE);
   const shown = tabs.some((entry) => entry.tab === tab) ? tab : "slides";
   return (

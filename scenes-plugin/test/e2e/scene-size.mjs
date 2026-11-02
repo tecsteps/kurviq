@@ -26,7 +26,8 @@ const browser = await puppeteer.launch({
 });
 const admin = (path, body) =>
   fetch(`${BASE}/fake-google/admin/${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}).then((r) => r.json());
-const signIn = async (path, email = EMAIL, space) => {
+const signIn = async (path, email, space) => {
+  email = email === undefined ? EMAIL : email;
   const ctx = await browser.createIncognitoBrowserContext();
   const page = await ctx.newPage();
   if (space) {
@@ -42,8 +43,8 @@ const report = (page) => page.evaluate(() => window.__live?.current()?.queueRepo
 const drained = async (page, ms) => {
   for (let t = 0; t < ms; t += 1000) {
     const r = await report(page);
-    if (r && r.phase === "ready" && r.unsent === 0) return r;
-    await sleep(1000);
+    if (r?.phase === "ready" && r.unsent === 0) return r;
+    await sleep(1000); // NOSONAR S9382: in order on purpose (ordered browser edits and polling depend on the previous step)
   }
   return report(page);
 };
@@ -59,7 +60,11 @@ await page.mouse.move(480, 360, { steps: 5 });
 await page.mouse.up();
 await page.keyboard.press("Escape");
 let first = null;
-for (let i = 0; i < 30 && !(first = await report(page))?.phase?.includes("ready"); i++) await sleep(1000);
+for (let i = 0; i < 30; i++) {
+  first = await report(page); // NOSONAR S9382: in order on purpose (polls the live state before the next delay)
+  if (first?.phase?.includes("ready")) break;
+  await sleep(1000); // NOSONAR S9382: in order on purpose (delays between polls)
+}
 ok(first?.phase === "ready", "scene is live", first);
 
 // a ~3 MB picture, added and deleted again, eight times
@@ -97,11 +102,11 @@ const deletePicture = (i) =>
 
 for (let i = 0; i < PICTURES; i++) {
   const data = randomBytes(2_250_000).toString("base64"); // ~3 MB as base64
-  await addPicture(i, data);
-  let r = await drained(page, 150_000);
+  await addPicture(i, data); // NOSONAR S9382: in order on purpose (ordered browser edits and polling depend on the previous step)
+  let r = await drained(page, 150_000); // NOSONAR S9382: in order on purpose (ordered browser edits and polling depend on the previous step)
   ok(r?.unsent === 0, `picture ${i} confirmed`, r?.problems);
-  await deletePicture(i);
-  r = await drained(page, 150_000);
+  await deletePicture(i); // NOSONAR S9382: in order on purpose (ordered browser edits and polling depend on the previous step)
+  r = await drained(page, 150_000); // NOSONAR S9382: in order on purpose (ordered browser edits and polling depend on the previous step)
   ok(r?.unsent === 0, `picture ${i} deleted, confirmed`, r?.problems);
 }
 const end = await report(page);
@@ -133,14 +138,14 @@ let seen = null;
 for (let i = 0; i < 90; i++) {
   seen = await other.evaluate(() => {
     const s = window.__live?.current();
-    if (!s || s.phase !== "ready") return null;
+    if (s?.phase !== "ready") return null;
     if (!s.surface.elements().some((e) => e.id === "img7")) return null;
     const files = s.surface.files();
-    return { img7: !!s.surface.elements().find((e) => e.id === "img7" && !e.isDeleted), file7: !!files["pic7".padEnd(40, "0")]?.dataURL, file3: !!files["pic3".padEnd(40, "0")] };
+    return { img7: s.surface.elements().some((e) => e.id === "img7" && !e.isDeleted), file7: !!files["pic7".padEnd(40, "0")]?.dataURL, file3: !!files["pic3".padEnd(40, "0")] };
   });
   if (seen) break;
-  if (i % 15 === 14) log("fresh session", await other.evaluate(() => ({ url: location.pathname, current: window.__scenes?.getState().current, live: window.__live?.current()?.queueReport() ?? null })).then(JSON.stringify));
-  await sleep(1000);
+  if (i % 15 === 14) log("fresh session", await other.evaluate(() => ({ url: location.pathname, current: window.__scenes?.getState().current, live: window.__live?.current()?.queueReport() ?? null })).then(JSON.stringify)); // NOSONAR S9382: in order on purpose (ordered browser edits and polling depend on the previous step)
+  await sleep(1000); // NOSONAR S9382: in order on purpose (ordered browser edits and polling depend on the previous step)
 }
 ok(seen?.img7 && seen?.file7, "a fresh session shows the picture brought back", seen);
 ok(seen && !seen.file3, "a picture only a deleted element shows is not sent to new sessions", seen);

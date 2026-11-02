@@ -80,7 +80,7 @@ const useNameSpots = (enabled: boolean) => {
         }
         const rect = name.getBoundingClientRect();
         // Excalidraw shortens a name to its frame's width (maxWidth)
-        const max = rect.left + (parseFloat(name.style.maxWidth) || Infinity);
+        const max = rect.left + (Number.parseFloat(name.style.maxWidth) || Infinity);
         if (rect.width) {
           next[id] = { left: Math.round(rect.left), x: Math.round(rect.right), y: Math.round(rect.top), h: Math.round(rect.height), max: Math.round(max) };
         }
@@ -413,7 +413,7 @@ export const SlideNotesOverlay = () => {
         </QuickTip>
       )}
       {slide && (
-        <div
+        <div // NOSONAR S6847, S6819: nonmodal portal keeps Excalidraw layout and stops canvas events
           className="slides-notes-pop"
           role="dialog"
           aria-label={`Speaker notes of slide ${slide.index + 1}`}

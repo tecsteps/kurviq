@@ -83,7 +83,7 @@ export const withUploads = async (elements: any[], files: Record<string, any> = 
       out.push(el);
       continue;
     }
-    const upload = await getUpload(el.fileId);
+    const upload = await getUpload(el.fileId); // NOSONAR S9382: preserve upload lookup and error order
     if (!upload) {
       out.push(el);
       continue;

@@ -42,10 +42,10 @@ export const toPubName = (text: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+/, "")
     .slice(0, PUB_MAX)
-    .replace(/-+$/, "");
+    .replace(/-+$/, ""); // NOSONAR S8786: input is bounded to PUB_MAX (40) characters by the preceding slice
 
 /** /pub/<name> (any case; the name is lowercased) */
 export const pubNameFromPath = (pathname: string) => {
-  const match = pathname.match(/^\/pub\/([A-Za-z0-9-]{1,60})\/?$/);
+  const match = /^\/pub\/([A-Za-z0-9-]{1,60})\/?$/.exec(pathname);
   return match ? match[1].toLowerCase() : null;
 };

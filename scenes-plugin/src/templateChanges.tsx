@@ -96,7 +96,7 @@ export const TemplateChangesBar = () => {
           key={name}
           type="button"
           className="kq-template-changes__item"
-          title={`${name[0].toUpperCase()}${name.slice(1)} back to the template${ids.length > 1 ? ` (${ids.length} elements)` : ""}`}
+          title={`${name[0].toUpperCase()}${name.slice(1)} back to the template${ids.length > 1 ? " (" + ids.length + " elements)" : ""}`}
           onClick={() => reset(ids, [name])}
         >
           {name}

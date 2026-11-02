@@ -112,33 +112,39 @@ export type Snapshot = {
  * moved to the new names in place, so the scenes keep their sync state.
  * Returns whether anything changed (the caller writes it back).
  */
+const migrateSceneMeta = (scene: Record<string, any>) => {
+  let changed = false;
+  if ("baseSha" in scene) {
+    if (scene.baseMd5 === undefined) {
+      scene.baseMd5 = scene.baseSha;
+    }
+    delete scene.baseSha;
+    changed = true;
+  }
+  if ("remoteSha" in scene) {
+    if (scene.remoteMd5 === undefined) {
+      scene.remoteMd5 = scene.remoteSha;
+    }
+    delete scene.remoteSha;
+    changed = true;
+  }
+  if (scene.conflict && typeof scene.conflict === "object" && "remoteSha" in scene.conflict) {
+    if (scene.conflict.remoteMd5 === undefined) {
+      scene.conflict.remoteMd5 = scene.conflict.remoteSha;
+    }
+    delete scene.conflict.remoteSha;
+    changed = true;
+  }
+  return changed;
+};
+
 export const migrateMeta = (meta: { scenes?: Record<string, unknown> }) => {
   let changed = false;
   for (const scene of Object.values(meta.scenes ?? {}) as Record<string, any>[]) {
     if (!scene || typeof scene !== "object") {
       continue;
     }
-    if ("baseSha" in scene) {
-      if (scene.baseMd5 === undefined) {
-        scene.baseMd5 = scene.baseSha;
-      }
-      delete scene.baseSha;
-      changed = true;
-    }
-    if ("remoteSha" in scene) {
-      if (scene.remoteMd5 === undefined) {
-        scene.remoteMd5 = scene.remoteSha;
-      }
-      delete scene.remoteSha;
-      changed = true;
-    }
-    if (scene.conflict && typeof scene.conflict === "object" && "remoteSha" in scene.conflict) {
-      if (scene.conflict.remoteMd5 === undefined) {
-        scene.conflict.remoteMd5 = scene.conflict.remoteSha;
-      }
-      delete scene.conflict.remoteSha;
-      changed = true;
-    }
+    if (migrateSceneMeta(scene)) changed = true;
   }
   return changed;
 };
@@ -247,7 +253,7 @@ export const setCheckpoint = (id: string, data: unknown) => {
     index[key] = at;
     const byAge = Object.entries(index).sort((a, b) => a[1] - b[1]);
     const drop = new Set(byAge.slice(0, Math.max(0, byAge.length - MAX_CHECKPOINTS)).map(([k]) => k));
-    const live = key.match(/^checkpoint:live-rev:([^:]+):/);
+    const live = /^checkpoint:live-rev:([^:]+):/.exec(key);
     if (live) {
       const own = byAge.filter(([k]) => k.startsWith(`checkpoint:live-rev:${live[1]}:`));
       own.slice(0, Math.max(0, own.length - MAX_LIVE_REVISIONS)).forEach(([k]) => drop.add(k));

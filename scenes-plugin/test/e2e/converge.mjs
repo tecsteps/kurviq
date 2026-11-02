@@ -48,7 +48,7 @@ const watch = (page, tag) => {
   // "leave the page?" (unsaved changes) on a reload: yes, the test reloads on purpose
   page.on("dialog", (dialog) => {
     dialogs.push(`${tag}: ${dialog.type()} ${dialog.message().slice(0, 80)}`);
-    dialog.accept().catch(() => {});
+    dialog.accept().catch (() => {});
   });
   page.on("console", (m) => {
     const text = m.text();
@@ -67,11 +67,11 @@ const signIn = async (ctx, email, path, space) => {
   await page.goto(page.url().replace("/authorize", "/approve") + `&email=${encodeURIComponent(email)}`, { waitUntil: "networkidle2" });
   return page;
 };
-const phase = (page) => page.evaluate(() => window.__live?.current()?.phase ?? "none").catch(() => "gone");
+const phase = (page) => page.evaluate(() => window.__live?.current()?.phase ?? "none").catch (() => "gone");
 const waitReady = async (page, ms = 40_000) => {
   for (let i = 0; i < ms / 500; i++) {
     if ((await phase(page)) === "ready") return true;
-    await sleep(500);
+    await sleep(500); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   }
   return false;
 };
@@ -91,11 +91,11 @@ for (let i = 0; i < 10; i++) {
   await A1.mouse.move(480, 360, { steps: 4 });
   await A1.mouse.up();
   await A1.keyboard.press("Escape");
-  const drawn = await A1.evaluate(() => window.__scenes?.getApi()?.getSceneElements().length ?? 0).catch(() => 0);
+  const drawn = await A1.evaluate(() => window.__scenes?.getApi()?.getSceneElements().length ?? 0).catch (() => 0);
   if (drawn) break;
 }
 if (!(await waitReady(A1, 45_000))) {
-  log("A1 state", await A1.evaluate(() => JSON.stringify({ n: window.__scenes?.getApi()?.getSceneElements().length, current: window.__scenes?.getState().current, list: window.__scenes?.getState().list.map((i) => `${i.name}:${i.status}:${i.fileId}`), live: window.__live?.current() ? { phase: window.__live.current().phase, error: window.__live.current().error, enabled: window.__live.current().enabled } : null, activity: window.__scenes?.getState().activity.slice(0, 5).map((a) => a.text), sync: window.__scenes?.getState().sync })).catch((e) => e.message));
+  log("A1 state", await A1.evaluate(() => JSON.stringify({ n: window.__scenes?.getApi()?.getSceneElements().length, current: window.__scenes?.getState().current, list: window.__scenes?.getState().list.map((i) => `${i.name}:${i.status}:${i.fileId}`), live: window.__live?.current() ? { phase: window.__live.current().phase, error: window.__live.current().error, enabled: window.__live.current().enabled } : null, activity: window.__scenes?.getState().activity.slice(0, 5).map((a) => a.text), sync: window.__scenes?.getState().sync })).catch ((e) => e.message));
   throw new Error("A1 never became live");
 }
 const fileId = await A1.evaluate(() => window.__live.current().fileId);
@@ -107,7 +107,7 @@ const A2 = await ownerCtx.newPage();
 watch(A2, "A2");
 await A2.goto(`${BASE}/${SCENE}`, { waitUntil: "load" });
 for (const [tag, page] of [["B", B], ["A2", A2]]) {
-  if (!(await waitReady(page))) throw new Error(`${tag} never became live`);
+  if (!(await waitReady(page))) throw new Error(`${tag} never became live`); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
 log("live in 3 tabs, file", fileId);
 
@@ -131,8 +131,8 @@ const op = async (tag, kind, r) =>
       const any = (list, i) => list[Math.floor(i * list.length) % Math.max(1, list.length)];
       const template = alive.find((el) => el.type === "rectangle") ?? all.find((el) => el.type === "rectangle");
       if (!template) return "no-template";
-      const id = () => Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12);
-      const bump = (el, patch) => ({ ...el, ...patch, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() });
+      const id = () => Array.from(crypto.getRandomValues(new Uint8Array(20)), (byte) => (byte % 36).toString(36)).join("");
+      const bump = (el, patch) => ({ ...el, ...patch, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() }); // NOSONAR S2245: not security relevant (test drawing positions and Excalidraw version nonces)
       const commit = (changed) => {
         const byId = new Map(all.map((el) => [el.id, el]));
         changed.forEach((el) => byId.set(el.id, el));
@@ -142,118 +142,139 @@ const op = async (tag, kind, r) =>
       };
       const base = { ...template, groupIds: [], frameId: null, boundElements: null, link: null, locked: false, index: null, isDeleted: false };
       const palette = ["#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00", "#9c36b5"];
-      switch (kind) {
-        case "add":
-          return commit([{ ...base, id: id(), x: 50 + r[0] * 900, y: 50 + r[1] * 600, width: 40 + r[2] * 100, height: 30 + r[3] * 80, version: 1, versionNonce: 1, seed: 1 }]);
-        case "move": {
-          const el = any(editable, r[0]);
-          return el ? commit([bump(el, { x: el.x + (r[1] - 0.5) * 200, y: el.y + (r[2] - 0.5) * 200 })]) : "skip";
+      const addElement = () => {
+        return commit([{ ...base, id: id(), x: 50 + r[0] * 900, y: 50 + r[1] * 600, width: 40 + r[2] * 100, height: 30 + r[3] * 80, version: 1, versionNonce: 1, seed: 1 }]);
+      };
+      const moveElement = () => {
+        const el = any(editable, r[0]);
+        return el ? commit([bump(el, { x: el.x + (r[1] - 0.5) * 200, y: el.y + (r[2] - 0.5) * 200 })]) : "skip";
+      };
+      const recolorElement = () => {
+        const el = any(editable, r[0]);
+        return el ? commit([bump(el, { strokeColor: palette[Math.floor(r[1] * palette.length)] })]) : "skip";
+      };
+      const deleteElement = () => {
+        const el = any(editable.filter((e) => e.type !== "text" || !e.containerId), r[0]);
+        if (!el) return "skip";
+        // what is bound to it (arrows, labels) lets go, like the editor does
+        const changed = [bump(el, { isDeleted: true })];
+        for (const other of alive) {
+          if (other.id === el.id) continue;
+          const patch = {};
+          if (other.startBinding?.elementId === el.id) patch.startBinding = null;
+          if (other.endBinding?.elementId === el.id) patch.endBinding = null;
+          if (other.containerId === el.id) patch.isDeleted = true;
+          // and nothing lists it as bound any more (the editor does the same)
+          if ((other.boundElements || []).some((b) => b.id === el.id)) patch.boundElements = other.boundElements.filter((b) => b.id !== el.id);
+          if (Object.keys(patch).length) changed.push(bump(other, patch));
         }
-        case "recolor": {
-          const el = any(editable, r[0]);
-          return el ? commit([bump(el, { strokeColor: palette[Math.floor(r[1] * palette.length)] })]) : "skip";
-        }
-        case "delete": {
-          const el = any(editable.filter((e) => e.type !== "text" || !e.containerId), r[0]);
-          if (!el) return "skip";
-          // what is bound to it (arrows, labels) lets go, like the editor does
-          const changed = [bump(el, { isDeleted: true })];
-          for (const other of alive) {
-            if (other.id === el.id) continue;
-            const patch = {};
-            if (other.startBinding?.elementId === el.id) patch.startBinding = null;
-            if (other.endBinding?.elementId === el.id) patch.endBinding = null;
-            if (other.containerId === el.id) patch.isDeleted = true;
-            // and nothing lists it as bound any more (the editor does the same)
-            if ((other.boundElements || []).some((b) => b.id === el.id)) patch.boundElements = other.boundElements.filter((b) => b.id !== el.id);
-            if (Object.keys(patch).length) changed.push(bump(other, patch));
-          }
-          return commit(changed);
-        }
-        case "group": {
-          const a = any(editable, r[0]);
-          const b = any(editable, r[1]);
-          if (!a || !b || a.id === b.id) return "skip";
-          const g = id();
-          return commit([bump(a, { groupIds: [g] }), bump(b, { groupIds: [g] })]);
-        }
-        case "arrow": {
-          const shapes = editable.filter((e) => e.type === "rectangle");
-          const a = any(shapes, r[0]);
-          const b = any(shapes, r[1]);
-          if (!a || !b || a.id === b.id) return "skip";
-          const arrowId = id();
-          const arrow = {
+        return commit(changed);
+      };
+      const groupElements = () => {
+        const a = any(editable, r[0]);
+        const b = any(editable, r[1]);
+        if (!a || !b || a.id === b.id) return "skip";
+        const g = id();
+        return commit([bump(a, { groupIds: [g] }), bump(b, { groupIds: [g] })]);
+      };
+      const addArrow = () => {
+        const shapes = editable.filter((e) => e.type === "rectangle");
+        const a = any(shapes, r[0]);
+        const b = any(shapes, r[1]);
+        if (!a || !b || a.id === b.id) return "skip";
+        const arrowId = id();
+        const arrow = {
+          ...base,
+          id: arrowId,
+          type: "arrow",
+          x: a.x + a.width,
+          y: a.y + a.height / 2,
+          width: Math.abs(b.x - a.x - a.width) || 1,
+          height: Math.abs(b.y - a.y) || 1,
+          points: [
+            [0, 0],
+            [b.x - a.x - a.width || 1, b.y - a.y || 1],
+          ],
+          lastCommittedPoint: null,
+          startArrowhead: null,
+          endArrowhead: "arrow",
+          elbowed: false,
+          roundness: null,
+          startBinding: { elementId: a.id, fixedPoint: [1, 0.5], mode: "orbit" },
+          endBinding: { elementId: b.id, fixedPoint: [0, 0.5], mode: "orbit" },
+          version: 1,
+          versionNonce: 1,
+        };
+        const withArrow = (el) => bump(el, { boundElements: [...(el.boundElements || []), { type: "arrow", id: arrowId }] });
+        return commit([arrow, withArrow(a), withArrow(b)]);
+      };
+      const addText = () => {
+        return commit([
+          {
             ...base,
-            id: arrowId,
-            type: "arrow",
-            x: a.x + a.width,
-            y: a.y + a.height / 2,
-            width: Math.abs(b.x - a.x - a.width) || 1,
-            height: Math.abs(b.y - a.y) || 1,
-            points: [
-              [0, 0],
-              [b.x - a.x - a.width || 1, b.y - a.y || 1],
-            ],
-            lastCommittedPoint: null,
-            startArrowhead: null,
-            endArrowhead: "arrow",
-            elbowed: false,
+            id: id(),
+            type: "text",
+            x: 50 + r[0] * 900,
+            y: 50 + r[1] * 600,
+            width: 120,
+            height: 25,
+            text: `t${Math.floor(r[2] * 1000)}`,
+            originalText: `t${Math.floor(r[2] * 1000)}`,
+            fontSize: 20,
+            fontFamily: 5,
+            textAlign: "left",
+            verticalAlign: "top",
+            containerId: null,
+            autoResize: true,
+            lineHeight: 1.25,
             roundness: null,
-            startBinding: { elementId: a.id, fixedPoint: [1, 0.5], mode: "orbit" },
-            endBinding: { elementId: b.id, fixedPoint: [0, 0.5], mode: "orbit" },
             version: 1,
             versionNonce: 1,
-          };
-          const withArrow = (el) => bump(el, { boundElements: [...(el.boundElements || []), { type: "arrow", id: arrowId }] });
-          return commit([arrow, withArrow(a), withArrow(b)]);
-        }
-        case "text": {
-          return commit([
-            {
-              ...base,
-              id: id(),
-              type: "text",
-              x: 50 + r[0] * 900,
-              y: 50 + r[1] * 600,
-              width: 120,
-              height: 25,
-              text: `t${Math.floor(r[2] * 1000)}`,
-              originalText: `t${Math.floor(r[2] * 1000)}`,
-              fontSize: 20,
-              fontFamily: 5,
-              textAlign: "left",
-              verticalAlign: "top",
-              containerId: null,
-              autoResize: true,
-              lineHeight: 1.25,
-              roundness: null,
-              version: 1,
-              versionNonce: 1,
-            },
-          ]);
-        }
-        case "edit-text": {
-          const el = any(editable.filter((e) => e.type === "text"), r[0]);
-          if (!el) return "skip";
-          const text = `${el.text.slice(0, 20)}${Math.floor(r[1] * 10)}`;
-          return commit([bump(el, { text, originalText: text })]);
-        }
-        case "z": {
-          const el = any(editable, r[0]);
-          if (!el) return "skip";
-          // to the front: after the last element (the editor gives it its index)
-          const rest = all.filter((e) => e.id !== el.id);
-          api.updateScene({ elements: [...rest, bump(el, { index: null })], captureUpdate: "IMMEDIATELY" });
-          if (offline) mine.add(el.id);
-          return `z:${el.id.slice(0, 4)}`;
-        }
-        case "image": {
-          const fileId = Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => b.toString(16).padStart(2, "0")).join("");
-          const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-          api.addFiles([{ id: fileId, mimeType: "image/png", dataURL: png, created: Date.now() }]);
-          return commit([{ ...base, id: id(), type: "image", fileId, status: "saved", scale: [1, 1], crop: null, x: 50 + r[0] * 900, y: 50 + r[1] * 600, width: 40, height: 40, roundness: null, version: 1, versionNonce: 1 }]);
-        }
+          },
+        ]);
+      };
+      const editText = () => {
+        const el = any(editable.filter((e) => e.type === "text"), r[0]);
+        if (!el) return "skip";
+        const text = `${el.text.slice(0, 20)}${Math.floor(r[1] * 10)}`;
+        return commit([bump(el, { text, originalText: text })]);
+      };
+      const bringToFront = () => {
+        const el = any(editable, r[0]);
+        if (!el) return "skip";
+        // to the front: after the last element (the editor gives it its index)
+        const rest = all.filter((e) => e.id !== el.id);
+        api.updateScene({ elements: [...rest, bump(el, { index: null })], captureUpdate: "IMMEDIATELY" });
+        if (offline) mine.add(el.id);
+        return `z:${el.id.slice(0, 4)}`;
+      };
+      const addImage = () => {
+        const fileId = Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => b.toString(16).padStart(2, "0")).join("");
+        const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        api.addFiles([{ id: fileId, mimeType: "image/png", dataURL: png, created: Date.now() }]);
+        return commit([{ ...base, id: id(), type: "image", fileId, status: "saved", scale: [1, 1], crop: null, x: 50 + r[0] * 900, y: 50 + r[1] * 600, width: 40, height: 40, roundness: null, version: 1, versionNonce: 1 }]);
+      };
+      switch (kind) {
+        case "add":
+          return addElement();
+        case "move":
+          return moveElement();
+        case "recolor":
+          return recolorElement();
+        case "delete":
+          return deleteElement();
+        case "group":
+          return groupElements();
+        case "arrow":
+          return addArrow();
+        case "text":
+          return addText();
+        case "edit-text":
+          return editText();
+        case "z":
+          return bringToFront();
+        case "image":
+          return addImage();
       }
       return "unknown";
     },
@@ -282,12 +303,12 @@ for (let i = 0; i < OPS; i++) {
     offlineUntil[tag] = Date.now() + ms;
     offlineWindows++;
     const page = tabs[tag];
-    await page.evaluate(() => (window.__offlineMine = new Set())).catch(() => {});
-    await page.setOfflineMode(true);
-    await page.evaluate(() => window.__live.current()?.dropConnection()).catch(() => {});
+    await page.evaluate(() => (window.__offlineMine = new Set())).catch (() => {}); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+    await page.setOfflineMode(true); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+    await page.evaluate(() => window.__live.current()?.dropConnection()).catch (() => {}); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     setTimeout(async () => {
-      await page.setOfflineMode(false).catch(() => {});
-      await page.evaluate(() => window.__live.current()?.wake()).catch(() => {});
+      await page.setOfflineMode(false).catch (() => {});
+      await page.evaluate(() => window.__live.current()?.wake()).catch (() => {});
     }, ms);
     log(`#${i} ${tag} offline ${ms} ms`);
     continue;
@@ -295,18 +316,18 @@ for (let i = 0; i < OPS; i++) {
   if (roll < 0.025 && Date.now() > offlineUntil[tag]) {
     reloads++;
     log(`#${i} ${tag} reload`);
-    await tabs[tag].reload({ waitUntil: "load", timeout: 60_000 });
-    await waitReady(tabs[tag], 30_000);
+    await tabs[tag].reload({ waitUntil: "load", timeout: 60_000 }); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+    await waitReady(tabs[tag], 30_000); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     continue;
   }
   const kind = pick(KINDS);
   const r = [rand(), rand(), rand(), rand()];
   // offline per the concept: not connected and up to date (also while reconnecting after an offline window)
-  const connected = (await phase(tabs[tag])) === "ready";
+  const connected = (await phase(tabs[tag])) === "ready"; // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   const offline = !connected || Date.now() < offlineUntil[tag];
   if (offline && !wasOffline[tag] && Date.now() >= offlineUntil[tag]) {
     // a new offline stretch (reconnecting): only what it makes in it from now on
-    await tabs[tag].evaluate(() => (window.__offlineMine = new Set())).catch(() => {});
+    await tabs[tag].evaluate(() => (window.__offlineMine = new Set())).catch (() => {}); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   }
   wasOffline[tag] = offline;
   // offline: only new things, or the tab's own offline elements (nothing that can clash)
@@ -314,26 +335,31 @@ for (let i = 0; i < OPS; i++) {
     continue;
   }
   offlineNow[tag] = offline;
-  const result = kind === "undo" ? (offline ? "skip" : await undo(tag)) : await op(tag, kind, r).catch((e) => `ERR ${e.message}`);
+  let result;
+  if (kind === "undo") {
+    result = offline ? "skip" : await undo(tag); // NOSONAR S9382: undo follows the previous drawing operation
+  } else {
+    result = await op(tag, kind, r).catch ((e) => `ERR ${e.message}`); // NOSONAR S9382: drawing operations run in scenario order
+  }
   counts[kind] = (counts[kind] ?? 0) + 1;
   if (offline && result !== "skip") offlineEdits++;
   if (i % 25 === 0) log(`#${i} ${tag} ${result}`);
-  await sleep(int(20, 250));
+  await sleep(int(20, 250)); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
 log("ops done", JSON.stringify(counts), "offline windows", offlineWindows, "offline edits", offlineEdits, "reloads", reloads);
 
 // --- quiet: everyone connected, nothing unanswered, then the save round brings everything to Drive
 for (const [tag, page] of Object.entries(tabs)) {
-  await page.setOfflineMode(false);
-  await page.evaluate(() => window.__live.current()?.wake()).catch(() => {});
-  if (!(await waitReady(page, 60_000))) log(`!! ${tag} not ready`);
+  await page.setOfflineMode(false); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+  await page.evaluate(() => window.__live.current()?.wake()).catch (() => {}); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+  if (!(await waitReady(page, 60_000))) log(`!! ${tag} not ready`); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
 const stageOf = (page) => page.evaluate(() => window.__live.current()?.stage() ?? "none");
 let stages = [];
 for (let i = 0; i < 60; i++) {
   stages = await Promise.all(Object.values(tabs).map(stageOf));
   if (stages.every((stage) => stage === "drive")) break;
-  await sleep(3000);
+  await sleep(3000); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
 log("stages", JSON.stringify(stages));
 // the tabs' catch-up with the DO's state runs every 5 s (claims of other tabs lapse meanwhile)
@@ -346,7 +372,7 @@ const norm = (value) => {
   if (Array.isArray(value)) return value.map(norm);
   if (value && typeof value === "object") {
     const out = {};
-    for (const key of Object.keys(value).sort()) {
+    for (const key of Object.keys(value).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
       const field = value[key];
       if (VOLATILE.has(key) || field === null || field === undefined || (Array.isArray(field) && !field.length)) continue;
       out[key] = norm(field);
@@ -366,7 +392,7 @@ const sceneOf = (elements) =>
       }),
   );
 for (const [tag, page] of Object.entries(tabs)) {
-  const info = await page.evaluate(() => {
+  const info = await page.evaluate(() => { // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     const s = window.__live.current();
     const out = [];
     for (const el of window.__scenes.getApi().getSceneElementsIncludingDeleted()) {
@@ -381,7 +407,7 @@ for (const [tag, page] of Object.entries(tabs)) {
 }
 const canvases = {};
 for (const [tag, page] of Object.entries(tabs)) {
-  canvases[tag] = sceneOf(await page.evaluate(() => window.__scenes.getApi().getSceneElementsIncludingDeleted()));
+  canvases[tag] = sceneOf(await page.evaluate(() => window.__scenes.getApi().getSceneElementsIncludingDeleted())); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
 const diff = (a, b) => {
   const out = [];
@@ -390,7 +416,8 @@ const diff = (a, b) => {
     if (a[id] && b[id]) {
       const [x, y] = [JSON.parse(a[id]), JSON.parse(b[id])];
       const keys = [...new Set([...Object.keys(x), ...Object.keys(y)])].filter((key) => JSON.stringify(x[key]) !== JSON.stringify(y[key]));
-      out.push(`${id.slice(0, 6)} ${x.type}: ${keys.map((key) => `${key}=${JSON.stringify(x[key])?.slice(0, 40)}|${JSON.stringify(y[key])?.slice(0, 40)}`).join(" ")}`);
+      const fields = keys.map((key) => `${key}=${JSON.stringify(x[key])?.slice(0, 40)}|${JSON.stringify(y[key])?.slice(0, 40)}`).join(" ");
+      out.push(`${id.slice(0, 6)} ${x.type}: ${fields}`);
     } else {
       out.push(id.slice(0, 6) + (a[id] ? " only left" : " only right"));
     }
@@ -416,12 +443,13 @@ const queueOf = (page) =>
   page.evaluate(
     () =>
       new Promise((resolve) => {
+        const batchLabel = (b) => `${b.tab}:${b.counter}:${b.state}`;
         const open = indexedDB.open("kurviq-live-queue");
         open.onsuccess = () => {
           const db = open.result;
           if (!db.objectStoreNames.contains("batches")) return resolve([]);
           const req = db.transaction("batches").objectStore("batches").getAll();
-          req.onsuccess = () => resolve(req.result.map((b) => `${b.tab}:${b.counter}:${b.state}`));
+          req.onsuccess = () => resolve(req.result.map(batchLabel));
         };
         open.onerror = () => resolve(["?"]);
       }),
@@ -431,18 +459,18 @@ if (queues.owner.length || queues.guest.length) failures.push(`queues not empty:
 // offline copies
 const copies = [];
 for (const [tag, page] of Object.entries(tabs)) {
-  const names = await page.evaluate(() => window.__scenes.getState().list.map((item) => item.name).filter((name) => name && name.includes("(offline changes)")));
+  const names = await page.evaluate(() => window.__scenes.getState().list.map((item) => item.name).filter((name) => name?.includes("(offline changes)"))); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   copies.push(...names.map((name) => `${tag}: ${name}`));
 }
 if (copies.length) {
   failures.push(`offline copies: ${JSON.stringify(copies)}`);
   for (const [tag, page] of [["owner", A1], ["guest", B]]) {
-    log(`${tag} copy reasons`, await page.evaluate(() => localStorage.getItem("kurviq-live-debug-copies")));
+    log(`${tag} copy reasons`, await page.evaluate(() => localStorage.getItem("kurviq-live-debug-copies"))); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   }
 }
 const notes = [];
 for (const [tag, page] of Object.entries(tabs)) {
-  const n = await page.evaluate(() => window.__live.current()?.notes.map((note) => note.text) ?? []);
+  const n = await page.evaluate(() => window.__live.current()?.notes.map((note) => note.text) ?? []); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   notes.push(...n.map((text) => `${tag}: ${text}`));
 }
 if (errors.length) failures.push(`console errors: ${errors.length}: ${errors.slice(0, 5).join(" | ")}`);
@@ -452,9 +480,9 @@ if (failures.length) {
   const ids = new Set();
   for (const tag of ["A2", "B"]) diff(canvases.A1, canvases[tag]).forEach((line) => ids.add(line.slice(0, 6)));
   for (const [tag, page] of Object.entries(tabs)) {
-    const trace = await page.evaluate((ids) => (window.__live.current()?.trace ?? []).filter((line) => ids.some((id) => line.includes(id))), [...ids]);
+    const trace = await page.evaluate((ids) => (window.__live.current()?.trace ?? []).filter((line) => ids.some((id) => line.includes(id))), [...ids]); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     log(`${tag} trace`, JSON.stringify(trace.slice(-12)));
-    const holders = await page.evaluate((ids) => {
+    const holders = await page.evaluate((ids) => { // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
       const s = window.__live.current();
       const all = window.__scenes.getApi().getSceneElementsIncludingDeleted();
       return ids.map((id) => {

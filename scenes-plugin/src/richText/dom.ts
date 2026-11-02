@@ -14,6 +14,33 @@ const HEADING_SIZES: Record<string, number> = { H1: 1.6, H2: 1.3, H3: 1.1 };
 
 type Block = { k?: ParaKind; d?: number; x?: true };
 
+const applyStyleMarks = (el: HTMLElement, next: Marks, external: boolean) => {
+  const style = el.style;
+  if (style) {
+    const weight = style.fontWeight;
+    if (weight === "bold" || weight === "bolder" || Number(weight) >= 600) next.b = true;
+    else if (weight === "normal" || (Number(weight) > 0 && Number(weight) < 600)) delete next.b;
+    if (style.fontStyle === "italic" || style.fontStyle === "oblique") next.i = true;
+    else if (style.fontStyle === "normal") delete next.i;
+    const decoration = `${style.textDecorationLine || ""} ${style.textDecoration || ""}`;
+    if (/underline/.test(decoration) && external) next.u = true;
+    if (/line-through/.test(decoration) && external) next.s = true;
+  }
+};
+
+const applyDataMarks = (data: DOMStringMap, next: Marks) => {
+  for (const key of ["b", "i", "u", "s"] as const) {
+    if (key in data) next[key] = true;
+    else delete next[key];
+  }
+  for (const key of ["c", "h", "a"] as const) {
+    if (data[key]) next[key] = data[key];
+    else delete next[key];
+  }
+  if (Number(data.z) > 0) next.z = Number(data.z);
+  else delete next.z;
+};
+
 const marksFrom = (el: HTMLElement, marks: Marks, external: boolean): Marks => {
   const tag = el.tagName;
   const data = el.dataset || {};
@@ -30,31 +57,24 @@ const marksFrom = (el: HTMLElement, marks: Marks, external: boolean): Marks => {
     next.b = true;
     next.z = HEADING_SIZES[tag];
   }
-  const style = el.style;
-  if (style) {
-    const weight = style.fontWeight;
-    if (weight === "bold" || weight === "bolder" || Number(weight) >= 600) next.b = true;
-    else if (weight === "normal" || (Number(weight) > 0 && Number(weight) < 600)) delete next.b;
-    if (style.fontStyle === "italic" || style.fontStyle === "oblique") next.i = true;
-    else if (style.fontStyle === "normal") delete next.i;
-    const decoration = `${style.textDecorationLine || ""} ${style.textDecoration || ""}`;
-    if (/underline/.test(decoration) && external) next.u = true;
-    if (/line-through/.test(decoration) && external) next.s = true;
-  }
+  applyStyleMarks(el, next, external);
   // the editor's own spans say exactly what they are
   if (hasData) {
-    for (const key of ["b", "i", "u", "s"] as const) {
-      if (key in data) next[key] = true;
-      else delete next[key];
-    }
-    for (const key of ["c", "h", "a"] as const) {
-      if (data[key]) next[key] = data[key];
-      else delete next[key];
-    }
-    if (Number(data.z) > 0) next.z = Number(data.z);
-    else delete next.z;
+    applyDataMarks(data, next);
   }
   return next;
+};
+
+const listPosition = (el: HTMLElement) => {
+  let depth = -1;
+  let kind: ParaKind = "ul";
+  for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === "UL" || parent.tagName === "OL") {
+      if (depth < 0) kind = parent.tagName === "OL" ? "ol" : "ul";
+      depth++;
+    }
+  }
+  return { depth, kind };
 };
 
 const blockFrom = (el: HTMLElement, external: boolean): Block => {
@@ -66,19 +86,26 @@ const blockFrom = (el: HTMLElement, external: boolean): Block => {
   if (el.tagName !== "LI") {
     return {};
   }
-  let depth = -1;
-  let kind: ParaKind = "ul";
-  for (let parent = el.parentElement; parent; parent = parent.parentElement) {
-    if (parent.tagName === "UL" || parent.tagName === "OL") {
-      if (depth < 0) kind = parent.tagName === "OL" ? "ol" : "ul";
-      depth++;
-    }
-  }
+  const { depth, kind } = listPosition(el);
   const checkbox = el.querySelector("input[type=checkbox]") as HTMLInputElement | null;
   if (checkbox) {
     return { k: "todo", d: Math.max(0, Math.min(MAX_DEPTH, depth)), ...(checkbox.checked ? { x: true as const } : {}) };
   }
   return { k: kind, d: Math.max(0, Math.min(MAX_DEPTH, depth)) };
+};
+
+const trimExternalParas = (paras: Para[]) => {
+  // trailing spaces of lines, and empty lines around the text
+  for (const para of paras) {
+    const last = para.r.at(-1);
+    if (last) {
+      let end = last.t.length;
+      while (last.t[end - 1] === " ") end--;
+      last.t = last.t.slice(0, end);
+    }
+  }
+  while (paras.length > 1 && !paras[0].r.some((run) => run.t)) paras.shift();
+  while (paras.length > 1 && !paras.at(-1)!.r.some((run) => run.t)) paras.pop();
 };
 
 /**
@@ -97,28 +124,32 @@ export const parseDom = (root: Node, { external }: { external: boolean }): RichD
     current = null;
   };
 
+  const appendText = (node: Text, marks: Marks) => {
+    let text = node.data.replaceAll(" ", " ").replaceAll("​", "");
+    if (external) {
+      text = text.replace(/[\t\n\r ]+/g, " ");
+      if (!current?.r.length) {
+        text = text.replace(/^ /, "");
+      }
+      if (!text) {
+        return;
+      }
+    }
+    const lines = text.split("\n");
+    lines.forEach((line, index) => {
+      if (index) {
+        close();
+      }
+      const para = open();
+      if (line) {
+        para.r.push({ ...marks, t: line });
+      }
+    });
+  };
+
   const walk = (node: Node, marks: Marks) => {
     if (node.nodeType === 3) {
-      let text = (node as Text).data.replace(/ /g, " ").replace(/​/g, "");
-      if (external) {
-        text = text.replace(/[\t\n\r ]+/g, " ");
-        if (!current?.r.length) {
-          text = text.replace(/^ /, "");
-        }
-        if (!text) {
-          return;
-        }
-      }
-      const lines = text.split("\n");
-      lines.forEach((line, index) => {
-        if (index) {
-          close();
-        }
-        const para = open();
-        if (line) {
-          para.r.push({ ...marks, t: line });
-        }
-      });
+      appendText(node as Text, marks);
       return;
     }
     if (node.nodeType !== 1) {
@@ -159,15 +190,7 @@ export const parseDom = (root: Node, { external }: { external: boolean }): RichD
   close();
 
   if (external) {
-    // trailing spaces of lines, and empty lines around the text
-    for (const para of paras) {
-      const last = para.r[para.r.length - 1];
-      if (last) {
-        last.t = last.t.replace(/ +$/, "");
-      }
-    }
-    while (paras.length > 1 && !paras[0].r.some((run) => run.t)) paras.shift();
-    while (paras.length > 1 && !paras[paras.length - 1].r.some((run) => run.t)) paras.pop();
+    trimExternalParas(paras);
   }
   return normalizeDoc({ v: 1, p: paras.length ? paras : [{ r: [] }] });
 };

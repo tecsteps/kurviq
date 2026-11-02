@@ -23,7 +23,7 @@ for (const file of [".env", ".env.local"]) {
   const full = path.join(HERE, "..", file);
   if (existsSync(full)) {
     for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/);
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: trusted local environment files are read only by developer tooling
       if (match) {
         env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
       }
@@ -46,7 +46,7 @@ for (const [name, value] of Object.entries(secrets)) {
     console.error(`[secrets] ${name}: no value (set KURVIQ_${name} in .env)`);
     process.exit(1);
   }
-  const result = spawnSync("node", [path.join(HERE, "with-env.mjs"), "npx", "wrangler", "secret", "put", name], {
+  const result = spawnSync("node", [path.join(HERE, "with-env.mjs"), "npx", "wrangler", "secret", "put", name], { // NOSONAR S4036: local developer tooling invokes a fixed command in the developer-controlled environment
     input: value,
     stdio: ["pipe", "inherit", "inherit"],
   });

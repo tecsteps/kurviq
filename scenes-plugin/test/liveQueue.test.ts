@@ -27,13 +27,13 @@ describe("the browser's queue", () => {
     await putBatch(batch("alice", "f2", "t3", 1));
     await putBatch(batch("bob", "f1", "t9", 1));
     // another account's queue is never part of this one's
-    expect((await batchesOf("alice")).length).toBe(4);
+    expect(await batchesOf("alice")).toHaveLength(4);
     expect((await batchesOf("bob")).map((entry) => entry.tab)).toEqual(["t9"]);
-    expect((await batchesOf("alice", "f1")).length).toBe(3);
+    expect(await batchesOf("alice", "f1")).toHaveLength(3);
     expect((await batchesOf("alice", "f1", "t1")).map((entry) => entry.counter)).toEqual([1, 2]);
     // a prefix of an id is not the id
     await putBatch(batch("ali", "f1", "t1", 1));
-    expect((await batchesOf("alice")).length).toBe(4);
+    expect(await batchesOf("alice")).toHaveLength(4);
     await deleteBatch(batch("alice", "f1", "t1", 1));
     expect((await batchesOf("alice", "f1", "t1")).map((entry) => entry.counter)).toEqual([2]);
   });

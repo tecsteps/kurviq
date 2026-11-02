@@ -14,13 +14,17 @@ const F = `${B}/fake-google`;
 const WS = B.replace(/^http/, "ws");
 let failures = 0;
 let passes = 0;
+/** a value for the log, kept on its line: control characters (newlines too) become spaces, server answers are untrusted */
+const clean = (value) => String(value).replaceAll(/\p{Cc}/gu, " ");
 const ok = (cond, what, extra) => {
-  console.log(`${cond ? "PASS" : "FAIL"} ${what}${cond || extra === undefined ? "" : ` -> ${typeof extra === "string" ? extra : JSON.stringify(extra).slice(0, 600)}`}`);
+  const shown = () => (typeof extra === "string" ? extra : JSON.stringify(extra).slice(0, 600));
+  const detail = cond || extra === undefined ? "" : ` -> ${clean(shown())}`;
+  console.log(`${cond ? "PASS" : "FAIL"} ${what}${detail}`);
   cond ? passes++ : failures++;
 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const admin = async (path, body, method = body ? "POST" : "GET") =>
-  (await fetch(`${F}/admin${path}`, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })).json();
+  (await fetch(`${F}/admin${path}`, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })).json(); // NOSONAR S7044 S8476: test client of the local dev server (BASE), paths are the test's own
 
 // -----------------------------------------------------------------------------
 // sign-in through /auth/login with the fake OAuth
@@ -66,7 +70,7 @@ const loginOnce = async (email) => {
 };
 
 const post = async (user, path, body = {}) => {
-  const res = await fetch(`${B}${path}`, {
+  const res = await fetch(`${B}${path}`, { // NOSONAR S7044 S8476: test client of the local dev server (BASE), paths are the test's own
     method: "POST",
     headers: { Origin: B, Cookie: user.cookie(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -75,9 +79,9 @@ const post = async (user, path, body = {}) => {
 };
 
 const drive = async (token, path, init = {}) => {
-  const res = await fetch(path.startsWith("http") ? path : `${F}/drive/v3${path}`, {
+  const res = await fetch(path.startsWith("http") ? path : `${F}/drive/v3${path}`, { // NOSONAR S7044 S8476: the dev server's fake Google, paths are the test's own
     ...init,
-    headers: { Authorization: `Bearer ${token}`, ...(init.json ? { "Content-Type": "application/json" } : {}), ...(init.headers || {}) },
+    headers: { Authorization: `Bearer ${token}`, ...(init.json ? { "Content-Type": "application/json" } : {}), ...init.headers },
     body: init.json ? JSON.stringify(init.json) : init.body,
   });
   const text = await res.text();
@@ -96,7 +100,11 @@ const enc = new TextEncoder();
 const b64 = (bytes) => Buffer.from(bytes).toString("base64");
 const importKey = async (key64) => crypto.subtle.importKey("raw", Buffer.from(key64, "base64"), "AES-GCM", false, ["encrypt", "decrypt"]);
 /** the additional data binds file, kind, id and key (liveProtocol aadOf); the kind follows from the id unless given */
-const kindOf = (id) => (id === "settings" ? "set" : id === "name" ? "name" : "el");
+const kindOf = (id) => {
+  if (id === "settings") return "set";
+  if (id === "name") return "name";
+  return "el";
+};
 const encrypt = async (scene, id, value, k = kindOf(id)) => {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const cipher = new Uint8Array(
@@ -167,7 +175,7 @@ const rect = (id, index, extra = {}) => ({
 
 const PART = 256 * 1024;
 const openTab = async (user, fileId, ticketAnswer, tabId) => {
-  const ws = new WebSocket(`${WS}/scene/${fileId}/live?ticket=${encodeURIComponent(ticketAnswer.ticket)}`, { headers: { Origin: B } });
+  const ws = new WebSocket(`${WS}/scene/${fileId}/live?ticket=${encodeURIComponent(ticketAnswer.ticket)}`, { headers: { Origin: B } }); // NOSONAR S8480: connects to the local dev server (BASE) with a ticket it issued
   const inbox = [];
   const waiters = [];
   const parts = new Map();
@@ -204,10 +212,10 @@ const openTab = async (user, fileId, ticketAnswer, tabId) => {
   const next = async (test, ms = 8000) => {
     const until = Date.now() + ms;
     for (;;) {
-      const at = inbox.findIndex(test);
+      const at = inbox.findIndex((m) => test(m));
       if (at >= 0) return inbox.splice(at, 1)[0];
       if (closed || Date.now() > until) return null;
-      await new Promise((resolve) => {
+      await new Promise((resolve) => { // NOSONAR S9382: waits for the next message, then looks again (polling)
         waiters.push(resolve);
         setTimeout(resolve, Math.max(0, until - Date.now()));
       });
@@ -225,7 +233,7 @@ const hello = async (tab, { seq = 0, generation = null, revision = null } = {}) 
 
 const batch = async (tab, events, extra = {}) => {
   const counter = extra.counter ?? ++tab.counter;
-  tab.send({ type: "batch", counter, live: true, made: Date.now(), via: "user", events, ...extra, counter });
+  tab.send({ type: "batch", live: true, made: Date.now(), via: "user", events, ...extra, counter });
   return tab.next((m) => (m.type === "ack" || m.type === "refused") && m.counter === counter);
 };
 
@@ -237,13 +245,13 @@ const waitFor = async (check, ms = 15000, step = 300) => {
   for (;;) {
     const value = await check();
     if (value || Date.now() > until) return value;
-    await sleep(step);
+    await sleep(step); // NOSONAR S9382: polling, one check after the other
   }
 };
 
 // -----------------------------------------------------------------------------
 
-console.log(await admin("/reset", {}));
+console.log(clean(JSON.stringify(await admin("/reset", {}))));
 const alice = await login("alice@example.test");
 const bob = await login("bob@example.test");
 const carol = await login("carol@example.test");
@@ -258,7 +266,7 @@ const original = {
   appState: { viewBackgroundColor: "#ffffff", gridSize: 20, gridStep: 5, gridModeEnabled: false },
   files: {},
 };
-const boundary = "kq" + Math.random().toString(36).slice(2);
+const boundary = "kq" + Math.random().toString(36).slice(2); // NOSONAR S2245: not security relevant (multipart boundary in a test)
 const created = await drive(alice.token, `${F}/upload/drive/v3/files?uploadType=multipart&fields=id,headRevisionId,md5Checksum`, {
   method: "POST",
   headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
@@ -283,9 +291,9 @@ let meta = await drive(alice.token, `/files/${fileId}?fields=appProperties`);
 ok(meta.data.appProperties?.kurviqKey?.startsWith(`${ta.data.keyId}.${fileId}.`) && meta.data.appProperties?.kurviqSync === "do-1", "key + marker written to appProperties", meta.data);
 const tc = await ticketFor(carol, fileId);
 ok(tc.status === 200 && tc.data.role === "read" && tc.data.key === ta.data.key, "carol gets a viewer ticket with the same key", tc.data?.role);
-const nobody = await fetch(`${B}/scene/${fileId}/ticket`, { method: "POST", headers: { Origin: B } });
+const nobody = await fetch(`${B}/scene/${fileId}/ticket`, { method: "POST", headers: { Origin: B } }); // NOSONAR S7044 S8476: local dev server (BASE), the file id comes from its fake Google
 ok(nobody.status === 401, "ticket without sign-in refused", nobody.status);
-const evilOrigin = await fetch(`${B}/scene/${fileId}/ticket`, { method: "POST", headers: { Origin: "https://evil.example", Cookie: alice.cookie() } });
+const evilOrigin = await fetch(`${B}/scene/${fileId}/ticket`, { method: "POST", headers: { Origin: "https://evil.example", Cookie: alice.cookie() } }); // NOSONAR S7044 S8476: local dev server (BASE), the file id comes from its fake Google
 ok(evilOrigin.status === 403, "ticket from a foreign origin refused", evilOrigin.status);
 
 // --- connect, seed -------------------------------------------------------------
@@ -296,8 +304,10 @@ const reused = await openTab(alice, fileId, ta.data, "tabX").then(() => "opened"
 ok(reused === "refused", "a ticket works only once", reused);
 
 const seedEvents = await Promise.all(original.elements.map((el) => elEvent(a1.scene, el, null)));
-seedEvents.push({ k: "set", id: "settings", base: null, c: await encrypt(a1.scene, "settings", original.appState) });
-seedEvents.push({ k: "name", id: "name", base: null, c: await encrypt(a1.scene, "name", { name: "Live test" }) });
+seedEvents.push(
+  { k: "set", id: "settings", base: null, c: await encrypt(a1.scene, "settings", original.appState) },
+  { k: "name", id: "name", base: null, c: await encrypt(a1.scene, "name", { name: "Live test" }) },
+);
 a1.send({ type: "seed", scene: { revision: "wrong-revision", md5: ta.data.head.md5, events: seedEvents } });
 const staleSeed = await a1.next((m) => m.type === "seed-refused");
 ok(staleSeed?.reason === "old", "a seed of another revision is refused", staleSeed);
@@ -411,7 +421,12 @@ curB = { ...byId.B, backgroundColor: "#00ff00" };
 const ackKurviqB = await batch(a3, [await elEvent(a3.scene, curB, baseOf(live.B))]);
 ok(ackKurviqB?.type === "ack", "alice changes B (pending)");
 const outside = structuredClone(content);
-outside.elements = outside.elements.map((el) => (el.id === "B" ? { ...el, backgroundColor: "#0000ff" } : el.id === "A" ? { ...el, strokeColor: "#ff00ff" } : el));
+const outsideChange = (el) => {
+  if (el.id === "B") return { ...el, backgroundColor: "#0000ff" };
+  if (el.id === "A") return { ...el, strokeColor: "#ff00ff" };
+  return el;
+};
+outside.elements = outside.elements.map(outsideChange);
 outside.elements.push(rect("D", "a9", { y: 500 }));
 delete outside.kurviq;
 await admin("/write", { email: "alice@example.test", fileId, content: JSON.stringify(outside) });
@@ -421,7 +436,7 @@ const merged = await waitFor(async () => {
   const els = Object.fromEntries(data.elements.map((el) => [el.id, el]));
   return data.kurviq && els.D && els.B?.backgroundColor === "#00ff00" ? els : null;
 }, 20000);
-ok(merged && merged.A.strokeColor === "#ff00ff" && merged.D && merged.B.backgroundColor === "#00ff00", "outside change merged: Kurviq's pending B wins, outside A and D kept", merged && { A: merged.A.strokeColor, B: merged.B.backgroundColor, D: !!merged.D });
+ok(merged?.A.strokeColor === "#ff00ff" && merged.D && merged.B.backgroundColor === "#00ff00", "outside change merged: Kurviq's pending B wins, outside A and D kept", merged && { A: merged.A.strokeColor, B: merged.B.backgroundColor, D: !!merged.D });
 
 // --- outside change right after our own save (no quiet window): merged; need-token when no credential is at hand
 const ta4 = await ticketFor(alice, fileId);
@@ -490,7 +505,7 @@ const stillBlocked = await a6.next((m) => m.type === "status", 3000);
 ok(stillBlocked?.blocked?.length === 1, "deciding before 24 hours does nothing", stillBlocked?.blocked);
 
 // --- after 24 hours: discard (a resend is refused), accept (saved on behalf) ------------
-await post(alice, `/scene/${fileId}/dev-age`, { ms: 25 * 3600_000 });
+await post(alice, `/scene/${fileId}/dev-age`, { ms: 25 * 3_600_000 });
 const decidable = await a6.next((m) => m.type === "status" && m.blocked?.[0]?.decidable, 5000);
 ok(decidable, "after 24 hours editors may decide", decidable?.blocked);
 a6.send({ type: "decide", author: tb.data.pseudonym, action: "discard" });
@@ -514,7 +529,7 @@ await sleep(3000);
 const ta8 = await ticketFor(alice, fileId);
 a6 = await openTab(alice, fileId, ta8.data, "tabA8");
 await hello(a6);
-await post(alice, `/scene/${fileId}/dev-age`, { ms: 25 * 3600_000 });
+await post(alice, `/scene/${fileId}/dev-age`, { ms: 25 * 3_600_000 });
 const decidable2 = await a6.next((m) => m.type === "status" && m.blocked?.[0]?.decidable, 5000);
 ok(decidable2, "bob blocked again, decidable");
 a6.send({ type: "decide", author: tb.data.pseudonym, action: "accept" });
@@ -523,7 +538,7 @@ const accepted = await waitFor(async () => {
   const D = data.elements.find((el) => el.id === "D");
   return D?.y === 4242 ? data : null;
 }, 20000);
-ok(accepted && accepted.kurviq.onBehalf.some((entry) => entry.by === ta.data.pseudonym && entry.for === tb.data.pseudonym), "accept: bob's change saved by alice, recorded on behalf of bob", accepted?.kurviq?.onBehalf);
+ok(accepted?.kurviq.onBehalf.some((entry) => entry.by === ta.data.pseudonym && entry.for === tb.data.pseudonym), "accept: bob's change saved by alice, recorded on behalf of bob", accepted?.kurviq?.onBehalf);
 ok(accepted?.kurviq?.authors?.D === tb.data.pseudonym, "the element keeps bob as its author", accepted?.kurviq?.authors?.D);
 
 // --- an agent's change: its own version, pinned and marked (agentRev) -----------------
@@ -591,20 +606,21 @@ const bob3 = await login("bob@example.test");
 const carol2 = await login("carol@example.test");
 
 const createScene = async (user, name, elements) => {
-  const b = "kq" + Math.random().toString(36).slice(2);
+  const b = "kq" + Math.random().toString(36).slice(2); // NOSONAR S2245: not security relevant (multipart boundary in a test)
+  const fileName = `${name}.excalidraw`;
   const res = await drive(user.token, `${F}/upload/drive/v3/files?uploadType=multipart&fields=id,headRevisionId,md5Checksum`, {
     method: "POST",
     headers: { "Content-Type": `multipart/related; boundary=${b}` },
-    body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: `${name}.excalidraw`, mimeType: "application/vnd.excalidraw+json" })}\r\n--${b}\r\nContent-Type: application/vnd.excalidraw+json\r\n\r\n${JSON.stringify({ ...original, elements })}\r\n--${b}--`,
+    body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: fileName, mimeType: "application/vnd.excalidraw+json" })}\r\n--${b}\r\nContent-Type: application/vnd.excalidraw+json\r\n\r\n${JSON.stringify({ ...original, elements })}\r\n--${b}--`,
   });
-  if (!res.data?.id) console.log("      (scene not created:", res.status, res.text.slice(0, 300), ")");
+  if (!res.data?.id) console.log("      (scene not created:", res.status, clean(res.text.slice(0, 300)), ")");
   return res.data.id;
 };
 /** ticket, connect, hello; seeds from Drive (with the file's kurviq record) if asked to */
 const join = async (user, fid, tabId, helloOpts = {}) => {
   const t = await ticketFor(user, fid);
   if (!t.data?.ticket) {
-    console.log(`      (no ticket for ${user.email}: ${JSON.stringify(t)})`);
+    console.log(`      (no ticket for ${user.email}: ${clean(JSON.stringify(t))})`);
   }
   const tab = await openTab(user, fid, t.data, tabId);
   tab.ticketAnswer = t.data;
@@ -648,19 +664,19 @@ ok(!stats0.metaKeys.includes("driveName") && !stats0.metaKeys.includes("people")
 // --- 17. rows written per batch -----------------------------------------------------
 await dev(alice2, file2, "dev-stats", { reset: true });
 for (let i = 0; i < 20; i++) {
-  const ackRow = await batch(t1, [await elEvent(t1.scene, rect(`R${i}`, `b${String(i).padStart(2, "0")}`, { y: 100 + i }), null)]);
+  const ackRow = await batch(t1, [await elEvent(t1.scene, rect(`R${i}`, `b${String(i).padStart(2, "0")}`, { y: 100 + i }), null)]); // NOSONAR S9382: batches in order on purpose (counters, rows counted per batch)
   if (ackRow?.type !== "ack") ok(false, "row test batch accepted", ackRow);
 }
 const statsRows = (await dev(alice2, file2, "dev-stats")).data;
 const perBatch = statsRows.rowsWritten / 20;
-console.log(`      rowsWritten: ${statsRows.rowsWritten} for 20 batches (incl. the first batch's token, outbox and schedule rows)`);
+console.log(`      rowsWritten: ${clean(statsRows.rowsWritten)} for 20 batches (incl. the first batch's token, outbox and schedule rows)`);
 ok(perBatch <= 1.5, `accepting a batch writes about one row (${perBatch.toFixed(2)} per batch)`, statsRows.rowsWritten);
 const costs = statsRows.costs;
-console.log(`      costs for 20 batches: ${JSON.stringify({ rowsWritten: costs.rowsWritten, rowsRead: costs.rowsRead, wsIn: costs.wsIn, wsOut: costs.wsOut, handlerMs: costs.handlerMs, alarms: costs.alarms })}`);
+console.log(`      costs for 20 batches: ${clean(JSON.stringify({ rowsWritten: costs.rowsWritten, rowsRead: costs.rowsRead, wsIn: costs.wsIn, wsOut: costs.wsOut, handlerMs: costs.handlerMs, alarms: costs.alarms }))}`);
 ok(costs && costs.wsIn >= 20 && costs.wsOut >= 20 && costs.rowsWritten === statsRows.rowsWritten && costs.handlers.webSocketMessage?.calls >= 20 && costs.fetches["/dev-stats"] >= 1, "dev-stats counts rows, messages, requests and handler time", costs);
 
 // --- 9. replay horizon and a sane `made` ----------------------------------------------
-const oldBatch = await batch(t1, [await elEvent(t1.scene, rect("OLD", "c0"), null)], { made: Date.now() - 31 * 24 * 3600_000 });
+const oldBatch = await batch(t1, [await elEvent(t1.scene, rect("OLD", "c0"), null)], { made: Date.now() - 31 * 24 * 3_600_000 });
 ok(oldBatch?.reason === "old", "a batch made more than 30 days ago is refused (old)", oldBatch);
 t1.counter--;
 const noMade = await batch(t1, [await elEvent(t1.scene, rect("OLD", "c0"), null)], { made: "yesterday" });
@@ -724,8 +740,8 @@ const final2 = await fileContent(alice2.token, file2);
 ok(final2.files?.img1, "an image no element uses yet is in the file (its batch is receipted as saved)", Object.keys(final2.files ?? {}));
 const statsSave = (await dev(alice2, file2, "dev-stats")).data;
 ok(statsSave.costs.alarms >= 1 && Object.keys(statsSave.costs.drive).some((kind) => kind.includes("upload")) && statsSave.costs.driveMs > 0, "dev-stats counts alarms and Google calls by kind with their wait", statsSave.costs.drive);
-console.log(`      Google calls in the save round: ${JSON.stringify(Object.fromEntries(Object.entries(statsSave.costs.drive).map(([k, v]) => [k, v.calls])))}, handlerMs ${statsSave.costs.handlerMs}`);
-console.log(`      rowsWritten: ${statsSave.rowsWritten} for the save round (3 versions, ${20 + 6} batches deleted, snapshot, receipts, tabs)`);
+console.log(`      Google calls in the save round: ${clean(JSON.stringify(Object.fromEntries(Object.entries(statsSave.costs.drive).map(([k, v]) => [k, v.calls]))))}, handlerMs ${clean(statsSave.costs.handlerMs)}`);
+console.log(`      rowsWritten: ${clean(statsSave.rowsWritten)} for the save round (3 versions, ${20 + 6} batches deleted, snapshot, receipts, tabs)`);
 
 // --- 14. the watch stops when the last connection left --------------------------------------
 const stopped = await until(async () => {
@@ -801,7 +817,7 @@ const sneakyEvent = { k: "el", id: "SN", base: null, r: readableOf({ ...sneaky, 
 ok((await batch(tr, [sneakyEvent]))?.type === "ack", "an arrow whose encrypted binding names an element its readable part doesn't");
 tr.ws.close();
 const savedSneaky = await until(async () => (await fileContent(alice2.token, file2)).elements.find((el) => el.id === "SN") ?? null, 25000);
-ok(savedSneaky && savedSneaky.startBinding === null, "it is saved with the checked (readable) references, no dangling binding", savedSneaky?.startBinding);
+ok(savedSneaky?.startBinding === null, "it is saved with the checked (readable) references, no dangling binding", savedSneaky?.startBinding);
 
 // --- 7 (round 2). an invalid change takes what was built on it along; affected tabs are told ------------
 const ti = await join(alice2, file2, "r-ti");
@@ -835,7 +851,7 @@ ok(ackArrow?.type === "ack" && sNow, "alice binds an arrow to bob's S (builds on
 t4.ws.close();
 await sleep(4000); // the round: bob can't be saved as, alice's arrow waits for him
 const t5 = await join(alice2, file2, "r-t5");
-await dev(alice2, file2, "dev-age", { ms: 25 * 3600_000 });
+await dev(alice2, file2, "dev-age", { ms: 25 * 3_600_000 });
 await t5.next((m) => m.type === "status" && m.blocked?.[0]?.decidable, 5000);
 t5.send({ type: "decide", author: b4.ticketAnswer.pseudonym, action: "discard" });
 const repair2 = await t5.next((m) => m.type === "events" && m.origin === "repair", 5000);
@@ -968,7 +984,7 @@ const heavy = (i) =>
   Array.from({ length: 100 }, (_, j) => rect(`H${i}_${j}`, `k${String(i).padStart(2, "0")}${String(j).padStart(3, "0")}`, { groupIds: Array.from({ length: 200 }, (_, g) => `g${g}`.padEnd(120, "x")) }));
 let heavyRefused = null;
 for (let i = 0; i < 12 && !heavyRefused; i++) {
-  const answer = await batch(v1, await Promise.all(heavy(i).map((el) => elEvent(v1.scene, el, null))));
+  const answer = await batch(v1, await Promise.all(heavy(i).map((el) => elEvent(v1.scene, el, null)))); // NOSONAR S9382: in order on purpose (fills the pending budget until the first refusal)
   if (answer?.type === "refused") heavyRefused = { i, answer };
 }
 ok(heavyRefused?.answer.reason === "limit" && heavyRefused.i < 10, "batches heavy in readable metadata (group ids) hit the pending budget", heavyRefused && { i: heavyRefused.i, detail: heavyRefused.answer.detail });
@@ -1000,8 +1016,15 @@ const s7 = await join(alice2, file7, "r-s7");
 const viewers = [];
 const viewerTabs = [];
 for (let i = 0; i < 6; i++) {
-  const t = await ticketFor(carol3, file7);
-  viewers.push(await openTab(carol3, file7, t.data, `r-cv${i}`).then((tab) => (viewerTabs.push(tab), "open"), () => "refused"));
+  const t = await ticketFor(carol3, file7); // NOSONAR S9382: one connection after the other on purpose (the sixth must be refused)
+  const opened = await openTab(carol3, file7, t.data, `r-cv${i}`).then( // NOSONAR S9382: in order on purpose (see above)
+    (tab) => {
+      viewerTabs.push(tab);
+      return "open";
+    },
+    () => "refused",
+  );
+  viewers.push(opened);
 }
 viewerTabs[0].ws.send(JSON.stringify({ type: "part", id: "big1", i: 0, total: 96, data: "" }));
 await viewerTabs[0].next(() => false, 1500);
@@ -1032,7 +1055,7 @@ await fetch(`${B}/drive/notify`, {
 });
 await sleep(1000);
 ok((await dev(alice2, file7, "dev-stats")).data.lifecycle.state === "active", "a notification with a forged channel secret is dropped by the Worker");
-const ghostId = "Ghost" + Math.random().toString(36).slice(2, 14);
+const ghostId = "Ghost" + Math.random().toString(36).slice(2, 14); // NOSONAR S2245: not security relevant (an unknown scene id for a test)
 await fetch(`${B}/drive/notify`, { method: "POST", headers: { "X-Goog-Channel-ID": "x", "X-Goog-Channel-Token": `${ghostId}.x`, "X-Goog-Resource-State": "update" } });
 const ghost = (await dev(alice2, ghostId, "dev-stats")).data;
 ok(ghost.unknown === true, "an unknown scene object writes nothing", ghost);
@@ -1047,7 +1070,7 @@ const kindStats = await until(async () => {
   return st.pending === 0 ? st : null;
 }, 25000);
 const file7Content = await fileContent(alice2.token, file7);
-ok(kindStats && /^invalid:/.test(kindStats.error ?? "") && file7Content.appState.viewBackgroundColor !== "#000000", "…and set aside at the save: they don't decrypt as settings", { error: kindStats?.error, bg: file7Content.appState.viewBackgroundColor });
+ok(kindStats && (kindStats.error ?? "").startsWith("invalid:") && file7Content.appState.viewBackgroundColor !== "#000000", "…and set aside at the save: they don't decrypt as settings", { error: kindStats?.error, bg: file7Content.appState.viewBackgroundColor });
 // L3: a key property whose key id isn't its key's own is not a key
 const file8 = await createScene(alice2, "Key check", [rect("K1", "a0")]);
 const fakeKey = Buffer.alloc(32, 9).toString("base64");
@@ -1107,21 +1130,21 @@ ok(smallAnonymous.status === 401, "a small request without a cookie: 401", small
 const keptBefore = (await dev(alice2, file2, "dev-stats")).data.kept;
 ok(keptBefore.tabs > 0 && keptBefore.forgotten > 0 && keptBefore.confirmed > 0, "before: tab rows, access times and a sign-out mark are kept", keptBefore);
 ok(!(await dev(alice2, file2, "dev-stats")).data.metaKeys.includes("pseudonyms"), "no account → pseudonym map is stored");
-await dev(alice2, file2, "dev-age", { ms: 31 * 24 * 3600_000, all: true });
+await dev(alice2, file2, "dev-age", { ms: 31 * 24 * 3_600_000, all: true });
 const kept31 = (await dev(alice2, file2, "dev-stats")).data.kept;
 ok(kept31.tabs === 0 && kept31.discarded === 0 && kept31.doneSaves === 0 && kept31.forgotten > 0 && kept31.confirmed === 0, "after 30 days: tab rows, discarded rows, finished save records and access times are gone; the sign-out mark stays", kept31);
 // scene "Unshare": bob's change, blocked since he lost access; discarded 90 days later (nobody accepted it)
 const pendingU = (await dev(alice2, file4, "dev-stats")).data;
 ok(pendingU.pending >= 1 && Object.keys(pendingU.blocked).length === 1, "before: bob's blocked change is kept", { pending: pendingU.pending, blocked: pendingU.blocked });
 ok(Object.values(pendingU.blocked).every((info) => info.reason === "access"), "he is blocked because he lost access (his changes can't be accepted, only discarded)", pendingU.blocked);
-await dev(alice2, file4, "dev-age", { ms: 6 * 24 * 3600_000, all: true });
+await dev(alice2, file4, "dev-age", { ms: 6 * 24 * 3_600_000, all: true });
 ok((await dev(alice2, file4, "dev-stats")).data.pending >= 1, "after 6 days it is still kept (editors see it and may discard it)");
-await dev(alice2, file4, "dev-age", { ms: 2 * 24 * 3600_000, all: true });
+await dev(alice2, file4, "dev-age", { ms: 2 * 24 * 3_600_000, all: true });
 const pending8 = (await dev(alice2, file4, "dev-stats")).data;
 ok(pending8.pending === 0 && !Object.keys(pending8.blocked).length, "7 days after he lost access it is discarded (other reasons: 90 days)", { pending: pending8.pending, blocked: pending8.blocked });
-await dev(alice2, file4, "dev-age", { ms: 31 * 24 * 3600_000, all: true });
+await dev(alice2, file4, "dev-age", { ms: 31 * 24 * 3_600_000, all: true });
 ok((await dev(alice2, file4, "dev-stats")).data.kept.discarded === 0, "its discard record goes 30 days after the change was made");
-await dev(alice2, file2, "dev-age", { ms: 370 * 24 * 3600_000, all: true });
+await dev(alice2, file2, "dev-age", { ms: 370 * 24 * 3_600_000, all: true });
 const kept401 = (await dev(alice2, file2, "dev-stats")).data.kept;
 ok(kept401.forgotten === 0, "after 400 days the sign-out mark is gone too", kept401);
 const sched = (await dev(alice2, file2, "dev-stats")).data.schedule.map((job) => job.kind);
@@ -1129,11 +1152,11 @@ const left401 = (await dev(alice2, file2, "dev-stats")).data;
 ok(sched.includes("retention") === left401.pending + left401.kept.tabs + left401.kept.discarded > 0 || sched.includes("trash-expire"), "the daily retention job stays planned only while something is left (here: the tombstone's change, deleted by trash-expire)", { sched, pending: left401.pending });
 // the account guard: connected and token entries run out; the sign-out epoch after 400 days
 const guardFresh = (await dev(alice2, file2, "dev-account-age", { ms: 0 })).data;
-const guard2h = (await dev(alice2, file2, "dev-account-age", { ms: 2 * 3600_000 })).data;
+const guard2h = (await dev(alice2, file2, "dev-account-age", { ms: 2 * 3_600_000 })).data;
 ok(guard2h.connected === 0, "account guard: connected-scene entries run out an hour after the last renewal", { guardFresh, guard2h });
-const guard6h = (await dev(alice2, file2, "dev-account-age", { ms: 4 * 3600_000 })).data;
+const guard6h = (await dev(alice2, file2, "dev-account-age", { ms: 4 * 3_600_000 })).data;
 ok(guard6h.scenes === 0, "account guard: stored-token entries run out 5 hours after the last one", guard6h);
-const guardOld = (await dev(alice2, file2, "dev-account-age", { ms: 401 * 24 * 3600_000 })).data;
+const guardOld = (await dev(alice2, file2, "dev-account-age", { ms: 401 * 24 * 3_600_000 })).data;
 ok(guardOld.epoch === 0 && !guardOld.sub, "account guard: the sign-out epoch and the account id are gone after 400 days", guardOld);
 
 console.log(`\n${passes} passed, ${failures} failed`);

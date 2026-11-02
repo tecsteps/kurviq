@@ -106,7 +106,7 @@ const imageType = (bytes: Uint8Array): string | null => {
   if (starts(0x89, 0x50, 0x4e, 0x47)) return "image/png";
   if (starts(0xff, 0xd8, 0xff)) return "image/jpeg";
   if (starts(0x47, 0x49, 0x46, 0x38)) return "image/gif";
-  if (starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP") return "image/webp";
+  if (starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP") return "image/webp"; // NOSONAR S7758: these are signature bytes, not Unicode code points
   // SVG: after an optional <?xml …?>, <!DOCTYPE …> and comments (icon sets start with a license comment)
   const head = new TextDecoder()
     .decode(bytes.subarray(0, 4096))
@@ -144,7 +144,7 @@ const handleUpload = async (request: Request, env: Env, access: Access | null) =
       error: bytes.length ? `At most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB per image` : "Empty body: send the image file as the request body (curl --data-binary @image.png)",
     });
   }
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes)); // NOSONAR S4790: Excalidraw content identifier only, not authentication or integrity verification
   const id = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   const first = bytes.find((byte) => byte !== 0x20 && byte !== 0x0a && byte !== 0x0d && byte !== 0x09);
   if (first === 0x7b || first === 0x5b) {
@@ -156,7 +156,7 @@ const handleUpload = async (request: Request, env: Env, access: Access | null) =
   }
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); // NOSONAR S7758: base64 needs one binary character per byte
   }
   const res = await pairingStub(env, access).fetch(
     toPairing(
@@ -298,9 +298,7 @@ const handleMcp = async (request: Request, env: Env, access: Access, ctx: Execut
       }
       return saved;
     },
-    savePdf: async () => {
-      throw new Error("PDF export is not available through the Kurviq MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).");
-    },
+    savePdf: () => Promise.reject(new Error("PDF export is not available through the Kurviq MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).")),
   });
   // stateless: a new server per request, nothing kept between requests
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -310,6 +308,128 @@ const handleMcp = async (request: Request, env: Env, access: Access, ctx: Execut
   } finally {
     server.close().catch(() => {});
   }
+};
+
+const handleMcpRoute = async (request: Request, env: Env, ctx: ExecutionContext, url: URL, mcp: RegExpExecArray) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS });
+  }
+  // no server-sent event stream (stateless: it would end at once, and clients
+  // reconnect every second, forever); 405 tells them not to ask again
+  if (request.method === "GET") {
+    return withCors(new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST, DELETE, OPTIONS" } }));
+  }
+  if (!mcp[1]) {
+    // signed in (OAuth); without a token: where to sign in
+    const pairing = await bearerPairing(request, env);
+    if (!pairing || pairing === "invalid") {
+      return unauthorized(url.origin, pairing === "invalid");
+    }
+    const uploadUrl = `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}`;
+    return handleMcp(request, env, { pairing, via: "oauth", uploadUrl }, ctx);
+  }
+  if (!KEY_RE.test(mcp[1])) {
+    return withCors(
+      new Response(
+        JSON.stringify({
+          error: `Not a Kurviq agent address. Add ${url.origin}/mcp as a remote MCP server: the agent signs in and the user allows it in Kurviq. See ${url.origin}/llms.txt`,
+        }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  }
+  const key = mcp[1];
+  // its own upload token (like a signed-in agent's), not the link: the link key is full access
+  const pairing = await pairingName(key);
+  return handleMcp(request, env, { pairing, via: "link", uploadUrl: `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}` }, ctx);
+};
+
+const handleLiveRoute = async (request: Request, env: Env, url: URL, key: string) => {
+  if (!KEY_RE.test(key)) {
+    return new Response("Unknown agent link", { status: 404 });
+  }
+  // only Kurviq's own pages (browsers always send Origin with a WebSocket)
+  if (request.headers.get("Origin") !== url.origin) {
+    return new Response("Forbidden", { status: 403 });
+  }
+  const stub = env.PAIRING.get(env.PAIRING.idFromName(await pairingName(key)));
+  return stub.fetch(new Request(`https://pairing/live${url.search}`, request));
+};
+
+const handleSignedUpload = async (request: Request, env: Env, url: URL, token: string) => {
+  const pairing = await uploadPairing(env, token);
+  return handleUpload(request, env, pairing ? { pairing, via: "oauth", uploadUrl: url.toString() } : null);
+};
+
+const handleLegacyUpload = async (request: Request, env: Env, url: URL, key: string) => {
+  return handleUpload(
+    request,
+    env,
+    KEY_RE.test(key) ? { pairing: await pairingName(key), via: "link", uploadUrl: `${url.origin}/mcp/${key}/upload` } : null,
+  );
+};
+
+const driveOpenRedirect = (url: URL) => {
+  let id = "";
+  try {
+    id = String(JSON.parse(url.searchParams.get("state") || "{}").ids?.[0] ?? "");
+  } catch {}
+  return Response.redirect(new URL(/^[\w-]{10,200}$/.test(id) ? `/s/${id}` : "/", url).toString(), 302);
+};
+
+const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContext, url: URL) => {
+  // bug reports and change requests from Kurviq's pages
+  if (url.pathname === "/api/feedback") {
+    const feedback = await handleFeedback(request, env);
+    if (feedback.ok) {
+      feedbackStats(env, ctx, "app");
+    }
+    return feedback;
+  }
+
+  // usage statistics, local tests only (./stats.ts)
+  if (url.pathname === "/api/stats-dev/flush" || url.pathname === "/api/stats-dev/retention") {
+    return handleStatsDev(request, env, () => runRetention(env));
+  }
+
+  // the contact form (./contact.ts)
+  const contact = await handleContact(request, env, ctx);
+  if (contact) {
+    return contact;
+  }
+
+  if (url.pathname === "/llms.txt") {
+    return new Response(String(llmsTxt).replaceAll("https://kurviq.com", url.origin), {
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=300" },
+    });
+  }
+
+  const fonts = await handleFonts(request, ctx);
+  if (fonts) {
+    return fonts;
+  }
+  const pubApi = await handlePubApi(request, env);
+  if (pubApi) {
+    return pubApi;
+  }
+  const publicApi = handlePublicApi(request, env, ctx);
+  if (publicApi) {
+    publicReadStats(request, env, ctx);
+    return publicApi;
+  }
+  // Drive's "Open with Kurviq" (Drive UI integration): state={"ids":[…],"action":"open"}
+  if (url.pathname === "/drive/open") {
+    return driveOpenRedirect(url);
+  }
+  const page = await handleSharedPage(request, env, env.ASSETS, ctx);
+  if (page) {
+    pageStats(request, page, env, ctx);
+    return page;
+  }
+  // the app (any scene) and the plain pages; page loads are counted (navigations only, ./stats.ts)
+  const asset = await env.ASSETS.fetch(request);
+  pageStats(request, asset, env, ctx);
+  return asset;
 };
 
 export default {
@@ -342,17 +462,9 @@ export default {
       return auth;
     }
 
-    const live = url.pathname.match(/^\/live\/([^/]+)$/);
+    const live = /^\/live\/([^/]+)$/.exec(url.pathname);
     if (live) {
-      if (!KEY_RE.test(live[1])) {
-        return new Response("Unknown agent link", { status: 404 });
-      }
-      // only Kurviq's own pages (browsers always send Origin with a WebSocket)
-      if (request.headers.get("Origin") !== url.origin) {
-        return new Response("Forbidden", { status: 403 });
-      }
-      const stub = env.PAIRING.get(env.PAIRING.idFromName(await pairingName(live[1])));
-      return stub.fetch(new Request(`https://pairing/live${url.search}`, request));
+      return handleLiveRoute(request, env, url, live[1]);
     }
 
     const oauth = await handleOAuth(request, env);
@@ -361,118 +473,27 @@ export default {
     }
 
     // uploads of a signed-in agent: /mcp/upload/<token> (curl can't sign in; the token names the pairing, for a week)
-    const signedUpload = url.pathname.match(/^\/mcp\/upload\/([^/]+)\/?$/);
+    const signedUpload = /^\/mcp\/upload\/([^/]+)\/?$/.exec(url.pathname);
     if (signedUpload) {
-      const pairing = await uploadPairing(env, signedUpload[1]);
-      return handleUpload(request, env, pairing ? { pairing, via: "oauth", uploadUrl: url.toString() } : null);
+      return handleSignedUpload(request, env, url, signedUpload[1]);
     }
     // the old link: /mcp/<key>/upload
-    const upload = url.pathname.match(/^\/mcp\/([^/]+)\/upload\/?$/);
+    const upload = /^\/mcp\/([^/]+)\/upload\/?$/.exec(url.pathname);
     if (upload) {
-      const key = upload[1];
-      return handleUpload(
-        request,
-        env,
-        KEY_RE.test(key) ? { pairing: await pairingName(key), via: "link", uploadUrl: `${url.origin}/mcp/${key}/upload` } : null,
-      );
+      return handleLegacyUpload(request, env, url, upload[1]);
     }
 
-    const mcp = url.pathname.match(/^\/mcp(?:\/([^/]*))?\/?$/);
+    const mcp = /^\/mcp(?:\/([^/]*))?\/?$/.exec(url.pathname);
     if (mcp) {
-      if (request.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: CORS });
-      }
-      // no server-sent event stream (stateless: it would end at once, and clients
-      // reconnect every second, forever); 405 tells them not to ask again
-      if (request.method === "GET") {
-        return withCors(new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST, DELETE, OPTIONS" } }));
-      }
-      if (!mcp[1]) {
-        // signed in (OAuth); without a token: where to sign in
-        const pairing = await bearerPairing(request, env);
-        if (!pairing || pairing === "invalid") {
-          return unauthorized(url.origin, pairing === "invalid");
-        }
-        const uploadUrl = `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}`;
-        return handleMcp(request, env, { pairing, via: "oauth", uploadUrl }, ctx);
-      }
-      if (!KEY_RE.test(mcp[1])) {
-        return withCors(
-          new Response(
-            JSON.stringify({
-              error: `Not a Kurviq agent address. Add ${url.origin}/mcp as a remote MCP server: the agent signs in and the user allows it in Kurviq. See ${url.origin}/llms.txt`,
-            }),
-            { status: 404, headers: { "Content-Type": "application/json" } },
-          ),
-        );
-      }
-      const key = mcp[1];
-      // its own upload token (like a signed-in agent's), not the link: the link key is full access
-      const pairing = await pairingName(key);
-      return handleMcp(request, env, { pairing, via: "link", uploadUrl: `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}` }, ctx);
+      return handleMcpRoute(request, env, ctx, url, mcp);
     }
 
-    // bug reports and change requests from Kurviq's pages
-    if (url.pathname === "/api/feedback") {
-      const feedback = await handleFeedback(request, env);
-      if (feedback.ok) {
-        feedbackStats(env, ctx, "app");
-      }
-      return feedback;
-    }
-
-    // usage statistics, local tests only (./stats.ts)
-    if (url.pathname === "/api/stats-dev/flush" || url.pathname === "/api/stats-dev/retention") {
-      return handleStatsDev(request, env, () => runRetention(env));
-    }
-
-    // the contact form (./contact.ts)
-    const contact = await handleContact(request, env, ctx);
-    if (contact) {
-      return contact;
-    }
-
-    if (url.pathname === "/llms.txt") {
-      return new Response(String(llmsTxt).replaceAll("https://kurviq.com", url.origin), {
-        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=300" },
-      });
-    }
-
-    const fonts = await handleFonts(request, ctx);
-    if (fonts) {
-      return fonts;
-    }
-    const pubApi = await handlePubApi(request, env);
-    if (pubApi) {
-      return pubApi;
-    }
-    const publicApi = handlePublicApi(request, env, ctx);
-    if (publicApi) {
-      publicReadStats(request, env, ctx);
-      return publicApi;
-    }
-    // Drive's "Open with Kurviq" (Drive UI integration): state={"ids":[…],"action":"open"}
-    if (url.pathname === "/drive/open") {
-      let id = "";
-      try {
-        id = String(JSON.parse(url.searchParams.get("state") || "{}").ids?.[0] ?? "");
-      } catch {}
-      return Response.redirect(new URL(/^[\w-]{10,200}$/.test(id) ? `/s/${id}` : "/", url).toString(), 302);
-    }
-    const page = await handleSharedPage(request, env, env.ASSETS, ctx);
-    if (page) {
-      pageStats(request, page, env, ctx);
-      return page;
-    }
-    // the app (any scene) and the plain pages; page loads are counted (navigations only, ./stats.ts)
-    const asset = await env.ASSETS.fetch(request);
-    pageStats(request, asset, env, ctx);
-    return asset;
+    return handlePageRoutes(request, env, ctx, url);
   },
 
   // hourly (wrangler.jsonc triggers): feedback older than 2 years, contact messages older than 1 year are deleted,
   // sender hashes older than a day blanked
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) { // NOSONAR S7503: async preserves the Worker handler promise and synchronous failure rejection
     ctx.waitUntil(runRetention(env));
   },
 };

@@ -34,7 +34,7 @@ const setTextPadding = (ids: Set<string>, padding: number) => {
   const next = new Map(
     elements.map((el) => [
       el.id,
-      ids.has(el.id) ? newElementWith(el, { customData: { ...(el.customData || {}), textPadding: padding } }) : el,
+      ids.has(el.id) ? newElementWith(el, { customData: { ...el.customData, textPadding: padding } }) : el,
     ]),
   );
   // lay the text out again: wrap at the new width, grow the shape if needed

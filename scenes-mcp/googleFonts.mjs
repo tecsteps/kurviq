@@ -11,14 +11,14 @@ export const toDataUrl = (bytes, mime) => {
   const view = new Uint8Array(bytes);
   let binary = "";
   for (let i = 0; i < view.length; i += 0x8000) {
-    binary += String.fromCharCode(...view.subarray(i, i + 0x8000));
+    binary += String.fromCharCode(...view.subarray(i, i + 0x8000)); // NOSONAR S7758: base64 needs one binary character per byte
   }
   return `data:${mime};base64,${btoa(binary)}`;
 };
 
 /** Google's CSS for a family → [{ data, range }], or null: no such font on Google Fonts */
 export const googleFaces = async (family) => {
-  const css = await fetch(`https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, "+")}`, {
+  const css = await fetch(`https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replaceAll("%20", "+")}`, {
     headers: {
       // a current browser: Google answers with woff2
       "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
@@ -31,16 +31,16 @@ export const googleFaces = async (family) => {
   const wanted = blocks.filter(([, subset]) => subset === "latin" || subset === "latin-ext");
   const faces = [];
   for (const [, , body] of (wanted.length ? wanted : blocks).slice(0, 4)) {
-    const url = body.match(/src:\s*url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/)?.[1];
-    const range = body.match(/unicode-range:\s*([^;]+);/)?.[1]?.trim();
+    const url = /src:\s*url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/.exec(body)?.[1];
+    const range = /unicode-range:([^;]+);/.exec(body)?.[1]?.trim();
     if (!url) {
       continue;
     }
-    const file = await fetch(url);
+    const file = await fetch(url); // NOSONAR S9382: in order on purpose (font fetches are serial to limit requests and memory)
     if (!file.ok) {
       throw new Error(`Google Fonts answered ${file.status}`);
     }
-    const bytes = await file.arrayBuffer();
+    const bytes = await file.arrayBuffer(); // NOSONAR S9382: in order on purpose (font fetches are serial to limit requests and memory)
     if (bytes.byteLength > MAX_FONT_BYTES) {
       throw new Error("The font is too large");
     }

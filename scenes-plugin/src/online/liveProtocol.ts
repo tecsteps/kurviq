@@ -17,16 +17,16 @@ export const PROOF_VALID_MS = 15 * 60_000;
 /** connect tickets */
 export const TICKET_VALID_MS = 60_000;
 /** stored refresh tokens: at most this long after the author's last renewal */
-export const TOKEN_LEASE_MS = 4 * 3600_000;
+export const TOKEN_LEASE_MS = 4 * 3_600_000;
 /** save rounds: this often while changes are pending */
 export const SAVE_EVERY_MS = 60_000;
 /** at most this many Drive versions per save round */
 export const MAX_VERSIONS_PER_ROUND = 5;
 /** batches older than this are never replayed */
-export const REPLAY_HORIZON_MS = 30 * 24 * 3600_000;
+export const REPLAY_HORIZON_MS = 30 * 24 * 3_600_000;
 /** unresolved changes of an author who cannot be saved as */
-export const DECIDE_AFTER_MS = 24 * 3600_000;
-export const AUTO_ACCEPT_AFTER_MS = 7 * 24 * 3600_000;
+export const DECIDE_AFTER_MS = 24 * 3_600_000;
+export const AUTO_ACCEPT_AFTER_MS = 7 * 24 * 3_600_000;
 
 /** limits (refused before acceptance, never cut off) */
 export const LIMITS = {
@@ -382,9 +382,9 @@ export const KEY_PROPERTY = "kurviqKey";
 
 /** a key's id: the first 12 characters of the base64url SHA-256 of its 32 bytes */
 export const keyIdOf = async (keyBase64: string) => {
-  const raw = Uint8Array.from(atob(keyBase64), (char) => char.charCodeAt(0));
+  const raw = Uint8Array.from(atob(keyBase64), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding operates on bytes, not Unicode code points
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
-  return btoa(String.fromCharCode(...digest)).replace(/\+/g, "-").replace(/\//g, "_").slice(0, 12);
+  return btoa(String.fromCharCode(...digest)).replaceAll("+", "-").replaceAll("/", "_").slice(0, 12); // NOSONAR S7758: base64 encoding requires a binary byte string
 };
 
 export const keyProperty = (keyId: string, fileId: string, keyBase64: string) => `${keyId}.${fileId}.${keyBase64}`;
@@ -395,7 +395,7 @@ export const keyProperty = (keyId: string, fileId: string, keyBase64: string) =>
  */
 export const parseKeyProperty = async (value: string | null | undefined, fileId: string) => {
   const match = /^([A-Za-z0-9_-]{12})\.([A-Za-z0-9_-]{10,200})\.([A-Za-z0-9+/]{43}=)$/.exec(value || "");
-  if (!match || (await keyIdOf(match[3])) !== match[1]) {
+  if (!match?.[3] || (await keyIdOf(match[3])) !== match[1]) {
     return null;
   }
   return { keyId: match[1], fileId: match[2], key: match[3], copy: match[2] !== fileId };

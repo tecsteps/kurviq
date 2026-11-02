@@ -24,7 +24,15 @@ const canon = (value) => {
   }
   if (isPlainObject(value)) {
     const out = {};
-    for (const key of Object.keys(value).sort()) {
+    for (const key of Object.keys(value).sort((a, b) => {
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      return 0;
+    })) {
       const field = canon(value[key]);
       if (field !== null) {
         out[key] = field;
@@ -61,7 +69,11 @@ export const formatText = (el) => {
 
 const occurrences = (haystack, needle) => {
   let count = 0;
-  for (let at = haystack.indexOf(needle); needle && at >= 0; at = haystack.indexOf(needle, at + needle.length)) {
+  const first = haystack.indexOf(needle);
+  if (!needle) {
+    return count;
+  }
+  for (let at = first; at >= 0; at = haystack.indexOf(needle, at + needle.length)) {
     count++;
   }
   return count;
@@ -94,61 +106,76 @@ const SPECIAL = new Set([
 const clashesOn = (base, current, props, { label = false } = {}) => {
   const clashes = [];
   const add = (property, yours, theirs) => clashes.push({ property, yours, theirs });
-  const textSet =
-    props.text !== undefined || props.markdown !== undefined || props.originalText !== undefined || props.customData?.rich !== undefined;
-  if (textSet && textChanged(base, current)) {
-    const yours = {};
-    for (const key of ["markdown", "text", "originalText"]) {
-      if (props[key] !== undefined) {
-        yours[key] = shown(props[key]);
+  const checkText = () => {
+    const textSet =
+      props.text !== undefined || props.markdown !== undefined || props.originalText !== undefined || props.customData?.rich !== undefined;
+    if (textSet && textChanged(base, current)) {
+      const yours = {};
+      for (const key of ["markdown", "text", "originalText"]) {
+        if (props[key] !== undefined) {
+          yours[key] = shown(props[key]);
+        }
       }
+      add("text", yours, textNow(current));
     }
-    add("text", yours, textNow(current));
-  }
+  };
+  checkText();
   if (!label) {
-    // x / y (also slide-relative): a move
-    if ((props.x !== undefined || props.y !== undefined) && (differs(base.x, current.x) || differs(base.y, current.y))) {
-      const yours = {};
-      for (const key of ["x", "y", "slide"]) {
-        if (props[key] !== undefined) {
-          yours[key] = props[key];
+    const checkPosition = () => {
+      // x / y (also slide-relative): a move
+      if ((props.x !== undefined || props.y !== undefined) && (differs(base.x, current.x) || differs(base.y, current.y))) {
+        const yours = {};
+        for (const key of ["x", "y", "slide"]) {
+          if (props[key] !== undefined) {
+            yours[key] = props[key];
+          }
         }
+        add("position", yours, { x: current.x, y: current.y, ...(current.frameId ? { frameId: current.frameId } : {}) });
       }
-      add("position", yours, { x: current.x, y: current.y, ...(current.frameId ? { frameId: current.frameId } : {}) });
-    }
-    // onto another slide
-    if ((props.slide !== undefined || props.frameId !== undefined) && differs(base.frameId, current.frameId)) {
-      add("slide", props.slide !== undefined ? { slide: props.slide } : { frameId: props.frameId }, { frameId: current.frameId ?? null });
-    }
-    // size; a text that measures itself only changed size because its words did
-    const autoSized = current.type === "text" && current.autoResize !== false && textChanged(base, current);
-    if ((props.width !== undefined || props.height !== undefined) && !autoSized && (differs(base.width, current.width) || differs(base.height, current.height))) {
-      const yours = {};
-      for (const key of ["width", "height"]) {
-        if (props[key] !== undefined) {
-          yours[key] = props[key];
+    };
+    checkPosition();
+    const checkSlide = () => {
+      // onto another slide
+      if ((props.slide !== undefined || props.frameId !== undefined) && differs(base.frameId, current.frameId)) {
+        add("slide", props.slide !== undefined ? { slide: props.slide } : { frameId: props.frameId }, { frameId: current.frameId ?? null });
+      }
+    };
+    checkSlide();
+    const checkSize = () => {
+      // size; a text that measures itself only changed size because its words did
+      const autoSized = current.type === "text" && current.autoResize !== false && textChanged(base, current);
+      if ((props.width !== undefined || props.height !== undefined) && !autoSized && (differs(base.width, current.width) || differs(base.height, current.height))) {
+        const yours = {};
+        for (const key of ["width", "height"]) {
+          if (props[key] !== undefined) {
+            yours[key] = props[key];
+          }
         }
+        add("size", yours, { width: current.width, height: current.height });
       }
-      add("size", yours, { width: current.width, height: current.height });
-    }
+    };
+    checkSize();
   }
+  const checkCustomData = (key, value) => {
+    const was = base.customData?.[key];
+    const now = current.customData?.[key];
+    if (isPlainObject(value) && (isPlainObject(was) || isPlainObject(now))) {
+      for (const [inner, innerValue] of Object.entries(value)) {
+        if (differs(was?.[inner], now?.[inner])) {
+          add(`customData.${key}.${inner}`, innerValue, now?.[inner] ?? null);
+        }
+      }
+    } else if (differs(was, now)) {
+      add(`customData.${key}`, value, now ?? null);
+    }
+  };
   // customData merges: compared key by key (one level down, like the merge)
   if (isPlainObject(props.customData)) {
     for (const [key, value] of Object.entries(props.customData)) {
       if (key === "rich") {
         continue;
       }
-      const was = base.customData?.[key];
-      const now = current.customData?.[key];
-      if (isPlainObject(value) && (isPlainObject(was) || isPlainObject(now))) {
-        for (const [inner, innerValue] of Object.entries(value)) {
-          if (differs(was?.[inner], now?.[inner])) {
-            add(`customData.${key}.${inner}`, innerValue, now?.[inner] ?? null);
-          }
-        }
-      } else if (differs(was, now)) {
-        add(`customData.${key}`, value, now ?? null);
-      }
+      checkCustomData(key, value);
     }
   }
   // everything else by name (strokeColor, backgroundColor, fontSize, fontFamily, points, …)
@@ -160,7 +187,15 @@ const clashesOn = (base, current, props, { label = false } = {}) => {
   return clashes;
 };
 
-const formatSpecs = (format) => (Array.isArray(format) ? format : format !== undefined && format !== null ? [format] : []);
+const formatSpecs = (format) => {
+  if (Array.isArray(format)) {
+    return format;
+  }
+  if (format !== undefined && format !== null) {
+    return [format];
+  }
+  return [];
+};
 
 /**
  * Which update entries clash with the user's changes between `base` (the
@@ -192,43 +227,50 @@ export const findConflicts = ({ base, current, updates }) => {
     const clashes = clashesOn(was, is, props);
 
     // a shape's label (`label: { text | markdown, fontSize, … }`) is its bound text element
-    const labelSpec = props.label === undefined || is.type === "text" ? null : typeof props.label === "string" ? { text: props.label } : props.label;
+    let labelSpec = null;
+    if (!(props.label === undefined || is.type === "text")) {
+      labelSpec = typeof props.label === "string" ? { text: props.label } : props.label;
+    }
     const baseLabel = labelIn(base, id);
     const label = labelIn(current, id);
-    if (isPlainObject(labelSpec)) {
-      const { id: _ignored, ...spec } = labelSpec;
-      if (baseLabel && label) {
-        clashes.push(...clashesOn(baseLabel, label, spec, { label: true }).map((c) => ({ ...c, property: `label.${c.property}` })));
-      } else if (baseLabel && !label) {
-        clashes.push({ property: "label", yours: spec, theirs: null, reason: "the user removed the label" });
-      } else if (!baseLabel && label && (spec.text !== undefined || spec.markdown !== undefined)) {
-        clashes.push({ property: "label.text", yours: spec, theirs: textNow(label) });
-      }
-    }
-
-    // format: only touches formatting; it clashes when the phrase is gone from a text the user changed
-    const specs = formatSpecs(props.format);
-    if (specs.length) {
-      const [baseText, text] = is.type === "text" ? [was, is] : [baseLabel, label];
-      if (text && baseText && textChanged(baseText, text)) {
-        const haystack = formatText(text);
-        const gone = specs.filter((spec) => {
-          const match = typeof spec?.match === "string" ? spec.match : "";
-          const found = occurrences(haystack, match);
-          const wanted = typeof spec?.occurrence === "number" ? spec.occurrence : 1;
-          return !found || found < wanted;
-        });
-        if (gone.length) {
-          clashes.push({
-            property: is.type === "text" ? "text" : "label.text",
-            yours: { format: gone },
-            theirs: textNow(text),
-            reason: "the phrase to format is no longer in the text: the user changed it",
-          });
+    const checkLabel = () => {
+      if (isPlainObject(labelSpec)) {
+        const { id: _ignored, ...spec } = labelSpec; // NOSONAR S1481: rest destructuring excludes id while preserving property getter access
+        if (baseLabel && label) {
+          clashes.push(...clashesOn(baseLabel, label, spec, { label: true }).map((c) => ({ ...c, property: `label.${c.property}` })));
+        } else if (baseLabel && !label) {
+          clashes.push({ property: "label", yours: spec, theirs: null, reason: "the user removed the label" });
+        } else if (!baseLabel && label && (spec.text !== undefined || spec.markdown !== undefined)) {
+          clashes.push({ property: "label.text", yours: spec, theirs: textNow(label) });
         }
       }
-    }
-
+    };
+    checkLabel();
+    // format: only touches formatting; it clashes when the phrase is gone from a text the user changed
+    const checkFormat = () => {
+      const specs = formatSpecs(props.format);
+      if (specs.length) {
+        const [baseText, text] = is.type === "text" ? [was, is] : [baseLabel, label];
+        if (text && baseText && textChanged(baseText, text)) {
+          const haystack = formatText(text);
+          const gone = specs.filter((spec) => {
+            const match = typeof spec?.match === "string" ? spec.match : "";
+            const found = occurrences(haystack, match);
+            const wanted = typeof spec?.occurrence === "number" ? spec.occurrence : 1;
+            return !found || found < wanted;
+          });
+          if (gone.length) {
+            clashes.push({
+              property: is.type === "text" ? "text" : "label.text",
+              yours: { format: gone },
+              theirs: textNow(text),
+              reason: "the phrase to format is no longer in the text: the user changed it",
+            });
+          }
+        }
+      }
+    };
+    checkFormat();
     if (clashes.length) {
       conflicts.push({
         index,

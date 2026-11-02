@@ -32,6 +32,23 @@ const plainOfMarkdown = (markdown) => {
 
 const rand = () => Math.floor(Math.random() * 2 ** 31);
 
+const registerArrowBindings = (out, byId) => {
+  // register arrows on the shapes they bind to
+  for (const el of out) {
+    for (const key of ["startBinding", "endBinding"]) {
+      const binding = el[key];
+      const target = binding?.elementId && byId.get(binding.elementId);
+      if (!target) {
+        continue;
+      }
+      el[key] = { fixedPoint: [0.5, 0.5], mode: "orbit", ...binding };
+      if (!target.boundElements?.some((b) => b.id === el.id)) {
+        target.boundElements = [...(target.boundElements || []), { type: "arrow", id: el.id }];
+      }
+    }
+  }
+};
+
 /**
  * Fallback conversion used when no browser tab is open (the browser converts
  * with real font metrics, see scenes-plugin/src/live.ts). Text sizes are
@@ -76,6 +93,33 @@ export const convertInNode = (elements) => {
     };
   };
 
+  const appendLabel = (el, label) => {
+    const fontSize = label.fontSize ?? 20;
+    const text = textProps(label.text, fontSize);
+    let cx = el.x + (el.width ?? 0) / 2;
+    let cy = el.y + (el.height ?? 0) / 2;
+    if (el.points) {
+      const mid = el.points[Math.floor((el.points.length - 1) / 2)];
+      const next = el.points[Math.ceil((el.points.length - 1) / 2)];
+      cx = el.x + (mid[0] + next[0]) / 2;
+      cy = el.y + (mid[1] + next[1]) / 2;
+    }
+    const textEl = base({
+      type: "text",
+      id: `${el.id}-label`,
+      x: cx - text.width / 2,
+      y: cy - text.height / 2,
+      strokeColor: label.strokeColor ?? el.strokeColor,
+      textAlign: label.textAlign ?? "center",
+      verticalAlign: label.verticalAlign ?? "middle",
+      containerId: el.id,
+      ...text,
+    });
+    el.boundElements = [...(el.boundElements || []), { type: "text", id: textEl.id }];
+    out.push(textEl);
+    byId.set(textEl.id, textEl);
+  };
+
   for (const raw of elements) {
     if (!needsConversion(raw)) {
       out.push(raw);
@@ -114,45 +158,9 @@ export const convertInNode = (elements) => {
     byId.set(el.id, el);
 
     if (label?.text) {
-      const fontSize = label.fontSize ?? 20;
-      const text = textProps(label.text, fontSize);
-      let cx = el.x + (el.width ?? 0) / 2;
-      let cy = el.y + (el.height ?? 0) / 2;
-      if (el.points) {
-        const mid = el.points[Math.floor((el.points.length - 1) / 2)];
-        const next = el.points[Math.ceil((el.points.length - 1) / 2)];
-        cx = el.x + (mid[0] + next[0]) / 2;
-        cy = el.y + (mid[1] + next[1]) / 2;
-      }
-      const textEl = base({
-        type: "text",
-        id: `${el.id}-label`,
-        x: cx - text.width / 2,
-        y: cy - text.height / 2,
-        strokeColor: label.strokeColor ?? el.strokeColor,
-        textAlign: label.textAlign ?? "center",
-        verticalAlign: label.verticalAlign ?? "middle",
-        containerId: el.id,
-        ...text,
-      });
-      el.boundElements = [...(el.boundElements || []), { type: "text", id: textEl.id }];
-      out.push(textEl);
-      byId.set(textEl.id, textEl);
+      appendLabel(el, label);
     }
   }
-  // register arrows on the shapes they bind to
-  for (const el of out) {
-    for (const key of ["startBinding", "endBinding"]) {
-      const binding = el[key];
-      const target = binding?.elementId && byId.get(binding.elementId);
-      if (!target) {
-        continue;
-      }
-      el[key] = { fixedPoint: [0.5, 0.5], mode: "orbit", ...binding };
-      if (!target.boundElements?.some((b) => b.id === el.id)) {
-        target.boundElements = [...(target.boundElements || []), { type: "arrow", id: el.id }];
-      }
-    }
-  }
+  registerArrowBindings(out, byId);
   return out;
 };

@@ -19,12 +19,13 @@ const HIDDEN_RANGES = [
   [0xfff0, 0xfffb], [0xe0000, 0xe0fff],
 ];
 const hex = (code) => code.toString(16).padStart(4, "0");
-const HIDDEN = new RegExp(`[${HIDDEN_RANGES.map(([a, b]) => `\\u{${hex(a)}}-\\u{${hex(b)}}`).join("")}]`, "gu");
+const hiddenRanges = HIDDEN_RANGES.map(([a, b]) => String.raw`\u{${hex(a)}}-\u{${hex(b)}}`).join("");
+const HIDDEN = new RegExp(`[${hiddenRanges}]`, "gu");
 
 // code and markup: HTML / XML tags, code fences and backticks, template and
 // script syntax, data / javascript URLs (stored with bound parameters: SQL needs no filter)
 const CODE = [
-  /<\s*\/?\s*[a-z!?][^>]*>/i,
+  /<\s*\/?\s*[a-z!?][^>]*>/i, // NOSONAR S8786: title and text are bounded to 120 and 2000 characters before this check
   /`/,
   /\$\{|\{\{|\}\}|<\?|\?>|<%|%>/,
   /\b(?:javascript|vbscript|data)\s*:/i,

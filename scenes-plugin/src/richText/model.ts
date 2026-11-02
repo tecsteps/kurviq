@@ -5,13 +5,13 @@
 // counts only while its plain text equals `originalText` (an edit by a tool
 // that doesn't know it simply drops it).
 
-import { MARK_KEYS, MAX_DEPTH, markersOf, paraText, plainOf, sameMarks, marksOf, safeLink, normalizeDoc, docFromPlain, isPlainDoc, richDocOf, markdownOf } from "../../../scenes-mcp/richDoc.mjs";
+import { MARK_KEYS, MAX_DEPTH, markersOf, paraText, marksOf, normalizeDoc } from "../../../scenes-mcp/richDoc.mjs";
 
-import type { Marks, Run, ParaKind, Para, RichDoc, MarkKey } from "../../../scenes-mcp/richDoc.mjs";
+import type { Marks, Run, Para, RichDoc, MarkKey } from "../../../scenes-mcp/richDoc.mjs";
 
 // the stored form, its checks, plain text and markdown: scenes-mcp/richDoc.mjs (shared with the MCP tools)
-export { MARK_KEYS, MAX_DEPTH, markersOf, paraText, plainOf, sameMarks, marksOf, safeLink, normalizeDoc, docFromPlain, isPlainDoc, richDocOf, markdownOf };
-export type { Marks, Run, ParaKind, Para, RichDoc, MarkKey };
+export { MARK_KEYS, MAX_DEPTH, markersOf, paraText, plainOf, sameMarks, marksOf, safeLink, normalizeDoc, docFromPlain, isPlainDoc, richDocOf, markdownOf } from "../../../scenes-mcp/richDoc.mjs";
+export type { Marks, Run, ParaKind, Para, RichDoc, MarkKey } from "../../../scenes-mcp/richDoc.mjs";
 
 // ---------------------------------------------------------------------------
 // positions: a position is (paragraph, offset into its text, markers not
@@ -106,7 +106,7 @@ export const insertText = (doc: RichDoc, at: Pos, text: string, marks: Marks): {
     ],
   }));
   next.p.splice(at.p, 1, ...paras);
-  const last = lines[lines.length - 1].length;
+  const last = lines.at(-1)!.length;
   return {
     doc: normalizeDoc(next),
     end: { p: at.p + lines.length - 1, o: (lines.length === 1 ? at.o : 0) + last },
@@ -155,26 +155,28 @@ export const insertDoc = (doc: RichDoc, at: Pos, piece: RichDoc): { doc: RichDoc
   const para = next.p[at.p];
   const [before, after] = splitRuns(para.r, at.o);
   const pieces = piece.p.map((p) => ({ ...p, r: p.r.map((run) => ({ ...run })) }));
-  const last = pieces[pieces.length - 1];
+  const last = pieces.at(-1)!;
   const endOffset = (pieces.length === 1 ? at.o : 0) + paraText(last).length;
-  const paras: Para[] = pieces.map((p, index) => ({
-    ...(index === 0 ? para : p.k || p.r.length ? p : { ...para, x: undefined }),
-    r: [...(index === 0 ? before : []), ...p.r, ...(index === pieces.length - 1 ? after : [])],
-  }));
+  const paras: Para[] = pieces.map((p, index) => {
+    let kind = p;
+    if (index === 0) {
+      kind = para;
+    } else if (!p.k && !p.r.length) {
+      kind = { ...para, x: undefined };
+    }
+    return {
+      ...kind,
+      r: [...(index === 0 ? before : []), ...p.r, ...(index === pieces.length - 1 ? after : [])],
+    };
+  });
   next.p.splice(at.p, 1, ...paras);
   return { doc: normalizeDoc(next), end: { p: at.p + pieces.length - 1, o: endOffset } };
 };
 
-/** applies a change to the formatting of [from, to) */
-export const formatRange = (doc: RichDoc, from: Pos, to: Pos, change: (marks: Marks) => Marks): RichDoc => {
-  const next = cloneDoc(doc);
-  for (let p = from.p; p <= to.p; p++) {
-    const para = next.p[p];
-    const start = p === from.p ? from.o : 0;
-    const end = p === to.p ? to.o : Infinity;
+const formatRuns = (source: Run[], start: number, end: number, change: (marks: Marks) => Marks) => {
     const runs: Run[] = [];
     let at = 0;
-    for (const run of para.r) {
+    for (const run of source) {
       const runEnd = at + run.t.length;
       const a = Math.max(start, at);
       const b = Math.min(end, runEnd);
@@ -191,9 +193,31 @@ export const formatRange = (doc: RichDoc, from: Pos, to: Pos, change: (marks: Ma
       }
       at = runEnd;
     }
-    para.r = runs;
+  return runs;
+};
+
+/** applies a change to the formatting of [from, to) */
+export const formatRange = (doc: RichDoc, from: Pos, to: Pos, change: (marks: Marks) => Marks): RichDoc => {
+  const next = cloneDoc(doc);
+  for (let p = from.p; p <= to.p; p++) {
+    const para = next.p[p];
+    const start = p === from.p ? from.o : 0;
+    const end = p === to.p ? to.o : Infinity;
+    para.r = formatRuns(para.r, start, end, change);
   }
   return normalizeDoc(next);
+};
+
+const intersectMarks = (common: Marks | null, marks: Marks): Marks => {
+  if (!common) {
+    return marks;
+  }
+  for (const key of MARK_KEYS) {
+    if (common[key] !== marks[key]) {
+      delete common[key];
+    }
+  }
+  return common;
 };
 
 /** the formatting all of [from, to) shares (for the toolbar's state) */
@@ -210,15 +234,7 @@ export const commonMarks = (doc: RichDoc, from: Pos, to: Pos): Marks => {
       const runEnd = at + run.t.length;
       if (Math.min(end, runEnd) > Math.max(start, at)) {
         const marks = marksOf(run);
-        if (!common) {
-          common = marks;
-        } else {
-          for (const key of MARK_KEYS) {
-            if (common[key] !== marks[key]) {
-              delete common[key];
-            }
-          }
-        }
+        common = intersectMarks(common, marks);
       }
       at = runEnd;
     }
@@ -290,6 +306,20 @@ const MD_MARKS: Array<[RegExp, MarkKey]> = [
   [/^\*([^*\s][\s\S]*?)\*/, "i"],
 ];
 
+const styledMarks = (style: string, marks: Marks) => {
+      const next: Marks = { ...marks };
+      for (const [, key, value] of style.matchAll(/(color|highlight|size)=([^\s}]+)/g)) {
+        if (key === "color") {
+          next.c = value;
+        } else if (key === "highlight") {
+          next.h = value;
+        } else if (Number(value) > 0) {
+          next.z = Number(value);
+        }
+      }
+  return next;
+};
+
 const parseInline = (text: string, marks: Marks, runs: Run[]) => {
   let plain = "";
   const flush = () => {
@@ -300,12 +330,12 @@ const parseInline = (text: string, marks: Marks, runs: Run[]) => {
   };
   let rest = text;
   while (rest) {
-    if (rest[0] === "\\" && rest.length > 1 && /[*_~[\]{}\\]/.test(rest[1])) {
+    if (rest.startsWith("\\") && rest.length > 1 && /[*_~[\]{}\\]/.test(rest[1])) {
       plain += rest[1];
       rest = rest.slice(2);
       continue;
     }
-    const link = rest.match(/^\[([^\]]+)\]\(([^)\s]+)\)/);
+    const link = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(rest);
     if (link) {
       flush();
       parseInline(link[1], { ...marks, a: link[2] }, runs);
@@ -313,24 +343,15 @@ const parseInline = (text: string, marks: Marks, runs: Run[]) => {
       continue;
     }
     // {color=#e03131 highlight=#ffec99 size=0.8}text{/}
-    const styled = rest.match(/^\{((?:\s*(?:color|highlight|size)=[^\s}]+)+)\s*\}([\s\S]*?)\{\/\}/);
+    const styled = /^\{((?:\s*(?:color|highlight|size)=[^\s}]+)+)\s*\}([\s\S]*?)\{\/\}/.exec(rest);
     if (styled) {
       flush();
-      const next: Marks = { ...marks };
-      for (const [, key, value] of styled[1].matchAll(/(color|highlight|size)=([^\s}]+)/g)) {
-        if (key === "color") {
-          next.c = value;
-        } else if (key === "highlight") {
-          next.h = value;
-        } else if (Number(value) > 0) {
-          next.z = Number(value);
-        }
-      }
+      const next = styledMarks(styled[1], marks);
       parseInline(styled[2], next, runs);
       rest = rest.slice(styled[0].length);
       continue;
     }
-    const mark = MD_MARKS.map(([re, key]) => [rest.match(re), key] as const).find(([m]) => m);
+    const mark = MD_MARKS.map(([re, key]) => [re.exec(rest), key] as const).find(([m]) => m);
     if (mark) {
       flush();
       parseInline(mark[0]![1], { ...marks, [mark[1]]: true }, runs);
@@ -351,27 +372,30 @@ const parseInline = (text: string, marks: Marks, runs: Run[]) => {
  */
 export const docFromMarkdown = (markdown: string): RichDoc => {
   const paras: Para[] = markdown.replace(/\r\n?/g, "\n").split("\n").map((line) => {
-    const indent = line.match(/^ */)![0].length;
+    const indent = /^ */.exec(line)![0].length;
     let rest = line.slice(indent);
     const para: Para = { r: [] };
     const base: Marks = {};
-    let m: RegExpMatchArray | null;
-    if ((m = rest.match(/^(#{1,3}) /))) {
+    const heading = /^(#{1,3}) /.exec(rest);
+    const todo = /^[-*] \[([ xX])\] /.exec(rest) || /^\[([ xX])\] /.exec(rest);
+    const bullet = /^[-*•] /.exec(rest);
+    const ordered = /^\d+[.)] /.exec(rest);
+    if (heading) {
       base.b = true;
-      base.z = [1.6, 1.3, 1.1][m[1].length - 1];
-      rest = rest.slice(m[0].length);
-    } else if ((m = rest.match(/^[-*] \[( |x|X)\] /)) || (m = rest.match(/^\[( |x|X)\] /))) {
+      base.z = [1.6, 1.3, 1.1][heading[1].length - 1];
+      rest = rest.slice(heading[0].length);
+    } else if (todo) {
       para.k = "todo";
-      if (m[1].toLowerCase() === "x") {
+      if (todo[1].toLowerCase() === "x") {
         para.x = true;
       }
-      rest = rest.slice(m[0].length);
-    } else if ((m = rest.match(/^[-*•] /))) {
+      rest = rest.slice(todo[0].length);
+    } else if (bullet) {
       para.k = "ul";
-      rest = rest.slice(m[0].length);
-    } else if ((m = rest.match(/^\d+[.)] /))) {
+      rest = rest.slice(bullet[0].length);
+    } else if (ordered) {
       para.k = "ol";
-      rest = rest.slice(m[0].length);
+      rest = rest.slice(ordered[0].length);
     }
     if (para.k) {
       para.d = Math.min(MAX_DEPTH, Math.floor(indent / 2));

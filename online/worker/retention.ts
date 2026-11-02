@@ -27,8 +27,8 @@ export const runRetention = async (env: { FEEDBACK?: D1 }, now = Date.now()) => 
     ["contact_messages", 1],
   ] as const) {
     try {
-      const deleted: any = await db.prepare(`DELETE FROM ${table} WHERE created_at < ?`).bind(yearsAgo(now, years)).run();
-      const blanked: any = await db.prepare(`UPDATE ${table} SET sender = '' WHERE created_at < ? AND sender != ''`).bind(dayAgo).run();
+      const deleted: any = await db.prepare(`DELETE FROM ${table} WHERE created_at < ?`).bind(yearsAgo(now, years)).run(); // NOSONAR S9382: in order on purpose (each table deletion precedes sender cleanup)
+      const blanked: any = await db.prepare(`UPDATE ${table} SET sender = '' WHERE created_at < ? AND sender != ''`).bind(dayAgo).run(); // NOSONAR S9382: in order on purpose (each table deletion precedes sender cleanup)
       done[table] = `deleted ${deleted?.meta?.changes ?? "?"}, sender removed from ${blanked?.meta?.changes ?? "?"}`;
     } catch (error) {
       done[table] = /no such table/i.test(String((error as Error).message)) ? "no table yet" : `failed: ${(error as Error).message}`;

@@ -60,8 +60,8 @@ const legacyRefused = (app: string) =>
   `This agent uses the old Kurviq link (the key in the URL), which doesn't work any more. Connect with ${app}/mcp instead: the agent signs in once and the user allows it in Kurviq (e.g. claude mcp add --transport http kurviq ${app}/mcp). Ask the user to do this.`;
 
 export class Pairing extends DurableObject {
-  private pending = new Map<string, Pending>();
-  private receivers = new WeakMap<WebSocket, (raw: string) => any>();
+  private readonly pending = new Map<string, Pending>();
+  private readonly receivers = new WeakMap<WebSocket, (raw: string) => any>();
   private seq = 0;
   private appUrl = "https://kurviq.com";
 
@@ -182,6 +182,21 @@ export class Pairing extends DurableObject {
     }
   }
 
+  private async flushTabs(body: string, via: Via) {
+    const { name } = JSON.parse(body || "{}");
+    const showing = this.tabs(via).filter((tab) => tab.state.current === name);
+    const targets = showing.length ? showing : [this.activeTab(via)].filter((tab) => !!tab);
+    const results = [];
+    for (const tab of targets) {
+      try {
+        results.push(await this.send(tab!.ws, { type: "flush", name }, 15_000)); // NOSONAR S9382: in order on purpose (flush tabs in order to preserve request and result order)
+      } catch (error: any) {
+        results.push({ error: error.message });
+      }
+    }
+    return json(200, { tabs: targets.length, results });
+  }
+
   private async api(request: Request, url: URL): Promise<Response> {
     const via: Via = request.headers.get("X-Kurviq-Via") === "oauth" ? "oauth" : "link";
     const body = request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
@@ -199,18 +214,7 @@ export class Pairing extends DurableObject {
       return json(200, { ok: true, result: await this.send(tab.ws, command) });
     }
     if (url.pathname === "/api/app/flush" && request.method === "POST") {
-      const { name } = JSON.parse(body || "{}");
-      const showing = this.tabs(via).filter((tab) => tab.state.current === name);
-      const targets = showing.length ? showing : [this.activeTab(via)].filter((tab) => !!tab);
-      const results = [];
-      for (const tab of targets) {
-        try {
-          results.push(await this.send(tab!.ws, { type: "flush", name }, 15_000));
-        } catch (error: any) {
-          results.push({ error: error.message });
-        }
-      }
-      return json(200, { tabs: targets.length, results });
+      return this.flushTabs(body, via);
     }
     if (url.pathname === "/api/pdf") {
       return json(501, {
@@ -254,7 +258,7 @@ export class Pairing extends DurableObject {
   // WebSocket events (also after hibernation)
   // ---------------------------------------------------------------------------
 
-  async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
+  async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) { // NOSONAR S7503: preserves the Durable Object handler promise and rejection contract
     if (typeof raw !== "string") {
       return;
     }
@@ -279,11 +283,11 @@ export class Pairing extends DurableObject {
     }
     if (message.type === "state") {
       const info = ws.deserializeAttachment() as Attachment;
-      ws.serializeAttachment({ ...info, state: { ...(message.state || {}) } } satisfies Attachment);
+      ws.serializeAttachment({ ...info, state: { ...message.state } } satisfies Attachment);
     } else if (message.type === "result") {
       const entry = this.pending.get(String(message.id));
       // only the tab the command went to may answer it
-      if (!entry || entry.tab !== (ws.deserializeAttachment() as Attachment).tab) {
+      if (entry?.tab !== (ws.deserializeAttachment() as Attachment).tab) {
         return;
       }
       this.pending.delete(String(message.id));
@@ -296,11 +300,13 @@ export class Pairing extends DurableObject {
     }
   }
 
-  async webSocketClose(ws: WebSocket, code: number) {
+  async webSocketClose(ws: WebSocket, code: number) { // NOSONAR S7503: preserves the Durable Object handler promise and rejection contract
     try {
       ws.close(code === 1005 || code === 1006 ? 1000 : code, "closed");
     } catch {}
   }
 
-  async webSocketError() {}
+  async webSocketError() {
+    // No recovery is needed here; the close handler handles connection cleanup.
+  }
 }

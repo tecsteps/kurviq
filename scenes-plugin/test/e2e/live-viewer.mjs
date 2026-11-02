@@ -51,7 +51,7 @@ for (let i = 0; i < 10; i++) {
   await owner.keyboard.press("Escape");
   if (await owner.evaluate(() => window.__scenes?.getApi()?.getSceneElements().length ?? 0).catch(() => 0)) break;
 }
-for (let i = 0; i < 90 && (await owner.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500);
+for (let i = 0; i < 90 && (await owner.evaluate(() => window.__live?.current()?.phase).catch(() => null)) !== "ready"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 const fileId = await owner.evaluate(() => window.__live.current().fileId);
 log("owner live, file", fileId);
 await admin("share", { fileId, email: READER, role: "reader" });
@@ -66,7 +66,7 @@ const viewer = (page) =>
     const v = window.__live?.viewerScene;
     return v ? { phase: v.phase, role: v.role, xs: v.surface.elements().filter((e) => !e.isDeleted).map((e) => Math.round(e.x)), batches: v.batches.length, draft: v.draft.size } : null;
   });
-for (let i = 0; i < 60 && (await viewer(reader))?.phase !== "ready"; i++) await sleep(500);
+for (let i = 0; i < 60 && (await viewer(reader))?.phase !== "ready"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 const before = await viewer(reader);
 log("reader viewer", JSON.stringify(before));
 if (before?.phase !== "ready") failures.push(`viewer not live: ${JSON.stringify(before)}`);
@@ -83,19 +83,19 @@ const moveTo = async (x) => {
   await owner.evaluate((x) => {
     const api = window.__scenes.getApi();
     const el = api.getSceneElements()[0];
-    api.updateScene({ elements: [{ ...el, x, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }], captureUpdate: "IMMEDIATELY" });
+    api.updateScene({ elements: [{ ...el, x, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }], captureUpdate: "IMMEDIATELY" }); // NOSONAR S2245: not security relevant (Excalidraw versionNonce)
   }, x);
   const start = Date.now();
   for (;;) {
     const now = await viewer(reader);
     if (now?.xs.includes(x)) return Date.now() - start;
     if (Date.now() - start > 5000) return null;
-    await sleep(50);
+    await sleep(50); // NOSONAR S9382: in order on purpose (polling and dependent browser actions) // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
   }
 };
 const delays = [];
 for (const x of [700, 900, 300]) {
-  const ms = await moveTo(x);
+  const ms = await moveTo(x); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
   delays.push(ms);
   log(`moved to ${x}: reader sees it after`, ms === null ? "TIMEOUT" : `${ms} ms`);
 }
@@ -107,19 +107,19 @@ if (after.batches || after.draft) failures.push(`the viewer queued something: ${
 const presenter = await readerCtx.newPage();
 watch(presenter, "present");
 await presenter.goto(`${BASE}/s/${fileId}/${SCENE}?present`, { waitUntil: "load" });
-for (let i = 0; i < 60 && (await viewer(presenter))?.phase !== "ready"; i++) await sleep(500);
+for (let i = 0; i < 60 && (await viewer(presenter))?.phase !== "ready"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
 const ms = await (async () => {
   await owner.evaluate(() => {
     const api = window.__scenes.getApi();
     const el = api.getSceneElements()[0];
-    api.updateScene({ elements: [{ ...el, x: 555, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }], captureUpdate: "IMMEDIATELY" });
+    api.updateScene({ elements: [{ ...el, x: 555, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }], captureUpdate: "IMMEDIATELY" }); // NOSONAR S2245: not security relevant (Excalidraw versionNonce)
   });
   const start = Date.now();
   for (;;) {
     const now = await viewer(presenter);
     if (now?.xs.includes(555)) return Date.now() - start;
     if (Date.now() - start > 5000) return null;
-    await sleep(50);
+    await sleep(50); // NOSONAR S9382: in order on purpose (polling and dependent browser actions) // NOSONAR S9382: in order on purpose (polling and dependent browser actions)
   }
 })();
 log("?present viewer sees the change after", ms === null ? "TIMEOUT" : `${ms} ms`, "url", presenter.url().replace(BASE, ""));

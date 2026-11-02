@@ -35,14 +35,14 @@ const sharedFromPath = (): { fileId: string; name: string } | null => {
   const pub = pubNameFromPath(window.location.pathname);
   if (pub) {
     const fileId = pubFiles.get(pub);
-    return fileId ? { fileId, name: pub.replace(/-/g, " ") } : null;
+    return fileId ? { fileId, name: pub.replaceAll("-", " ") } : null;
   }
-  const match = window.location.pathname.match(/^\/s\/([\w-]{10,200})(?:\/([^/]*))?\/?$/);
+  const match = /^\/s\/([\w-]{10,200})(?:\/([^/]*))?\/?$/.exec(window.location.pathname);
   if (!match) {
     return null;
   }
   try {
-    return { fileId: match[1], name: decodeURIComponent(match[2] ?? "").replace(/-/g, " ") };
+    return { fileId: match[1], name: decodeURIComponent(match[2] ?? "").replaceAll("-", " ") };
   } catch {
     return { fileId: match[1], name: "" };
   }
@@ -75,7 +75,12 @@ const sceneFromPath = (): string | null => {
   if (sharedFromPath() || pubNameFromPath(window.location.pathname)) {
     return null;
   }
-  const raw = window.location.pathname.replace(/^\/+|\/+$/g, "");
+  const path = window.location.pathname;
+  let start = 0;
+  let end = path.length;
+  while (start < end && path[start] === "/") start++;
+  while (end > start && path[end - 1] === "/") end--;
+  const raw = path.slice(start, end);
   if (!raw) {
     return null;
   }
@@ -125,17 +130,17 @@ const removeOldPublicCopies = async () => {
     if (!scenesController.isLocalOnly(name)) {
       continue;
     }
-    const json = await scenesController.localOnlyJson(name);
+    const json = await scenesController.localOnlyJson(name); // NOSONAR S9382: in order on purpose (polling and scene removal must finish before proceeding)
     const elements = (JSON.parse(json).elements ?? [])
       .filter((el: any) => !el.isDeleted)
       .map((el: any) => [el.id, Math.round(el.x), Math.round(el.y), Math.round(el.width), Math.round(el.height), el.text ?? ""]);
     let h = 2166136261;
     const text = JSON.stringify(elements);
     for (let i = 0; i < text.length; i++) {
-      h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+      h = Math.imul(h ^ text.charCodeAt(i), 16777619); // NOSONAR S7758: this stored content hash uses UTF-16 code units
     }
     if ((h >>> 0).toString(36) === content) {
-      await scenesController.remove(name);
+      await scenesController.remove(name); // NOSONAR S9382: in order on purpose (polling and scene removal must finish before proceeding)
     }
   }
   try {
@@ -155,7 +160,8 @@ export const setSlideParam = (number: number | null) => {
     params.delete("slide");
   }
   const query = params.toString();
-  const url = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  const search = query ? `?${query}` : "";
+  const url = `${window.location.pathname}${search}${window.location.hash}`;
   if (url !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
     window.history.replaceState(window.history.state, "", url);
   }
@@ -165,7 +171,7 @@ export const setSlideParam = (number: number | null) => {
 const showSlideFromUrl = async () => {
   const params = new URLSearchParams(window.location.search);
   const number = Number(params.get("slide"));
-  if (params.has("present") || !(number >= 1)) {
+  if (params.has("present") || number < 1 || Number.isNaN(number)) {
     return;
   }
   for (let tries = 0; tries < 40; tries++) {
@@ -176,7 +182,22 @@ const showSlideFromUrl = async () => {
       deck.setActive(slide.id);
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 250)); // NOSONAR S9382: in order on purpose (polling and scene removal must finish before proceeding)
+  }
+};
+
+const openSharedSpace = async () => {
+  // this space's one scene (its name comes from Drive, with the first sync)
+  for (let tries = 0; tries < 120; tries++) {
+    const { list, remote, current } = scenesController.getState();
+    const name = list.find((item) => item.name !== null)?.name ?? remote?.[0]?.name;
+    if (name) {
+      if (name !== current) {
+        await navigateTo(name);
+      }
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250)); // NOSONAR S9382: in order on purpose (polling and scene removal must finish before proceeding)
   }
 };
 
@@ -208,7 +229,12 @@ export const connectRouter = async () => {
   const baseTitle = document.title;
   const syncTitle = () => {
     const viewer = publicScene.shown();
-    const name = viewer ? (viewer.fileId ? viewer.name : null) : scenesController.getState().current;
+    let name: string | null;
+    if (viewer) {
+      name = viewer.fileId ? viewer.name : null;
+    } else {
+      name = scenesController.getState().current;
+    }
     const title = name ? `${name} · Kurviq` : baseTitle;
     if (document.title !== title) {
       document.title = title;
@@ -230,22 +256,11 @@ export const connectRouter = async () => {
   if (target !== null && !isPublicScene(target)) {
     await navigateTo(target);
   } else if (sharedFileId && sharedFromPath()?.fileId === sharedFileId) {
-    // this space's one scene (its name comes from Drive, with the first sync)
-    for (let tries = 0; tries < 120; tries++) {
-      const { list, remote, current } = scenesController.getState();
-      const name = list.find((item) => item.name !== null)?.name ?? remote?.[0]?.name;
-      if (name) {
-        if (name !== current) {
-          await navigateTo(name);
-        }
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
+    await openSharedSpace();
   }
   syncUrl("replace");
   syncTitle();
-  showSlideFromUrl();
+  showSlideFromUrl().catch((error) => console.error("[scenes] could not show linked slide", error));
 
   // viewer closed: the URL goes back to the current scene (without the viewer's ?present / ?slide)
   publicScene.subscribe(() => {
@@ -254,7 +269,8 @@ export const connectRouter = async () => {
       params.delete("present");
       params.delete("slide");
       const query = params.toString();
-      window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+      const search = query ? `?${query}` : "";
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${search}`);
     }
     syncUrl("replace");
   });
@@ -285,7 +301,7 @@ export const connectRouter = async () => {
       publicScene.close();
     }
     if (name !== null && name !== scenesController.getState().current) {
-      navigateTo(name);
+      void navigateTo(name);
     }
   });
 };

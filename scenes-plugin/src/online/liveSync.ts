@@ -160,7 +160,50 @@ const referenceOf = (detail: string | undefined) => {
 };
 
 /** the element ids a refusal says the DO doesn't know ("unknown: a,b") */
-const unknownIds = (detail: string | undefined) => (/^unknown: /.test(detail ?? "") ? detail!.slice(9).split(",").filter(Boolean) : []);
+const unknownIds = (detail: string | undefined) => ((detail ?? "").startsWith("unknown: ") ? detail!.slice(9).split(",").filter(Boolean) : []);
+
+const compareStrings = (a: string, b: string) => {
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
+};
+
+const refusedMessage = (reason: RefuseReason, detail?: string) => {
+  if (reason === "limit") {
+    if (detail === "sceneBytes") {
+      return "This scene is too big for Kurviq's server (30 MB, pictures included): your latest changes wait in this browser. Remove or shrink pictures.";
+    }
+    if (detail === "elements") {
+      return "This scene has too many elements for Kurviq's server: your latest changes wait in this browser.";
+    }
+    const suffix = detail ? ` (${detail})` : "";
+    return `Too big to save at once${suffix}: split it up, or remove large pictures`;
+  }
+  if (reason === "role") {
+    return "You can only view this scene now: your changes stay in this browser";
+  }
+  if (reason === "key") {
+    return "Waiting for the scene's key";
+  }
+  return "This scene can't be changed now";
+};
+
+const refusedCopyReason = (reason: RefuseReason) => {
+  if (reason === "discarded") {
+    return "Changes another editor discarded";
+  }
+  if (reason === "old") {
+    return "Changes kept in this browser were too old to send";
+  }
+  if (reason === "invalid") {
+    return "Changes the server could not take";
+  }
+  return "Changes made here while offline clashed with newer ones";
+};
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
@@ -183,7 +226,7 @@ type Surface = {
   destroy(): void;
 };
 
-const canvasSurface = (api: ExcalidrawImperativeAPI, scene: () => LiveScene | null): Surface => {
+const canvasSurface = (api: ExcalidrawImperativeAPI, _scene: () => LiveScene | null): Surface => {
   const merge = (elements: El[]) => {
     const byId = new Map(api.getSceneElementsIncludingDeleted().map((el) => [el.id, el as unknown as El]));
     for (const el of elements) {
@@ -202,7 +245,6 @@ const canvasSurface = (api: ExcalidrawImperativeAPI, scene: () => LiveScene | nu
   // undo and redo are the editor's own (stock behaviour): changes of others come with
   // CaptureUpdateAction.NEVER, so they never enter the user's history, and nothing here
   // rewrites what an undo or redo did
-  void scene;
   // the editor changes element objects in place (dragging, its own index repairs): the engine
   // never shares an object with it, in either direction
   return {
@@ -337,9 +379,9 @@ export class LiveScene {
   readonly fileId: string;
   name: string;
   readonly headless: boolean;
-  private surface: Surface;
+  private readonly surface: Surface;
   private sub: string;
-  private host: () => LiveHost | null;
+  private readonly host: () => LiveHost | null;
 
   private tab: HeldTab | null = null;
   private key: SceneKey | null = null;
@@ -370,15 +412,15 @@ export class LiveScene {
 
   // this tab's side
   /** per element (and "set:settings", "name:name"): the DO state the local copy derives from */
-  private synced = new Map<string, { stamp: Base | null; el: any }>();
+  private readonly synced = new Map<string, { stamp: Base | null; el: any }>();
   /** canvas stamps already accounted for (sent, or written by us) */
-  private known = new Map<string, Base>();
-  private draft = new Map<string, Draft>();
+  private readonly known = new Map<string, Base>();
+  private readonly draft = new Map<string, Draft>();
   private batches: QueuedBatch[] = [];
-  private inFlight = new Map<number, Flight>();
-  private lastCanvas = new Map<string, El>();
+  private readonly inFlight = new Map<number, Flight>();
+  private readonly lastCanvas = new Map<string, El>();
   /** local edits kept against every incoming change (their recovery copy could not be stored) */
-  private protectedIds = new Set<string>();
+  private readonly protectedIds = new Set<string>();
   /** elements another tab of this account has queued (not this tab's to send) */
   private othersPending = new Map<string, Set<string>>();
   /**
@@ -387,7 +429,7 @@ export class LiveScene {
    * has pending, so none is taken for this tab's own
    */
   private channel: BroadcastChannel | null = null;
-  private peers = new Map<string, { ids: string[]; at: number }>();
+  private readonly peers = new Map<string, { ids: string[]; at: number }>();
   private announced = "";
 
   private openChannel() {
@@ -404,7 +446,7 @@ export class LiveScene {
       if (data.type === "ask") {
         // always answered (also with nothing pending): the asking tab learns that this one is open
         this.peers.set(data.tab, { ids: [], at: Date.now() });
-        this.announced = [...this.pendingIds()].sort().join(",");
+        this.announced = [...this.pendingIds()].sort(compareStrings).join(",");
         this.channel?.postMessage({ type: "pending", tab: this.tab?.tab, ids: [...this.pendingIds()] });
       } else if (data.type === "pending" && Array.isArray(data.ids)) {
         this.peers.set(data.tab, { ids: data.ids, at: Date.now() });
@@ -419,7 +461,7 @@ export class LiveScene {
     window.addEventListener("pagehide", this.sayBye);
   }
 
-  private sayBye = () => {
+  private readonly sayBye = () => {
     this.channel?.postMessage({ type: "bye", tab: this.tab?.tab });
   };
 
@@ -427,7 +469,7 @@ export class LiveScene {
     if (!this.channel || this.phase === "closed") {
       return;
     }
-    const ids = [...this.pendingIds()].sort();
+    const ids = [...this.pendingIds()].sort(compareStrings);
     const key = ids.join(",");
     if (key !== this.announced) {
       this.announced = key;
@@ -453,12 +495,12 @@ export class LiveScene {
   private agentMark: { command?: string } | null = null;
   /** the local copy's base for the first reconciliation (persisted confirmed state, or the Drive version) */
   private localBase: Map<string, El> | null = null;
-  private driveBase: (() => Promise<El[] | null>) | null;
+  private readonly driveBase: (() => Promise<El[] | null>) | null;
   private signedOutEdits = false;
   private storageFailed = false;
   private offlineCopy: Promise<string> | null = null;
   private seeded = false;
-  private waiters: { resolve: () => void; reject: (error: Error) => void; until: () => boolean }[] = [];
+  private readonly waiters: { resolve: () => void; reject: (error: Error) => void; until: () => boolean }[] = [];
   /** the canvas shows another scene now: nothing is applied to it any more (the queue is still flushed) */
   private detached = false;
 
@@ -468,7 +510,7 @@ export class LiveScene {
   }
 
   /** dev and fake-Google builds: how the confirmed layer changed (for tests) */
-  private trace: string[] | null = import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE ? [] : null;
+  private readonly trace: string[] | null = import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE ? [] : null;
 
   /** per element, the last stamps the DO gave it (a canvas element with one is the DO's, not a local edit) */
   private doStamps = new Map<string, string[]>();
@@ -529,7 +571,7 @@ export class LiveScene {
   losers: LiveLoser[] = [];
   notes: LiveNote[] = [];
   savedAt: number | null = null;
-  private listeners = new Set<() => void>();
+  private readonly listeners = new Set<() => void>();
 
   constructor(options: {
     fileId: string;
@@ -588,7 +630,7 @@ export class LiveScene {
   private changed() {
     this.announcePending();
     this.listeners.forEach((listener) => listener());
-    for (const waiter of [...this.waiters]) {
+    for (const waiter of [...this.waiters]) { // NOSONAR S7747: the snapshot is required because resolving waiters mutates this array
       if (waiter.until()) {
         this.waiters.splice(this.waiters.indexOf(waiter), 1);
         waiter.resolve();
@@ -656,15 +698,21 @@ export class LiveScene {
         changes: batch.changes.length,
         pictures: batch.changes.filter((change) => change.k === "file").length,
         ageS: Math.round((now - batch.made) / 1000),
-        state: this.parked.has(batch.counter)
-          ? "refused (set aside until reconnect)"
-          : this.inFlight.has(batch.counter)
-          ? `sent ${Math.round((now - this.inFlight.get(batch.counter)!.at) / 1000)} s ago, unanswered`
-          : "waiting",
+        state: this.batchState(batch, now),
         ...(this.rebases.get(batch.counter) ? { refusals: this.rebases.get(batch.counter) } : {}),
       })),
       problems: this.refusals,
     };
+  }
+
+  private batchState(batch: QueuedBatch, now: number) {
+    if (this.parked.has(batch.counter)) {
+      return "refused (set aside until reconnect)";
+    }
+    if (this.inFlight.has(batch.counter)) {
+      return `sent ${Math.round((now - this.inFlight.get(batch.counter)!.at) / 1000)} s ago, unanswered`;
+    }
+    return "waiting";
   }
 
   info(): LiveInfo {
@@ -720,22 +768,36 @@ export class LiveScene {
     }
     this.openChannel();
     this.watchdog = setInterval(() => this.checkAcks(), 1000);
-    this.connect();
+    this.connect().catch((error) => console.error("[live] background operation failed", error));
+  }
+
+  private async loadViewerTab() {
+    const key = `kurviq-live-viewer-tab:${this.fileId}`;
+    let known: string | null = null;
+    try {
+      known = localStorage.getItem(key);
+    } catch {}
+    this.tab = (known ? await holdTab(this.fileId, known) : null) ?? (await holdTab(this.fileId, newTabId())) ?? { tab: newTabId(), release: () => {} };
+    try {
+      localStorage.setItem(key, this.tab.tab);
+    } catch {}
+  }
+
+  private readOtherPending(all: QueuedBatch[]) {
+    for (const batch of all) {
+      if (batch.tab !== this.tab!.tab && batch.state === "queued") {
+        const ids = this.othersPending.get(batch.tab) ?? new Set<string>();
+        batch.changes.forEach((change) => change.k === "el" && ids.add(change.id));
+        this.othersPending.set(batch.tab, ids);
+      }
+    }
   }
 
   private async loadQueue() {
     if (this.viewOnly) {
       // a viewer has no queue and no stored state: a tab id of its own (the same for this file in this
       // browser: the DO allows an account only so many), the whole state at the handshake
-      const key = `kurviq-live-viewer-tab:${this.fileId}`;
-      let known: string | null = null;
-      try {
-        known = localStorage.getItem(key);
-      } catch {}
-      this.tab = (known ? await holdTab(this.fileId, known) : null) ?? (await holdTab(this.fileId, newTabId())) ?? { tab: newTabId(), release: () => {} };
-      try {
-        localStorage.setItem(key, this.tab.tab);
-      } catch {}
+      await this.loadViewerTab();
       return;
     }
     try {
@@ -748,13 +810,7 @@ export class LiveScene {
       const all = await batchesOf(this.sub, this.fileId);
       this.batches = all.filter((batch) => batch.tab === this.tab!.tab).sort((a, b) => a.counter - b.counter);
       // other tabs' changes of this scene (they share this browser's canvas storage): theirs to send
-      for (const batch of all) {
-        if (batch.tab !== this.tab.tab && batch.state === "queued") {
-          const ids = this.othersPending.get(batch.tab) ?? new Set<string>();
-          batch.changes.forEach((change) => change.k === "el" && ids.add(change.id));
-          this.othersPending.set(batch.tab, ids);
-        }
-      }
+      this.readOtherPending(all);
       const stored = await get<StoredBase>([this.sub, this.fileId], bases()).catch(() => undefined);
       if (stored) {
         stored.elements.forEach((el) => this.traced(`stored${stored.seq}`, el));
@@ -802,7 +858,7 @@ export class LiveScene {
     const wait = at ?? Math.min(30_000, 1000 * 2 ** Math.min(this.retry++, 5));
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
-      this.connect();
+      this.connect().catch((error) => console.error("[live] background operation failed", error));
     }, wait);
   }
 
@@ -814,47 +870,38 @@ export class LiveScene {
         this.retryTimer = null;
       }
       this.retry = 0;
-      this.connect();
+      this.connect().catch((error) => console.error("[live] background operation failed", error));
     }
   }
 
-  private async connect() {
-    if (this.phase === "closed" || this.phase === "disabled") {
-      return;
-    }
-    this.phase = "connecting";
-    let answer: TicketAnswer;
-    try {
-      answer = await authPost(`/scene/${encodeURIComponent(this.fileId)}/ticket`, { protocol: LIVE_PROTOCOL });
-    } catch (error: any) {
-      if ((this.phase as Phase) === "closed") {
-        return;
-      }
-      if (error?.code === "no-access") {
-        // Kurviq may not open the file (the Picker grants it): today's sync explains it
-        this.enabled = false;
-        this.phase = "disabled";
-        this.error = error.code;
-        this.changed();
-        return;
-      }
-      if (error?.status === 401) {
-        // signed out / sign in again: changes stay queued, nothing is sent until the next sign-in
-        this.phase = "disabled";
-        this.error = error.code ?? "signed-out";
-        this.changed();
-        return;
-      }
-      // everything else is for now (Google or Kurviq unreachable, the key being made): tried again
-      this.phase = "offline";
-      this.error = error?.code ?? null;
-      this.changed();
-      this.scheduleRetry(error?.status >= 400 && error?.status < 500 ? 60_000 : undefined);
-      return;
-    }
+  private ticketFailed(error: any) {
     if ((this.phase as Phase) === "closed") {
       return;
     }
+    if (error?.code === "no-access") {
+      // Kurviq may not open the file (the Picker grants it): today's sync explains it
+      this.enabled = false;
+      this.phase = "disabled";
+      this.error = error.code;
+      this.changed();
+      return;
+    }
+    if (error?.status === 401) {
+      // signed out / sign in again: changes stay queued, nothing is sent until the next sign-in
+      this.phase = "disabled";
+      this.error = error.code ?? "signed-out";
+      this.changed();
+      return;
+    }
+    // everything else is for now (Google or Kurviq unreachable, the key being made): tried again
+    this.phase = "offline";
+    this.error = error?.code ?? null;
+    this.changed();
+    this.scheduleRetry(error?.status >= 400 && error?.status < 500 ? 60_000 : undefined);
+    return;
+  }
+
+  private unavailableTicket(answer: Extract<TicketAnswer, { enabled: false }>) {
     if (!answer.enabled && answer.code === "no-key-yet") {
       // a viewer before any editor made the scene's key: today's sync until then, asked again later
       this.enabled = false;
@@ -872,6 +919,36 @@ export class LiveScene {
         this.note("Live sync is off for this scene: changes kept in this browser wait until it is on again.");
       }
       this.changed();
+      return;
+    }
+  }
+
+  private async importTicketKey(answer: Extract<TicketAnswer, { enabled: true }>) {
+    try {
+      this.key = answer.key && answer.keyId ? await importSceneKey(answer.key, answer.keyId, this.fileId) : null;
+    } catch {
+      this.key = null;
+      this.error = "key-invalid";
+    }
+  }
+
+  private async connect() {
+    if (this.phase === "closed" || this.phase === "disabled") {
+      return;
+    }
+    this.phase = "connecting";
+    let answer: TicketAnswer;
+    try {
+      answer = await authPost(`/scene/${encodeURIComponent(this.fileId)}/ticket`, { protocol: LIVE_PROTOCOL });
+    } catch (error: any) {
+      this.ticketFailed(error);
+      return;
+    }
+    if ((this.phase as Phase) === "closed") {
+      return;
+    }
+    if (!answer.enabled) {
+      this.unavailableTicket(answer);
       return;
     }
     this.enabled = true;
@@ -895,12 +972,7 @@ export class LiveScene {
         return;
       }
     }
-    try {
-      this.key = answer.key && answer.keyId ? await importSceneKey(answer.key, answer.keyId, this.fileId) : null;
-    } catch {
-      this.key = null;
-      this.error = "key-invalid";
-    }
+    await this.importTicketKey(answer);
     if ((this.phase as Phase) === "closed") {
       return; // closed while the key was imported: never reopened
     }
@@ -922,7 +994,8 @@ export class LiveScene {
     const receive = createReceiver();
     let ping: ReturnType<typeof setInterval> | null = null;
     ws.onopen = () => {
-      this.openToken = Math.random().toString(36).slice(2, 14);
+      const random = crypto.getRandomValues(new Uint32Array(2));
+      this.openToken = ((random[0] * 2 ** 21 + (random[1] >>> 11)) / 2 ** 53).toString(36).slice(2, 14);
       this.send({
         type: "hello",
         protocol: LIVE_PROTOCOL,
@@ -1118,6 +1191,27 @@ export class LiveScene {
     }
   }
 
+  private onStatus(message: Extract<ServerMessage, { type: "status" }>) {
+    this.blocked = message.blocked;
+    this.error = message.error;
+    this.presence = message.presence;
+    this.setLifecycle(message.lifecycle);
+    if (message.driveName) {
+      const to = message.driveName.replace(/\.excalidraw$/, "");
+      if (this.sentName !== null) {
+        // our rename isn't in Drive yet: Drive's old name is no news
+        if (to === this.sentName) {
+          this.sentName = null;
+        }
+      } else if (to !== this.name) {
+        this.name = to;
+        this.host()?.renamed(this.fileId, to);
+      }
+    }
+    this.changed();
+    return;
+  }
+
   private async receive(message: ServerMessage) {
     switch (message.type) {
       case "welcome":
@@ -1135,23 +1229,7 @@ export class LiveScene {
         this.changed();
         return;
       case "status":
-        this.blocked = message.blocked;
-        this.error = message.error;
-        this.presence = message.presence;
-        this.setLifecycle(message.lifecycle);
-        if (message.driveName) {
-          const to = message.driveName.replace(/\.excalidraw$/, "");
-          if (this.sentName !== null) {
-            // our rename isn't in Drive yet: Drive's old name is no news
-            if (to === this.sentName) {
-              this.sentName = null;
-            }
-          } else if (to !== this.name) {
-            this.name = to;
-            this.host()?.renamed(this.fileId, to);
-          }
-        }
-        this.changed();
+        this.onStatus(message);
         return;
       case "seed-refused":
         if (message.reason === "old") {
@@ -1217,20 +1295,20 @@ export class LiveScene {
     const files: BinaryFileData[] = [];
     for (const event of state.events) {
       if (event.k === "el") {
-        const el = await this.decode(event, this.confirmed.get(event.id));
+        const el = await this.decode(event, this.confirmed.get(event.id)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         if (el) {
           elements.set(el.id, el);
         }
       } else if (event.k === "set") {
-        settings = { value: settingsOf(await this.decode(event)), stamp: event.v ?? null };
+        settings = { value: settingsOf(await this.decode(event)), stamp: event.v ?? null }; // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       } else if (event.k === "file") {
         if (!this.confirmedFiles.has(event.id) || !this.surface.files()[event.id]) {
-          files.push(await this.decode(event));
+          files.push(await this.decode(event)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         }
       } else if (event.k === "font") {
-        await this.takeFont(event);
+        await this.takeFont(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       } else if (event.k === "name") {
-        await this.takeName(event);
+        await this.takeName(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
     this.confirmed = elements;
@@ -1269,10 +1347,59 @@ export class LiveScene {
     }
   }
 
-  private async onWelcome(welcome: Extract<ServerMessage, { type: "welcome" }>) {
-    if (welcome.openToken !== this.openToken || welcome.fileId !== this.fileId) {
-      return; // an answer for another open (this tab switched scenes meanwhile)
+  private hasConfirmedChange(batch: QueuedBatch, change: QueuedChange) {
+    const key = keyOf(change.k, change.id);
+    if (change.k === "el") {
+      const now = this.confirmed.get(change.id);
+      const stamp = batch.stamps?.[key];
+      return !!now && (contentEqual(now, change.value) || (!!stamp && now.version === stamp.v && now.versionNonce === stamp.n));
     }
+    if (change.k === "file") {
+      return this.confirmedFiles.has(change.id);
+    }
+    if (change.k === "font") {
+      return this.confirmedFonts.has(change.id);
+    }
+    return sameJson(this.synced.get(key)?.el, change.value);
+  }
+
+  private async reconcileReceipts(welcome: Extract<ServerMessage, { type: "welcome" }>, lostData: boolean) {
+    const known = new Set(welcome.known);
+    const receipt = this.receipts[this.tab?.tab ?? ""];
+    for (const batch of this.batches) {
+      const doHas = batch.counter <= welcome.knownMark || known.has(batch.counter);
+      if (batch.state === "queued" && doHas) {
+        batch.state = "acked";
+        await this.persist(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      } else if ((batch.state === "acked" || (lostData && batch.state === "queued")) && !doHas && !inReceipt(receipt, batch.counter)) {
+        // lost by the DO and not recorded in Drive: by content. What the DO's
+        // state (Drive's) already has is done; the rest is sent again as offline
+        // work: if it clashes it goes into a copy, never over newer work
+        const has = (change: QueuedChange) => this.hasConfirmedChange(batch, change);
+        if (batch.changes.every(has)) {
+          await this.forget(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+          continue;
+        }
+        batch.state = "queued";
+        batch.live = false;
+        batch.stamps = undefined;
+        await this.persist(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+    }
+  }
+
+  private staleBatches(welcome: Extract<ServerMessage, { type: "welcome" }>) {
+    const stale = this.batches.filter(
+      (batch) =>
+        batch.state === "queued" &&
+        // too old, or made in an earlier epoch (before a restore from the trash); a batch made before
+        // any epoch was known (e.g. while a new scene was being seeded) is of the current one
+        (Date.now() - batch.made > REPLAY_HORIZON_MS || (!!batch.epoch && batch.epoch < welcome.epoch)), // epochs start at 1: 0 (older app versions) is unknown too
+    );
+    return stale;
+  }
+
+  private welcomeStatus(welcome: Extract<ServerMessage, { type: "welcome" }>) {
     this.onWelcomed?.();
     if (this.error === "too-many-tabs" || this.error === "too-many-connections") {
       this.error = null;
@@ -1283,6 +1410,13 @@ export class LiveScene {
     if (welcome.keyId && this.key && welcome.keyId !== this.key.keyId) {
       this.error = "key-changed";
     }
+  }
+
+  private async onWelcome(welcome: Extract<ServerMessage, { type: "welcome" }>) {
+    if (welcome.openToken !== this.openToken || welcome.fileId !== this.fileId) {
+      return; // an answer for another open (this tab switched scenes meanwhile)
+    }
+    this.welcomeStatus(welcome);
     if (welcome.mode === "seed") {
       return this.seed();
     }
@@ -1304,7 +1438,7 @@ export class LiveScene {
       if (this.stale()) {
         return;
       }
-      await this.takeStamped(batch, { toCanvas: false });
+      await this.takeStamped(batch, { toCanvas: false }); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
     }
     if (this.stale()) {
       return;
@@ -1319,51 +1453,10 @@ export class LiveScene {
     // this tab's batches against what the DO and Drive have: the DO has them
     // (answers lost) -> on the server; neither has them (the DO lost its data:
     // a new generation) -> sent again, also those answered before
-    const known = new Set(welcome.known);
-    const receipt = this.receipts[this.tab?.tab ?? ""];
-    for (const batch of this.batches) {
-      const doHas = batch.counter <= welcome.knownMark || known.has(batch.counter);
-      if (batch.state === "queued" && doHas) {
-        batch.state = "acked";
-        await this.persist(batch);
-      } else if ((batch.state === "acked" || (lostData && batch.state === "queued")) && !doHas && !inReceipt(receipt, batch.counter)) {
-        // lost by the DO and not recorded in Drive: by content. What the DO's
-        // state (Drive's) already has is done; the rest is sent again as offline
-        // work: if it clashes it goes into a copy, never over newer work
-        const has = (change: QueuedChange) => {
-          const key = keyOf(change.k, change.id);
-          if (change.k === "el") {
-            const now = this.confirmed.get(change.id);
-            const stamp = batch.stamps?.[key];
-            return !!now && (contentEqual(now, change.value) || (!!stamp && now.version === stamp.v && now.versionNonce === stamp.n));
-          }
-          if (change.k === "file") {
-            return this.confirmedFiles.has(change.id);
-          }
-          if (change.k === "font") {
-            return this.confirmedFonts.has(change.id);
-          }
-          return sameJson(this.synced.get(key)?.el, change.value);
-        };
-        if (batch.changes.every(has)) {
-          await this.forget(batch);
-          continue;
-        }
-        batch.state = "queued";
-        batch.live = false;
-        batch.stamps = undefined;
-        await this.persist(batch);
-      }
-    }
+    await this.reconcileReceipts(welcome, lostData);
     await this.dropSaved();
     // batches that may never be replayed (too old, or from before the scene was restored from the trash)
-    const stale = this.batches.filter(
-      (batch) =>
-        batch.state === "queued" &&
-        // too old, or made in an earlier epoch (before a restore from the trash); a batch made before
-        // any epoch was known (e.g. while a new scene was being seeded) is of the current one
-        (Date.now() - batch.made > REPLAY_HORIZON_MS || (!!batch.epoch && batch.epoch < welcome.epoch)), // epochs start at 1: 0 (older app versions) is unknown too
-    );
+    const stale = this.staleBatches(welcome);
     this.epoch = welcome.epoch;
     this.parked.clear();
     await this.reconcile(stale);
@@ -1378,6 +1471,39 @@ export class LiveScene {
     this.persistBaseSoon();
     this.changed();
     this.pump();
+  }
+
+  private async prepareSeed(data: any, elements: El[]) {
+    const events: WireEvent[] = [];
+    for (const el of elements) {
+      events.push(await encodeEvent(this.key!, "el", el.id, el, null)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+    }
+    // settings and name get their first stamp here (the DO keeps it), so later changes name it as base
+    const settingsStamp: Base = { v: 1, n: Math.floor(Math.random() * 2 ** 31) };
+    const nameStamp: Base = { v: 1, n: Math.floor(Math.random() * 2 ** 31) };
+    events.push(
+      { ...(await encodeEvent(this.key!, "set", SETTINGS_ID, settingsOf(data.appState), null)), v: settingsStamp },
+      { ...(await encodeEvent(this.key!, "name", NAME_ID, { name: this.name }, null)), v: nameStamp },
+    );
+    this.synced.set(NAME_KEY, { stamp: nameStamp, el: { name: this.name } });
+    const used = new Set(elements.filter((el) => !el.isDeleted && el.fileId).map((el) => el.fileId));
+    for (const [id, file] of Object.entries<any>(data.files || {})) {
+      if (used.has(id)) {
+        events.push(await encodeEvent(this.key!, "file", id, file, null)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+    }
+    for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
+      events.push(await encodeEvent(this.key!, "font", await fontHash(font), font, null, { fontId: font.id })); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+    }
+    return { events, settingsStamp, used };
+  }
+
+  private async showSeedAssets(data: any, used: Set<unknown>) {
+    // a headless copy has nothing else to show: the seed's images and fonts are its view too
+    this.surface.apply({ files: Object.values<any>(data.files || {}).filter((file) => used.has(file.id)) });
+    for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
+      await addFont(font).catch(() => {}); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+    }
   }
 
   /** an empty DO asked for the scene: the Drive version the ticket names, if this tab can load exactly that one */
@@ -1397,34 +1523,12 @@ export class LiveScene {
     }
     const data = JSON.parse(json);
     const elements = restoreElements(data.elements, null, { repairBindings: true }) as unknown as El[];
-    const events: WireEvent[] = [];
-    for (const el of elements) {
-      events.push(await encodeEvent(this.key, "el", el.id, el, null));
-    }
-    // settings and name get their first stamp here (the DO keeps it), so later changes name it as base
-    const settingsStamp: Base = { v: 1, n: Math.floor(Math.random() * 2 ** 31) };
-    const nameStamp: Base = { v: 1, n: Math.floor(Math.random() * 2 ** 31) };
-    events.push({ ...(await encodeEvent(this.key, "set", SETTINGS_ID, settingsOf(data.appState), null)), v: settingsStamp });
-    events.push({ ...(await encodeEvent(this.key, "name", NAME_ID, { name: this.name }, null)), v: nameStamp });
-    this.synced.set(NAME_KEY, { stamp: nameStamp, el: { name: this.name } });
-    const used = new Set(elements.filter((el) => !el.isDeleted && el.fileId).map((el) => el.fileId));
-    for (const [id, file] of Object.entries<any>(data.files || {})) {
-      if (used.has(id)) {
-        events.push(await encodeEvent(this.key, "file", id, file, null));
-      }
-    }
-    for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
-      events.push(await encodeEvent(this.key, "font", await fontHash(font), font, null, { fontId: font.id }));
-    }
+    const { events, settingsStamp, used } = await this.prepareSeed(data, elements);
     if (this.stale()) {
       return;
     }
     if (this.headless) {
-      // a headless copy has nothing else to show: the seed's images and fonts are its view too
-      this.surface.apply({ files: Object.values<any>(data.files || {}).filter((file) => used.has(file.id)) });
-      for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
-        await addFont(font).catch(() => {});
-      }
+      await this.showSeedAssets(data, used);
     }
     // the local copy's changes are found against this version (unless a newer base is known)
     this.localBase ??= new Map(elements.map((el) => [el.id, el]));
@@ -1435,7 +1539,7 @@ export class LiveScene {
     this.confirmedFiles = new Set(used as Set<string>);
     this.confirmedFonts = new Map();
     for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
-      this.confirmedFonts.set(await fontHash(font), font.id);
+      this.confirmedFonts.set(await fontHash(font), font.id); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
     }
     // not "known" yet: until the DO's welcome takes the seed, changes stay on the canvas (the
     // reconcile after the welcome queues them against the DO's actual state; a refused seed
@@ -1482,7 +1586,7 @@ export class LiveScene {
           } else if (change.k === "set") {
             settings = change.value;
           } else if (change.k === "font") {
-            await addFont({ ...change.value, id: change.fontId ?? change.value.id }).catch(() => {});
+            await addFont({ ...change.value, id: change.fontId ?? change.value.id }).catch(() => {}); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
           }
         }
       }
@@ -1570,29 +1674,33 @@ export class LiveScene {
       });
     }
     // nothing local is replaced or dropped unless the copy holding it is stored
-    const copied = copyNeeded
-      ? await this.makeOfflineCopy(
-          stale.length
-            ? "Changes kept in this browser were too old to send"
-            : this.signedOutEdits
-            ? "Changes made while you were signed out"
-            : "Changes made here while offline clashed with newer ones",
-        )
-      : true;
+    const copyReason = () => {
+      if (stale.length) {
+        return "Changes kept in this browser were too old to send";
+      }
+      if (this.signedOutEdits) {
+        return "Changes made while you were signed out";
+      }
+      return "Changes made here while offline clashed with newer ones";
+    };
+    const copied = copyNeeded ? await this.makeOfflineCopy(copyReason()) : true;
     if (this.stale()) {
       return;
     }
     if (copied) {
       for (const batch of stale) {
         this.skipped.push(batch.counter);
-        await this.forget(batch);
+        await this.forget(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     } else {
       // kept as they are (and not sent): the user can export the scene
       stale.forEach((batch) => this.parked.add(batch.counter));
     }
     // the DO's version where it wins (only once the user's version is safe in the copy)
-    const losing = !copied ? [] : this.signedOutEdits ? unqueued.map((entry) => entry.el.id) : [...clashes];
+    let losing: string[] = [];
+    if (copied) {
+      losing = this.signedOutEdits ? unqueued.map((entry) => entry.el.id) : [...clashes];
+    }
     if (!copied) {
       clashes.forEach((id) => this.protectedIds.add(id)); // left as they are on the canvas
       if (this.signedOutEdits) {
@@ -1653,6 +1761,18 @@ export class LiveScene {
     }
   }
 
+  private catchUpUnknown(el: El, now: number, back: El[]) {
+    // not the DO's and nobody's pending change (after a grace for queues of closed tabs): gone here too
+    if (!el.isDeleted) {
+      const since = this.unknownSince.get(el.id) ?? now;
+      this.unknownSince.set(el.id, since);
+      if (now - since > 15_000) {
+        this.unknownSince.delete(el.id);
+        back.push({ ...el, isDeleted: true });
+      }
+    }
+  }
+
   /**
    * Catch up with the DO's state: an element that is not pending here, not
    * in a gesture and not another tab's pending change shows the DO's version.
@@ -1677,15 +1797,7 @@ export class LiveScene {
         continue;
       }
       if (!theirs) {
-        // not the DO's and nobody's pending change (after a grace for queues of closed tabs): gone here too
-        if (!el.isDeleted) {
-          const since = this.unknownSince.get(el.id) ?? now;
-          this.unknownSince.set(el.id, since);
-          if (now - since > 15_000) {
-            this.unknownSince.delete(el.id);
-            back.push({ ...el, isDeleted: true });
-          }
-        }
+        this.catchUpUnknown(el, now, back);
         continue;
       }
       this.unknownSince.delete(el.id);
@@ -1705,7 +1817,7 @@ export class LiveScene {
 
   private caughtUpAt = 0;
   private othersReadAt = Date.now();
-  private unknownSince = new Map<string, number>();
+  private readonly unknownSince = new Map<string, number>();
 
   /** a batch of someone else's changes (or this tab's own, if its answer was lost) */
   private async onEvents(batch: Extract<ServerMessage, { type: "events" }>) {
@@ -1722,7 +1834,7 @@ export class LiveScene {
   private async takeStamped(batch: StampedBatch, { toCanvas }: { toCanvas: boolean }) {
     if (batch.tab === this.tab?.tab && batch.counter !== undefined) {
       const own = this.batches.find((entry) => entry.counter === batch.counter);
-      if (own && own.state === "queued") {
+      if (own?.state === "queued") {
         // its answer was lost: the streamed batch is it, with the DO's repairs (index, font numbers)
         const stamps: Record<string, Base> = {};
         const repairs: Record<string, string> = {};
@@ -1764,7 +1876,7 @@ export class LiveScene {
     for (const event of batch.events) {
       if (event.k === "el") {
         const previous = this.confirmed.get(event.id);
-        const el = await this.decode(event, previous ?? this.lastCanvas.get(event.id));
+        const el = await this.decode(event, previous ?? this.lastCanvas.get(event.id)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         if (!el) {
           continue;
         }
@@ -1775,7 +1887,7 @@ export class LiveScene {
           this.synced.set(el.id, { stamp: stampOf(el), el });
         }
       } else if (event.k === "set") {
-        const value = settingsOf(await this.decode(event));
+        const value = settingsOf(await this.decode(event)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         this.confirmedSettings = { value, stamp: event.v ?? null };
         if (toCanvas && !this.isPending(SETTINGS_KEY)) {
           settings = value;
@@ -1784,12 +1896,12 @@ export class LiveScene {
       } else if (event.k === "file") {
         this.confirmedFiles.add(event.id);
         if (!this.surface.files()[event.id]) {
-          files.push(await this.decode(event));
+          files.push(await this.decode(event)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         }
       } else if (event.k === "font") {
-        await this.takeFont(event);
+        await this.takeFont(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       } else if (event.k === "name") {
-        await this.takeName(event);
+        await this.takeName(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
     if (this.stale()) {
@@ -1869,20 +1981,10 @@ export class LiveScene {
     this.editsStopped = false;
   }
 
-  /**
-   * The local copy changed (the canvas's onChange, or an agent's edit in
-   * memory): what differs from what was accounted for goes into the draft.
-   */
-  collect() {
-    // without any known state of the DO, changes are found by reconcile() after the handshake
-    if (!this.canEdit() || this.phase === "idle" || !this.baseLoaded) {
-      return;
-    }
-    const elements = this.surface.elements();
-    const gesture = this.surface.gesture();
+  private collectElements(elements: readonly El[]) {
     for (const el of elements) {
       const seen = this.known.get(el.id);
-      if (seen && seen.v === el.version && seen.n === el.versionNonce) {
+      if (seen?.v === el.version && seen.n === el.versionNonce) {
         continue;
       }
       this.known.set(el.id, stampOf(el));
@@ -1897,6 +1999,20 @@ export class LiveScene {
       this.addDraft("el", el.id, el, {});
       this.draftAssets(el, true);
     }
+  }
+
+  /**
+   * The local copy changed (the canvas's onChange, or an agent's edit in
+   * memory): what differs from what was accounted for goes into the draft.
+   */
+  collect() {
+    // without any known state of the DO, changes are found by reconcile() after the handshake
+    if (!this.canEdit() || this.phase === "idle" || !this.baseLoaded) {
+      return;
+    }
+    const elements = this.surface.elements();
+    const gesture = this.surface.gesture();
+    this.collectElements(elements);
     const settings = this.surface.settings();
     const viewSettings = this.viewOf(SETTINGS_KEY);
     if (viewSettings && !sameJson(viewSettings, settings)) {
@@ -1921,11 +2037,11 @@ export class LiveScene {
     if (this.draft.size) {
       this.changed();
       if (gestureEnded || this.agentMark) {
-        this.flush();
+        this.flush().catch((error) => console.error("[live] background operation failed", error));
       } else if (!this.batchTimer) {
         this.batchTimer = setTimeout(() => {
           this.batchTimer = null;
-          this.flush();
+          this.flush().catch((error) => console.error("[live] background operation failed", error));
         }, BATCH_MS);
       }
     }
@@ -1939,13 +2055,13 @@ export class LiveScene {
     if (previous && previous.via !== via) {
       // an agent's change never shares a batch with the user's: the user's goes first
       this.draft.delete(key);
-      this.enqueue([previous]);
+      this.enqueue([previous]).catch((error) => console.error("[live] background operation failed", error));
     }
     this.draft.set(key, {
       k,
       id,
       value,
-      live: (previous && previous.via === via ? previous.live : true) && made,
+      live: (previous?.via === via ? previous.live : true) && made,
       via,
       ...(this.agentMark?.command ? { command: this.agentMark.command } : {}),
       ...(fontId !== undefined ? { fontId } : {}),
@@ -1972,14 +2088,14 @@ export class LiveScene {
           if (!this.confirmedFonts.has(hash) && !this.isPending(keyOf("font", hash))) {
             const { family, id, faces, source } = font;
             this.addDraft("font", hash, { family, id, faces, source }, { live, fontId: id });
-            this.flush();
+            this.flush().catch((error) => console.error("[live] background operation failed", error));
           }
-        });
+        }).catch((error) => console.error("[live] background operation failed", error));
       }
     }
   }
 
-  private fontDrafting = new Set<number>();
+  private readonly fontDrafting = new Set<number>();
 
   private flushing: Promise<void> = Promise.resolve();
 
@@ -1988,6 +2104,19 @@ export class LiveScene {
     const run = this.flushing.then(() => this.flushDraft(all));
     this.flushing = run.catch(() => {});
     return run;
+  }
+
+  private holdGestureDrafts(gesture: Set<string>, held: Set<string>) {
+    if (gesture.size) {
+      const ids = [...this.draft.values()].filter((draft) => draft.k === "el").map((draft) => draft.id);
+      const members = groupIndex(this.surface.elements());
+      const parts = components(ids, (id) => touchedBy(this.draft.get(id)?.value ?? { id, version: 0, versionNonce: 0 }, members));
+      for (const part of parts) {
+        if ([...part].some((id) => gesture.has(id))) {
+          part.forEach((id) => held.add(id));
+        }
+      }
+    }
   }
 
   private async flushDraft(all = false) {
@@ -2001,16 +2130,7 @@ export class LiveScene {
     // held back: what is part of a gesture, and everything connected to it
     const gesture = all ? new Set<string>() : this.surface.gesture();
     const held = new Set<string>();
-    if (gesture.size) {
-      const ids = [...this.draft.values()].filter((draft) => draft.k === "el").map((draft) => draft.id);
-      const members = groupIndex(this.surface.elements());
-      const parts = components(ids, (id) => touchedBy(this.draft.get(id)?.value ?? { id, version: 0, versionNonce: 0 }, members));
-      for (const part of parts) {
-        if ([...part].some((id) => gesture.has(id))) {
-          part.forEach((id) => held.add(id));
-        }
-      }
-    }
+    this.holdGestureDrafts(gesture, held);
     const ready = [...this.draft.entries()].filter(([, draft]) => draft.k !== "el" || !held.has(draft.id));
     if (!ready.length) {
       return;
@@ -2027,16 +2147,16 @@ export class LiveScene {
       if (group[0].command) {
         // an agent's command: one batch (assets first in it), one IndexedDB write: a retry finds
         // the whole command or nothing of it, never half
-        await this.enqueue([...group.filter((d) => d.k === "file" || d.k === "font"), ...group.filter((d) => d.k !== "file" && d.k !== "font")]);
+        await this.enqueue([...group.filter((d) => d.k === "file" || d.k === "font"), ...group.filter((d) => d.k !== "file" && d.k !== "font")]); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         continue;
       }
       const assets = group.filter((draft) => draft.k === "file" || draft.k === "font");
       const rest = group.filter((draft) => draft.k !== "file" && draft.k !== "font");
       if (assets.length) {
-        await this.enqueue(assets);
+        await this.enqueue(assets); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
       if (rest.length) {
-        await this.enqueue(rest);
+        await this.enqueue(rest); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
   }
@@ -2100,7 +2220,7 @@ export class LiveScene {
   }
 
   /** batches whose IndexedDB write has not committed yet */
-  private unstored = new Set<number>();
+  private readonly unstored = new Set<number>();
 
   private async persist(batch: QueuedBatch) {
     this.unstored.add(batch.counter);
@@ -2117,7 +2237,8 @@ export class LiveScene {
   }
 
   private async forget(batch: QueuedBatch) {
-    this.trace?.push(`forget#${batch.counter} ${batch.state} [${batch.changes.map((c) => `${c.k}:${c.id.slice(0, 6)}`).join(",")}]`);
+    const changes = () => batch.changes.map((c) => `${c.k}:${c.id.slice(0, 6)}`).join(",");
+    this.trace?.push(`forget#${batch.counter} ${batch.state} [${changes()}]`);
     this.batches = this.batches.filter((entry) => entry !== batch);
     await deleteBatch(batch).catch(() => {});
   }
@@ -2125,9 +2246,9 @@ export class LiveScene {
   /** acked batches Drive has (per the receipts): done */
   private async dropSaved() {
     const receipt = this.receipts[this.tab?.tab ?? ""];
-    for (const batch of [...this.batches]) {
+    for (const batch of [...this.batches]) { // NOSONAR S7747: the snapshot keeps the batch list stable across awaited deletions
       if (batch.state === "acked" && inReceipt(receipt, batch.counter)) {
-        await this.forget(batch);
+        await this.forget(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
   }
@@ -2201,7 +2322,7 @@ export class LiveScene {
     const events: WireEvent[] = [];
     for (const change of batch.changes) {
       events.push(
-        await encodeEvent(this.key!, change.k, change.id, change.value, this.baseOf(batch, change), change.fontId !== undefined ? { fontId: change.fontId } : {}),
+        await encodeEvent(this.key!, change.k, change.id, change.value, this.baseOf(batch, change), change.fontId !== undefined ? { fontId: change.fontId } : {}), // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       );
     }
     if (!this.inFlight.has(batch.counter)) {
@@ -2229,7 +2350,50 @@ export class LiveScene {
   private skipped: number[] = [];
 
   /** refused for a reason that a resend can't fix right now (limit, role, key, …): until the next handshake */
-  private parked = new Set<number>();
+  private readonly parked = new Set<number>();
+
+  private acknowledgeElement(change: QueuedChange, key: string, stamp: Base | undefined, ack: Extract<ServerMessage, { type: "ack" }>, batch: QueuedBatch, canvas: Map<string, El>, restamp: El[]) {
+    if (!stamp) {
+      return; // a duplicate the DO saved already: the catch-up state has it
+    }
+    const repaired = ack.repairs?.[key];
+    const font = typeof change.value.fontFamily === "number" ? this.assignedFont(change.value.fontFamily, batch, ack.fontIds) : undefined;
+    const stamped = {
+      ...change.value,
+      version: stamp.v,
+      versionNonce: stamp.n,
+      ...(repaired ? { index: repaired } : {}),
+      ...(font !== undefined ? { fontFamily: font } : {}),
+    };
+    this.setConfirmed(change.id, stamped, "ack");
+    // the canvas keeps its own stamp for this state (no re-stamp): it is a state the DO has too
+    this.rememberStamp(change.value);
+    this.traced(`ack${ack.seq}${ack.duplicate ? "dup" : ""}`, stamped);
+    this.synced.set(key, { stamp, el: stamped });
+    const shown = canvas.get(change.id);
+    // the canvas keeps the element as the editor made it (no new stamp: that would put an
+    // object under the editor's history it didn't make); only the DO's index repair, a real
+    // difference, is applied
+    if (shown && repaired && shown.index !== repaired) {
+      restamp.push({ ...shown, index: repaired });
+    }
+  }
+
+  private async advanceBatchBases(batch: QueuedBatch, ack: Extract<ServerMessage, { type: "ack" }>) {
+    for (const later of this.batches) {
+      let touched = false;
+      for (const change of later.changes) {
+        if (change.after === batch.counter) {
+          change.base = ack.stamps[keyOf(change.k, change.id)] ?? this.synced.get(keyOf(change.k, change.id))?.stamp ?? null;
+          delete change.after;
+          touched = true;
+        }
+      }
+      if (touched) {
+        await this.persist(later); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+    }
+  }
 
   private async onAck(ack: Extract<ServerMessage, { type: "ack" }>) {
     const batch = this.batches.find((entry) => entry.counter === ack.counter);
@@ -2247,30 +2411,7 @@ export class LiveScene {
       const key = keyOf(change.k, change.id);
       const stamp = ack.stamps[key];
       if (change.k === "el") {
-        if (!stamp) {
-          continue; // a duplicate the DO saved already: the catch-up state has it
-        }
-        const repaired = ack.repairs?.[key];
-        const font = typeof change.value.fontFamily === "number" ? this.assignedFont(change.value.fontFamily, batch, ack.fontIds) : undefined;
-        const stamped = {
-          ...change.value,
-          version: stamp.v,
-          versionNonce: stamp.n,
-          ...(repaired ? { index: repaired } : {}),
-          ...(font !== undefined ? { fontFamily: font } : {}),
-        };
-        this.setConfirmed(change.id, stamped, "ack");
-        // the canvas keeps its own stamp for this state (no re-stamp): it is a state the DO has too
-        this.rememberStamp(change.value);
-        this.traced(`ack${ack.seq}${ack.duplicate ? "dup" : ""}`, stamped);
-        this.synced.set(key, { stamp, el: stamped });
-        const shown = canvas.get(change.id);
-        // the canvas keeps the element as the editor made it (no new stamp: that would put an
-        // object under the editor's history it didn't make); only the DO's index repair, a real
-        // difference, is applied
-        if (shown && repaired && shown.index !== repaired) {
-          restamp.push({ ...shown, index: repaired });
-        }
+        this.acknowledgeElement(change, key, stamp, ack, batch, canvas, restamp);
       } else if (change.k === "set") {
         this.confirmedSettings = { value: change.value, stamp: stamp ?? null };
         this.synced.set(key, { stamp: stamp ?? null, el: change.value });
@@ -2286,19 +2427,7 @@ export class LiveScene {
       this.applyToSurface(restamp);
     }
     // later batches made on top of this one take its stamps as their base now
-    for (const later of this.batches) {
-      let touched = false;
-      for (const change of later.changes) {
-        if (change.after === batch.counter) {
-          change.base = ack.stamps[keyOf(change.k, change.id)] ?? this.synced.get(keyOf(change.k, change.id))?.stamp ?? null;
-          delete change.after;
-          touched = true;
-        }
-      }
-      if (touched) {
-        await this.persist(later);
-      }
-    }
+    await this.advanceBatchBases(batch, ack);
     if (ack.fontIds) {
       await this.remapFonts(batch, ack.fontIds);
     }
@@ -2309,6 +2438,24 @@ export class LiveScene {
     this.persistBaseSoon();
     this.changed();
     this.pump();
+  }
+
+  private async remapQueuedFont(from: number, move: (el: El) => El) {
+    for (const entry of this.batches) {
+      if (entry.state !== "queued") {
+        continue;
+      }
+      let touched = false;
+      for (const item of entry.changes) {
+        if (item.k === "el" && item.value.fontFamily === from) {
+          item.value = move(item.value);
+          touched = true;
+        }
+      }
+      if (touched) {
+        await this.persist(entry); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      }
+    }
   }
 
   /**
@@ -2325,26 +2472,12 @@ export class LiveScene {
         continue;
       }
       const from = change.value.id as number;
-      await addFont({ ...change.value, id: assigned }).catch(() => {});
+      await addFont({ ...change.value, id: assigned }).catch(() => {}); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       this.fontRemap.set(from, assigned);
       // only this tab's own elements of that font: others' text with the old number is another font
       const own = new Set<string>([...this.pendingIds(), ...batch.changes.filter((item) => item.k === "el").map((item) => item.id)]);
-      const move = (el: El) => (el && el.fontFamily === from ? { ...el, fontFamily: assigned } : el);
-      for (const entry of this.batches) {
-        if (entry.state !== "queued") {
-          continue;
-        }
-        let touched = false;
-        for (const item of entry.changes) {
-          if (item.k === "el" && item.value.fontFamily === from) {
-            item.value = move(item.value);
-            touched = true;
-          }
-        }
-        if (touched) {
-          await this.persist(entry);
-        }
-      }
+      const move = (el: El) => (el?.fontFamily === from ? { ...el, fontFamily: assigned } : el);
+      await this.remapQueuedFont(from, move);
       for (const draft of this.draft.values()) {
         if (draft.k === "el") {
           draft.value = move(draft.value);
@@ -2374,7 +2507,7 @@ export class LiveScene {
   }
 
   /** fonts whose number the DO changed in this scene (old -> new) */
-  private fontRemap = new Map<number, number>();
+  private readonly fontRemap = new Map<number, number>();
 
   private async onRefused(refusal: Extract<ServerMessage, { type: "refused" }>) {
     const batch = this.batches.find((entry) => entry.counter === refusal.counter);
@@ -2385,8 +2518,10 @@ export class LiveScene {
     // stays "in flight" while it is settled, so nothing sends it meanwhile
     this.inFlight.set(batch.counter, { at: Date.now(), ids: new Set() });
     const reason: RefuseReason = refusal.reason;
-    this.refusals = [...this.refusals.slice(-5), `${new Date().toISOString().slice(11, 19)} #${batch.counter} ${reason}${refusal.detail ? ` (${refusal.detail})` : ""}`];
-    this.trace?.push(`refused#${batch.counter} ${reason} ${refusal.detail ?? ""} live=${batch.live} [${batch.changes.map((c) => `${c.k}:${c.id.slice(0, 6)}${c.value?.isDeleted ? "(del)" : ""}`).join(",")}] current=[${refusal.current.map((e) => e.id.slice(0, 6))}]`);
+    const detailSuffix = () => refusal.detail ? ` (${refusal.detail})` : "";
+    this.refusals = [...this.refusals.slice(-5), `${new Date().toISOString().slice(11, 19)} #${batch.counter} ${reason}${detailSuffix()}`];
+    const changes = () => batch.changes.map((c) => `${c.k}:${c.id.slice(0, 6)}${c.value?.isDeleted ? "(del)" : ""}`).join(",");
+    this.trace?.push(`refused#${batch.counter} ${reason} ${refusal.detail ?? ""} live=${batch.live} [${changes()}] current=[${refusal.current.map((e) => e.id.slice(0, 6))}]`);
     if (reason === "token") {
       await this.renew();
       this.inFlight.delete(batch.counter);
@@ -2408,18 +2543,7 @@ export class LiveScene {
     }
     if (reason === "key" || reason === "role" || reason === "lifecycle" || reason === "limit") {
       // kept in this browser: nothing is cut off silently
-      this.error =
-        reason === "limit"
-          ? refusal.detail === "sceneBytes"
-            ? "This scene is too big for Kurviq's server (30 MB, pictures included): your latest changes wait in this browser. Remove or shrink pictures."
-            : refusal.detail === "elements"
-            ? "This scene has too many elements for Kurviq's server: your latest changes wait in this browser."
-            : `Too big to save at once${refusal.detail ? ` (${refusal.detail})` : ""}: split it up, or remove large pictures`
-          : reason === "role"
-          ? "You can only view this scene now: your changes stay in this browser"
-          : reason === "key"
-          ? "Waiting for the scene's key"
-          : "This scene can't be changed now";
+      this.error = refusedMessage(reason, refusal.detail);
       if (reason === "role") {
         this.role = "read";
       }
@@ -2436,7 +2560,7 @@ export class LiveScene {
             this.givenUp.set(queued.counter, refusal.detail ?? reason);
             this.parked.delete(queued.counter);
             this.skipped.push(queued.counter);
-            await this.forget(queued);
+            await this.forget(queued); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
           }
           this.error = null;
         }
@@ -2461,16 +2585,16 @@ export class LiveScene {
     for (const event of refusal.current) {
       colliding.add(keyOf(event.k, event.id));
       if (event.k === "el") {
-        const el = await this.decode(event, this.confirmed.get(event.id));
+        const el = await this.decode(event, this.confirmed.get(event.id)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         if (el) {
           current.set(el.id, el);
           this.setConfirmed(el.id, el, "refused");
         }
       } else if (event.k === "set") {
-        this.confirmedSettings = { value: settingsOf(await this.decode(event)), stamp: event.v ?? null };
+        this.confirmedSettings = { value: settingsOf(await this.decode(event)), stamp: event.v ?? null }; // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         this.synced.set(SETTINGS_KEY, { stamp: event.v ?? null, el: this.confirmedSettings.value });
       } else if (event.k === "name") {
-        this.synced.set(NAME_KEY, { stamp: event.v ?? null, el: await this.decode(event) });
+        this.synced.set(NAME_KEY, { stamp: event.v ?? null, el: await this.decode(event) }); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
     if (this.stale()) {
@@ -2527,15 +2651,7 @@ export class LiveScene {
     }
     this.debugCopy({ at: "refused", reason, detail: refusal.detail, counter: batch.counter, live: batch.live, tries, colliding: [...colliding].slice(0, 10) });
     // after offline (or discarded, invalid): nothing of it is applied, the whole local scene becomes a copy
-    const copied = await this.makeOfflineCopy(
-      reason === "discarded"
-        ? "Changes another editor discarded"
-        : reason === "old"
-        ? "Changes kept in this browser were too old to send"
-        : reason === "invalid"
-        ? "Changes the server could not take"
-        : "Changes made here while offline clashed with newer ones",
-    );
+    const copied = await this.makeOfflineCopy(refusedCopyReason(reason));
     this.inFlight.delete(batch.counter);
     if (!copied) {
       // the queue and the canvas stay as they are (not sent again): the user can export the scene
@@ -2548,13 +2664,13 @@ export class LiveScene {
   }
 
   /** batches given up after a refusal for good (kept in an offline copy instead): counter -> why */
-  private givenUp = new Map<number, string>();
+  private readonly givenUp = new Map<number, string>();
 
   /** the last refusals (time, batch, reason) and hung messages, for app_status (liveQueue.problems) */
   private refusals: string[] = [];
 
   /** refusals per batch (a batch refused again and again takes the offline way) */
-  private rebases = new Map<number, number>();
+  private readonly rebases = new Map<number, number>();
 
   /** a live collision: the user's properties on top of the newer state, sent again (same counter) */
   private async rebaseLive(batch: QueuedBatch, current: Map<string, El>, reason: RefuseReason, detail?: string) {
@@ -2577,7 +2693,7 @@ export class LiveScene {
           }
         }
         for (const fileId of needed) {
-          const upload = this.surface.files()[fileId] ? null : await getUpload(fileId);
+          const upload = this.surface.files()[fileId] ? null : await getUpload(fileId); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
           const file = this.surface.files()[fileId] ?? (upload ? { id: upload.id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created } : undefined);
           if (file) {
             this.confirmedFiles.delete(fileId);
@@ -2682,7 +2798,7 @@ export class LiveScene {
         el = result.el;
         if (result.overlaps.length) {
           // the same property on both sides: the later change (this one) wins, they may restore theirs
-          losers.push(await encodeEvent(this.key!, "el", theirs.id, theirs, stampOf(theirs)));
+          losers.push(await encodeEvent(this.key!, "el", theirs.id, theirs, stampOf(theirs))); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         }
         change.base = stampOf(theirs);
         this.synced.set(change.id, { stamp: stampOf(theirs), el: theirs });
@@ -2697,21 +2813,21 @@ export class LiveScene {
       const steps = later.flatMap((entry) => entry.changes.filter((item) => item.k === "el" && item.id === change.id));
       const draft = this.draft.get(change.id);
       const shown = this.surface.elements().find((item) => item.id === change.id);
-      const lastLocal = (draft?.value ?? steps[steps.length - 1]?.value ?? before) as El;
+      const lastLocal = (draft?.value ?? steps.at(-1)?.value ?? before) as El;
       const showsLast = !!shown && shown.version === lastLocal.version && shown.versionNonce === lastLocal.versionNonce;
       const chain = reapplyChain(before, el, [...steps.map((step) => step.value as El), ...(draft ? [draft.value as El] : [])]);
       steps.forEach((step, i) => (step.value = chain[i]));
       if (draft) {
-        draft.value = chain[chain.length - 1];
+        draft.value = chain.at(-1);
       }
       if (showsLast) {
-        restamp.push(chain.length ? chain[chain.length - 1] : el); // the canvas shows the rebased result
+        restamp.push(chain.length ? chain.at(-1)! : el); // the canvas shows the rebased result
       }
       change.value = el;
       change.keys = changedKeys(this.synced.get(change.id)?.el, el);
       for (const entry of later) {
         if (entry.changes.some((item) => item.k === "el" && item.id === change.id)) {
-          await this.persist(entry);
+          await this.persist(entry); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         }
       }
     }
@@ -2723,7 +2839,21 @@ export class LiveScene {
     await this.persist(batch);
     this.inFlight.delete(batch.counter);
     if (this.phase === "ready") {
-      this.sendBatch(batch, { losers });
+      this.sendBatch(batch, { losers }).catch((error) => console.error("[live] background operation failed", error));
+    }
+  }
+
+  private revertDropped(dropped: Set<string>, revert: El[]) {
+    for (const id of dropped) {
+      const theirs = this.confirmed.get(id);
+      const shown = this.surface.elements().find((el) => el.id === id);
+      if (theirs) {
+        revert.push(theirs);
+        this.synced.set(id, { stamp: stampOf(theirs), el: theirs });
+      } else if (shown && !shown.isDeleted) {
+        revert.push({ ...shown, isDeleted: true, version: shown.version + 1 });
+      }
+      this.draft.delete(id);
     }
   }
 
@@ -2762,23 +2892,13 @@ export class LiveScene {
       }
       if (kept.length) {
         entry.changes = kept;
-        await this.persist(entry);
+        await this.persist(entry); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       } else {
         this.skipped.push(entry.counter);
-        await this.forget(entry);
+        await this.forget(entry); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
-    for (const id of dropped) {
-      const theirs = this.confirmed.get(id);
-      const shown = this.surface.elements().find((el) => el.id === id);
-      if (theirs) {
-        revert.push(theirs);
-        this.synced.set(id, { stamp: stampOf(theirs), el: theirs });
-      } else if (shown && !shown.isDeleted) {
-        revert.push({ ...shown, isDeleted: true, version: shown.version + 1 });
-      }
-      this.draft.delete(id);
-    }
+    this.revertDropped(dropped, revert);
     let settings: Settings | null = null;
     if (otherKeys.has(SETTINGS_KEY) && this.confirmedSettings) {
       settings = this.confirmedSettings.value;
@@ -2824,7 +2944,7 @@ export class LiveScene {
     }
     const json = withFonts(serializeAsJSON(byIndex(elements) as any, settings as any, files as any, "local"), elements);
     // a copy covers exactly what it contains: the same content again needs no new one
-    if (this.offlineCopy && this.offlineCopyJson === json) {
+    if (this.offlineCopy !== null && this.offlineCopyJson === json) {
       return this.offlineCopy.then(
         () => true,
         () => false,
@@ -2904,7 +3024,7 @@ export class LiveScene {
 
   /** the scene's current state as this tab sees it (confirmed + its own pending changes) */
   sceneJson() {
-    const elements = this.headless ? this.surface.elements() : this.surface.elements();
+    const elements = this.surface.elements();
     const visible = elements.filter((el) => !el.isDeleted);
     return withFonts(serializeAsJSON(visible as any, { ...this.surface.settings(), name: this.name } as any, this.surface.files() as any, "local"), visible);
   }
@@ -2980,7 +3100,7 @@ export class LiveScene {
           if (!left.length) {
             return null;
           }
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 500)); // NOSONAR S9382: in order on purpose (polling waits for the preceding observation)
         }
         return "Applied in the user's browser (another tab of it sends it); Kurviq's server has not confirmed it yet. It goes out by itself: nothing to redo.";
       }
@@ -3042,8 +3162,9 @@ export class LiveScene {
       );
     }
     if (refused()) {
+      const suffix = this.error ? ` (${this.error})` : "";
       throw new Error(
-        `Applied in the user's browser, but Kurviq's server refused it${this.error ? ` (${this.error})` : ""}: it is kept there and not saved. Tell the user.`,
+        `Applied in the user's browser, but Kurviq's server refused it${suffix}: it is kept there and not saved. Tell the user.`,
       );
     }
     if (!open().length) {
@@ -3051,8 +3172,9 @@ export class LiveScene {
     }
     const waiting = open();
     const sent = waiting.filter((batch) => this.inFlight.has(batch.counter)).length;
+    const delivery = sent ? "sent, no answer yet" : "waiting behind earlier changes";
     return this.connected
-      ? `Applied in the user's browser; Kurviq's server has not confirmed it yet (${sent ? "sent, no answer yet" : "waiting behind earlier changes"}). It goes out by itself: nothing to redo.`
+      ? `Applied in the user's browser; Kurviq's server has not confirmed it yet (${delivery}). It goes out by itself: nothing to redo.`
       : "Applied and kept in the user's browser; Kurviq's server is not reachable right now, it is sent once it is. Nothing to redo.";
   }
 
@@ -3082,7 +3204,7 @@ export class LiveScene {
       return;
     }
     this.addDraft("name", NAME_ID, { name: to }, {});
-    this.flush();
+    this.flush().catch((error) => console.error("[live] background operation failed", error));
   }
 
   /** restore the user's version after losing a live collision */
@@ -3095,7 +3217,7 @@ export class LiveScene {
     const mine = await this.decode(loser.event);
     const shown = this.surface.elements().find((el) => el.id === id);
     if (mine && shown) {
-      this.surface.edit({ elements: [{ ...shown, ...mine, version: shown.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }] });
+      this.surface.edit({ elements: [{ ...shown, ...mine, version: shown.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }] }); // NOSONAR S2245: not security relevant (Excalidraw version nonce)
       this.collect();
     }
     this.changed();
@@ -3144,7 +3266,15 @@ export class LiveScene {
     try {
       await authPost(`/scene/${encodeURIComponent(this.fileId)}/keep-local`, {});
     } catch (error: any) {
-      return { ok: false, reason: error?.code === "shared" ? "shared" : error?.offline ? "offline" : error?.code ?? "refused" };
+      let reason: string;
+      if (error?.code === "shared") {
+        reason = "shared";
+      } else if (error?.offline) {
+        reason = "offline";
+      } else {
+        reason = error?.code ?? "refused";
+      }
+      return { ok: false, reason };
     }
     const answer = await new Promise<Extract<ServerMessage, { type: "keep-local" }>>((resolve, reject) => {
       this.keepLocalAnswer = resolve;
@@ -3171,8 +3301,8 @@ export class LiveScene {
 
   /** the scene left Drive (kept only here, or deleted): its queue and stored state go */
   async forgetAll() {
-    for (const batch of [...this.batches]) {
-      await this.forget(batch);
+    for (const batch of [...this.batches]) { // NOSONAR S7747: the snapshot keeps the batch list stable across awaited deletions
+      await this.forget(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
     }
     this.draft.clear();
     await forgetFile(this.sub, this.fileId).catch(() => {});
@@ -3265,8 +3395,8 @@ const HEADLESS_IDLE_MS = 2 * 60_000;
 class LiveSync {
   private host: LiveHost | null = null;
   private canvas: LiveScene | null = null;
-  private headless = new Map<string, { scene: LiveScene; usedAt: number; starting: Promise<LiveScene> }>();
-  private listeners = new Set<() => void>();
+  private readonly headless = new Map<string, { scene: LiveScene; usedAt: number; starting: Promise<LiveScene> }>();
+  private readonly listeners = new Set<() => void>();
   /** file id -> stage of scenes not open (from the browser's queue) */
   private queued = new Map<string, LiveStage>();
   private account: string | null = null;
@@ -3277,16 +3407,16 @@ class LiveSync {
     this.host = host;
   }
 
-  subscribe = (listener: () => void) => {
+  readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   };
 
-  getVersion = () => this.version;
+  readonly getVersion = () => this.version;
 
-  private changed = () => {
+  private readonly changed = () => {
     this.version++;
     this.listeners.forEach((listener) => listener());
     this.host?.changed();
@@ -3370,9 +3500,9 @@ class LiveSync {
     if (!same) {
       // another account: the old one's connections close first (its draft queued
       // as its own), the canvas shows only what the DO had
-      this.closeAll({ resetToConfirmed: true }).then(() => this.host?.changed());
+      this.closeAll({ resetToConfirmed: true }).then(() => this.host?.changed()).catch((error) => console.error("[live] background operation failed", error));
     }
-    this.sweep();
+    this.sweep().catch((error) => console.error("[live] background operation failed", error));
   }
 
   private signedOut() {
@@ -3382,7 +3512,7 @@ class LiveSync {
         localStorage.setItem(`kurviq-live-signed-out:${this.account}`, JSON.stringify({ at: Date.now(), seen: [] }));
       } catch {}
     }
-    this.closeAll({ resetToConfirmed: false });
+    this.closeAll({ resetToConfirmed: false }).catch((error) => console.error("[live] background operation failed", error));
     this.account = null;
   }
 
@@ -3422,7 +3552,7 @@ class LiveSync {
   }
 
   /** closed tabs' queues, sent from here under their own tab ids (also of scenes open here) */
-  private replays = new Map<string, LiveScene>();
+  private readonly replays = new Map<string, LiveScene>();
 
   /** why a queue an earlier session of this scene left can't be sent (shown with the open scene) */
   replayProblems(fileId: string) {
@@ -3436,12 +3566,7 @@ class LiveSync {
     return [...this.replays].map(([key, scene]) => ({ key, ...scene.queueReport() }));
   }
 
-  /** queues no open tab holds go out from this one; idle headless sessions close */
-  private async sweep() {
-    const account = this.account;
-    if (!account) {
-      return;
-    }
+  private closeIdleSessions() {
     for (const [fileId, entry] of this.headless) {
       if (entry.scene.idle() && Date.now() - entry.usedAt > HEADLESS_IDLE_MS) {
         entry.scene.close();
@@ -3454,6 +3579,15 @@ class LiveSync {
         this.replays.delete(key);
       }
     }
+  }
+
+  /** queues no open tab holds go out from this one; idle headless sessions close */
+  private async sweep() {
+    const account = this.account;
+    if (!account) {
+      return;
+    }
+    this.closeIdleSessions();
     try {
       const orphans = await orphanQueues(account);
       for (const { fileId, tab } of orphans) {
@@ -3461,7 +3595,7 @@ class LiveSync {
         if (this.replays.has(key)) {
           continue;
         }
-        const held = await holdTab(fileId, tab);
+        const held = await holdTab(fileId, tab); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         if (!held) {
           continue;
         }
@@ -3469,7 +3603,7 @@ class LiveSync {
         const scene = new LiveScene({ fileId, name: "", sub: account, surface: memorySurface(), headless: true, host: () => this.host, tab: held });
         scene.subscribe(this.changed);
         this.replays.set(key, scene);
-        scene.start();
+        scene.start().catch((error) => console.error("[live] background operation failed", error));
       }
       // stages of scenes not open
       const stages = new Map<string, LiveStage>();
@@ -3530,7 +3664,7 @@ class LiveSync {
     });
     scene.subscribe(this.changed);
     this.canvas = scene;
-    scene.start();
+    scene.start().catch((error) => console.error("[live] background operation failed", error));
     this.changed();
     return scene;
   }
@@ -3548,7 +3682,7 @@ class LiveSync {
     scene = new LiveScene({ fileId, name, sub: account, surface: canvasSurface(api, () => scene), headless: false, host: () => this.host, viewOnly: true });
     scene.subscribe(this.changed);
     this.viewerScene = scene;
-    scene.start();
+    scene.start().catch((error) => console.error("[live] background operation failed", error));
     return scene;
   }
 
@@ -3573,7 +3707,7 @@ class LiveSync {
       // the last edits before the canvas shows something else; nothing is applied to it any more
       scene.collect();
       scene.detach();
-      scene.flush({ all: true }).finally(() => scene.close());
+      scene.flush({ all: true }).finally(() => scene.close()).catch((error) => console.error("[live] background operation failed", error));
       this.changed();
     }
   }
@@ -3649,7 +3783,7 @@ class LiveSync {
 export const liveSync = new LiveSync();
 
 /** decidable after DECIDE_AFTER_MS: shown to editors (the DO says when) */
-export const DECIDE_AFTER_HOURS = DECIDE_AFTER_MS / 3600_000;
+export const DECIDE_AFTER_HOURS = DECIDE_AFTER_MS / 3_600_000;
 
 if (import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE) {
   // dev and fake-Google builds (local QA): the engine's state in the console

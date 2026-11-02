@@ -8,7 +8,7 @@ let stopping = false;
 const procs = new Map();
 
 const start = (script) => {
-  const proc = spawn("npm", ["run", "--silent", script], { stdio: "inherit" });
+  const proc = spawn("npm", ["run", "--silent", script], { stdio: "inherit" }); // NOSONAR S4036: local developer tooling invokes a fixed command in the developer-controlled environment
   procs.set(script, proc);
   proc.on("exit", (code, signal) => {
     if (stopping) {

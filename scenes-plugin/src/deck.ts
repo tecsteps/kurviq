@@ -69,7 +69,7 @@ export const PRESENTING_KEY = "kurviq-presenting";
 
 class Deck {
   private api: ExcalidrawImperativeAPI | null = null;
-  private listeners = new Set<() => void>();
+  private readonly listeners = new Set<() => void>();
   private lastKey = "";
   /** the slides at the last change: ids, and whether they were Kurviq's grid (from where) */
   private lastTemplateKey = 0;
@@ -405,7 +405,7 @@ class Deck {
         continue;
       }
       try {
-        const canvas = await renderSlide(elements, files, frame, { width: THUMB_WIDTH, background });
+        const canvas = await renderSlide(elements, files, frame, { width: THUMB_WIDTH, background }); // NOSONAR S9382: in order on purpose (renders thumbnails in order and updates shared thumbnail state)
         thumbs = { ...thumbs, [frame.id]: canvas.toDataURL("image/png") };
         this.thumbVersions.set(frame.id, version);
       } catch (error) {

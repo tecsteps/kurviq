@@ -36,6 +36,48 @@ const accepted = (key: "c" | "h" | "z" | "a", value: unknown) => {
   return (doc.p[0].r[0] as any)[key] !== undefined;
 };
 
+const valueDescription = (key: string) => {
+  if (key === "z") return "a number from 0.1 to 10";
+  if (key === "a") return "an http(s): or mailto: link";
+  return "a CSS color, e.g. #1565c0";
+};
+
+const collectFlags = (spec: FormatSpec, where: string, set: Marks, unset: string[]) => {
+  for (const [name, key] of Object.entries(FLAGS)) {
+    const value = (spec as any)[name];
+    if (value === undefined) continue;
+    if (typeof value !== "boolean") {
+      throw new TypeError(`${where}: format.${name} must be true or false`);
+    }
+    if (value) {
+      (set as any)[key] = true;
+    } else {
+      unset.push(key);
+    }
+  }
+};
+
+const trimValue = (value: any) => typeof value === "string" ? value.trim() : value;
+
+const collectValues = (spec: FormatSpec, where: string, set: Marks, unset: string[]) => {
+  for (const [name, key] of Object.entries(VALUES)) {
+    let value = (spec as any)[name];
+    if (value === undefined) continue;
+    if (key === "z" && value === 1) value = null;
+    if (value === null || value === false) {
+      unset.push(key);
+    } else if (accepted(key, trimValue(value))) {
+      (set as any)[key] = trimValue(value);
+    } else {
+      throw new Error(
+        `${where}: format.${name} ${JSON.stringify(value)} is not valid (${
+          valueDescription(key)
+        }; null removes it)`,
+      );
+    }
+  }
+};
+
 /** checks a spec, returns how it changes a piece's marks */
 const changeOf = (spec: FormatSpec, where: string) => {
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
@@ -50,30 +92,8 @@ const changeOf = (spec: FormatSpec, where: string) => {
   }
   const set: Marks = {};
   const unset: string[] = [];
-  for (const [name, key] of Object.entries(FLAGS)) {
-    const value = (spec as any)[name];
-    if (value === undefined) continue;
-    if (typeof value !== "boolean") {
-      throw new Error(`${where}: format.${name} must be true or false`);
-    }
-    value ? ((set as any)[key] = true) : unset.push(key);
-  }
-  for (const [name, key] of Object.entries(VALUES)) {
-    let value = (spec as any)[name];
-    if (value === undefined) continue;
-    if (key === "z" && value === 1) value = null;
-    if (value === null || value === false) {
-      unset.push(key);
-    } else if (accepted(key, typeof value === "string" ? value.trim() : value)) {
-      (set as any)[key] = typeof value === "string" ? value.trim() : value;
-    } else {
-      throw new Error(
-        `${where}: format.${name} ${JSON.stringify(value)} is not valid (${
-          key === "z" ? "a number from 0.1 to 10" : key === "a" ? "an http(s): or mailto: link" : "a CSS color, e.g. #1565c0"
-        }; null removes it)`,
-      );
-    }
-  }
+  collectFlags(spec, where, set, unset);
+  collectValues(spec, where, set, unset);
   if (!Object.keys(set).length && !unset.length) {
     throw new Error(`${where}: format changes nothing: say what to set (e.g. "color": "#1565c0", "bold": true; null / false removes)`);
   }
@@ -104,17 +124,7 @@ const posAt = (doc: RichDoc, offset: number): Pos => {
 
 const shorten = (text: string) => (text.length > 300 ? `${text.slice(0, 300)}…` : text);
 
-/**
- * Applies one or more `format` specs to a doc. Throws (nothing changed) if a
- * phrase is not found or a spec is invalid; `where` names the element.
- */
-export const applyFormat = (doc: RichDoc, format: FormatSpec | FormatSpec[], where: string): RichDoc => {
-  const specs = Array.isArray(format) ? format : [format];
-  if (!specs.length) {
-    throw new Error(`${where}: format is empty`);
-  }
-  let next = doc;
-  for (const spec of specs) {
+const applySpec = (next: RichDoc, spec: FormatSpec, where: string): RichDoc => {
     const change = changeOf(spec, where);
     const text = searchableText(next);
     const starts: number[] = [];
@@ -137,6 +147,21 @@ export const applyFormat = (doc: RichDoc, format: FormatSpec | FormatSpec[], whe
     for (const start of chosen) {
       next = formatRange(next, posAt(next, start), posAt(next, start + spec.match.length), change);
     }
+  return next;
+};
+
+/**
+ * Applies one or more `format` specs to a doc. Throws (nothing changed) if a
+ * phrase is not found or a spec is invalid; `where` names the element.
+ */
+export const applyFormat = (doc: RichDoc, format: FormatSpec | FormatSpec[], where: string): RichDoc => {
+  const specs = Array.isArray(format) ? format : [format];
+  if (!specs.length) {
+    throw new Error(`${where}: format is empty`);
+  }
+  let next = doc;
+  for (const spec of specs) {
+    next = applySpec(next, spec, where);
   }
   return next;
 };

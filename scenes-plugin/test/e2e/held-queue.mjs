@@ -28,7 +28,8 @@ const browser = await puppeteer.launch({
 const ctx = await browser.createIncognitoBrowserContext();
 const page = await ctx.newPage();
 page.on("pageerror", (e) => log("PAGEERROR", e.message));
-await page.goto(`${BASE}/auth/login?return=${encodeURIComponent(`/${SCENE}`)}`, { waitUntil: "domcontentloaded" });
+const scenePath = `/${SCENE}`;
+await page.goto(`${BASE}/auth/login?return=${encodeURIComponent(scenePath)}`, { waitUntil: "domcontentloaded" });
 await page.goto(page.url().replace("/authorize", "/approve") + `&email=${encodeURIComponent(EMAIL)}`, { waitUntil: "networkidle2" });
 await sleep(3000);
 await page.keyboard.press("r");
@@ -38,8 +39,8 @@ await page.mouse.move(480, 360, { steps: 5 });
 await page.mouse.up();
 await page.keyboard.press("Escape");
 const report = () => page.evaluate(() => window.__live?.current()?.queueReport() ?? null);
-for (let i = 0; i < 30 && (await report())?.phase !== "ready"; i++) await sleep(1000);
-for (let i = 0; i < 20 && (await report())?.unsent; i++) await sleep(1000);
+for (let i = 0; i < 30 && (await report())?.phase !== "ready"; i++) await sleep(1000); // NOSONAR S9382: polling, one check after the other
+for (let i = 0; i < 20 && (await report())?.unsent; i++) await sleep(1000); // NOSONAR S9382: polling, one check after the other
 ok((await report())?.phase === "ready", "scene is live");
 
 // the other queue: tab GHOST (held by a lock here, as if its page were still busy) has a new frame
@@ -53,7 +54,8 @@ await page.evaluate(async (ghost) => {
   };
   // the lock a live page holds for its tab id: the queue is not a closed tab's yet
   window.__releaseGhost = await new Promise((held) => {
-    navigator.locks.request(`kurviq-live-tab:${s.fileId}:${ghost}`, () => new Promise((release) => held(release)));
+    // settles only when the lock is released (by __releaseGhost); nothing to wait for here
+    void navigator.locks.request(`kurviq-live-tab:${s.fileId}:${ghost}`, () => new Promise((release) => held(release)));
   });
   const batch = { sub: s.sub, fileId: s.fileId, tab: ghost, counter: 1, made: now, live: true, via: "user", changes: [{ k: "el", id: "frameX", value: frame, base: null, keys: null }], state: "queued", ...(s.epoch ? { epoch: s.epoch } : {}) };
   await new Promise((done, fail) => {
@@ -101,8 +103,8 @@ log("refusals while held", JSON.stringify(r.problems));
 const canvas = () =>
   page.evaluate(() => {
     const s = window.__live.current();
-    const live = s.surface.elements().filter((e) => !e.isDeleted).map((e) => e.id);
-    return { frameX: live.includes("frameX"), onFrame: live.includes("onFrame") };
+    const live = new Set(s.surface.elements().filter((e) => !e.isDeleted).map((e) => e.id));
+    return { frameX: live.has("frameX"), onFrame: live.has("onFrame") };
   });
 const shown = await canvas();
 ok(shown.frameX && shown.onFrame, "frame and element stay on the canvas", shown);
@@ -112,7 +114,7 @@ ok(still.frameX && still.onFrame, "still there after the canvas caught up with t
 
 // the other queue's page goes: its queue is a closed tab's, sent from here; then the waiting change lands
 await page.evaluate(() => window.__releaseGhost());
-for (let i = 0; i < 90 && (await report())?.unsent; i++) await sleep(1000);
+for (let i = 0; i < 90 && (await report())?.unsent; i++) await sleep(1000); // NOSONAR S9382: polling, one check after the other
 r = await report();
 ok(r.unsent === 0, "everything confirmed after the other queue went out", r);
 const after = await canvas();

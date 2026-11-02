@@ -41,12 +41,12 @@ export const senderHash = async (env: FeedbackEnv, value: string) => keyedHash(e
  * identifies nobody
  */
 export const keyedHash = async (secret64: string, value: string) => {
-  const raw = Uint8Array.from(atob(secret64), (char) => char.charCodeAt(0));
+  const raw = Uint8Array.from(atob(secret64), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding operates on bytes, not Unicode code points
   const master = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const derived = await crypto.subtle.sign("HMAC", master, new TextEncoder().encode("kurviq-sender-hash"));
   const key = await crypto.subtle.importKey("raw", derived, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
-  return [...mac.slice(0, 12)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return Array.from(mac.slice(0, 12), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
 /** store a report, or say why not: { id } | { error, status } */
@@ -67,7 +67,7 @@ export const saveFeedback = async (
     await db.prepare(SCHEMA).bind().run();
     schemaReady = true;
   }
-  const since = new Date(Date.now() - 3600_000).toISOString();
+  const since = new Date(Date.now() - 3_600_000).toISOString();
   const recent = await db
     .prepare("SELECT COUNT(*) AS n FROM feedback WHERE sender = ? AND created_at > ?")
     .bind(sender, since)

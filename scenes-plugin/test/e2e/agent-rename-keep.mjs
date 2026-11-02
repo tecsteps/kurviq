@@ -33,7 +33,9 @@ const signIn = async (email, path, space) => {
 const state = (page) =>
   page.evaluate(() => {
     const s = window.__live?.current();
-    if (!s) return "no live scene";
+    if (!s) {
+      return "no live scene";
+    }
     const canvas = s.surface.elements().filter((e) => !e.isDeleted).map((e) => `${e.id.slice(0, 4)} x=${Math.round(e.x)} ${e.strokeColor} v${e.version}`);
     return `phase=${s.phase} role=${s.role} stage=${s.stage()} canvas=[${canvas}] batches=${s.batches.map((b) => b.counter + b.state).join(",")} notes=${JSON.stringify(s.notes.map((n) => n.text))} losers=${s.losers.length} presence=${s.presence.map((p) => p.name).join("/")}`;
   });
@@ -41,7 +43,7 @@ const edit = (page, props) =>
   page.evaluate((props) => {
     const s = window.__live.current();
     const el = s.surface.elements().find((e) => !e.isDeleted);
-    s.surface.edit({ elements: [{ ...el, ...props, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }] });
+    s.surface.edit({ elements: [{ ...el, ...props, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }] }); // NOSONAR S2245: not security relevant (Excalidraw version nonce in a test)
     s.collect();
     return s.flush();
   }, props);
@@ -59,7 +61,7 @@ const draw = async (page, x, y) => {
 const owner = await signIn(OWNER, `/${SCENE}`);
 await sleep(3000);
 await draw(owner, 500, 400);
-for (let i = 0; i < 25 && !(await state(owner)).includes("phase=ready"); i++) await sleep(1000);
+for (let i = 0; i < 25 && !(await state(owner)).includes("phase=ready"); i++) await sleep(1000); // NOSONAR S9382: in order on purpose (polling waits for the preceding observation)
 const fileId = await owner.evaluate(() => window.__live.current().fileId);
 log("owner", await state(owner));
 // an agent's whole-scene write (PUT through this tab): via live sync, never Drive directly

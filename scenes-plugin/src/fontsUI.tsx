@@ -49,7 +49,7 @@ const familyFromFileName = (name: string) =>
   name
     .replace(/\.[^.]+$/, "")
     .replace(/[-_ ]?(Regular|Variable|VariableFont|Book|Normal|Roman|wght|\[.*\])+$/i, "")
-    .replace(/[_]+/g, " ")
+    .replace(/_+/g, " ")
     .trim();
 
 const AddFontDialog = () => {
@@ -91,7 +91,7 @@ const AddFontDialog = () => {
 
   return (
     <div className="kq-overlay" onPointerDown={(event) => event.target === event.currentTarget && setOpen(false)}>
-      <form
+      <form // NOSONAR S6847, S6819: form submission and existing modal focus/layout require the form dialog
         className="kq-dialog kq-dialog--narrow"
         role="dialog"
         aria-modal="true"
@@ -99,7 +99,7 @@ const AddFontDialog = () => {
         onKeyDown={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
-          submit();
+          submit().catch((error) => console.error("[fonts] could not add font", error));
         }}
       >
         <div className="kq-dialog__head">

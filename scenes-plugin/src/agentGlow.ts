@@ -29,76 +29,10 @@ const presenting = () => document.body.classList.contains("slides-presenting");
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
 
-/**
- * Show what an agent changed. `before`: the elements on the canvas before the edit (by id),
- * `after`: the elements the edit wrote (all of them, or only the changed ones).
- */
-export const showAgentChange = (api: ExcalidrawImperativeAPI | null, before: ReadonlyMap<string, El>, after: readonly El[]) => {
-  if (!api || typeof document === "undefined" || presenting()) {
-    return;
-  }
-  const now = new Map((api.getSceneElements() as unknown as El[]).map((el) => [el.id, el]));
-  const added: El[] = [];
-  const changed: El[] = [];
-  const deleted: El[] = [];
-  const differs = (a: El, b: El) => a.version !== b.version || a.versionNonce !== b.versionNonce;
-  for (const el of after) {
-    const was = before.get(el.id);
-    if (el.containerId) {
-      // a label: its shape stands for it (morphs when the label changed)
-      const shape = now.get(el.containerId);
-      if (shape && !el.isDeleted && was && differs(was, el) && !changed.includes(shape) && !added.some((item) => item.id === shape.id)) {
-        changed.push(shape);
-      }
-      continue;
-    }
-    if (el.isDeleted) {
-      if (was && !was.isDeleted) {
-        deleted.push(was);
-      }
-    } else if (!was || was.isDeleted) {
-      added.push(el);
-    } else if (differs(was, el) && !changed.some((item) => item.id === el.id)) {
-      changed.push(now.get(el.id) ?? el);
-    }
-  }
-  if (!added.length && !changed.length && !deleted.length) {
-    return;
-  }
-  running?.stop();
+type Ghost = { node: HTMLCanvasElement; bounds: readonly [number, number, number, number]; zoom: number; dx: number; dy: number; deleted: boolean };
 
-  const reduceMotion = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const morphing = !reduceMotion && added.length + changed.length + deleted.length <= MAX_MORPHS;
-  const labelsOf = (map: ReadonlyMap<string, El>, id: string) => [...map.values()].filter((el) => el.containerId === id && !el.isDeleted);
-
-  // the new elements: id → how they come in (labels follow their shape)
-  type Morph = { opacity: number; kind: "added" | "changed"; dx: number; dy: number };
-  const morphs = new Map<string, Morph>();
-  if (morphing) {
-    for (const el of added) {
-      for (const item of [el, ...labelsOf(now, el.id)]) {
-        morphs.set(item.id, { opacity: item.opacity ?? 100, kind: "added", dx: 0, dy: 0 });
-      }
-    }
-    for (const el of changed) {
-      const was = before.get(el.id)!;
-      const dx = was.x - el.x;
-      const dy = was.y - el.y;
-      for (const item of [el, ...labelsOf(now, el.id)]) {
-        morphs.set(item.id, { opacity: item.opacity ?? 100, kind: "changed", dx, dy });
-      }
-    }
-    // hidden right away (before the next paint), the old looks cover their place meanwhile
-    api.setElementRenderOverrides(new Map([...morphs].map(([id, morph]) => [id, { opacity: 0, offset: { x: morph.dx, y: morph.dy } }])));
-  }
-
-  const layer = document.createElement("div");
-  layer.className = "kq-agent-glow";
-  // inside the editor, under its toolbars and sidebars (z-index of the canvas buttons)
-  (document.querySelector(".excalidraw") ?? document.body).appendChild(layer);
-
+const collectGhosts = (api: ExcalidrawImperativeAPI, before: ReadonlyMap<string, El>, changed: El[], deleted: El[], morphing: boolean, layer: HTMLElement) => {
   // the old looks of changed and deleted elements, drawn by Excalidraw
-  type Ghost = { node: HTMLCanvasElement; bounds: readonly [number, number, number, number]; zoom: number; dx: number; dy: number; deleted: boolean };
   const ghosts: Ghost[] = [];
   if (morphing) {
     const appState = api.getAppState();
@@ -140,6 +74,101 @@ export const showAgentChange = (api: ExcalidrawImperativeAPI | null, before: Rea
         .catch(() => {});
     }
   }
+
+  return ghosts;
+};
+
+type Morph = { opacity: number; kind: "added" | "changed"; dx: number; dy: number };
+const labelsOf = (map: ReadonlyMap<string, El>, id: string) => [...map.values()].filter((el) => el.containerId === id && !el.isDeleted);
+
+const collectMorphs = (added: El[], changed: El[], before: ReadonlyMap<string, El>, now: ReadonlyMap<string, El>) => {
+  // the new elements: id → how they come in (labels follow their shape)
+  const morphs = new Map<string, Morph>();
+  for (const el of added) {
+    for (const item of [el, ...labelsOf(now, el.id)]) {
+      morphs.set(item.id, { opacity: item.opacity ?? 100, kind: "added", dx: 0, dy: 0 });
+    }
+  }
+  for (const el of changed) {
+    const was = before.get(el.id)!;
+    const dx = was.x - el.x;
+    const dy = was.y - el.y;
+    for (const item of [el, ...labelsOf(now, el.id)]) {
+      morphs.set(item.id, { opacity: item.opacity ?? 100, kind: "changed", dx, dy });
+    }
+  }
+  return morphs;
+};
+
+const markChangedContainer = (el: El, was: El | undefined, now: ReadonlyMap<string, El>, added: El[], changed: El[]) => {
+  // a label: its shape stands for it (morphs when the label changed)
+  const shape = now.get(el.containerId!);
+  if (
+    shape &&
+    !el.isDeleted &&
+    was &&
+    (was.version !== el.version || was.versionNonce !== el.versionNonce) &&
+    !changed.includes(shape) &&
+    !added.some((item) => item.id === shape.id)
+  ) {
+    changed.push(shape);
+  }
+};
+
+const classifyChanges = (before: ReadonlyMap<string, El>, after: readonly El[], now: ReadonlyMap<string, El>) => {
+  const added: El[] = [];
+  const changed: El[] = [];
+  const deleted: El[] = [];
+  const differs = (a: El, b: El) => a.version !== b.version || a.versionNonce !== b.versionNonce;
+  for (const el of after) {
+    const was = before.get(el.id);
+    if (el.containerId) {
+      markChangedContainer(el, was, now, added, changed);
+      continue;
+    }
+    if (el.isDeleted) {
+      if (was && !was.isDeleted) {
+        deleted.push(was);
+      }
+    } else if (!was || was.isDeleted) {
+      added.push(el);
+    } else if (differs(was, el) && !changed.some((item) => item.id === el.id)) {
+      changed.push(now.get(el.id) ?? el);
+    }
+  }
+  return { added, changed, deleted };
+};
+
+/**
+ * Show what an agent changed. `before`: the elements on the canvas before the edit (by id),
+ * `after`: the elements the edit wrote (all of them, or only the changed ones).
+ */
+export const showAgentChange = (api: ExcalidrawImperativeAPI | null, before: ReadonlyMap<string, El>, after: readonly El[]) => {
+  if (!api || typeof document === "undefined" || presenting()) {
+    return;
+  }
+  const now = new Map((api.getSceneElements() as unknown as El[]).map((el) => [el.id, el]));
+  const { added, changed, deleted } = classifyChanges(before, after, now);
+  if (!added.length && !changed.length && !deleted.length) {
+    return;
+  }
+  running?.stop();
+
+  const reduceMotion = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const morphing = !reduceMotion && added.length + changed.length + deleted.length <= MAX_MORPHS;
+
+  const morphs = morphing ? collectMorphs(added, changed, before, now) : new Map<string, Morph>();
+  if (morphing) {
+    // hidden right away (before the next paint), the old looks cover their place meanwhile
+    api.setElementRenderOverrides(new Map([...morphs].map(([id, morph]) => [id, { opacity: 0, offset: { x: morph.dx, y: morph.dy } }])));
+  }
+
+  const layer = document.createElement("div");
+  layer.className = "kq-agent-glow";
+  // inside the editor, under its toolbars and sidebars (z-index of the canvas buttons)
+  (document.querySelector(".excalidraw") ?? document.body).appendChild(layer);
+
+  const ghosts = collectGhosts(api, before, changed, deleted, morphing, layer);
 
   // the glow boxes around the result, in scene coordinates
   const marked = [...added.map((el) => ({ el, kind: "added" })), ...changed.map((el) => ({ el, kind: "changed" })), ...deleted.map((el) => ({ el, kind: "deleted" }))];

@@ -3,7 +3,7 @@
 // logos, screenshots and icons into scenes without writing scene JSON.
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 const MIME_BY_EXT = {
@@ -13,6 +13,18 @@ const MIME_BY_EXT = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
+};
+
+// Local inputs stay inside the directory the MCP server was launched in.
+const LOCAL_ROOT = process.cwd();
+const confinedPath = async (file) => {
+  const root = await realpath(LOCAL_ROOT);
+  const resolved = await realpath(file);
+  const relative = path.relative(root, resolved);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`file "${file}": must be inside ${LOCAL_ROOT}`);
+  }
+  return resolved;
 };
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -49,7 +61,7 @@ const fetchBytes = async (url) => {
     }
     size += value.byteLength;
     if (size > MAX_BYTES) {
-      await reader.cancel().catch(() => {});
+      await reader.cancel().catch(() => {}); // NOSONAR S9382: cancel this stream before reporting its size limit
       throw new Error(`${url}: larger than ${MAX_BYTES / 1024 / 1024} MB`);
     }
     chunks.push(value);
@@ -57,20 +69,27 @@ const fetchBytes = async (url) => {
   return { bytes: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))), mimeType: res.headers.get("content-type")?.split(";")[0] || null };
 };
 
+const svgSize = (bytes) => {
+  const svg = bytes.toString("utf8");
+  const tag = svg.match(/<svg\b[^>]*>/i)?.[0] || "";
+  const num = (attr) => {
+    const value = tag.match(new RegExp(String.raw`\b${attr}="([\d.]+)(px)?"`))?.[1];
+    return value ? Number.parseFloat(value) : null;
+  };
+  const viewBox = tag
+    .match(/viewBox="([^"]+)"/)?.[1]
+    ?.split(/[\s,]+/)
+    .map(Number);
+  const width = num("width") ?? viewBox?.[2];
+  const height = num("height") ?? viewBox?.[3];
+  return width && height ? { width, height } : null;
+};
+
 /** intrinsic size of PNG / GIF / JPEG / WebP / SVG, or null */
 const imageSize = (bytes, mimeType) => {
   try {
     if (mimeType === "image/svg+xml") {
-      const svg = bytes.toString("utf8");
-      const tag = svg.match(/<svg\b[^>]*>/i)?.[0] || "";
-      const num = (attr) => {
-        const value = tag.match(new RegExp(`\\b${attr}="([\\d.]+)(px)?"`))?.[1];
-        return value ? parseFloat(value) : null;
-      };
-      const viewBox = tag.match(/viewBox="([^"]+)"/)?.[1]?.split(/[\s,]+/).map(Number);
-      const width = num("width") ?? viewBox?.[2];
-      const height = num("height") ?? viewBox?.[3];
-      return width && height ? { width, height } : null;
+      return svgSize(bytes);
     }
     if (bytes.subarray(1, 4).toString() === "PNG") {
       return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
@@ -106,7 +125,7 @@ const sizedSvg = (svg) => {
     return svg;
   }
   const viewBox = tag.match(/viewBox="([^"]+)"/)?.[1]?.split(/[\s,]+/).map(Number);
-  if (!viewBox || viewBox.length !== 4) {
+  if (viewBox?.length !== 4) {
     return svg;
   }
   return svg.replace(tag, tag.replace(/<svg\b/i, `<svg width="${viewBox[2]}" height="${viewBox[3]}"`));
@@ -117,7 +136,7 @@ const tintSvg = (svg, color, set) => {
   if (set === "simple-icons") {
     return svg.replace(/<svg\b/, `<svg fill="${color}"`);
   }
-  return svg.replace(/currentColor/g, color);
+  return svg.replaceAll("currentColor", color);
 };
 
 /** lucide's icon names with their tags (for suggestions), loaded once */
@@ -126,7 +145,10 @@ const loadLucideTags = async () => {
   if (!lucideTags) {
     lucideTags = fetchBytes("https://unpkg.com/lucide-static/tags.json")
       .then(({ bytes }) => JSON.parse(bytes.toString("utf8")))
-      .catch(() => ((lucideTags = null), {}));
+      .catch(() => {
+        lucideTags = null;
+        return {};
+      });
   }
   return lucideTags;
 };
@@ -135,10 +157,14 @@ const loadLucideTags = async () => {
 const suggestIcons = async (name) => {
   const tags = await loadLucideTags();
   const words = name.split("-").filter((word) => word.length > 2);
+  const nameScore = (icon, word) => {
+    if (icon.split("-").includes(word)) return 3;
+    return icon.includes(word) ? 2 : 0;
+  };
   const score = (icon) =>
     words.reduce(
       (sum, word) =>
-        sum + (icon.split("-").includes(word) ? 3 : icon.includes(word) ? 2 : 0) + ((tags[icon] || []).some((tag) => tag.includes(word)) ? 1 : 0),
+        sum + nameScore(icon, word) + ((tags[icon] || []).some((tag) => tag.includes(word)) ? 1 : 0),
       0,
     );
   return Object.keys(tags)
@@ -166,7 +192,7 @@ const loadSource = async (el) => {
   }
   const src = String(el.src);
   if (src.startsWith("data:")) {
-    const match = src.match(/^data:([^;,]+)(;base64)?,(.*)$/s);
+    const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(src);
     if (!match) {
       throw new Error("src: invalid data URL");
     }
@@ -185,7 +211,37 @@ const loadSource = async (el) => {
   if (!MIME_BY_EXT[ext]) {
     throw new Error(`src "${src}": only ${Object.keys(MIME_BY_EXT).join(" ")} files`);
   }
-  return { bytes: await readFile(src), mimeType: MIME_BY_EXT[ext], what: src };
+  return { bytes: await readFile(await confinedPath(src)), mimeType: MIME_BY_EXT[ext], what: src };
+};
+
+const imageElement = (el, source, files) => {
+  if (source.mimeType === "image/svg+xml") {
+    source.bytes = Buffer.from(sizedSvg(source.bytes.toString("utf8")));
+  }
+  if (!source.mimeType?.startsWith("image/")) {
+    throw new Error(`${source.what}: not an image (${source.mimeType || "unknown type"})`);
+  }
+  if (source.bytes.length > MAX_BYTES) {
+    throw new Error(`${source.what}: larger than ${MAX_BYTES / 1024 / 1024} MB`);
+  }
+  const fileId = createHash("sha1").update(source.bytes).digest("hex"); // NOSONAR S4790: content identifier for Excalidraw deduplication, not authentication
+  files[fileId] = {
+    id: fileId,
+    mimeType: source.mimeType,
+    dataURL: `data:${source.mimeType};base64,${source.bytes.toString("base64")}`,
+    created: Date.now(),
+  };
+  // size: as given, else keep the aspect ratio of the image
+  const natural = imageSize(source.bytes, source.mimeType) || { width: 1, height: 1 };
+  const fallback = source.icon ? 48 : Math.min(400, natural.width || 200);
+  const width = el.width ?? (el.height ? (el.height * natural.width) / natural.height : fallback);
+  const height = el.height ?? (width * natural.height) / natural.width;
+  const rest = { ...el };
+  delete rest.src;
+  delete rest.svg;
+  delete rest.icon;
+  delete rest.color;
+  return { ...rest, type: "image", fileId, status: "saved", width, height, scale: [1, 1] };
 };
 
 /**
@@ -210,7 +266,9 @@ export const resolveImages = async (elements) => {
       failed.map(async ({ error, el }) => {
         const [set, name] = String(el.icon || "").split(":");
         const ideas = set === "lucide" && name ? await suggestIcons(name) : [];
-        return `- ${el.id ? `${el.id}: ` : ""}${error.message}${ideas.length ? `; similar: ${ideas.join(", ")}` : ""}`;
+        const prefix = el.id ? `${el.id}: ` : "";
+        const suffix = ideas.length ? `; similar: ${ideas.join(", ")}` : "";
+        return `- ${prefix}${error.message}${suffix}`;
       }),
     );
     throw new Error(`${failed.length} image${failed.length === 1 ? "" : "s"} could not be loaded (nothing was saved):\n${lines.join("\n")}`);
@@ -221,29 +279,7 @@ export const resolveImages = async (elements) => {
       continue;
     }
     const source = loaded[i];
-    if (source.mimeType === "image/svg+xml") {
-      source.bytes = Buffer.from(sizedSvg(source.bytes.toString("utf8")));
-    }
-    if (!source.mimeType?.startsWith("image/")) {
-      throw new Error(`${source.what}: not an image (${source.mimeType || "unknown type"})`);
-    }
-    if (source.bytes.length > MAX_BYTES) {
-      throw new Error(`${source.what}: larger than ${MAX_BYTES / 1024 / 1024} MB`);
-    }
-    const fileId = createHash("sha1").update(source.bytes).digest("hex");
-    files[fileId] = {
-      id: fileId,
-      mimeType: source.mimeType,
-      dataURL: `data:${source.mimeType};base64,${source.bytes.toString("base64")}`,
-      created: Date.now(),
-    };
-    // size: as given, else keep the aspect ratio of the image
-    const natural = imageSize(source.bytes, source.mimeType) || { width: 1, height: 1 };
-    const fallback = source.icon ? 48 : Math.min(400, natural.width || 200);
-    const width = el.width ?? (el.height ? (el.height * natural.width) / natural.height : fallback);
-    const height = el.height ?? (width * natural.height) / natural.width;
-    const { src: _src, svg: _svg, icon: _icon, color: _color, ...rest } = el;
-    out.push({ ...rest, type: "image", fileId, status: "saved", width, height, scale: [1, 1] });
+    out.push(imageElement(el, source, files));
   }
   return { elements: out, files };
 };
@@ -257,6 +293,6 @@ export const readEditFile = async (file) => {
   if (!path.isAbsolute(file)) {
     throw new Error(`file "${file}": use an absolute path`);
   }
-  const data = JSON.parse(await readFile(file, "utf8"));
+  const data = JSON.parse(await readFile(await confinedPath(file), "utf8"));
   return Array.isArray(data) ? { add: data } : data;
 };

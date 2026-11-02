@@ -21,7 +21,7 @@ import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from
 import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
 import { scenesController } from "./controller";
 import { liveSync } from "./online/liveSync";
-import { claimPubName, linkAccessOf, listPermissions, loadPubName, pubLink, releasePubName, setLinkAccess, shareLink } from "./online/drive";
+import { connection, claimPubName, linkAccessOf, listPermissions, loadPubName, pubLink, releasePubName, setLinkAccess, shareLink } from "./online/drive";
 import {
   editLocalScene,
   editOpenScene,
@@ -45,7 +45,7 @@ import { editsRunning, getPayload, keepPayload, onceForRequest } from "./agentRe
 import { getUpload, keepUpload, withUploads } from "./uploads";
 import { createReceiver, sendMessage } from "./online/frames";
 import { OUTDATED_MESSAGE, checkServerBuild } from "./online/version";
-import { connection } from "./online/drive";
+
 import { pairing } from "./online/pairing";
 import { serveRequest } from "./online/tabServer";
 
@@ -74,7 +74,7 @@ type Command =
       kurviqFonts?: unknown;
       deck: string;
       background?: string;
-      slides?: "all" | string | Array<number | string>;
+      slides?: string | Array<number | string>;
       includeSkipped?: boolean;
     }
   | { type: "preview"; elements: any[] }
@@ -197,7 +197,7 @@ const ensureFonts = async (command: any) => {
   );
   for (const name of missing) {
     try {
-      await addFont(await fontFromGoogle(name, { online: IS_ONLINE }));
+      await addFont(await fontFromGoogle(name, { online: IS_ONLINE })); // NOSONAR S9382: in order on purpose (font registration must finish in request order)
     } catch (error: any) {
       throw new Error(
         `Font "${name}": ${error.message}. Use a font from fonts.google.com by its exact name, one of app_status → customFonts, or Excalidraw's own (Excalifont, Nunito, Helvetica …). A font file must be added by the user (font picker → "Add font…" → Font file).`,
@@ -254,10 +254,113 @@ const withBodyStyle = (el: any, body: NonNullable<ReturnType<typeof bodyStyle>>)
   return el;
 };
 
+const restoreArrowBindings = (result: any[], rawById: Map<string, any>, needsConversion: (el: any) => boolean, byId: Map<string, any>) => {
+  for (const arrow of result) {
+    const raw = rawById.get(arrow.id);
+    if (!raw || !needsConversion(raw) || arrow.type !== "arrow") {
+      continue;
+    }
+    for (const key of ["startBinding", "endBinding"] as const) {
+      const binding = raw[key];
+      const target = binding?.elementId && byId.get(binding.elementId);
+      if (!target) {
+        continue;
+      }
+      arrow[key] = {
+        elementId: target.id,
+        fixedPoint: binding.fixedPoint ?? [0.5, 0.5],
+        mode: binding.mode ?? "orbit",
+      };
+      if (!target.boundElements?.some((b: any) => b.id === arrow.id)) {
+        target.boundElements = [
+          ...(target.boundElements || []),
+          { type: "arrow", id: arrow.id },
+        ];
+      }
+    }
+  }
+};
+
+const restoreFrameBounds = (result: any[], rawById: Map<string, any>, needsConversion: (el: any) => boolean) => {
+  for (const el of result) {
+    const raw = rawById.get(el.id);
+    if (raw && (el.type === "frame" || el.type === "magicframe") && needsConversion(raw)) {
+      for (const key of ["x", "y", "width", "height"] as const) {
+        if (typeof raw[key] === "number") {
+          el[key] = raw[key];
+        }
+      }
+    }
+  }
+};
+
+const restoreTextBox = (el: any, raw: any, byId: Map<string, any>) => {
+  // text with a given width: a box from x to x + width, its lines wrap at
+  // the width and textAlign aligns them inside it (the converter would treat
+  // x as the anchor of the alignment and shrink the box to the text)
+  if (el.type === "text" && !el.containerId && !el.customData?.rich && raw.autoResize !== true && typeof raw.width === "number" && raw.width > 0) {
+    el.autoResize = false;
+    el.width = raw.width;
+    if (typeof raw.x === "number") {
+      el.x = raw.x;
+    }
+    const { x: _x, y: _y, ...size } = refreshTextDimensions(el, null, byId as any) || ({} as any);
+    Object.assign(el, size, { width: raw.width });
+    return;
+  }
+  // autoResize: true with a width: one line, aligned inside that box
+  if (el.type === "text" && !el.containerId && el.autoResize !== false && typeof raw.width === "number" && typeof raw.x === "number") {
+    if (el.textAlign === "center") {
+      el.x = raw.x + (raw.width - el.width) / 2;
+    } else if (el.textAlign === "right") {
+      el.x = raw.x + raw.width - el.width;
+    } else {
+      el.x = raw.x;
+    }
+  }
+};
+
+const restoreRichText = (el: any, raw: any, byId: Map<string, any>) => {
+  // formatted text: measured as it shows (the converter measured it as
+  // plain text); with `autoResize: false` it wraps at its width
+  if (el.type === "text" && !el.containerId && el.customData?.rich) {
+    if (raw.autoResize !== true && typeof raw.width === "number") {
+      el.autoResize = false;
+      el.width = raw.width;
+      if (typeof raw.x === "number") {
+        el.x = raw.x;
+      }
+    }
+    Object.assign(el, refreshTextDimensions(el, null, byId as any) || {});
+  }
+};
+
+const restoreConvertedText = (result: any[], rawById: Map<string, any>, byId: Map<string, any>, needsConversion: (el: any) => boolean) => {
+  for (const el of result) {
+    const raw = rawById.get(el.id);
+    // labels made from `label` live on their shape's slide
+    if (el.containerId && !raw) {
+      const container = byId.get(el.containerId);
+      if (container && el.frameId !== (container.frameId ?? null)) {
+        el.frameId = container.frameId ?? null;
+      }
+    }
+    if (!raw || !needsConversion(raw)) {
+      continue;
+    }
+    // closed (fillable) lines: the converter drops `polygon`
+    if (el.type === "line" && typeof raw.polygon === "boolean") {
+      el.polygon = raw.polygon;
+    }
+    restoreRichText(el, raw, byId);
+    restoreTextBox(el, raw, byId);
+  }
+};
+
 const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) => {
   const input = raw.map(withFontIds);
   // in a deck, new text without its own font / size / color takes the template's body text style (like the app's defaults)
-  const body = bodyStyle(input.filter((el) => el && el.version !== undefined));
+  const body = bodyStyle(input.filter((el) => el?.version !== undefined));
   const elements = placeOnSlides(input.map(applyMarkdown), input).map((el) => (el && body ? withBodyStyle(el, body) : el));
   // text is measured during conversion: the fonts (incl. the characters
   // used) must be loaded, otherwise widths are computed with a fallback font
@@ -322,8 +425,8 @@ const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) 
     const el = convertedById.get(raw.id);
     if (el) {
       // new elements get fresh fractional indices fitting their position
-      result.push({ ...el, index: null });
       result.push(
+        { ...el, index: null },
         ...(labelsOf.get(raw.id) || []).map((label) => ({ ...label, index: null })),
       );
     } else {
@@ -334,96 +437,13 @@ const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) 
   // convertToExcalidrawElements only understands `start`/`end`; carry over the
   // `startBinding`/`endBinding` ({ elementId, fixedPoint }) used by excalidraw-mcp
   const byId = new Map(result.map((el) => [el.id, el]));
-  for (const arrow of result) {
-    const raw = rawById.get(arrow.id);
-    if (!raw || !needsConversion(raw) || arrow.type !== "arrow") {
-      continue;
-    }
-    for (const key of ["startBinding", "endBinding"] as const) {
-      const binding = raw[key];
-      const target = binding?.elementId && byId.get(binding.elementId);
-      if (!target) {
-        continue;
-      }
-      arrow[key] = {
-        elementId: target.id,
-        fixedPoint: binding.fixedPoint ?? [0.5, 0.5],
-        mode: binding.mode ?? "orbit",
-      };
-      if (!target.boundElements?.some((b: any) => b.id === arrow.id)) {
-        target.boundElements = [
-          ...(target.boundElements || []),
-          { type: "arrow", id: arrow.id },
-        ];
-      }
-    }
-  }
+  restoreArrowBindings(result, rawById, needsConversion, byId);
   // normalize like the editor does on load (fractional indices, bindings, …)
   // so the committed file doesn't change again when the app saves it
   // frames keep the position and size given: the converter fits frames with
   // children to them whenever x / y is 0 (falsy)
-  for (const el of result) {
-    const raw = rawById.get(el.id);
-    if (raw && (el.type === "frame" || el.type === "magicframe") && needsConversion(raw)) {
-      for (const key of ["x", "y", "width", "height"] as const) {
-        if (typeof raw[key] === "number") {
-          el[key] = raw[key];
-        }
-      }
-    }
-  }
-  for (const el of result) {
-    const raw = rawById.get(el.id);
-    // labels made from `label` live on their shape's slide
-    if (el.containerId && !raw) {
-      const container = byId.get(el.containerId);
-      if (container && el.frameId !== (container.frameId ?? null)) {
-        el.frameId = container.frameId ?? null;
-      }
-    }
-    if (!raw || !needsConversion(raw)) {
-      continue;
-    }
-    // closed (fillable) lines: the converter drops `polygon`
-    if (el.type === "line" && typeof raw.polygon === "boolean") {
-      el.polygon = raw.polygon;
-    }
-    // formatted text: measured as it shows (the converter measured it as
-    // plain text); with `autoResize: false` it wraps at its width
-    if (el.type === "text" && !el.containerId && el.customData?.rich) {
-      if (raw.autoResize !== true && typeof raw.width === "number") {
-        el.autoResize = false;
-        el.width = raw.width;
-        if (typeof raw.x === "number") {
-          el.x = raw.x;
-        }
-      }
-      Object.assign(el, refreshTextDimensions(el, null, byId as any) || {});
-    }
-    // text with a given width: a box from x to x + width, its lines wrap at
-    // the width and textAlign aligns them inside it (the converter would treat
-    // x as the anchor of the alignment and shrink the box to the text)
-    if (el.type === "text" && !el.containerId && !el.customData?.rich && raw.autoResize !== true && typeof raw.width === "number" && raw.width > 0) {
-      el.autoResize = false;
-      el.width = raw.width;
-      if (typeof raw.x === "number") {
-        el.x = raw.x;
-      }
-      const { x: _x, y: _y, ...size } = refreshTextDimensions(el, null, byId as any) || ({} as any);
-      Object.assign(el, size, { width: raw.width });
-      continue;
-    }
-    // autoResize: true with a width: one line, aligned inside that box
-    if (el.type === "text" && !el.containerId && el.autoResize !== false && typeof raw.width === "number" && typeof raw.x === "number") {
-      if (el.textAlign === "center") {
-        el.x = raw.x + (raw.width - el.width) / 2;
-      } else if (el.textAlign === "right") {
-        el.x = raw.x + raw.width - el.width;
-      } else {
-        el.x = raw.x;
-      }
-    }
-  }
+  restoreFrameBounds(result, rawById, needsConversion);
+  restoreConvertedText(result, rawById, byId, needsConversion);
   syncInvalidIndices(result);
   const restored = restoreElements(result, null, { repairBindings: true });
   return deck ? withTemplate(restored, deck) : restored;
@@ -447,13 +467,18 @@ const fitLabel = (el: any) => {
       .map((word) => measureText(word, font, getLineHeight(fontFamily)).width),
   );
   // usable width inside the shape (as Excalidraw lays out bound text)
-  const factor = el.type === "ellipse" ? Math.SQRT2 : el.type === "diamond" ? 2 : 1;
+  let factor = 1;
+  if (el.type === "ellipse") factor = Math.SQRT2;
+  else if (el.type === "diamond") factor = 2;
   const needed = (longestWord + BOUND_TEXT_PADDING * 2 + 2) * factor;
   if (el.width >= needed) {
     return el;
   }
   const grow = needed - el.width;
-  const height = el.type === "rectangle" ? el.height : Math.max(el.height ?? 0, el.height ? (el.height * needed) / el.width : needed);
+  let height = el.height;
+  if (el.type !== "rectangle") {
+    height = Math.max(el.height ?? 0, el.height ? (el.height * needed) / el.width : needed);
+  }
   return { ...el, x: el.x - grow / 2, width: needed, ...(el.height ? { y: el.y - (height - el.height) / 2, height } : {}) };
 };
 
@@ -528,6 +553,15 @@ const showLive = async (elements: any[]) => {
   }
 };
 
+const driveStatus = (sync: ReturnType<typeof scenesController.getState>["sync"]) => {
+  if (sync.notConnected) return "not connected (all scenes stay in the user's browser, local-only)";
+  if (sync.readOnly) return `read only: ${sync.readOnly} (scenes can be read, not changed)`;
+  if (sync.driveOnline === false) return "offline";
+  if (sync.driveOnline) return "online";
+  if (sync.lastCheckedAt) return "unknown";
+  return "checking (the first check with Drive hasn't finished yet)";
+};
+
 const status = () => {
   const { current, dirty, list, sync, autoSync } = scenesController.getState();
   return {
@@ -536,17 +570,7 @@ const status = () => {
     autoSync,
     // fonts the user added (besides Excalidraw's own): usable by name as fontFamily
     customFonts: customFonts.list().map((font) => font.family),
-    drive: sync.notConnected
-      ? "not connected (all scenes stay in the user's browser, local-only)"
-      : sync.readOnly
-      ? `read only: ${sync.readOnly} (scenes can be read, not changed)`
-      : sync.driveOnline === false
-      ? "offline"
-      : sync.driveOnline
-      ? "online"
-      : sync.lastCheckedAt
-      ? "unknown"
-      : "checking (the first check with Drive hasn't finished yet)",
+    drive: driveStatus(sync),
     lastCheckedAt: sync.lastCheckedAt,
     // the health of this tab: what it is working on (an edit or picture running for minutes is stuck)
     busy: [...busy.values()].map(({ what, since }) => `${what} for ${Math.round((Date.now() - since) / 1000)} s`),
@@ -559,9 +583,13 @@ const status = () => {
     // "name: status": synced / ahead (not pushed) / behind / diverged / conflict / local
     scenes: list
       .filter((item) => item.name !== null)
-      .map(({ name, status, pendingRename, localOnly }) =>
-        `${name}: ${status}${localOnly ? " (only in the user's browser, never synced to Drive)" : scenesController.autoSyncFor(name!) ? "" : " (auto-sync off)"}${pendingRename ? ` (rename in Drive pending, still "${pendingRename}" there)` : ""}`,
-      ),
+      .map(({ name, status, pendingRename, localOnly }) => {
+        let syncInfo = "";
+        if (localOnly) syncInfo = " (only in the user's browser, never synced to Drive)";
+        else if (!scenesController.autoSyncFor(name!)) syncInfo = " (auto-sync off)";
+        const rename = pendingRename ? ` (rename in Drive pending, still "${pendingRename}" there)` : "";
+        return `${name}: ${status}${syncInfo}${rename}`;
+      }),
     autoSyncInfo:
       "The app pushes local changes of a scene to Drive by itself (about 10 s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push. " +
       "Scenes with a live-… status save live through Kurviq's server (live-browser: the latest change is still in the user's browser; live-server: on the server; live-drive: in Drive): everyone who has them open sees changes within a second, and your edits reach them the same way.",
@@ -571,7 +599,7 @@ const status = () => {
 /** app_status: right after the tab opened, wait a moment for its first Drive check */
 const statusSettled = async () => {
   for (let i = 0; i < 25 && !scenesController.getState().sync.lastCheckedAt && !scenesController.getState().sync.notConnected; i++) {
-    await sleep(200);
+    await sleep(200); // NOSONAR S9382: in order on purpose (polls Drive status with a delay between checks)
   }
   return status();
 };
@@ -645,6 +673,19 @@ const sceneJsonWithUploads = async (json: string) => {
  * Images an agent uploaded (kurviq.com/mcp/<key>/upload) are referenced by
  * fileId: whatever the command, the file comes along from this tab's uploads.
  */
+const attachUpdatedUploads = async (command: any) => {
+  const files = { ...command.files };
+  for (const item of command.update) {
+    if (typeof item?.fileId === "string" && !files[item.fileId]) {
+      const upload = await getUpload(item.fileId); // NOSONAR S9382: in order on purpose (uploads are attached in command order without concurrent requests)
+      if (upload) {
+        files[item.fileId] = { id: upload.id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created };
+      }
+    }
+  }
+  command.files = files;
+};
+
 const attachUploads = async (command: any) => {
   if (Array.isArray(command.add)) {
     const { elements, files } = await withUploads(command.add, command.files || {});
@@ -654,16 +695,7 @@ const attachUploads = async (command: any) => {
   // an update that points an image at another uploaded picture: that picture comes along too
   // (the canvas holds only pictures a scene used, and none after a reload)
   if (Array.isArray(command.update)) {
-    const files = { ...(command.files || {}) };
-    for (const item of command.update) {
-      if (typeof item?.fileId === "string" && !files[item.fileId]) {
-        const upload = await getUpload(item.fileId);
-        if (upload) {
-          files[item.fileId] = { id: upload.id, mimeType: upload.mimeType, dataURL: upload.dataURL, created: upload.created };
-        }
-      }
-    }
-    command.files = files;
+    await attachUpdatedUploads(command);
   }
   if (command.type === "convert" && Array.isArray(command.elements)) {
     command.elements = (await withUploads(command.elements)).elements;
@@ -676,6 +708,110 @@ const attachUploads = async (command: any) => {
   }
 };
 
+const addCommandFont = async (command: Extract<Command, { type: "add-font" }>) => {
+  const name = String((command as any).name || "").trim();
+  const known = customFonts.byName(name);
+  if (!known) {
+    await ensureFonts({ add: [{ type: "text", fontFamily: name }] });
+  }
+  return {
+    added: customFonts.byName(name)?.family ?? name,
+    alreadyThere: !!known,
+    use: `"fontFamily": "${customFonts.byName(name)?.family ?? name}"`,
+    customFonts: customFonts.list().map((font) => font.family),
+  };
+ };
+
+const uploadCommandFile = async (command: Extract<Command, { type: "upload" }>) => {
+  // an image the agent uploaded: kept in this tab until a scene uses it
+  const file = await keepUpload((command as any).file);
+  scenesController.getApi()?.addFiles([{ id: file.id, mimeType: file.mimeType, dataURL: file.dataURL, created: file.created } as any]);
+  const kb = Math.round((file.dataURL.length - file.dataURL.indexOf(",") - 1) * 0.75 / 1024);
+  return {
+    fileId: file.id,
+    mimeType: file.mimeType,
+    width: file.width,
+    height: file.height,
+    kb,
+    // the agent decides; Kurviq keeps the image as it is
+    ...(kb > 500 || Math.max(file.width ?? 0, file.height ?? 0) > 2400
+      ? { note: `Large for a scene: ${kb} KB, ${file.width}×${file.height}. Every picture travels with the scene file and counts toward Kurviq's 30 MB per scene (stored at about 1.8× its size). A slide is 1920×1080: about twice the size it is shown at is enough. WebP (keeps transparency) or JPEG usually needs a fraction of a PNG's bytes. Shrinking is up to you.` }
+      : {}),
+  };
+ };
+
+const commandShortLink = async (command: Extract<Command, { type: "short-link" }>) => {
+  // a scene's links: kurviq.com/pub/<short name> (unique on Kurviq) and the long one; optionally who may open them
+  const fileId = await scenesController.fileForSharing(command.name);
+  if (command.access) {
+    await setLinkAccess(fileId, command.access);
+  }
+  const before = await loadPubName(fileId);
+  if (command.shortName === null && before) {
+    await releasePubName(fileId, before);
+  } else if (command.shortName && command.shortName !== before) {
+    await claimPubName(fileId, command.shortName);
+  }
+  const short = command.shortName === undefined ? before : command.shortName;
+  const access = linkAccessOf(await listPermissions(fileId));
+  const link = short ? pubLink(short) : shareLink(fileId, command.name);
+  return {
+    scene: command.name,
+    shortLink: short ? pubLink(short) : null,
+    longLink: shareLink(fileId, command.name),
+    presentLink: `${link}?present`,
+    generalAccess: access,
+    ...(access === "restricted"
+      ? { note: "Only people the scene is shared with can open these links (signed in with Google). For everyone: generalAccess \"reader\", only if the user wants it public." }
+      : {}),
+  };
+ };
+
+const commandResolveConflict = async (command: Extract<Command, { type: "conflict-resolve" }>) => {
+  switch (command.resolution) {
+          case "merge":
+            return {
+              ...(await scenesController.resolveConflict(command.name, command.choices || {}, command.otherwise)),
+              ...status(),
+            };
+          case "mine":
+            await scenesController.keepMine(command.name);
+            return { resolved: true, kept: "mine (Drive overwritten)", ...status() };
+          case "theirs":
+            await scenesController.takeTheirs(command.name);
+            return { resolved: true, kept: "Drive's (local changes discarded)", ...status() };
+          case "both": {
+            const copy = await scenesController.keepBoth(command.name);
+            return { resolved: true, kept: `Drive's; local version saved as "${copy}"`, copy, ...status() };
+          }
+        }
+        throw new Error(`Unknown resolution: ${(command as any).resolution}`);
+ };
+
+const commandRender = async (command: Extract<Command, { type: "render" }>) => {
+  if (command.conflict) {
+          const scene = await scenesController.conflictScene(command.conflict.name, command.conflict.side);
+          return renderScene({ ...command, scene }, () => {
+            throw new Error("unreachable");
+          }, convertMcpElements);
+        }
+        return renderScene(
+          command,
+          () => {
+            const api = scenesController.getApi();
+            if (!api) {
+              throw new Error("Editor not ready");
+            }
+            return {
+              elements: api.getSceneElements(),
+              files: api.getFiles(),
+              background: api.getAppState().viewBackgroundColor,
+            };
+          },
+          convertMcpElements,
+        );
+ };
+
 const runCommand = async (command: Command) => {
   await ensureFonts(command);
   if (Array.isArray((command as any).update)) {
@@ -686,36 +822,8 @@ const runCommand = async (command: Command) => {
   }
   await attachUploads(command);
   switch (command.type) {
-    case "add-font": {
-      const name = String((command as any).name || "").trim();
-      const known = customFonts.byName(name);
-      if (!known) {
-        await ensureFonts({ add: [{ type: "text", fontFamily: name }] });
-      }
-      return {
-        added: customFonts.byName(name)?.family ?? name,
-        alreadyThere: !!known,
-        use: `"fontFamily": "${customFonts.byName(name)?.family ?? name}"`,
-        customFonts: customFonts.list().map((font) => font.family),
-      };
-    }
-    case "upload": {
-      // an image the agent uploaded: kept in this tab until a scene uses it
-      const file = await keepUpload((command as any).file);
-      scenesController.getApi()?.addFiles([{ id: file.id, mimeType: file.mimeType, dataURL: file.dataURL, created: file.created } as any]);
-      const kb = Math.round((file.dataURL.length - file.dataURL.indexOf(",") - 1) * 0.75 / 1024);
-      return {
-        fileId: file.id,
-        mimeType: file.mimeType,
-        width: file.width,
-        height: file.height,
-        kb,
-        // the agent decides; Kurviq keeps the image as it is
-        ...(kb > 500 || Math.max(file.width ?? 0, file.height ?? 0) > 2400
-          ? { note: `Large for a scene: ${kb} KB, ${file.width}×${file.height}. Every picture travels with the scene file and counts toward Kurviq's 30 MB per scene (stored at about 1.8× its size). A slide is 1920×1080: about twice the size it is shown at is enough. WebP (keeps transparency) or JPEG usually needs a fraction of a PNG's bytes. Shrinking is up to you.` }
-          : {}),
-      };
-    }
+    case "add-font": return addCommandFont(command);
+    case "upload": return uploadCommandFile(command);
     case "flush":
       return scenesController.flush(command.name);
     case "scene-edit": {
@@ -735,7 +843,7 @@ const runCommand = async (command: Command) => {
       return { json: await getPayload(String(command.id || "")) };
     case "ping":
       // the health check: answered through the same queues as edits and pictures
-      return queueEdit(() => exclusive(async () => ({ pong: true })));
+      return queueEdit(() => exclusive(() => Promise.resolve({ pong: true })));
     case "http":
       return serveRequest(command.request);
     case "status":
@@ -755,32 +863,7 @@ const runCommand = async (command: Command) => {
     case "local-only":
       await scenesController.setLocalOnly(command.name, command.on);
       return status();
-    case "short-link": {
-      // a scene's links: kurviq.com/pub/<short name> (unique on Kurviq) and the long one; optionally who may open them
-      const fileId = await scenesController.fileForSharing(command.name);
-      if (command.access) {
-        await setLinkAccess(fileId, command.access);
-      }
-      const before = await loadPubName(fileId);
-      if (command.shortName === null && before) {
-        await releasePubName(fileId, before);
-      } else if (command.shortName && command.shortName !== before) {
-        await claimPubName(fileId, command.shortName);
-      }
-      const short = command.shortName === undefined ? before : command.shortName;
-      const access = linkAccessOf(await listPermissions(fileId));
-      const link = short ? pubLink(short) : shareLink(fileId, command.name);
-      return {
-        scene: command.name,
-        shortLink: short ? pubLink(short) : null,
-        longLink: shareLink(fileId, command.name),
-        presentLink: `${link}?present`,
-        generalAccess: access,
-        ...(access === "restricted"
-          ? { note: "Only people the scene is shared with can open these links (signed in with Google). For everyone: generalAccess \"reader\", only if the user wants it public." }
-          : {}),
-      };
-    }
+    case "short-link": return commandShortLink(command);
     case "open":
       await scenesController.open(command.name);
       return status();
@@ -817,46 +900,9 @@ const runCommand = async (command: Command) => {
     case "conflict-info":
       return scenesController.conflictInfo(command.name);
     case "conflict-resolve":
-      switch (command.resolution) {
-        case "merge":
-          return {
-            ...(await scenesController.resolveConflict(command.name, command.choices || {}, command.otherwise)),
-            ...status(),
-          };
-        case "mine":
-          await scenesController.keepMine(command.name);
-          return { resolved: true, kept: "mine (Drive overwritten)", ...status() };
-        case "theirs":
-          await scenesController.takeTheirs(command.name);
-          return { resolved: true, kept: "Drive's (local changes discarded)", ...status() };
-        case "both": {
-          const copy = await scenesController.keepBoth(command.name);
-          return { resolved: true, kept: `Drive's; local version saved as "${copy}"`, copy, ...status() };
-        }
-      }
-      throw new Error(`Unknown resolution: ${(command as any).resolution}`);
+      return commandResolveConflict(command);
     case "render":
-      if (command.conflict) {
-        const scene = await scenesController.conflictScene(command.conflict.name, command.conflict.side);
-        return renderScene({ ...command, scene }, () => {
-          throw new Error("unreachable");
-        }, convertMcpElements);
-      }
-      return renderScene(
-        command,
-        () => {
-          const api = scenesController.getApi();
-          if (!api) {
-            throw new Error("Editor not ready");
-          }
-          return {
-            elements: api.getSceneElements(),
-            files: api.getFiles(),
-            background: api.getAppState().viewBackgroundColor,
-          };
-        },
-        convertMcpElements,
-      );
+      return commandRender(command);
     case "deck-check":
       // the scene's own fonts first: text is measured with them
       await registerSceneFonts(command);
@@ -904,7 +950,7 @@ const report = () => {
     }
     return;
   }
-  scenesApi.reportState(tabState());
+  scenesApi.reportState(tabState()).catch((error) => console.error("[scenes] report state failed", error));
 };
 
 const handleCommand = async (event: { id: string; command: Command }, reply: (payload: { ok: boolean; result?: unknown; error?: string }) => void) => {
@@ -970,9 +1016,9 @@ const openSocket = () => {
         answer({ ok: false, error: OUTDATED_MESSAGE });
         return;
       }
-      handleCommand(event, answer);
+      handleCommand(event, answer).catch((error) => console.error("[kurviq] command reply failed", error));
     } else if (event.type === "scene-saved" || event.type === "scene-renamed" || event.type === "scene-deleted") {
-      scenesController.syncNow();
+      scenesController.syncNow().catch((error) => console.error("[scenes] sync failed", error));
     }
   };
   ws.onclose = () => {
@@ -1056,7 +1102,9 @@ export const connectLive = () => {
   source.onmessage = async (message) => {
     const event = JSON.parse(message.data);
     if (event.type === "command") {
-      handleCommand(event, (payload) => scenesApi.sendResult(event.id, payload));
+      handleCommand(event, (payload) => {
+        scenesApi.sendResult(event.id, payload).catch((error) => console.error("[scenes] command result failed", error));
+      }).catch((error) => console.error("[scenes] command reply failed", error));
     } else if (["scene-saved", "scene-renamed", "scene-deleted"].includes(event.type)) {
       if (IS_RENDERER || event.source === `app:${TAB_ID}`) {
         return;
@@ -1065,7 +1113,7 @@ export const connectLive = () => {
         await scenesController.followRemoteRename(event.from, event.to, event.md5 ?? null);
       }
       // someone else pushed: check and sync (visible in the activity log)
-      scenesController.syncNow();
+      scenesController.syncNow().catch((error) => console.error("[scenes] sync failed", error));
     }
   };
   reportSceneChanges();

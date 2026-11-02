@@ -181,7 +181,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     const load = fileId
       ? readSharedScene(fileId).then((answer) => {
           if (!("scene" in answer)) {
-            return Promise.reject(Object.assign(new Error(""), { missing: answer }));
+            throw Object.assign(new Error("Shared scene not available"), { missing: answer });
           }
           if (answer.scene.name) {
             setName(answer.scene.name);
@@ -262,7 +262,8 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     let lastSeen = Date.now();
     /** nobody there: no timer runs until the visitor is back */
     let paused = false;
-    sharedSceneVersion(fileId).then((v) => (version.current ??= v));
+    // a failed first look is harmless: the first check notes the version
+    sharedSceneVersion(fileId).then((v) => (version.current ??= v)).catch(() => {});
     const away = () => document.visibilityState !== "visible" || Date.now() - lastSeen > AWAY_AFTER_MS;
     const schedule = () => {
       clearTimeout(timer);
@@ -318,7 +319,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
       if (paused && document.visibilityState === "visible") {
         paused = false;
         step = 0;
-        check();
+        void check(); // check catches its own errors
       }
     };
     const activity = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"] as const;
@@ -364,7 +365,8 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     }
     presenting ? params.set("present", "") : params.delete("present");
     const query = params.toString().replace(/present=(&|$)/, "present$1");
-    window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+    const search = query ? `?${query}` : "";
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${search}`);
   }, [presenting]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -382,8 +384,9 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
   };
 
   return (
-    <div
-      ref={root}
+    // a full-page overlay that keeps the editor's keys away; a <dialog> would change its layering and Escape
+    <div // NOSONAR S6819 S6847: overlay div on purpose (see above)
+      ref={root} // NOSONAR S6819 S6847
       className={clsx("public-scene", { "public-scene--presenting": presenting })}
       role="dialog"
       aria-modal="true"

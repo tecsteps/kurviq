@@ -31,7 +31,7 @@ const readEnv = () => {
       continue;
     }
     for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/);
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: build-time matching of trusted local configuration or upstream source
       if (match) {
         env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
       }
@@ -52,7 +52,7 @@ const injectScenesPlugin = () => ({
   name: "excalidraw-scenes-inject",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    if (!id.replace(/\\/g, "/").endsWith("/excalidraw-app/App.tsx")) {
+    if (!id.replaceAll(/\\/g, "/").endsWith("/excalidraw-app/App.tsx")) {
       return null;
     }
     const fail = (what: string) => {
@@ -64,7 +64,7 @@ const injectScenesPlugin = () => ({
     if (/\brenderTopLeftUI=/.test(code)) {
       fail("App.tsx already uses renderTopLeftUI");
     }
-    const topRight = /(\n\s*)renderTopRightUI=\{/;
+    const topRight = /(\n\s*)renderTopRightUI=\{/; // NOSONAR S8786: build-time matching of trusted local configuration or upstream source
     if (!topRight.test(code)) {
       fail("anchor `renderTopRightUI={` not found");
     }
@@ -112,7 +112,7 @@ const customFonts = () => ({
   name: "excalidraw-scenes-custom-fonts",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replace(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll(/\\/g, "/").split("?")[0];
     if (!file.endsWith("/packages/excalidraw/components/FontPicker/FontPickerList.tsx")) {
       return null;
     }
@@ -120,8 +120,9 @@ const customFonts = () => ({
     if (code.split(anchor).length !== 2) {
       throw new Error("[excalidraw-scenes] custom fonts: FontPickerList.tsx changed upstream. Update scenes-plugin/vite.config.mts.");
     }
+    const patched = code.replace(anchor, `${anchor}        <__KurviqAddFont />\n`);
     return {
-      code: `import { AddFontButton as __KurviqAddFont } from ${JSON.stringify(FONTS_UI_ENTRY)};\n${code.replace(anchor, `${anchor}        <__KurviqAddFont />\n`)}`,
+      code: `import { AddFontButton as __KurviqAddFont } from ${JSON.stringify(FONTS_UI_ENTRY)};\n${patched}`,
       map: null,
     };
   },
@@ -137,12 +138,12 @@ const textPadding = () => ({
   name: "excalidraw-scenes-text-padding",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replace(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll(/\\/g, "/").split("?")[0];
     const patch = (name: string, steps: Array<[string | RegExp, string, number?]>) => {
       let next = code;
       for (const [from, to, count = 1] of steps) {
         const found =
-          typeof from === "string" ? next.split(from).length - 1 : (next.match(new RegExp(from.source, "g")) || []).length;
+          typeof from === "string" ? next.split(from).length - 1 : Array.from(next.matchAll(new RegExp(from.source, "g"))).length;
         if (found !== count) {
           throw new Error(
             `[excalidraw-scenes] text padding: ${name} changed upstream (expected ${count}× ${String(from).slice(0, 60)}, found ${found}). Update scenes-plugin/vite.config.mts.`,
@@ -168,8 +169,8 @@ const textPadding = () => ({
         throw new Error("[excalidraw-scenes] text padding: getBoundTextMaxWidth/Height not found upstream");
       }
       code = code
-        .replace(maxWidth, maxWidth.split("BOUND_TEXT_PADDING * 2").join("__textPadding(container) * 2").replace(": BOUND_TEXT_PADDING) *", ": __textPadding(container)) *"))
-        .replace(maxHeight, maxHeight.split("BOUND_TEXT_PADDING * 2").join("__textPadding(container) * 2"));
+        .replace(maxWidth, maxWidth.replaceAll("BOUND_TEXT_PADDING * 2", "__textPadding(container) * 2").replace(": BOUND_TEXT_PADDING) *", ": __textPadding(container)) *"))
+        .replace(maxHeight, maxHeight.replaceAll("BOUND_TEXT_PADDING * 2", "__textPadding(container) * 2"));
       return patch("textElement.ts", [
         ["    : BOUND_TEXT_PADDING;\n  let offsetX = padding;", "    : __textPadding(container);\n  let offsetX = padding;"],
         [
@@ -215,12 +216,12 @@ const richText = () => ({
   name: "excalidraw-scenes-rich-text",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replace(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll(/\\/g, "/").split("?")[0];
     const patch = (name: string, entry: string, imports: string[], steps: Array<[string | RegExp, string, number?]>) => {
       let next = code;
       for (const [from, to, count = 1] of steps) {
         const found =
-          typeof from === "string" ? next.split(from).length - 1 : (next.match(new RegExp(from.source, "g")) || []).length;
+          typeof from === "string" ? next.split(from).length - 1 : Array.from(next.matchAll(new RegExp(from.source, "g"))).length;
         if (found !== count) {
           throw new Error(
             `[excalidraw-scenes] rich text: ${name} changed upstream (expected ${count}× ${String(from).slice(0, 80)}, found ${found}). Update scenes-plugin/vite.config.mts.`,
@@ -368,7 +369,8 @@ const sceneUrls = () => ({
         /^\/[^/]+$/.test(pathname) &&
         !/\.html?$/.test(pathname)
       ) {
-        req.url = `/${query ? `?${query}` : ""}`;
+        const search = query ? `?${query}` : "";
+        req.url = `/${search}`;
       }
       next();
     });
@@ -513,7 +515,7 @@ const kurviqOnline = () => ({
   name: "kurviq-online",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replace(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll(/\\/g, "/").split("?")[0];
     const patch = (name: string, steps: Array<[string | RegExp, string]>) => {
       let next = code;
       for (const [from, to] of steps) {
@@ -731,7 +733,7 @@ const securityHeaders = (html: string) => {
 /** the commit a build is made from (Actions: GITHUB_SHA) */
 const kurviqBuild = () => {
   try {
-    return (process.env.GITHUB_SHA || execSync("git rev-parse HEAD", { cwd: HERE, encoding: "utf8" })).trim().slice(0, 12);
+    return (process.env.GITHUB_SHA || execSync("git rev-parse HEAD", { cwd: HERE, encoding: "utf8" })).trim().slice(0, 12); // NOSONAR S4036: local developer tooling invokes a fixed command in the developer-controlled environment
   } catch {
     return "";
   }
@@ -838,7 +840,7 @@ const kurviqPwa = () =>
     },
   });
 
-export default async (configEnv: { mode: string; command: string }) => {
+export default async function kurviqConfig(configEnv: { mode: string; command: string }) {
   const config: any = await (typeof upstreamConfig === "function"
     ? (upstreamConfig as any)(configEnv)
     : upstreamConfig);
@@ -907,4 +909,4 @@ export default async (configEnv: { mode: string; command: string }) => {
       },
     },
   };
-};
+}

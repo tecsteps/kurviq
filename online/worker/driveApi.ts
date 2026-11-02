@@ -181,7 +181,7 @@ export const listRevisions = async (env: GoogleEnv, token: string, fileId: strin
 
 /** a new version of the file: content and metadata (appProperties, name) in one multipart PATCH */
 export const uploadVersion = (env: GoogleEnv, token: string, fileId: string, metadata: unknown, content: Uint8Array) => {
-  const boundary = `kurviq${crypto.randomUUID().replace(/-/g, "")}`;
+  const boundary = `kurviq${crypto.randomUUID().replaceAll("-", "")}`;
   const head = new TextEncoder().encode(
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
       `--${boundary}\r\nContent-Type: application/vnd.excalidraw+json\r\n\r\n`,

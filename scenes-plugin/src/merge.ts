@@ -10,9 +10,9 @@
 
 import { syncInvalidIndices } from "@excalidraw/element";
 
-import { changedFields, sameContent } from "../../scenes-mcp/elementContent.mjs";
+import { sameContent } from "../../scenes-mcp/elementContent.mjs";
 
-export { changedFields };
+export { changedFields } from "../../scenes-mcp/elementContent.mjs";
 
 type El = { id: string; version: number; versionNonce: number; index?: string | null; [key: string]: any };
 
@@ -75,7 +75,11 @@ export const mergeElements = (
   }
 
   // z-order: fractional indices are ASCII-ordered strings
-  result.sort((x, y) => ((x.index ?? "") < (y.index ?? "") ? -1 : (x.index ?? "") > (y.index ?? "") ? 1 : 0));
+  result.sort((x, y) => {
+    if ((x.index ?? "") < (y.index ?? "")) return -1;
+    if ((x.index ?? "") > (y.index ?? "")) return 1;
+    return 0;
+  });
   syncInvalidIndices(result as any);
   return { elements: result, clashes, fromMine, fromTheirs };
 };
@@ -94,7 +98,13 @@ export const newestWins = (
   const choices: Record<string, ClashChoice> = {};
   for (const id of clashes) {
     const [me, te] = [m.get(id), t.get(id)];
-    choices[id] = !me ? "theirs" : !te ? "mine" : ((me as any).updated ?? 0) > ((te as any).updated ?? 0) ? "mine" : "theirs";
+    if (!me) {
+      choices[id] = "theirs";
+    } else if (!te) {
+      choices[id] = "mine";
+    } else {
+      choices[id] = ((me as any).updated ?? 0) > ((te as any).updated ?? 0) ? "mine" : "theirs";
+    }
   }
   return choices;
 };

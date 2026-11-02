@@ -23,4 +23,9 @@ export const writeFile = async (path) => {
   throw missing(path);
 };
 
-export default { readFile, writeFile };
+// scenes-mcp/media.mjs confines local paths with realpath first: no local files here either
+export const realpath = async (path) => {
+  throw missing(path);
+};
+
+export default { readFile, writeFile, realpath };

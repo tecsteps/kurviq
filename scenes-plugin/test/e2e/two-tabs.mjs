@@ -64,7 +64,7 @@ const state = (page) =>
   });
 const names = (page) => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("excalidraw-scenes") || "{}").scenes || {}));
 await draw(a, 500, 400);
-for (let i = 0; i < 22; i++) await sleep(1000);
+for (let i = 0; i < 22; i++) await sleep(1000); // NOSONAR S9382: in order on purpose (waits for sync before opening the second tab)
 log("A pill", await a.$eval(".scenes-pill", (el) => el.getAttribute("title")));
 const b = await ctx.newPage();
 watch(b, "B");
@@ -73,16 +73,19 @@ await sleep(5000);
 log("B sees", JSON.stringify(await els(b)));
 const dumpQueue = (page) =>
   page.evaluate(
-    () =>
-      new Promise((resolve) => {
+    () => {
+      const changeOf = (ch) => [ch.k, ch.id.slice(0, 8), ch.keys, ch.k === "set" ? ch.value : undefined];
+      const batchOf = (b) => ({ c: b.counter, state: b.state, via: b.via, live: b.live, changes: b.changes.map(changeOf) });
+      return new Promise((resolve) => {
         const open = indexedDB.open("kurviq-live-queue");
         open.onsuccess = () => {
           const db = open.result;
           if (!db.objectStoreNames.contains("batches")) return resolve([]);
           const req = db.transaction("batches").objectStore("batches").getAll();
-          req.onsuccess = () => resolve(req.result.map((b) => ({ c: b.counter, state: b.state, via: b.via, live: b.live, changes: b.changes.map((ch) => [ch.k, ch.id.slice(0, 8), ch.keys, ch.k === "set" ? ch.value : undefined]) })));
+          req.onsuccess = () => resolve(req.result.map(batchOf));
         };
-      }),
+      });
+    },
   );
 log("B queue", JSON.stringify(await dumpQueue(b)));
 log("A queue", JSON.stringify(await dumpQueue(a)));

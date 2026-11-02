@@ -94,7 +94,7 @@ export const batchesOf = (sub: string, fileId?: string, tab?: string): Promise<Q
 /** a scene left Drive: every queued batch of it (all tabs of the account) goes */
 export const forgetFile = async (sub: string, fileId: string) => {
   for (const batch of await batchesOf(sub, fileId)) {
-    await deleteBatch(batch);
+    await deleteBatch(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
   }
 };
 
@@ -126,9 +126,9 @@ export const moveAccount = async (from: string, to: string) => {
   }
   for (const batch of await batchesOf(from)) {
     const moved = { ...batch, sub: to };
-    await putBatch(moved);
-    await deleteBatch(batch);
-    await update<number>(
+    await putBatch(moved); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+    await deleteBatch(batch); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+    await update<number>( // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       [to, batch.fileId, batch.tab],
       (current) => Math.max(current ?? 0, batch.counter),
       counters(),
@@ -235,7 +235,7 @@ let commandStore: ReturnType<typeof createStore> | null = null;
 const commands = () => (commandStore ??= createStore("kurviq-live-commands", "commands"));
 
 /** commands are remembered this long (agents retry within minutes) */
-const COMMAND_KEEP_MS = 7 * 24 * 3600_000;
+const COMMAND_KEEP_MS = 7 * 24 * 3_600_000;
 
 export type CommandRecord = { at: number; revision?: string };
 

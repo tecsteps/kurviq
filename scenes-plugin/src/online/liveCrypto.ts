@@ -26,7 +26,7 @@ const decoder = new TextDecoder();
 export const toBase64 = (bytes: Uint8Array) => {
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); // NOSONAR S7758: base64 converts bytes to code units, not Unicode code points
   }
   return btoa(binary);
 };
@@ -35,7 +35,7 @@ export const fromBase64 = (text: string) => {
   const binary = atob(text);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+    bytes[i] = binary.charCodeAt(i); // NOSONAR S7758: base64 converts bytes to code units, not Unicode code points
   }
   return bytes;
 };
@@ -106,10 +106,15 @@ export const encodeEvent = async (
  */
 export const decodeEvent = async (scene: SceneKey, event: WireEvent, previous?: any): Promise<any> => {
   if (event.k === "el") {
-    if (!event.r || event.r.id !== event.id) {
+    if (event.r?.id !== event.id) {
       throw new Error(`Element event ${event.id} without its readable part`);
     }
-    const content = event.c === "" ? (previous ? contentOf(previous) : null) : await decryptJson(scene, event.k, event.id, event.c);
+    let content;
+    if (event.c === "") {
+      content = previous ? contentOf(previous) : null;
+    } else {
+      content = await decryptJson(scene, event.k, event.id, event.c);
+    }
     if (!content) {
       return null;
     }

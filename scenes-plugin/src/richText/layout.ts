@@ -66,8 +66,7 @@ export const paraAttrs = (para: Para, marker: string) => {
   const z0 = paraSize(para);
   const style = [`font-size:${round(z0)}em`];
   if (para.k) {
-    style.push("text-align:left");
-    style.push(`--rt-indent:${round((LIST_INDENT * ((para.d || 0) + 1)) / z0)}em`, "padding-left:var(--rt-indent)");
+    style.push("text-align:left", `--rt-indent:${round((LIST_INDENT * ((para.d || 0) + 1)) / z0)}em`, "padding-left:var(--rt-indent)");
   }
   const attrs = [
     para.k && ` data-k="${escapeHtml(String(para.k))}"`,
@@ -145,7 +144,7 @@ export type RichLayout = {
 
 let host: HTMLDivElement | null = null;
 const getHost = () => {
-  if (!host || !host.isConnected) {
+  if (!host?.isConnected) {
     host = document.createElement("div");
     host.setAttribute("aria-hidden", "true");
     host.className = "rt-measure";
@@ -231,10 +230,10 @@ export const layoutRich = (spec: TextSpec, doc: RichDoc, wrapWidth: number | nul
     const rect = el.getBoundingClientRect();
     const z0 = paraSize(para);
     const lines: string[] = [];
-    let lineBaseline = NaN;
+    let lineBaseline = Number.NaN;
     let lineLeft = Infinity;
     let lineRight = -Infinity;
-    let firstBaseline = NaN;
+    let firstBaseline = Number.NaN;
     const endLine = () => {
       if (Number.isFinite(lineLeft)) {
         const left = para.k ? rect.left - origin.left : lineLeft;
@@ -295,7 +294,7 @@ export const layoutRich = (spec: TextSpec, doc: RichDoc, wrapWidth: number | nul
       firstBaseline = rect.top - origin.top + (rect.height - height) / 2 + ascent;
     }
     if (para.k) {
-      const contentLeft = rect.left - origin.left + parseFloat(getComputedStyle(el).paddingLeft || "0");
+      const contentLeft = rect.left - origin.left + Number.parseFloat(getComputedStyle(el).paddingLeft || "0");
       const size = spec.fontSize * z0;
       const strut = metricsOf(runFont({}, size, family));
       markers.push({
@@ -404,7 +403,9 @@ export const elementLayout = (element: TextElementLike) => {
   // did): centered and right-aligned lines move back by that; a text that
   // doesn't wrap aligns inside its box, like plain text (the box may be wider)
   const extra = wraps ? -1 : element.width - layout.width;
-  const shift = element.textAlign === "center" ? extra / 2 : element.textAlign === "right" ? extra : 0;
+  let shift = 0;
+  if (element.textAlign === "center") shift = extra / 2;
+  else if (element.textAlign === "right") shift = extra;
   return { layout, shift };
 };
 
@@ -419,6 +420,35 @@ const decorations = (fragment: Fragment) => {
 
 const markerColor = (element: TextElementLike, _marker: ListMarker, dark: boolean) =>
   applyDarkModeFilter(element.strokeColor, dark);
+
+const drawMarkers = (element: TextElementLike, context: CanvasRenderingContext2D, dark: boolean, markers: ListMarker[]) => {
+  const family = getFontFamilyString(element as any);
+  for (const marker of markers) {
+    const color = markerColor(element, marker, dark);
+    context.fillStyle = color;
+    context.strokeStyle = color;
+    if (marker.kind === "todo") {
+      const box = checkbox(marker);
+      context.lineWidth = box.stroke;
+      context.beginPath();
+      (context as any).roundRect ? (context as any).roundRect(box.x, box.y, box.side, box.side, box.radius) : context.rect(box.x, box.y, box.side, box.side);
+      context.stroke();
+      if (marker.checked) {
+        context.beginPath();
+        box.check.forEach(([x, y], index) => (index ? context.lineTo(x, y) : context.moveTo(x, y)));
+        context.lineWidth = box.stroke * 1.3;
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        context.stroke();
+      }
+    } else {
+      context.font = runFont({}, marker.size, family);
+      context.textAlign = "right";
+      context.fillText(marker.text, marker.right, marker.baseline);
+      context.textAlign = "left";
+    }
+  }
+};
 
 /** draws a formatted text on the canvas (at its top-left); false if it isn't one */
 export const drawRich = (element: TextElementLike, context: CanvasRenderingContext2D, dark: boolean) => {
@@ -453,34 +483,7 @@ export const drawRich = (element: TextElementLike, context: CanvasRenderingConte
       context.fillRect(fragment.x, line.y - line.thickness / 2, fragment.width, line.thickness);
     }
   }
-  const family = getFontFamilyString(element as any);
-  for (const marker of layout.markers) {
-    const color = markerColor(element, marker, dark);
-    context.fillStyle = color;
-    context.strokeStyle = color;
-    if (marker.kind === "todo") {
-      const box = checkbox(marker);
-      context.lineWidth = box.stroke;
-      context.beginPath();
-      (context as any).roundRect
-        ? (context as any).roundRect(box.x, box.y, box.side, box.side, box.radius)
-        : context.rect(box.x, box.y, box.side, box.side);
-      context.stroke();
-      if (marker.checked) {
-        context.beginPath();
-        box.check.forEach(([x, y], index) => (index ? context.lineTo(x, y) : context.moveTo(x, y)));
-        context.lineWidth = box.stroke * 1.3;
-        context.lineCap = "round";
-        context.lineJoin = "round";
-        context.stroke();
-      }
-    } else {
-      context.font = runFont({}, marker.size, family);
-      context.textAlign = "right";
-      context.fillText(marker.text, marker.right, marker.baseline);
-      context.textAlign = "left";
-    }
-  }
+  drawMarkers(element, context, dark, layout.markers);
   context.restore();
   return true;
 };
@@ -505,57 +508,10 @@ const checkbox = (marker: ListMarker) => {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-/** adds a formatted text to an SVG group (at its top-left); false if it isn't one */
-export const svgRich = (element: TextElementLike, node: SVGElement, doc: Document, dark: boolean) => {
-  const result = elementLayout(element);
-  if (!result) {
-    return false;
-  }
-  const { layout, shift } = result;
-  const family = getFontFamilyString(element as any);
-  const add = (parent: Element, tag: string, attrs: Record<string, string | number>) => {
-    const child = doc.createElementNS(SVG_NS, tag);
-    for (const [name, value] of Object.entries(attrs)) {
-      child.setAttribute(name, String(value));
-    }
-    parent.appendChild(child);
-    return child;
-  };
-  const group = shift ? add(node, "g", { transform: `translate(${shift} 0)` }) : node;
-  for (const fragment of layout.fragments) {
-    if (fragment.marks.h && fragment.width > 0) {
-      add(group, "rect", {
-        x: fragment.x,
-        y: fragment.top,
-        width: fragment.width,
-        height: fragment.height,
-        fill: applyDarkModeFilter(fragment.marks.h, dark),
-      });
-    }
-  }
-  for (const fragment of layout.fragments) {
-    const color = applyDarkModeFilter(fragment.marks.c || (fragment.marks.a ? LINK_COLOR : element.strokeColor), dark);
-    const href = safeLink(fragment.marks.a);
-    const parent = href ? add(group, "a", { href, target: "_blank", rel: "noopener noreferrer" }) : group;
-    const text = add(parent, "text", {
-      x: fragment.x,
-      y: fragment.baseline,
-      "font-family": family,
-      "font-size": `${round(fragment.size)}px`,
-      fill: color,
-      style: "white-space: pre;",
-      "dominant-baseline": "alphabetic",
-      ...(fragment.marks.b
-        ? { stroke: color, "stroke-width": round(fragment.size * BOLD_STROKE), "stroke-linejoin": "round" }
-        : {}),
-      ...(fragment.marks.i ? { "font-style": "italic" } : {}),
-    });
-    text.textContent = fragment.text;
-    for (const line of decorations(fragment)) {
-      add(parent, "rect", { x: fragment.x, y: line.y - line.thickness / 2, width: fragment.width, height: line.thickness, fill: color });
-    }
-  }
-  for (const marker of layout.markers) {
+type AddSvg = (parent: Element, tag: string, attrs: Record<string, string | number>) => Element;
+
+const svgMarkers = (element: TextElementLike, dark: boolean, markers: ListMarker[], family: string, add: AddSvg, group: Element) => {
+  for (const marker of markers) {
     const color = markerColor(element, marker, dark);
     if (marker.kind === "todo") {
       const box = checkbox(marker);
@@ -592,5 +548,60 @@ export const svgRich = (element: TextElementLike, node: SVGElement, doc: Documen
       text.textContent = marker.text;
     }
   }
+};
+
+const svgFragments = (element: TextElementLike, dark: boolean, fragments: Fragment[], family: string, add: AddSvg, group: Element) => {
+  for (const fragment of fragments) {
+    const color = applyDarkModeFilter(fragment.marks.c || (fragment.marks.a ? LINK_COLOR : element.strokeColor), dark);
+    const href = safeLink(fragment.marks.a);
+    const parent = href ? add(group, "a", { href, target: "_blank", rel: "noopener noreferrer" }) : group;
+    const text = add(parent, "text", {
+      x: fragment.x,
+      y: fragment.baseline,
+      "font-family": family,
+      "font-size": `${round(fragment.size)}px`,
+      fill: color,
+      style: "white-space: pre;",
+      "dominant-baseline": "alphabetic",
+      ...(fragment.marks.b ? { stroke: color, "stroke-width": round(fragment.size * BOLD_STROKE), "stroke-linejoin": "round" } : {}),
+      ...(fragment.marks.i ? { "font-style": "italic" } : {}),
+    });
+    text.textContent = fragment.text;
+    for (const line of decorations(fragment)) {
+      add(parent, "rect", { x: fragment.x, y: line.y - line.thickness / 2, width: fragment.width, height: line.thickness, fill: color });
+    }
+  }
+};
+
+/** adds a formatted text to an SVG group (at its top-left); false if it isn't one */
+export const svgRich = (element: TextElementLike, node: SVGElement, doc: Document, dark: boolean) => {
+  const result = elementLayout(element);
+  if (!result) {
+    return false;
+  }
+  const { layout, shift } = result;
+  const family = getFontFamilyString(element as any);
+  const add = (parent: Element, tag: string, attrs: Record<string, string | number>) => {
+    const child = doc.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attrs)) {
+      child.setAttribute(name, String(value));
+    }
+    parent.appendChild(child);
+    return child;
+  };
+  const group = shift ? add(node, "g", { transform: `translate(${shift} 0)` }) : node;
+  for (const fragment of layout.fragments) {
+    if (fragment.marks.h && fragment.width > 0) {
+      add(group, "rect", {
+        x: fragment.x,
+        y: fragment.top,
+        width: fragment.width,
+        height: fragment.height,
+        fill: applyDarkModeFilter(fragment.marks.h, dark),
+      });
+    }
+  }
+  svgFragments(element, dark, layout.fragments, family, add, group);
+  svgMarkers(element, dark, layout.markers, family, add, group);
   return true;
 };

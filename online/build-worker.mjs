@@ -17,7 +17,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** the commit a build is made from (Actions: GITHUB_SHA), the same as the app's (scenes-plugin/vite.config.mts) */
 const kurviqBuild = () => {
   try {
-    return (process.env.GITHUB_SHA || execSync("git rev-parse HEAD", { encoding: "utf8" })).trim().slice(0, 12);
+    return (process.env.GITHUB_SHA || execSync("git rev-parse HEAD", { encoding: "utf8" })).trim().slice(0, 12); // NOSONAR S4036: local build tool runs a constant git command in the developer or CI environment
   } catch {
     return "";
   }

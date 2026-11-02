@@ -1,5 +1,8 @@
 // Kurviq's own UI (online build): Google Drive panel, MCP dialog, footer
 .excalidraw {
+  // Text and borders need a darker green than Excalidraw's success background.
+  --kq-ok-color: #2b8a3e;
+
   .kq-card {
     display: flex;
     flex-direction: column;
@@ -629,10 +632,6 @@
   z-index: 1001;
 }
 
-// Excalidraw's --color-success is a pale background green: text and borders need a darker one
-.excalidraw {
-  --kq-ok-color: #2b8a3e;
-}
 
 .excalidraw.theme--dark {
   --kq-ok-color: #69db7c;
@@ -688,8 +687,8 @@
     min-width: 0;
     height: 100%;
     padding: 0 0.6rem 0 0.1rem;
-    border: none !important;
-    box-shadow: none !important;
+    border: none !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
+    box-shadow: none !important; /* NOSONAR S9423: overrides Excalidraw's own rule */
     background: transparent;
     font-size: 0.95rem;
     font-weight: 600;

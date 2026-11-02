@@ -100,15 +100,16 @@ export const kurviqSkill = (app: string, uploadUrl = "<the upload address from t
     }
   }
   text = text
-    .replace(/\s*\(localhost:3101\)/g, "")
-    .replace(/the scenes server's HTTP API/g, "Kurviq's or Google's HTTP API")
+    // " (localhost:3101)" with the whitespace before it (no regex: Sonar S8786)
+    .split("(localhost:3101)").map((part, index, parts) => (index < parts.length - 1 ? part.trimEnd() : part)).join("")
+    .replaceAll("the scenes server's HTTP API", "Kurviq's or Google's HTTP API")
     .replace(/absolute file path,\s+/g, "")
     .replace(
       /- \*\*Big edits:\*\* write[\s\S]*?instead of pasting it into the call\./,
-      '- **Big edits:** upload them as JSON and pass \`payloadId\` (see "Images from your machine").',
+      '- **Big edits:** upload them as JSON and pass `payloadId` (see "Images from your machine").',
     )
     .replace(
-      /- PDF: \`export_pdf\(name\)\`[\s\S]*?selectable text\./,
+      /- PDF: `export_pdf\(name\)`[\s\S]*?selectable text\./,
       "- PDF: the user exports the deck in Kurviq (Slides sidebar → PDF).",
     );
   return `${text.trimEnd()}\n\n${UPLOADS(uploadUrl)}\n${TROUBLESHOOTING(app)}`;

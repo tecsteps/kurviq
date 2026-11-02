@@ -12,7 +12,7 @@ for (const file of [".env", ".env.local"]) {
   const full = path.join(HERE, "..", file);
   if (existsSync(full)) {
     for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/);
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: trusted local development configuration lines, not remote input
       if (match) {
         env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
       }

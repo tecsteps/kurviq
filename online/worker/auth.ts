@@ -63,7 +63,7 @@ export const devGate = (env: { FAKE_GOOGLE?: string; DEV_ORIGIN?: string }, requ
   return (
     ip === "::1" ||
     ip === "127.0.0.1" ||
-    ip === "::ffff:127.0.0.1" ||
+    ip === "::ffff:127.0.0.1" || // NOSONAR S1313: loopback is allowed only for the local development sign-in origin
     host === "localhost" ||
     host === "127.0.0.1" ||
     host.endsWith(".localhost")
@@ -116,18 +116,18 @@ export type Session = {
 // -----------------------------------------------------------------------------
 
 export const b64url = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").split("=")[0]; // NOSONAR S7758: base64 encoding uses binary bytes, not Unicode code points
 
 const fromB64url = (text: string) => {
-  const binary = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const binary = atob(text.replaceAll("-", "+").replaceAll("_", "/"));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
 };
 
 let cachedKey: { raw: string; key: CryptoKey } | null = null;
 
 const cookieKey = async (env: AuthEnv) => {
   if (cachedKey?.raw !== env.COOKIE_KEY) {
-    const raw = Uint8Array.from(atob(env.COOKIE_KEY), (char) => char.charCodeAt(0));
+    const raw = Uint8Array.from(atob(env.COOKIE_KEY), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
     if (raw.length !== 32) {
       throw new Error("COOKIE_KEY must be base64 of 32 bytes");
     }
@@ -282,7 +282,7 @@ const tokenKey = async (raw64: string | undefined) => {
   }
   let entry = tokenKeys.get(raw64);
   if (!entry) {
-    const raw = Uint8Array.from(atob(raw64), (char) => char.charCodeAt(0));
+    const raw = Uint8Array.from(atob(raw64), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
     if (raw.length !== 32) {
       throw new Error("TOKEN_KEY must be base64 of 32 bytes");
     }
@@ -324,7 +324,7 @@ export const unsealSceneToken = async (env: AuthEnv, sealed: string, fileId: str
   try {
     const [keyId, expText, iv, data] = sealed.split(".");
     const exp = Number(expText);
-    if (!(exp > Date.now())) {
+    if (exp <= Date.now() || Number.isNaN(exp)) {
       return null;
     }
     for (const raw of [env.TOKEN_KEY, env.TOKEN_KEY_PREVIOUS]) {
@@ -372,7 +372,7 @@ export const revokeAtGoogle = async (env: AuthEnv, refreshToken: string) => {
  * server key, so the Worker checks a notification before any scene object is woken
  */
 export const watchSecret = async (env: AuthEnv, fileId: string, channelId: string) => {
-  const raw = Uint8Array.from(atob(env.COOKIE_KEY), (char) => char.charCodeAt(0));
+  const raw = Uint8Array.from(atob(env.COOKIE_KEY), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
   const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-watch:${fileId}|${channelId}`)));
   return b64url(mac).slice(0, 32);
@@ -387,7 +387,7 @@ export const pseudonymOf = async (env: AuthEnv, sub: string, fileId: string) => 
   if (!env.PSEUDONYM_KEY) {
     throw new Error("PSEUDONYM_KEY is not set");
   }
-  const secret = Uint8Array.from(atob(env.PSEUDONYM_KEY), (char) => char.charCodeAt(0));
+  const secret = Uint8Array.from(atob(env.PSEUDONYM_KEY), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
   const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-pseudonym:${sub}:${fileId}`)));
   return `p${b64url(mac).slice(0, 11)}`;
@@ -471,9 +471,7 @@ const startFlow = async (
   back: string,
   local: boolean,
   consent: boolean,
-  hint?: string,
-  redirectUri?: string,
-  pageState?: string,
+  { hint, redirectUri, pageState }: { hint?: string; redirectUri?: string; pageState?: string },
 ) => {
   const url = new URL(request.url);
   // wrangler dev: its real (local) address; never a configured non-local one
@@ -582,7 +580,7 @@ export const localSession = async (env: AuthEnv, sealed: unknown, origin: string
 
 /** renewed: a new expiry; the sign-in time stays what it was (0 if unknown: live sync then asks for a new sign-in) */
 export const sealLocalSession = (env: AuthEnv, session: Session) =>
-  seal(env, { ...session, iat: session.iat ?? 0, exp: Date.now() + LOCAL_SESSION_DAYS * 24 * 3600_000 }, LOCAL_SESSION);
+  seal(env, { ...session, iat: session.iat ?? 0, exp: Date.now() + LOCAL_SESSION_DAYS * 24 * 3_600_000 }, LOCAL_SESSION);
 
 /** an account's "sign out everywhere" epoch (0: never); null: the guard could not be asked or answered nonsense */
 export const accountEpochOf = async (env: AuthEnv, sub: string, init?: RequestInit): Promise<number | null> => {
@@ -628,6 +626,111 @@ export const freshSession = async (env: AuthEnv, session: Session, needSub = fal
   return typeof next === "string" ? next : { session: next, renewed: true };
 };
 
+const authCallback = async (request: Request, env: AuthEnv, url: URL) => {
+  const flow = await unseal<Flow>(env, readCookie(request, STATE_COOKIE), STATE_COOKIE);
+  if (flow?.state !== url.searchParams.get("state")) {
+    console.warn(`[auth] sign-in failed: ${flow ? "state does not match" : "no sign-in started in this browser (state cookie missing)"}`);
+    return redirect("/?google=failed", [cookie(request, STATE_COOKIE, "", 0)]);
+  }
+  const code = url.searchParams.get("code");
+  if (url.searchParams.get("error") || !code) {
+    console.warn(`[auth] sign-in cancelled: ${url.searchParams.get("error") ?? "no code"}`);
+    return finish(request, env, flow, "cancelled");
+  }
+  const answer = await exchange(env, { grant_type: "authorization_code", code, redirect_uri: flow.redirect });
+  const user = userOf(answer.id_token);
+  if (!answer.access_token || !user) {
+    // (only `wrangler tail` sees this: no request logs are kept)
+    console.warn(`[auth] sign-in failed: ${answer.error ?? (answer.access_token ? "no email in the ID token" : "no token")}`);
+    return finish(request, env, flow, "failed");
+  }
+  if (!answer.refresh_token) {
+    // allowed before (another browser has the refresh token): ask for consent once more
+    if (!flow.consent) {
+      return startFlow(request, env, flow.back, flow.local, true, { hint: user.email, redirectUri: flow.redirect, pageState: flow.pageState });
+    }
+    console.warn("[auth] sign-in failed: no refresh token, even after consent");
+    return finish(request, env, flow, "failed");
+  }
+  const session: Session = {
+    a: answer.access_token,
+    ae: Date.now() + (answer.expires_in ?? 3600) * 1000,
+    r: answer.refresh_token,
+    user,
+    drive: grantsDrive(answer.scope),
+    sub: subOf(answer.id_token),
+    iat: Date.now(),
+  };
+  return finish(request, env, flow, session.drive ? "connected" : "nodrive", session);
+};
+
+const authToken = async (request: Request, env: AuthEnv, url: URL, origin: string | null, local: boolean) => {
+  if (origin !== url.origin && !local) {
+    return json(403, { error: "Forbidden" });
+  }
+  const cors = local ? origin! : undefined;
+  const session = await sessionOf(request, env, local);
+  if (!session) {
+    return json(200, { connected: false }, [], cors);
+  }
+  // signed out everywhere since: this session is over too (and if that can't be checked now, no token is handed out)
+  const revoked = await revokedEverywhere(env, session);
+  if (revoked === "unknown") {
+    return json(503, { error: "Sign-in check not available, try again" }, [], cors);
+  }
+  if (revoked) {
+    return json(200, { connected: false, expired: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], cors);
+  }
+  if (session.ae - Date.now() > 10 * 60_000) {
+    return json(200, tokenAnswer(session), [], cors);
+  }
+  const next = await refresh(env, session);
+  if (next === "unreachable") {
+    return json(503, { error: "Google not reachable" }, [], cors);
+  }
+  if (next === "expired") {
+    // revoked at Google (or the password changed): signed out
+    return json(200, { connected: false, expired: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], cors);
+  }
+  if (local) {
+    return json(200, { ...tokenAnswer(next), session: await sealLocalSession(env, next) }, [], cors);
+  }
+  return json(200, tokenAnswer(next), [await sessionCookie(request, env, next)]);
+};
+
+const authLogin = async (request: Request, env: AuthEnv, url: URL) => {
+  const { back, local: toLocal } = safeReturn(url.searchParams.get("return"), url.origin);
+  const pageState = url.searchParams.get("state");
+  if (toLocal && pageState !== null && !PAGE_STATE_RE.test(pageState)) {
+    return json(400, { error: "state: 16 to 128 characters of A-Z a-z 0-9 _ -" });
+  }
+  return startFlow(
+    request,
+    env,
+    back,
+    toLocal,
+    url.searchParams.has("consent"),
+    { hint: url.searchParams.get("hint") ?? undefined, pageState: toLocal ? pageState ?? undefined : undefined },
+  );
+};
+
+const authUnavailable = (url: URL, local: boolean, origin: string | null) => {
+  if (url.pathname === "/auth/token") {
+    // a Kurviq without Google: nobody is signed in, scenes stay in the browser
+    return json(200, { connected: false }, [], local ? origin! : undefined);
+  }
+  return json(503, { error: "Google sign-in is not configured on this Kurviq server" }, [], local ? origin! : undefined);
+};
+
+const authLogout = (request: Request, url: URL, origin: string | null, local: boolean) => {
+  if (origin !== url.origin && !local) {
+    return json(403, { error: "Forbidden" });
+  }
+  // not revoked at Google: that would end Kurviq's access in every other
+  // browser of this user too (they remove it at myaccount.google.com/permissions)
+  return json(200, { ok: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], local ? origin! : undefined);
+};
+
 export const handleAuth = async (request: Request, env: AuthEnv): Promise<Response | null> => {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/auth/")) {
@@ -649,110 +752,23 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
     });
   }
   if (!clientId(env) || !env.GOOGLE_CLIENT_SECRET || !env.COOKIE_KEY) {
-    if (url.pathname === "/auth/token") {
-      // a Kurviq without Google: nobody is signed in, scenes stay in the browser
-      return json(200, { connected: false }, [], local ? origin! : undefined);
-    }
-    return json(503, { error: "Google sign-in is not configured on this Kurviq server" }, [], local ? origin! : undefined);
+    return authUnavailable(url, local, origin);
   }
 
   if (url.pathname === "/auth/login" && request.method === "GET") {
-    const { back, local: toLocal } = safeReturn(url.searchParams.get("return"), url.origin);
-    const pageState = url.searchParams.get("state");
-    if (toLocal && pageState !== null && !PAGE_STATE_RE.test(pageState)) {
-      return json(400, { error: "state: 16 to 128 characters of A-Z a-z 0-9 _ -" });
-    }
-    return startFlow(
-      request,
-      env,
-      back,
-      toLocal,
-      url.searchParams.has("consent"),
-      url.searchParams.get("hint") ?? undefined,
-      undefined,
-      toLocal ? pageState ?? undefined : undefined,
-    );
+    return authLogin(request, env, url);
   }
 
   if (url.pathname === "/auth/callback" && request.method === "GET") {
-    const flow = await unseal<Flow>(env, readCookie(request, STATE_COOKIE), STATE_COOKIE);
-    if (!flow || flow.state !== url.searchParams.get("state")) {
-      console.warn(`[auth] sign-in failed: ${flow ? "state does not match" : "no sign-in started in this browser (state cookie missing)"}`);
-      return redirect("/?google=failed", [cookie(request, STATE_COOKIE, "", 0)]);
-    }
-    const code = url.searchParams.get("code");
-    if (url.searchParams.get("error") || !code) {
-      console.warn(`[auth] sign-in cancelled: ${url.searchParams.get("error") ?? "no code"}`);
-      return finish(request, env, flow, "cancelled");
-    }
-    const answer = await exchange(env, { grant_type: "authorization_code", code, redirect_uri: flow.redirect });
-    const user = userOf(answer.id_token);
-    if (!answer.access_token || !user) {
-      // (only `wrangler tail` sees this: no request logs are kept)
-      console.warn(`[auth] sign-in failed: ${answer.error ?? (answer.access_token ? "no email in the ID token" : "no token")}`);
-      return finish(request, env, flow, "failed");
-    }
-    if (!answer.refresh_token) {
-      // allowed before (another browser has the refresh token): ask for consent once more
-      if (!flow.consent) {
-        return startFlow(request, env, flow.back, flow.local, true, user.email, flow.redirect, flow.pageState);
-      }
-      console.warn("[auth] sign-in failed: no refresh token, even after consent");
-      return finish(request, env, flow, "failed");
-    }
-    const session: Session = {
-      a: answer.access_token,
-      ae: Date.now() + (answer.expires_in ?? 3600) * 1000,
-      r: answer.refresh_token,
-      user,
-      drive: grantsDrive(answer.scope),
-      sub: subOf(answer.id_token),
-      iat: Date.now(),
-    };
-    return finish(request, env, flow, session.drive ? "connected" : "nodrive", session);
+    return authCallback(request, env, url);
   }
 
   if (url.pathname === "/auth/token" && request.method === "POST") {
-    if (origin !== url.origin && !local) {
-      return json(403, { error: "Forbidden" });
-    }
-    const cors = local ? origin! : undefined;
-    const session = await sessionOf(request, env, local);
-    if (!session) {
-      return json(200, { connected: false }, [], cors);
-    }
-    // signed out everywhere since: this session is over too (and if that can't be checked now, no token is handed out)
-    const revoked = await revokedEverywhere(env, session);
-    if (revoked === "unknown") {
-      return json(503, { error: "Sign-in check not available, try again" }, [], cors);
-    }
-    if (revoked) {
-      return json(200, { connected: false, expired: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], cors);
-    }
-    if (session.ae - Date.now() > 10 * 60_000) {
-      return json(200, tokenAnswer(session), [], cors);
-    }
-    const next = await refresh(env, session);
-    if (next === "unreachable") {
-      return json(503, { error: "Google not reachable" }, [], cors);
-    }
-    if (next === "expired") {
-      // revoked at Google (or the password changed): signed out
-      return json(200, { connected: false, expired: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], cors);
-    }
-    if (local) {
-      return json(200, { ...tokenAnswer(next), session: await sealLocalSession(env, next) }, [], cors);
-    }
-    return json(200, tokenAnswer(next), [await sessionCookie(request, env, next)]);
+    return authToken(request, env, url, origin, local);
   }
 
   if (url.pathname === "/auth/logout" && request.method === "POST") {
-    if (origin !== url.origin && !local) {
-      return json(403, { error: "Forbidden" });
-    }
-    // not revoked at Google: that would end Kurviq's access in every other
-    // browser of this user too (they remove it at myaccount.google.com/permissions)
-    return json(200, { ok: true }, local ? [] : [cookie(request, SESSION_COOKIE, "", 0)], local ? origin! : undefined);
+    return authLogout(request, url, origin, local);
   }
 
   return json(404, { error: "Not found" });

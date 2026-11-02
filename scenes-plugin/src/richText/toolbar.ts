@@ -317,7 +317,7 @@ export const createToolbar = (
           }, "No highlight"),
         ),
       ),
-      button("clear", `Clear formatting (${MOD}\\)`, ICONS.clear, () => api.clearFormatting()),
+      button("clear", String.raw`Clear formatting (${MOD}\)`, ICONS.clear, () => api.clearFormatting()),
     );
     return el;
   };

@@ -36,7 +36,7 @@ await A.evaluateOnNewDocument(() => {
 });
 await A.goto(`${BASE}/auth/login?return=${encodeURIComponent("/" + SCENE)}`, { waitUntil: "domcontentloaded" });
 await A.goto(A.url().replace("/authorize", "/approve") + `&email=${encodeURIComponent(EMAIL)}`, { waitUntil: "load" });
-for (let i = 0; i < 40 && !(await A.evaluate(() => !!window.__scenes?.getApi() && window.__scenes.getState().current).catch(() => null)); i++) await sleep(250);
+for (let i = 0; i < 40 && !(await A.evaluate(() => !!window.__scenes?.getApi() && window.__scenes.getState().current).catch(() => null)); i++) await sleep(250); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 log("scene open:", await A.evaluate(() => window.__scenes.getState().current));
 if (VARIANT === "slow") {
   // Drive answers slowly: uploads (the scene's creation, its saves) and file reads take 2.5 s
@@ -50,13 +50,13 @@ const drawn = [];
 const draw = async (page) => {
   const id = await page.evaluate(() => {
     const api = window.__scenes.getApi();
-    const id = "r" + Math.random().toString(36).slice(2, 10);
+    const id = "r" + Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => (byte % 36).toString(36)).join("");
     const all = api.getSceneElementsIncludingDeleted();
     const el = {
-      id, type: "rectangle", x: 50 + Math.random() * 800, y: 50 + Math.random() * 500, width: 60, height: 40, angle: 0,
+      id, type: "rectangle", x: 50 + Math.random() * 800, y: 50 + Math.random() * 500, width: 60, height: 40, angle: 0, // NOSONAR S2245: not security relevant (test drawing positions and Excalidraw version nonces)
       strokeColor: "#1e1e1e", backgroundColor: "transparent", fillStyle: "solid", strokeWidth: 2, strokeStyle: "solid",
       roughness: 1, opacity: 100, groupIds: [], frameId: null, index: null, roundness: { type: 3 }, seed: 1,
-      version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), isDeleted: false, boundElements: null,
+      version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), isDeleted: false, boundElements: null, // NOSONAR S2245: not security relevant (test drawing positions and Excalidraw version nonces)
       updated: Date.now(), link: null, locked: false,
     };
     api.updateScene({ elements: [...all, el], captureUpdate: "IMMEDIATELY" });
@@ -66,35 +66,35 @@ const draw = async (page) => {
 };
 let B = null;
 for (let i = 0; i < 75; i++) {
-  await draw(A);
+  await draw(A); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   if (i === 9) {
     // a pause like a person's: the scene gets its Drive file (after 10 s idle), then live sync
     // starts (ticket, seeding) while drawing goes on
-    for (let k = 0; k < 150 && !(await A.evaluate(() => !!window.__scenes.fileIdOf(window.__scenes.getState().current))); k++) {
-      await sleep(100);
+    for (let k = 0; k < 150 && !(await A.evaluate(() => !!window.__scenes.fileIdOf(window.__scenes.getState().current))); k++) { // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+      await sleep(100); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     }
-    log("the file exists; live phase", await A.evaluate(() => window.__live?.current()?.phase ?? "none"));
+    log("the file exists; live phase", await A.evaluate(() => window.__live?.current()?.phase ?? "none")); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   }
   if (VARIANT === "two-tabs" && i === 20) {
     // a second tab of the same account opens the scene meanwhile
-    B = await ctx.newPage();
+    B = await ctx.newPage(); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     watch(B, "B");
-    B.goto(`${BASE}/${encodeURIComponent(SCENE)}`, { waitUntil: "load" }).catch(() => {});
+    void B.goto(`${BASE}/${encodeURIComponent(SCENE)}`, { waitUntil: "load" }).catch(() => {}); // NOSONAR S7785: navigation deliberately overlaps drawing in the first tab
   }
   if (B && i > 30 && i % 3 === 0) {
-    await draw(B).catch(() => {});
+    await draw(B).catch(() => {}); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   }
-  await sleep(400);
+  await sleep(400); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   if (i === 9) {
     // fast while the scene connects for the first time (ticket, seeding, the DO's welcome): the
     // seeding's round trip is a few ms locally and hundreds on Cloudflare; up to 40 s
     const until = Date.now() + 40_000;
-    while (Date.now() < until && (await A.evaluate(() => window.__live?.current()?.phase ?? "none")) !== "ready") {
-      await draw(A);
-      await sleep(15);
+    while (Date.now() < until && (await A.evaluate(() => window.__live?.current()?.phase ?? "none")) !== "ready") { // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+      await draw(A); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+      await sleep(15); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     }
     for (let k = 0; k < 30; k++) {
-      await draw(A); // and on right after it
+      await draw(A); // and on right after it // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     }
     log("fast drawing through the first connection:", drawn.length, "shapes");
   }
@@ -104,12 +104,12 @@ await admin("faults", null).catch(() => {});
 await fetch(`${BASE}/fake-google/admin/faults`, { method: "DELETE" }).catch(() => {});
 
 // quiet: in Drive, then the checks
-for (let i = 0; i < 60 && (await A.evaluate(() => window.__live?.current()?.stage() ?? "none")) !== "drive"; i++) await sleep(3000);
+for (let i = 0; i < 60 && (await A.evaluate(() => window.__live?.current()?.stage() ?? "none")) !== "drive"; i++) await sleep(3000); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 await sleep(3000);
 const failures = [];
 const pages = B ? [["A", A], ["B", B]] : [["A", A]];
 for (const [tag, page] of pages) {
-  const state = await page.evaluate(() => ({
+  const state = await page.evaluate(() => ({ // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     list: window.__scenes.getState().list.map((item) => item.name),
     notes: window.__live?.current()?.notes.map((n) => n.text) ?? [],
     alive: window.__scenes.getApi().getSceneElements().map((e) => e.id),
@@ -117,7 +117,7 @@ for (const [tag, page] of pages) {
     stage: window.__live?.current()?.stage(),
   }));
   log(tag, "phase", state.phase, "stage", state.stage, "elements", state.alive.length, "notes", JSON.stringify(state.notes));
-  const copies = state.list.filter((name) => name && name.includes("(offline changes)"));
+  const copies = state.list.filter((name) => name?.includes("(offline changes)"));
   if (copies.length) failures.push(`${tag}: offline copies ${JSON.stringify(copies)}`);
   if (state.notes.some((note) => /offline|too old|copy/i.test(note))) failures.push(`${tag}: notes ${JSON.stringify(state.notes)}`);
   const missing = drawn.filter((id) => !state.alive.includes(id));

@@ -22,7 +22,8 @@ const admin = (path, body) =>
   fetch(`${BASE}/fake-google/admin/${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}).then((r) => r.json());
 const ctx = await browser.createIncognitoBrowserContext();
 const page = await ctx.newPage();
-await page.goto(`${BASE}/auth/login?return=${encodeURIComponent(`/${SCENE}`)}`, { waitUntil: "domcontentloaded" });
+const scenePath = `/${SCENE}`;
+await page.goto(`${BASE}/auth/login?return=${encodeURIComponent(scenePath)}`, { waitUntil: "domcontentloaded" });
 await page.goto(page.url().replace("/authorize", "/approve") + `&email=${encodeURIComponent(EMAIL)}`, { waitUntil: "networkidle2" });
 await sleep(3000);
 await page.keyboard.press("r");
@@ -32,7 +33,11 @@ await page.mouse.move(480, 360, { steps: 5 });
 await page.mouse.up();
 await page.keyboard.press("Escape");
 let fileId = null;
-for (let i = 0; i < 30 && !(fileId = await page.evaluate(() => window.__live?.current()?.fileId ?? null)); i++) await sleep(1000);
+for (let i = 0; i < 30; i++) {
+  fileId = await page.evaluate(() => window.__live?.current()?.fileId ?? null); // NOSONAR S9382: polling, one check after the other
+  if (fileId) break;
+  await sleep(1000); // NOSONAR S9382: polling, one check after the other
+}
 ok(!!fileId, "scene is in Drive", fileId);
 await admin("share", { fileId, anyone: true, role: "reader" });
 const userName = await page.evaluate(() => window.__scenes && document.querySelector(".kq-folder-actions")?.textContent);

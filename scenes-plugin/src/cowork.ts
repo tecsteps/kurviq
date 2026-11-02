@@ -147,7 +147,9 @@ const handleBaseline = async (
   return previous === undefined ? {} : { agentBaseline: previous };
 };
 
-export const readOpenScene = async (command: ReadCommand = { type: "read" }) => {
+const READ_COMMAND: ReadCommand = { type: "read" };
+
+export const readOpenScene = async (command: ReadCommand = READ_COMMAND) => {
   const api = requireApi();
   const info = sceneInfo();
   const elements = api.getSceneElements();
@@ -185,7 +187,7 @@ const layoutAfterEdit = (
     if (!textChanged.has(el.id) && !reshaped.has(container.id) && !reshaped.has(el.id)) {
       continue;
     }
-    let text: any = { ...el, ...(refreshTextDimensions(el as any, container, map, (el as any).originalText ?? (el as any).text) || {}) };
+    let text: any = { ...el, ...refreshTextDimensions(el as any, container, map, (el as any).originalText ?? (el as any).text) };
     if (text.height > getBoundTextMaxHeight(container, text)) {
       scene.mutateElement(container, {
         height: (computeContainerDimensionForBoundText as any)(text.height, container.type, container),
@@ -233,7 +235,7 @@ const mergeCustomData = (current: Record<string, unknown> | null | undefined, pa
   if (!isPlainObject(patch)) {
     return patch;
   }
-  const merged: Record<string, unknown> = { ...(current || {}) };
+  const merged: Record<string, unknown> = { ...current };
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) {
       delete merged[key];
@@ -362,7 +364,7 @@ const applyEdits = async (
       }
       const { label: rawLabel, ...rest } = applyMarkdownUpdate(el, props as Record<string, any>);
       const label = rawLabel && typeof rawLabel === "object" ? applyMarkdownUpdate(labelOf(id) ?? {}, rawLabel) : rawLabel;
-      const patch: Record<string, unknown> = { ...(patches.get(id) || {}) };
+      const patch: Record<string, unknown> = { ...patches.get(id) };
       for (const [key, value] of Object.entries(rest)) {
         if (!PROTECTED.has(key)) {
           patch[key] = key === "customData" ? mergeCustomData((patch.customData ?? el.customData) as any, value) : value;
@@ -428,7 +430,7 @@ const applyEdits = async (
       }
     }
     // a moved frame takes its content along (like dragging it in the editor)
-    for (const [id, patch] of [...patches]) {
+    for (const [id, patch] of [...patches]) { // NOSONAR S7747: snapshot prevents newly added child patches from being visited in this pass
       const frame = present.get(id)!;
       if ((frame.type !== "frame" && frame.type !== "magicframe") || !("x" in patch || "y" in patch)) {
         continue;
@@ -439,7 +441,7 @@ const applyEdits = async (
         const own = patches.get(child.id) || {};
         const moves = child.frameId === id && !child.isDeleted && !("x" in own) && !("y" in own);
         if (moves && (dx || dy)) {
-          patches.set(child.id, { ...(patches.get(child.id) || {}), x: child.x + dx, y: child.y + dy });
+          patches.set(child.id, { ...patches.get(child.id), x: child.x + dx, y: child.y + dy });
           reshaped.add(child.id);
         }
       }
@@ -459,7 +461,7 @@ const applyEdits = async (
     const refreshed = new Map(
       elements
         .filter((el) => textUpdated.has(el.id) && el.type === "text" && !(el as any).containerId)
-        .map((el: any) => [el.id, { ...el, ...(refreshTextDimensions(withRoomForWords(el), null, map, el.originalText ?? el.text) || {}) }]),
+        .map((el: any) => [el.id, { ...el, ...refreshTextDimensions(withRoomForWords(el), null, map, el.originalText ?? el.text) }]),
     );
     elements = elements.map((el) => {
       const next = refreshed.get(el.id) as any;
@@ -487,13 +489,18 @@ const applyEdits = async (
   // reset: slides (frame ids, numbers), template copies (ids), or a copy's
   // single changes ({ id, changes: ["color"] }), like the card's icon and the canvas's bar
   const slidesNow = getSlides(elements);
-  const refs = command.restyle || command.reset === "all" ? slidesNow.map((slide) => slide.id) : Array.isArray(command.reset) ? command.reset : [];
+  let refs: typeof command.reset = [];
+  if (command.restyle || command.reset === "all") refs = slidesNow.map((slide) => slide.id);
+  else if (Array.isArray(command.reset)) refs = command.reset;
   const resetIds: string[] = [];
   const copyResets: Array<{ id: string; changes: string[] | null }> = [];
   const unknown: string[] = [];
   for (const ref of refs) {
     const item = typeof ref === "object" && ref ? (ref as { id?: string; changes?: string[] }) : null;
-    const id = item ? String(item.id) : typeof ref === "number" ? slidesNow[ref - 1]?.id ?? String(ref) : String(ref);
+    let id: string;
+    if (item) id = String(item.id);
+    else if (typeof ref === "number") id = slidesNow[ref - 1]?.id ?? String(ref);
+    else id = String(ref);
     if (slidesNow.some((slide) => slide.id === id) && !item) {
       resetIds.push(id);
     } else if (slideData(elements.find((el) => el.id === id && !el.isDeleted)).copyOf) {
@@ -557,7 +564,7 @@ const applyEdits = async (
     const merged = (await convert([...live, ...toAdd])).map((el: any) => {
       const tombstone = deletedById.get(el.id);
       return tombstone && !liveIds.has(el.id)
-        ? { ...el, version: tombstone.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }
+        ? { ...el, version: tombstone.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) } // NOSONAR S2245: not security relevant (Excalidraw versionNonce)
         : el;
     });
     const existingIds = liveIds;
@@ -572,7 +579,7 @@ const applyEdits = async (
       const label = mergedById.get(id);
       const container = label?.containerId && mergedById.get(label.containerId);
       const raw = toAdd.find((el) => el?.id === id);
-      if (!label || label.type !== "text" || !container || raw?.type !== "text") {
+      if (label?.type !== "text" || !container || raw?.type !== "text") {
         continue;
       }
       mergedById.set(id, {
@@ -677,6 +684,40 @@ const moveLayers = (
   if (!moves.length) {
     return { elements: input, problems };
   }
+  const relativeLayerIndex = (move: typeof moves[number], rest: ExcalidrawElement[]) => {
+    const ref = (move.above ?? move.below) as string;
+    const index = rest.findIndex((item) => item.id === ref && !item.isDeleted);
+    if (index < 0) {
+      problems.push(`${move.id}: ${move.above !== undefined ? "above" : "below"} "${ref}": no such element`);
+      return null;
+    }
+    if (move.above !== undefined) {
+      // above the element and its label
+      let end = index;
+      while (end + 1 < rest.length && (rest[end + 1] as any).containerId === ref) {
+        end++;
+      }
+      return end + 1;
+    } else {
+      return index;
+    }
+  };
+
+  const layerIndex = (move: typeof moves[number], rest: ExcalidrawElement[], sameLayer: (item: ExcalidrawElement) => boolean) => {
+    if (typeof move.above === "string" || typeof move.below === "string") {
+      return relativeLayerIndex(move, rest);
+    } else if (move.zIndex === "front") {
+      const last = rest.reduce((found, item, i) => (sameLayer(item) ? i : found), -1);
+      return last < 0 ? rest.length : last + 1;
+    } else if (move.zIndex === "back") {
+      const first = rest.findIndex((item) => sameLayer(item));
+      return Math.max(0, first);
+    } else {
+      problems.push(`${move.id}: zIndex must be "front" or "back" (or use above / below with an element id)`);
+      return null;
+    }
+  };
+
   let list = [...input];
   for (const move of moves) {
     const el = list.find((item) => item.id === move.id && !item.isDeleted);
@@ -687,34 +728,8 @@ const moveLayers = (
     const rest = list.filter((item) => !group.has(item.id));
     const moving = list.filter((item) => group.has(item.id)).map((item) => newElementWith(item, { index: null } as any));
     const sameLayer = (item: ExcalidrawElement) => !item.isDeleted && (item.frameId ?? null) === (el.frameId ?? null) && item.type !== "frame";
-    let at: number;
-    if (typeof move.above === "string" || typeof move.below === "string") {
-      const ref = (move.above ?? move.below) as string;
-      const index = rest.findIndex((item) => item.id === ref && !item.isDeleted);
-      if (index < 0) {
-        problems.push(`${move.id}: ${move.above !== undefined ? "above" : "below"} "${ref}": no such element`);
-        continue;
-      }
-      if (move.above !== undefined) {
-        // above the element and its label
-        let end = index;
-        while (end + 1 < rest.length && (rest[end + 1] as any).containerId === ref) {
-          end++;
-        }
-        at = end + 1;
-      } else {
-        at = index;
-      }
-    } else if (move.zIndex === "front") {
-      const last = rest.reduce((found, item, i) => (sameLayer(item) ? i : found), -1);
-      at = last < 0 ? rest.length : last + 1;
-    } else if (move.zIndex === "back") {
-      const first = rest.findIndex((item) => sameLayer(item));
-      at = first < 0 ? 0 : first;
-    } else {
-      problems.push(`${move.id}: zIndex must be "front" or "back" (or use above / below with an element id)`);
-      continue;
-    }
+    const at = layerIndex(move, rest, sameLayer);
+    if (at === null) continue;
     list = [...rest.slice(0, at), ...moving, ...rest.slice(at)];
   }
   syncInvalidIndices(list as any);
@@ -808,7 +823,7 @@ export const editSceneOnDrive = async (
       convert,
       command.name,
     );
-    const files = { ...(data.files || {}), ...(command.files || {}) };
+    const files = { ...data.files, ...command.files };
     const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
     const elements = images.elements;
     const json = withSceneName(
@@ -846,7 +861,7 @@ const editLiveScene = async (
   await registerSceneFonts(data);
   const readState = restoreElements(data.elements || [], null, { repairBindings: true });
   const edit = await applyEdits(readState, command, convert, command.name);
-  const files = { ...(data.files || {}), ...(command.files || {}) };
+  const files = { ...data.files, ...command.files };
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
   // against what the edit was made on: what the user did meanwhile stays
@@ -922,7 +937,7 @@ export const editLocalScene = async (
     convert,
     command.name,
   );
-  const files = { ...(data.files || {}), ...(command.files || {}) };
+  const files = { ...data.files, ...command.files };
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
   const json = withSceneName(withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements), command.name);

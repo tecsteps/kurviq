@@ -19,13 +19,25 @@ const PAGE_WIDTH_IN = 13.333;
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
+/** the slides one part of the spec names: a range "2-4", a number or a frame id */
+const slidesForPart = (slides: Frame[], part: number | string): Array<Frame | undefined> => {
+  const range = typeof part === "string" && /^(\d+)\s*-\s*(\d+)$/.exec(part);
+  if (range) {
+    return slides.slice(Number(range[1]) - 1, Number(range[2]));
+  }
+  if (typeof part === "number" || /^\d+$/.test(part)) {
+    return [slides[Number(part) - 1]];
+  }
+  return [slides.find((slide) => slide.id === part)];
+};
+
 /**
  * Which slides: "all" (skipped ones left out), or numbers (1-based, deck
  * order), frame ids and ranges like "2-4", given as a list or "1, 3-5".
  */
 export const pickSlides = (
   elements: readonly ExcalidrawElement[],
-  spec: "all" | string | Array<number | string> = "all",
+  spec: string | Array<number | string> = "all", // "all" is one of the strings
   { includeSkipped = false }: { includeSkipped?: boolean } = {},
 ): Frame[] => {
   const slides = getSlides(elements);
@@ -36,12 +48,7 @@ export const pickSlides = (
   const picked: Frame[] = [];
   for (const raw of parts) {
     const part = typeof raw === "number" ? raw : raw.trim();
-    const range = typeof part === "string" && part.match(/^(\d+)\s*-\s*(\d+)$/);
-    const found = range
-      ? slides.slice(Number(range[1]) - 1, Number(range[2]))
-      : typeof part === "number" || /^\d+$/.test(part)
-      ? [slides[Number(part) - 1]]
-      : [slides.find((slide) => slide.id === part)];
+    const found = slidesForPart(slides, part);
     if (!found.length || found.some((slide) => !slide)) {
       throw new Error(`No slide "${part}": the deck has ${slides.length} slides`);
     }
@@ -75,6 +82,25 @@ const hasTransparency = (data: Uint8ClampedArray) => {
 };
 
 /**
+ * Where each picture on the slides is shown: element width, and the part of
+ * the picture it shows (crop). The crop counts in pixels of the picture as it
+ * was when cropped: its naturalWidth.
+ */
+const shownSizes = (elements: readonly ExcalidrawElement[], frames: readonly Frame[]) => {
+  const onSlides = new Set(frames.map((frame) => frame.id));
+  const shown = new Map<string, Array<{ width: number; cropShare: number }>>();
+  for (const el of elements) {
+    if (el.isDeleted || el.type !== "image" || !el.fileId || !el.frameId || !onSlides.has(el.frameId)) {
+      continue;
+    }
+    const crop = (el as any).crop as { width: number; naturalWidth: number } | null;
+    const cropShare = crop ? crop.width / crop.naturalWidth : 1;
+    shown.set(el.fileId, [...(shown.get(el.fileId) ?? []), { width: el.width, cropShare }]);
+  }
+  return shown;
+};
+
+/**
  * Smaller pictures for a PDF, without visible loss: each one scaled down to
  * twice the size it has on its slides (if it is bigger), and stored as a
  * high-quality JPEG when it has no transparency. A picture keeps its
@@ -85,18 +111,7 @@ export const optimizeImages = async (
   files: BinaryFiles,
   frames: readonly Frame[],
 ): Promise<BinaryFiles> => {
-  const onSlides = new Set(frames.map((frame) => frame.id));
-  // where each picture is shown: element width, and the part of the picture it shows (crop)
-  // (the crop counts in pixels of the picture as it was when cropped: its naturalWidth)
-  const shown = new Map<string, Array<{ width: number; cropShare: number }>>();
-  for (const el of elements) {
-    if (el.isDeleted || el.type !== "image" || !el.fileId || !el.frameId || !onSlides.has(el.frameId)) {
-      continue;
-    }
-    const crop = (el as any).crop as { width: number; naturalWidth: number } | null;
-    const cropShare = crop ? crop.width / crop.naturalWidth : 1;
-    shown.set(el.fileId, [...(shown.get(el.fileId) ?? []), { width: el.width, cropShare }]);
-  }
+  const shown = shownSizes(elements, frames);
   const result: BinaryFiles = { ...files };
   for (const [fileId, uses] of shown) {
     const file = files[fileId];
@@ -104,7 +119,7 @@ export const optimizeImages = async (
       continue; // SVG and the like: already small and sharp
     }
     try {
-      const image = await loadImage(file.dataURL);
+      const image = await loadImage(file.dataURL); // NOSONAR S9382: one picture at a time on purpose (each decodes into a canvas, memory)
       // slide pixels per pixel of the picture, at its largest use
       const perPixel = Math.max(...uses.map((use) => use.width / (use.cropShare * image.naturalWidth)));
       const factor = Math.min(1, perPixel * IMAGE_DENSITY);
@@ -150,7 +165,8 @@ export const slidesHtml = async (
   const pages: string[] = [];
   for (const original of frames) {
     const frame = (byId.get(original.id) as Frame) ?? original;
-    const svg = await exportToSvg({
+    // in order on purpose: pages in deck order, a shared picture is kept on its first page
+    const svg = await exportToSvg({ // NOSONAR S9382
       elements: onSlides(frame),
       files,
       appState: { exportBackground: true, viewBackgroundColor: background, exportWithDarkMode: false },
@@ -220,7 +236,7 @@ export const printInBrowser = (html: string, fileName?: string) => {
   document.body.appendChild(frame);
   const doc = frame.contentDocument!;
   doc.open();
-  doc.write(html);
+  doc.write(html); // NOSONAR S1874: the simple way to fill a blank print frame synchronously; srcdoc would load later
   doc.close();
   const print = () => {
     // "Save as PDF" names the file after the page's title, not the printed frame's
@@ -233,5 +249,5 @@ export const printInBrowser = (html: string, fileName?: string) => {
     document.title = title;
     setTimeout(() => frame.remove(), 60_000);
   };
-  doc.fonts.ready.then(() => setTimeout(print, 300));
+  doc.fonts.ready.then(() => setTimeout(print, 300)).catch((error) => console.error("[pdf] print failed", error));
 };

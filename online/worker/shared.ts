@@ -46,7 +46,8 @@ const notPublic = () =>
 /** a public scene, through the edge cache (stale copies are fine for a minute) */
 const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: ExecutionContext, version?: string) => {
   const cache = caches.default;
-  const key = new Request(`${origin}${apiPath(fileId)}${version ? `?v=${encodeURIComponent(version)}` : ""}`);
+  const query = version ? `?v=${encodeURIComponent(version)}` : "";
+  const key = new Request(`${origin}${apiPath(fileId)}${query}`);
   const hit = await cache.match(key);
   if (hit) {
     return hit;
@@ -109,7 +110,7 @@ const publicVersion = async (origin: string, fileId: string, env: SharedEnv, ctx
 /** /api/public/<fileId>, /api/public/<fileId>/version */
 export const handlePublicApi = (request: Request, env: SharedEnv, ctx: ExecutionContext): Promise<Response> | null => {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/public\/([^/]+)(\/version)?$/);
+  const match = /^\/api\/public\/([^/]+)(\/version)?$/.exec(url.pathname);
   if (!match) {
     return null;
   }
@@ -124,7 +125,7 @@ export const handlePublicApi = (request: Request, env: SharedEnv, ctx: Execution
 };
 
 const escapeHtml = (text: string) =>
-  text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
+  text.replace(/[&<>"']/g, (char) => `&#${char.codePointAt(0)};`);
 
 /**
  * /s/<fileId>/<slug> and the short link /pub/<name> (./pubLinks.ts): the app
@@ -138,7 +139,7 @@ export const handleSharedPage = async (
   ctx: ExecutionContext,
 ): Promise<Response | null> => {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/s\/([^/]+)(?:\/[^/]*)?\/?$/);
+  const match = /^\/s\/([^/]+)(?:\/[^/]*)?\/?$/.exec(url.pathname);
   const pubName = pubNameFromPath(url.pathname);
   if ((!match && !pubName) || request.method !== "GET") {
     return null;
@@ -160,11 +161,13 @@ export const handleSharedPage = async (
   const name = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-Name") || "") : "";
   const by = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-By") || "") : "";
   const title = name ? `${name} · Kurviq` : `A shared scene on Kurviq`;
+  const byline = by ? `By ${by}. ` : "";
   const description = name
-    ? `${by ? `By ${by}. ` : ""}A drawing made with Kurviq. Open it in your browser: no sign-up.`
+    ? `${byline}A drawing made with Kurviq. Open it in your browser: no sign-up.`
     : `Shared with you on Kurviq. Sign in with Google to see it, if it was shared with you.`;
   const link = pubName ? `${url.origin}/pub/${pubName}` : `${url.origin}${url.pathname}`;
   const content = (value: string) => ({ element: (el: Element) => el.setAttribute("content", value) });
+  const publicName = `${pubName} ${fileId}`;
   const rewritten = new HTMLRewriter()
     .on("title", { element: (el) => el.setInnerContent(title) })
     .on('meta[property="og:title"], meta[name="twitter:title"]', content(title))
@@ -174,7 +177,7 @@ export const handleSharedPage = async (
     .on("head", {
       element: (el) =>
         el.append(
-          (pubName ? `<meta name="kurviq-pub" content="${escapeHtml(`${pubName} ${fileId}`)}">` : "") +
+          (pubName ? `<meta name="kurviq-pub" content="${escapeHtml(publicName)}">` : "") +
             (name
               ? `<link rel="preload" href="${escapeHtml(apiPath(fileId))}" as="fetch" crossorigin="anonymous">`
               : `<meta name="robots" content="noindex">`),

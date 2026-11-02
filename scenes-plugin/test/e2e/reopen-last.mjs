@@ -37,7 +37,7 @@ const page = async (tag) => {
   return p;
 };
 const ready = async (p) => {
-  for (let i = 0; i < 80 && !(await p.evaluate(() => !!window.__scenes?.getApi()).catch(() => false)); i++) await sleep(250);
+  for (let i = 0; i < 80 && !(await p.evaluate(() => !!window.__scenes?.getApi()).catch(() => false)); i++) await sleep(250); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   await p.evaluate(() => window.__scenes.ready);
   await sleep(2500); // the router and the first sync
 };
@@ -47,10 +47,10 @@ const draw = (p) =>
   p.evaluate(() => {
     const api = window.__scenes.getApi();
     const el = {
-      id: "r" + Math.random().toString(36).slice(2, 10), type: "rectangle", x: 50 + Math.random() * 800, y: 50 + Math.random() * 500, width: 60, height: 40, angle: 0,
+      id: "r" + Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => (byte % 36).toString(36)).join(""), type: "rectangle", x: 50 + Math.random() * 800, y: 50 + Math.random() * 500, width: 60, height: 40, angle: 0, // NOSONAR S2245: not security relevant (test drawing positions and Excalidraw version nonces)
       strokeColor: "#1e1e1e", backgroundColor: "transparent", fillStyle: "solid", strokeWidth: 2, strokeStyle: "solid",
       roughness: 1, opacity: 100, groupIds: [], frameId: null, index: null, roundness: { type: 3 }, seed: 1,
-      version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), isDeleted: false, boundElements: null, updated: Date.now(), link: null, locked: false,
+      version: 1, versionNonce: Math.floor(Math.random() * 2 ** 31), isDeleted: false, boundElements: null, updated: Date.now(), link: null, locked: false, // NOSONAR S2245: not security relevant (test drawing positions and Excalidraw version nonces)
     };
     api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), el], captureUpdate: "IMMEDIATELY" });
   });
@@ -76,11 +76,11 @@ await A.goto(`${BASE}/auth/login?return=${encodeURIComponent("/")}`, { waitUntil
 await A.goto(A.url().replace("/authorize", "/approve") + `&email=${encodeURIComponent(EMAIL)}`, { waitUntil: "load" });
 await ready(A);
 for (const name of ["Alpha", "Bravo", "Charlie"]) {
-  await A.evaluate((n) => window.__scenes.create(n), name);
-  await draw(A);
-  for (let k = 0; k < 200 && !(await A.evaluate(() => !!window.__scenes.fileIdOf(window.__scenes.getState().current))); k++) await sleep(100);
+  await A.evaluate((n) => window.__scenes.create(n), name); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+  await draw(A); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+  for (let k = 0; k < 200 && !(await A.evaluate(() => !!window.__scenes.fileIdOf(window.__scenes.getState().current))); k++) await sleep(100); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
-for (let i = 0; i < 40 && (await A.evaluate(() => window.__live?.current()?.phase)) !== "ready"; i++) await sleep(500);
+for (let i = 0; i < 40 && (await A.evaluate(() => window.__live?.current()?.phase)) !== "ready"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 log("live:", await A.evaluate(() => window.__live?.current()?.phase ?? "none"));
 if ((await A.evaluate(() => window.__live?.current()?.phase)) !== "ready") failures.push("Charlie never went live");
 
@@ -108,8 +108,8 @@ log("background tabs:", JSON.stringify(await current(T)), JSON.stringify(await c
 // the user works in A (Bravo) again, then stops
 await use(A);
 for (let i = 0; i < 6; i++) {
-  await draw(A);
-  await sleep(700);
+  await draw(A); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+  await sleep(700); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
 log("stored after working in A:", JSON.stringify(await stored(A)));
 // the user closes A; both background tabs write the metadata again later (their sync, here
@@ -120,13 +120,13 @@ for (let i = 0; i < 90; i++) {
   const now = [await T.evaluate(() => window.__metaWrites), await U.evaluate(() => window.__metaWrites)];
   if (now[0] > marks[0] && now[1] > marks[1]) break;
   if (i % 15 === 2) {
-    await U.evaluate(() => {
+    await U.evaluate(() => { // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
       const api = window.__scenes.getApi();
       const [el] = api.getSceneElements();
-      if (el) api.updateScene({ elements: [{ ...el, x: el.x + 5, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }], captureUpdate: "IMMEDIATELY" });
+      if (el) api.updateScene({ elements: [{ ...el, x: el.x + 5, version: el.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }], captureUpdate: "IMMEDIATELY" }); // NOSONAR S2245: not security relevant (test drawing positions and Excalidraw version nonces)
     });
   }
-  await sleep(2000);
+  await sleep(2000); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
 log("background writes:", marks, "→", [await T.evaluate(() => window.__metaWrites), await U.evaluate(() => window.__metaWrites)], "stored:", JSON.stringify(await stored(T)));
 await check("A closed, Untitled + Alpha tabs in the background, new tab at /", "Bravo");

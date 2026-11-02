@@ -5,15 +5,24 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const cloudflareSetting = (line) => {
+  const match = /^\s*(CLOUDFLARE_\w+)\s*=/.exec(line);
+  if (!match) return null;
+  const value = line.slice(match[0].length).trim();
+  // Values are single-line, with whitespace allowed around them.
+  if (/[\r\n\u2028\u2029]/.test(value)) return null;
+  return { name: match[1], value };
+};
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const env = { ...process.env };
 for (const file of [".env", ".env.local"]) {
   const full = path.join(HERE, "..", file);
   if (existsSync(full)) {
     for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*(CLOUDFLARE_[\w]+)\s*=\s*(.*?)\s*$/);
-      if (match && match[2]) {
-        env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
+      const setting = cloudflareSetting(line);
+      if (setting?.value) {
+        env[setting.name] = setting.value.replace(/^(['"])(.*)\1$/, "$2");
       }
     }
   }
