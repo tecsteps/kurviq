@@ -83,7 +83,7 @@ class Deck {
   private remeasuredFor: string | null = null;
   private syncTimer = 0;
   private thumbTimer = 0;
-  private thumbVersions = new Map<string, number>();
+  private readonly thumbVersions = new Map<string, number>();
   /** paused while presenting (nothing is edited then) */
   paused = false;
 

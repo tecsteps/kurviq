@@ -123,7 +123,7 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     return json({ ok: true });
   }
 
-  private async ageForTest(body: any): Promise<Response> {
+  private ageForTest(body: any): Response {
     const ms = Number(body.ms) || 0;
     this.sql.exec("UPDATE connected SET at = at - ?", ms);
     this.sql.exec("UPDATE scenes SET at = at - ?", ms);
@@ -139,16 +139,20 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     });
   }
 
+  private touchScene(body: any, fileOk: boolean) {
+    if (fileOk && body.touch) {
+      this.sql.exec("UPDATE connected SET at = ? WHERE id = ?", Date.now(), body.fileId);
+      this.sql.exec("UPDATE scenes SET at = ? WHERE id = ?", Date.now(), body.fileId);
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url);
     const body: any = request.method === "POST" ? await request.json().catch (() => ({})) : {};
     const fileOk = typeof body.fileId === "string" && FILE_ID_RE.test(body.fileId);
     if (pathname === "/epoch") {
       // a renewal of a connected tab also keeps its index entries fresh (they run out without)
-      if (fileOk && body.touch) {
-        this.sql.exec("UPDATE connected SET at = ? WHERE id = ?", Date.now(), body.fileId);
-        this.sql.exec("UPDATE scenes SET at = ? WHERE id = ?", Date.now(), body.fileId);
-      }
+      this.touchScene(body, fileOk);
       return json({ epoch: this.epoch() });
     }
     if (pathname === "/scene-connect") {

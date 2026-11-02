@@ -94,7 +94,7 @@ for (let i = 0; i < 75; i++) {
       await sleep(15); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
     }
     for (let k = 0; k < 30; k++) {
-      await draw(A); // and on right after it // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+      await draw(A); // NOSONAR S9382: drawing calls must run in order to reproduce connection timing
     }
     log("fast drawing through the first connection:", drawn.length, "shapes");
   }

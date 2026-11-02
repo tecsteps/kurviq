@@ -381,22 +381,22 @@ export class SceneRoom extends DurableObject<SceneEnv> {
   private sceneBytes = 0;
 
   // memory only: names, access tokens (≤ 1 h), the round's key, rate counters, locks
-  private names = new Map<string, string | null>();
+  private readonly names = new Map<string, string | null>();
   private driveName: string | null = null;
-  private access = new Map<string, { token: string; expiresAt: number }>();
+  private readonly access = new Map<string, { token: string; expiresAt: number }>();
   /** the last access token that worked here (a save or a one-time token): outside checks without asking a tab */
   private lastAccess: { sub: string; token: string; expiresAt: number } | null = null;
   private roundKey: SceneKey | null = null;
   /** per-minute counters: batches per connection and per account, control messages and full states per connection */
-  private rateBySocket = new WeakMap<WebSocket, Record<string, { minute: number; count: number }>>();
-  private rateBySub = new Map<string, { minute: number; count: number }>();
+  private readonly rateBySocket = new WeakMap<WebSocket, Record<string, { minute: number; count: number }>>();
+  private readonly rateBySub = new Map<string, { minute: number; count: number }>();
   private driveChain: Promise<unknown> = Promise.resolve();
   private outboxChain: Promise<unknown> = Promise.resolve();
   private alarmAt: number | null = null;
   private alarmRunning = false;
   /** the job the alarm is running now: a retry it plans replaces its (overdue) deadline */
   private runningKind: string | null = null;
-  private assemblies = new Map<WebSocket, { sub: string; entries: Map<string, { parts: string[]; count: number; total: number; at: number }> }>();
+  private readonly assemblies = new Map<WebSocket, { sub: string; entries: Map<string, { parts: string[]; count: number; total: number; at: number }> }>();
   private assemblyBytes = 0;
   /** rows written since the object woke (cost measurement, dev-stats) */
   private rowsWritten = 0;
@@ -2548,7 +2548,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
 
   /** an index above `index` and below the next used one (or after all, for a missing index) */
   private freeIndex(index: string | null, taken: Set<string>) {
-    const all = [...this.indices.keys(), ...taken].filter((value) => value !== "").sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const all = [...this.indices.keys(), ...taken].filter((value) => value !== "").sort();
     if (index === null) {
       return indexBetween(all.at(-1) ?? null, null);
     }

@@ -199,7 +199,8 @@ export class Pairing extends DurableObject {
 
   private async api(request: Request, url: URL): Promise<Response> {
     const via: Via = request.headers.get("X-Kurviq-Via") === "oauth" ? "oauth" : "link";
-    const body = request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
+    const bodyless = ["GET", "HEAD"].includes(request.method);
+    const body = bodyless ? "" : await request.text();
     if (url.pathname === "/api/app/state") {
       return json(200, this.appState(via));
     }

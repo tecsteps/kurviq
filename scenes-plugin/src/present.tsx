@@ -64,7 +64,7 @@ class Presenter {
   private shift: Map<string, { x: number; y: number }> | null = null;
   presenterWindow: Window | null = null;
 
-  subscribe = (listener: () => void) => {
+  readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -180,12 +180,12 @@ class Presenter {
 
   /** fullscreen on / off, window resized: fit the slide again */
   private resizeTimer = 0;
-  private onResize = () => {
+  private readonly onResize = () => {
     clearTimeout(this.resizeTimer);
     this.resizeTimer = window.setTimeout(() => this.state.active && this.show({ animate: false }), 120);
   };
 
-  private onFullscreen = () => {
+  private readonly onFullscreen = () => {
     if (!document.fullscreenElement && this.wasFullscreen) {
       this.stop(); // Esc in fullscreen ends the presentation
     }

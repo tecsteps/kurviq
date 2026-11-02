@@ -821,9 +821,9 @@ const runCommand = async (command: Command) => {
     (command as any).items = (command as any).items.map(withFontIds);
   }
   await attachUploads(command);
+  if (command.type === "add-font") return addCommandFont(command);
+  if (command.type === "upload") return uploadCommandFile(command);
   switch (command.type) {
-    case "add-font": return addCommandFont(command);
-    case "upload": return uploadCommandFile(command);
     case "flush":
       return scenesController.flush(command.name);
     case "scene-edit": {

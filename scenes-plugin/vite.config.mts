@@ -52,7 +52,7 @@ const injectScenesPlugin = () => ({
   name: "excalidraw-scenes-inject",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    if (!id.replaceAll(/\\/g, "/").endsWith("/excalidraw-app/App.tsx")) {
+    if (!id.replaceAll("\\", "/").endsWith("/excalidraw-app/App.tsx")) {
       return null;
     }
     const fail = (what: string) => {
@@ -112,7 +112,7 @@ const customFonts = () => ({
   name: "excalidraw-scenes-custom-fonts",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replaceAll(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll("\\", "/").split("?")[0];
     if (!file.endsWith("/packages/excalidraw/components/FontPicker/FontPickerList.tsx")) {
       return null;
     }
@@ -138,7 +138,7 @@ const textPadding = () => ({
   name: "excalidraw-scenes-text-padding",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replaceAll(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll("\\", "/").split("?")[0];
     const patch = (name: string, steps: Array<[string | RegExp, string, number?]>) => {
       let next = code;
       for (const [from, to, count = 1] of steps) {
@@ -216,7 +216,7 @@ const richText = () => ({
   name: "excalidraw-scenes-rich-text",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replaceAll(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll("\\", "/").split("?")[0];
     const patch = (name: string, entry: string, imports: string[], steps: Array<[string | RegExp, string, number?]>) => {
       let next = code;
       for (const [from, to, count = 1] of steps) {
@@ -515,7 +515,7 @@ const kurviqOnline = () => ({
   name: "kurviq-online",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    const file = id.replaceAll(/\\/g, "/").split("?")[0];
+    const file = id.replaceAll("\\", "/").split("?")[0];
     const patch = (name: string, steps: Array<[string | RegExp, string]>) => {
       let next = code;
       for (const [from, to] of steps) {

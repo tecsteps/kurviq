@@ -54,6 +54,9 @@ const registerArrowBindings = (out, byId) => {
  * with real font metrics, see scenes-plugin/src/live.ts). Text sizes are
  * estimated; Excalidraw re-measures text when the scene is opened.
  */
+const labelOf = (label) =>
+  typeof label?.markdown === "string" ? { ...label, text: plainOfMarkdown(label.markdown) } : label;
+
 export const convertInNode = (elements) => {
   const out = [];
   const byId = new Map();
@@ -130,8 +133,7 @@ export const convertInNode = (elements) => {
     if (typeof markdown === "string") {
       rest.text = plainOfMarkdown(markdown);
     }
-    const label =
-      typeof rawLabel?.markdown === "string" ? { ...rawLabel, text: plainOfMarkdown(rawLabel.markdown) } : rawLabel;
+    const label = labelOf(rawLabel);
     const el = base(rest);
     if (el.type === "text") {
       Object.assign(el, {

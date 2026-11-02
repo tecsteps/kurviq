@@ -352,7 +352,7 @@ class ScenesController {
   // store plumbing (for useSyncExternalStore)
   // ---------------------------------------------------------------------------
 
-  subscribe = (listener: () => void) => {
+  readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -389,7 +389,7 @@ class ScenesController {
   private persistedCurrent: string | null = this.meta.current;
 
   /** the user does something in this tab: it is the one in use */
-  private onInteract = () => {
+  private readonly onInteract = () => {
     if (!this.claimsCurrent) {
       this.claimsCurrent = true;
       this.persistMeta();
@@ -465,7 +465,7 @@ class ScenesController {
             .then(() => this.connectInitial())
             .finally(() => this.readyDeferred.resolve())
             .catch((error) => console.error("[scenes] could not initialize scene", error));
-    void waitForLoad();
+    waitForLoad();
     this.unsubscribeChange?.();
     this.api = api;
     this.unsubscribeChange = api.onChange((elements, appState) =>
@@ -552,7 +552,7 @@ class ScenesController {
   }
 
   /** other tabs may have changed scene metadata; this tab keeps its own scene */
-  private onFocus = () => {
+  private readonly onFocus = () => {
     const { current, baseline } = this.meta;
     this.meta = { ...loadMeta(), current, baseline };
     this.lastVersionKey = "";
@@ -567,7 +567,7 @@ class ScenesController {
    * take it over, so this tab doesn't write its stale copy back. The scene
    * this tab shows stays (it is reloaded on focus, like the canvas).
    */
-  private onStorage = (event: StorageEvent) => {
+  private readonly onStorage = (event: StorageEvent) => {
     if (event.key !== META_KEY) {
       return;
     }
@@ -580,10 +580,10 @@ class ScenesController {
     this.refresh();
   };
 
-  private onOnline = () => this.syncNow({ refresh: true });
+  private readonly onOnline = () => this.syncNow({ refresh: true });
 
   /** leaving the tab: push right away instead of waiting for idle */
-  private onVisibility = () => {
+  private readonly onVisibility = () => {
     if (document.visibilityState === "hidden") {
       liveSync.current()?.flush().catch((error) => console.error("[scenes] could not flush live scene", error));
     }
@@ -1204,7 +1204,7 @@ class ScenesController {
    * is told (it checks Drive and stops saving), and the browser's queue of it
    * is let go (the user deleted it).
    */
-  private liveTrash = async (fileId: string, name: string) => {
+  private readonly liveTrash = async (fileId: string, name: string) => {
     const session = await liveSync.session(fileId, name).catch(() => null);
     if (!session) {
       throw new Error(`"${name}" can't be deleted while Kurviq's server is not reachable: try again online`);
@@ -1355,7 +1355,7 @@ class ScenesController {
 
   liveRevision = async (fileId: string, revision: string) => ((await getCheckpoint(`live-rev:${fileId}:${revision}`).catch(() => null)) as string | null) ?? null;
 
-  liveAgentVersion = async (fileId: string) => {
+  readonly liveAgentVersion = async (fileId: string) => {
     const kept = (await getCheckpoint(`live-agent:${fileId}`).catch(() => null)) as
       | { md5?: string; driveRevision?: string; sha?: string; commit?: string; at: string }
       | null;
@@ -1724,7 +1724,7 @@ class ScenesController {
    * The scene's Drive file, for sharing: unsaved changes go to Drive first
    * (a scene that is only in this browser can't be shared).
    */
-  fileForSharing = (name: string) =>
+  readonly fileForSharing = (name: string) =>
     this.withBusy("saving", async () => {
       if (this.isLocalOnly(name)) {
         throw new Error(`"${name}" is kept in this browser only: sync it with Google Drive first`);
@@ -1794,7 +1794,7 @@ class ScenesController {
     }
   };
 
-  private openOrCreateInner = async (name: string) => {
+  private readonly openOrCreateInner = async (name: string) => {
     // online without Drive: there is nowhere else to look, a new scene right away
     if (!this.exists(name) && this.state.sync.notConnected) {
       await this.create(name);
@@ -2326,9 +2326,12 @@ class ScenesController {
   }
 
   private async applyMergedScene(
-    name: string, mine: any, theirsData: any, theirs: { json: string; md5: string },
-    merged: ReturnType<typeof mergeElements>, meta: SceneMeta, unchanged: () => Promise<boolean>,
-    settled: string[], pushAfter: boolean,
+    name: string,
+    { mine, theirsData, theirs, merged, meta, unchanged, settled, pushAfter }: {
+      mine: any; theirsData: any; theirs: { json: string; md5: string };
+      merged: ReturnType<typeof mergeElements>; meta: SceneMeta; unchanged: () => Promise<boolean>;
+      settled: string[]; pushAfter: boolean;
+    },
   ) {
     await registerSceneFonts(theirsData);
     const mergedJson = JSON.stringify({
@@ -2373,7 +2376,7 @@ class ScenesController {
 
   private async takeNonemptyMergeSource(name: string, theirs: { json: string; md5: string }, meta: SceneMeta, unchanged: () => Promise<boolean>) {
     if (!(await unchanged())) {
-      return null;
+      return false;
     }
     await this.writeLocal(name, theirs.json, { dirty: false });
     meta.baseMd5 = theirs.md5;
@@ -2382,7 +2385,7 @@ class ScenesController {
     this.persistMeta();
     this.log("pull", `"${name}" was empty here: took Drive's version`);
     this.refresh();
-    return null;
+    return true;
   }
 
   private mergeWithPolicy(base: any, mine: any, theirsData: any, choices: Record<string, ClashChoice>) {
@@ -2438,7 +2441,8 @@ class ScenesController {
     // a local copy without any elements never deletes Drive's content by a
     // merge (an editor that lost its canvas looks like "the user deleted everything")
     if (!getNonDeletedElements(mine.elements || []).length && getNonDeletedElements(theirsData.elements || []).length) {
-      return this.takeNonemptyMergeSource(name, theirs, meta, unchanged);
+      await this.takeNonemptyMergeSource(name, theirs, meta, unchanged);
+      return null;
     }
     const { merged, settled } = this.mergeWithPolicy(base, mine, theirsData, choices);
     meta.remoteMd5 = theirs.md5;
@@ -2455,7 +2459,7 @@ class ScenesController {
       return null;
     }
 
-    return this.applyMergedScene(name, mine, theirsData, theirs, merged, meta, unchanged, settled, pushAfter);
+    return this.applyMergedScene(name, { mine, theirsData, theirs, merged, meta, unchanged, settled, pushAfter });
   }
 
   private async pushPendingOps() {
@@ -2935,7 +2939,7 @@ class ScenesController {
     });
 
   /** discard the local version, take Drive's */
-  takeTheirs = (name: string) =>
+  readonly takeTheirs = (name: string) =>
     this.withBusy("loading", async () => {
       const latest = await scenesApi.load(name);
       const meta = this.sceneMeta(name);

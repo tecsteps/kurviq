@@ -342,16 +342,7 @@ export const checkDeck = async (
     const checkReadability = async (el: any) => {
       // formatted text: each piece in its own size and color
       const checkTextSize = () => {
-        const doc = richDocOf(el);
-        const pieces: Array<{ size: number; color: string; text: string }> = doc
-          ? doc.p.flatMap((para) =>
-              para.r.map((run) => ({
-                size: Math.round(el.fontSize * (run.z || 1)),
-                color: run.c || (run.a ? LINK_COLOR : el.strokeColor),
-                text: run.t,
-              })),
-            )
-          : [{ size: el.fontSize, color: el.strokeColor, text: el.text }];
+        const pieces = textPieces(el);
         const smallest = pieces.reduce((min, piece) => (piece.size < min.size ? piece : min), pieces[0]);
         if (smallest && smallest.size < MIN_FONT) {
           add("small-text", `text ${preview(smallest.text)} is ${smallest.size}px: hard to read on a projector (use ${MIN_FONT}px or more)`, el.id);
@@ -362,7 +353,7 @@ export const checkDeck = async (
       const box = boxOf(el);
       const behind = await colorBehind(el, slide.id);
       const checkContrast = () => {
-        for (const piece of behind ? pieces.filter((p, i) => pieces.findIndex((q) => q.color === p.color && q.size >= 28 === p.size >= 28) === i) : []) {
+        for (const piece of behind ? distinctContrastPieces(pieces) : []) {
           const ratio = contrast(piece.color, behind!.color);
           const needed = piece.size >= 28 ? 3 : 4.5;
           if (ratio !== null && ratio < needed) {
@@ -391,7 +382,7 @@ export const checkDeck = async (
       }
     };
     for (const el of texts as any[]) {
-      await checkReadability(el);
+      await checkReadability(el); // NOSONAR S9382: text checks append findings in element order
     }
 
     const checkClickSteps = () => {
@@ -466,7 +457,7 @@ export const checkDeck = async (
     });
   };
   for (const [index, slide] of slides.entries()) {
-    await checkSlide(index, slide);
+    await checkSlide(index, slide); // NOSONAR S9382: slide checks append report and findings in deck order
   }
 
   const checkLabelFrames = () => {
@@ -513,3 +504,18 @@ export const checkDeck = async (
       : "No findings: the deck looks clean.",
   };
 };
+
+const textPieces = (el: any): Array<{ size: number; color: string; text: string }> => {
+  const doc = richDocOf(el);
+  if (!doc) return [{ size: el.fontSize, color: el.strokeColor, text: el.text }];
+  return doc.p.flatMap((para) => para.r.map((run) => ({
+    size: Math.round(el.fontSize * (run.z || 1)),
+    color: run.c || (run.a ? LINK_COLOR : el.strokeColor),
+    text: run.t,
+  })));
+};
+
+const distinctContrastPieces = (pieces: ReturnType<typeof textPieces>) =>
+  pieces.filter((piece, index) => pieces.findIndex((other) =>
+    other.color === piece.color && other.size >= 28 === piece.size >= 28,
+  ) === index);

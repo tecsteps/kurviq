@@ -341,8 +341,8 @@ type StatsDoEnv = { FEEDBACK?: D1; DEV_ORIGIN?: string; STATS_FLUSH_MS?: string 
 
 export class Stats extends DurableObject<StatsDoEnv> {
   private readonly sql: SqlStorage;
-  private registers = new Map<string, Uint8Array>();
-  private keys = new Map<string, Promise<CryptoKey>>();
+  private readonly registers = new Map<string, Uint8Array>();
+  private readonly keys = new Map<string, Promise<CryptoKey>>();
   private alarmAt: number | null | undefined;
   private d1Ready = false;
   private flushMs = FLUSH_MS;

@@ -455,7 +455,6 @@ const serveEvents = async (req, res, url) => {
       tabStates.delete(tabId);
     }
   });
-  return;
 };
 
 const flushTabs = async (req, res) => {

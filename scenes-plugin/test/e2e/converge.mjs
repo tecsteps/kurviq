@@ -372,7 +372,7 @@ const norm = (value) => {
   if (Array.isArray(value)) return value.map(norm);
   if (value && typeof value === "object") {
     const out = {};
-    for (const key of Object.keys(value).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    for (const key of Object.keys(value).sort()) {
       const field = value[key];
       if (VOLATILE.has(key) || field === null || field === undefined || (Array.isArray(field) && !field.length)) continue;
       out[key] = norm(field);

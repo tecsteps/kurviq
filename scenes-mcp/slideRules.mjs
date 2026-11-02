@@ -36,7 +36,7 @@ export const canon = (value) => {
   }
   if (value && typeof value === "object") {
     return `{${Object.keys(value)
-      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+      .sort()
       .map((key) => `${JSON.stringify(key)}:${canon(value[key])}`)
       .join(",")}}`;
   }

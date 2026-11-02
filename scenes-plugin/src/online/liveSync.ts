@@ -898,7 +898,6 @@ export class LiveScene {
     this.error = error?.code ?? null;
     this.changed();
     this.scheduleRetry(error?.status >= 400 && error?.status < 500 ? 60_000 : undefined);
-    return;
   }
 
   private unavailableTicket(answer: Extract<TicketAnswer, { enabled: false }>) {
@@ -919,7 +918,6 @@ export class LiveScene {
         this.note("Live sync is off for this scene: changes kept in this browser wait until it is on again.");
       }
       this.changed();
-      return;
     }
   }
 
@@ -1209,7 +1207,6 @@ export class LiveScene {
       }
     }
     this.changed();
-    return;
   }
 
   private async receive(message: ServerMessage) {
@@ -2130,7 +2127,7 @@ export class LiveScene {
           if (!this.confirmedFonts.has(hash) && !this.isPending(keyOf("font", hash))) {
             const { family, id, faces, source } = font;
             this.addDraft("font", hash, { family, id, faces, source }, { live, fontId: id });
-            this.flush().catch((error) => console.error("[live] background operation failed", error));
+            return this.flush();
           }
         }).catch((error) => console.error("[live] background operation failed", error));
       }
@@ -2519,7 +2516,7 @@ export class LiveScene {
       // only this tab's own elements of that font: others' text with the old number is another font
       const own = new Set<string>([...this.pendingIds(), ...batch.changes.filter((item) => item.k === "el").map((item) => item.id)]);
       const move = (el: El) => (el?.fontFamily === from ? { ...el, fontFamily: assigned } : el);
-      await this.remapQueuedFont(from, move);
+      await this.remapQueuedFont(from, move); // NOSONAR S9382: font remaps update shared queues and must apply in collision order
       for (const draft of this.draft.values()) {
         if (draft.k === "el") {
           draft.value = move(draft.value);

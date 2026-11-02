@@ -531,7 +531,7 @@ export const applyEdits = async (
       let id: string;
       if (item) id = String(item.id);
       else if (typeof ref === "number") id = slidesNow[ref - 1]?.id ?? String(ref);
-      else id = String(ref);
+      else id = String(ref); // NOSONAR S6551: object refs are handled by item above, only primitive refs reach this branch
       if (slidesNow.some((slide) => slide.id === id) && !item) {
         resetIds.push(id);
       } else if (slideData(elements.find((el) => el.id === id && !el.isDeleted)).copyOf) {

@@ -68,22 +68,23 @@ const request = async (path: string, init?: RequestInit) => {
   try {
     res = await fetch(`${BASE_URL}${path}`, init);
   } catch {
-    throw Object.assign(
-      new Error(`Scenes server not reachable at ${BASE_URL}`),
-      { status: 0, offline: true },
-    ) as ApiError;
+    const error = new Error(`Scenes server not reachable at ${BASE_URL}`);
+    Object.assign(error, { status: 0, offline: true });
+    throw error;
   }
   if (!res.ok) {
     let body: any = {};
     try {
       body = await res.json();
     } catch {}
-    throw Object.assign(new Error(body.error || `${res.status} ${res.statusText}`), {
+    const error = new Error(body.error || `${res.status} ${res.statusText}`);
+    Object.assign(error, {
       status: res.status,
       offline: res.status === 503 || !!body.offline,
       remoteMd5: body.remoteMd5,
       exists: !!body.exists,
-    }) as ApiError;
+    });
+    throw error;
   }
   return res;
 };

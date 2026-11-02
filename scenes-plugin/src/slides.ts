@@ -121,7 +121,7 @@ const slideFrame = (slide: unknown, frames: readonly any[], slides: Frame[]) => 
   if (slide === "template") {
     return frames.find((f) => f.customData?.slides?.role === "template");
   }
-  if (typeof slide === "number" || /^\d+$/.test(String(slide))) {
+  if (typeof slide === "number" || /^\d+$/.test(String(slide))) { // NOSONAR S6551: legacy slide references intentionally use string coercion before numeric lookup
     return slides[Number(slide) - 1];
   }
   return frames.find((f) => f.id === slide);
@@ -479,8 +479,8 @@ export const syncTemplate = (
         );
       }
     }
-    const nextHidden = [...hidden].filter((id) => templateIds.has(id)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    if (nextHidden.join() !== [...wasHidden].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join()) {
+    const nextHidden = [...hidden].filter((id) => templateIds.has(id)).sort();
+    if (nextHidden.join() !== [...wasHidden].sort().join()) {
       replaced.set(slide.id, withSlideData(slide, { hidden: nextHidden.length ? nextHidden : undefined }));
     }
   });
@@ -853,7 +853,7 @@ export const deleteSlides = (api: ExcalidrawImperativeAPI, ids: string[]) => {
 export const addSlide = (api: ExcalidrawImperativeAPI, after?: string) => {
   const elements = api.getSceneElementsIncludingDeleted();
   const slides = getSlides(elements);
-  const anchor = slides.find((s) => s.id === after) ?? slides[slides.length - 1];
+  const anchor = slides.find((s) => s.id === after) ?? slides.at(-1);
   const template = getTemplate(elements);
   const width = template?.width ?? SLIDE_WIDTH;
   const height = template?.height ?? SLIDE_HEIGHT;
@@ -1185,14 +1185,14 @@ export const addTitleBlock = (elements: readonly ExcalidrawElement[]) => {
   const adopted = new Map<string, ExcalidrawElement>();
   const hiddenOn = new Map<string, string[]>();
   for (const slide of slides) {
+    if (!model) {
+      continue; // nothing to go by: the template's show everywhere
+    }
     const titles = found.get(slide.id);
     for (const [own, src] of [
       [titles?.headline, sources[1]],
       [titles?.eyebrow, sources[0]],
     ] as const) {
-      if (!model) {
-        continue; // nothing to go by: the template's show everywhere
-      }
       if (!inPlace(own, src, slide)) {
         hiddenOn.set(slide.id, [...(hiddenOn.get(slide.id) ?? slideData(slide).hidden ?? []), src.id]);
         continue;
