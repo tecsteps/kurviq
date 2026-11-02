@@ -102,7 +102,7 @@ class Presenter {
   start = (fromSlideId?: string) => {
     const api = this.api();
     const slides = this.shown();
-    if (!slides.length) {
+    if (!deck.getState().isPresentation || !slides.length) {
       return;
     }
     const appState = api.getAppState();
@@ -296,7 +296,7 @@ class Presenter {
 
   go = (index: number, { built = false } = {}) => {
     const slides = this.shown();
-    if (!slides.length) {
+    if (!deck.getState().isPresentation || !slides.length) {
       return;
     }
     const next = Math.max(0, Math.min(slides.length - 1, index));
@@ -433,7 +433,7 @@ if (typeof window !== "undefined") {
         event.preventDefault(); // already presenting: never a reload
         return;
       }
-      if (!deck.getState().slides.length) {
+      if (!deck.getState().isPresentation || !deck.getState().slides.length) {
         return;
       }
       event.preventDefault();

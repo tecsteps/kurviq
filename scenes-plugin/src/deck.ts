@@ -43,6 +43,7 @@ export type SlideInfo = {
 };
 
 export type DeckState = {
+  isPresentation: boolean;
   slides: SlideInfo[];
   templateId: string | null;
   transition: Transition;
@@ -54,13 +55,8 @@ export type DeckState = {
   activeId: string | null;
 };
 
-/**
- * The scene is a presentation: a template, several slides or speaker notes (a
- * single frame, e.g. an infographic, isn't one). The one test for Present,
- * presentation links and the canvas icons.
- */
-export const isDeck = ({ slides, templateId }: Pick<DeckState, "slides" | "templateId">) =>
-  !!templateId || slides.length > 1 || slides.some((slide) => slide.notes.trim());
+/** Presentation UI follows only the saved scene setting. */
+export const isDeck = (state: Pick<DeckState, "isPresentation">) => state.isPresentation;
 
 const THUMB_WIDTH = 480;
 
@@ -87,7 +83,7 @@ class Deck {
   /** paused while presenting (nothing is edited then) */
   paused = false;
 
-  state: DeckState = { slides: [], templateId: null, transition: "glide", thumbs: {}, selection: [], activeId: null };
+  state: DeckState = { isPresentation: false, slides: [], templateId: null, transition: "glide", thumbs: {}, selection: [], activeId: null };
   private lastSelection = "";
 
   subscribe = (listener: () => void) => {
@@ -121,6 +117,9 @@ class Deck {
       }
     } catch {}
     const offChange = api.onChange((elements, appState) => {
+      if (this.state.isPresentation !== ((appState as any).kurviqPresentation === true)) {
+        this.set({ isPresentation: (appState as any).kurviqPresentation === true });
+      }
       this.onChange(elements);
       this.onSelection(elements, appState.selectedElementIds);
     });
@@ -171,6 +170,7 @@ class Deck {
       offPointer();
       document.removeEventListener("keydown", onKey, true);
     };
+    this.set({ isPresentation: (api.getAppState() as any).kurviqPresentation === true });
     this.onChange(api.getSceneElementsIncludingDeleted());
   }
 

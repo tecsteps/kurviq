@@ -939,6 +939,16 @@ export const SlidesSidebar = () => {
         <div className="scenes-sidebar__title">Slides</div>
       </Sidebar.Header>
       <div className="slides-body">
+        <label>
+          <input
+            type="checkbox"
+            checked={state.isPresentation}
+            onChange={(event) => api().updateScene({
+              appState: { kurviqPresentation: event.target.checked, kurviqPresentationAt: Date.now() } as any,
+            })}
+          />
+          This scene is a presentation
+        </label>
         {!isDeck(state) ? (
           <SlidesEmpty />
         ) : (

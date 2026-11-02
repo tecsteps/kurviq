@@ -37,6 +37,9 @@ const snapshotStore = createStore(`excalidraw-scenes-db${spaceSuffix(currentSpac
 export const UNTITLED = "\u0000untitled";
 
 export type SceneMeta = {
+  /** Immediate reload recovery for app state fields filtered by Excalidraw. */
+  kurviqPresentation?: boolean;
+  kurviqPresentationAt?: number;
   /** version in Drive (MD5 of the content) the local copy is based on; null = never saved there */
   baseMd5: string | null;
   /** last seen version in Drive (null = not in Drive), for status while offline */

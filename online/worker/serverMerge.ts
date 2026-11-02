@@ -1,3 +1,4 @@
+import { presentationOf } from "../../scenes-mcp/presentation.mjs";
 // Live sync, server side: what a scene's Durable Object (./scene.ts) does
 // with scene content while it saves: decrypting events, building the
 // Drive file, and telling what an outside app changed.
@@ -258,7 +259,7 @@ export const sameContent = (k: EventKind, a: any, b: any) => {
 // the Drive file
 // -----------------------------------------------------------------------------
 
-export const DEFAULT_SETTINGS = { viewBackgroundColor: "#ffffff", gridSize: 20, gridStep: 5, gridModeEnabled: false };
+export const DEFAULT_SETTINGS = { viewBackgroundColor: "#ffffff", gridSize: 20, gridStep: 5, gridModeEnabled: false, kurviqPresentation: false, kurviqPresentationAt: 0 };
 
 const byIndex = (a: any, b: any) => {
   const [x, y] = [a.index ?? "", b.index ?? ""];
@@ -357,6 +358,8 @@ export const buildSceneFile = (plain: Map<string, { k: EventKind; value: any }>,
       gridSize: pick("gridSize"),
       gridStep: pick("gridStep"),
       gridModeEnabled: pick("gridModeEnabled"),
+      kurviqPresentation: pick("kurviqPresentation"),
+      kurviqPresentationAt: pick("kurviqPresentationAt"),
     },
     files,
   };
@@ -398,7 +401,8 @@ export const subjectsOfFile = async (json: string, driveName: string | null, has
   for (const el of elements) {
     out.set(eventKey("el", el.id), { k: "el", id: el.id, value: el });
   }
-  const app = data.appState || {};
+  const app = { ...data.appState };
+  app.kurviqPresentation = presentationOf(data);
   out.set(eventKey("set", SETTINGS_ID), {
     k: "set",
     id: SETTINGS_ID,

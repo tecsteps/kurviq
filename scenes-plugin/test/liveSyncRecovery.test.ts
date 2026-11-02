@@ -1,3 +1,4 @@
+import { presentationOf } from "../../scenes-mcp/presentation.mjs";
 // Pin the recovery paths before splitting them. The engine's private entry
 // points are called directly so these tests need no browser or live server.
 import { readFileSync } from "node:fs";
@@ -22,6 +23,7 @@ const compiled = ts.transpileModule(source.replaceAll("import.meta.env", "({})")
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const imports: Record<string, unknown> = {
+  "../presentation": { presentationOf, serializeAsJSON: (...args: any[]) => JSON.stringify({ elements: args[0], appState: args[1], files: args[2] }) },
   "../agentGlow": { showAgentChange: vi.fn() },
   "@excalidraw/excalidraw": { CaptureUpdateAction: { NEVER: "never" }, restoreElements: vi.fn(), serializeAsJSON: vi.fn() },
   "@excalidraw/element": { hashString: vi.fn() },
@@ -232,6 +234,15 @@ describe("reconcile: recovery before replacing local work", () => {
   });
 });
 
+describe("presentation metadata in live settings", () => {
+  it.each([true, false])("applies explicit %s from the room without consulting frames", async (flag) => {
+    const f = fixture([el("a")]);
+    const value = { ...settings, kurviqPresentation: flag, kurviqPresentationAt: 123 };
+    await f.scene.takeStamped({ tab: "other", seq: 2, events: [event("set", "settings", value)] }, { toCanvas: true });
+    expect(f.app()).toMatchObject({ kurviqPresentation: flag, kurviqPresentationAt: 123 });
+  });
+});
+
 describe("takeStamped: streamed acknowledgements and protected canvas state", () => {
   it("recovers a lost ack with stamps, index repairs and font assignments without decoding", async () => {
     const f = fixture();
@@ -272,7 +283,7 @@ describe("takeStamped: streamed acknowledgements and protected canvas state", ()
     expect(f.scene.decode).not.toHaveBeenCalledWith(events[5]);
     expect(f.calls.slice(0, 8)).toEqual(["decode:pending", "decode:gesture", "decode:free", "decode:missing", "decode:settings", "decode:new", "decode:font", "decode:name"]);
     expect(f.apply.mock.calls[0][0]).toEqual({ files: [{ id: "new", dataURL: "data:new" }] });
-    expect(f.app()).toEqual({ viewBackgroundColor: "#ffffff", gridSize: 40, gridStep: 5, gridModeEnabled: false });
+    expect(f.app()).toEqual({ viewBackgroundColor: "#ffffff", gridSize: 40, gridStep: 5, gridModeEnabled: false, kurviqPresentation: false, kurviqPresentationAt: 0 });
     expect(f.agentChange).toHaveBeenCalledWith(expect.any(Map), [el("free", { x: 3 })]);
     expect(f.host.renamed).toHaveBeenCalledWith("file", "Renamed");
   });

@@ -1,3 +1,4 @@
+import { presentationOf } from "./presentation.mjs";
 /**
  * The scenes MCP tools, independent of where they run:
  *
@@ -251,8 +252,8 @@ export const createScenesMcp = ({
   };
 
   const toSceneElements = async (elements, deck) => {
-    const isDeck = elements.some((el) => el?.type === "frame" && el.customData?.slides?.role === "template");
-    if (!elements.some(needsConversion) && !isDeck) {
+    const hasTemplate = elements.some((el) => el?.type === "frame" && el.customData?.slides?.role === "template");
+    if (!elements.some(needsConversion) && !hasTemplate) {
       return { elements, convertedBy: "none" };
     }
     try {
@@ -666,6 +667,7 @@ export const createScenesMcp = ({
     const readOpenResult = ({ open, elements, changes, revision, changesOnly, summary, region, elementIds, textsOffset }) => {
       const result = text({
         scene: sceneLabel(open.scene),
+        isPresentation: open.isPresentation === true,
         unsavedChanges: open.dirty,
         sync: syncNote(open),
         elementCount: elements.length,
@@ -681,6 +683,7 @@ export const createScenesMcp = ({
     const readSceneResult = ({ name, current, local, flushed, elements, changes, changesOnly, summary, region, elementIds, textsOffset, slide, relative }) => {
       const result = text({
         scene: name,
+        isPresentation: presentationOf(current.file),
         revision: current.md5,
         sync: local ? LOCAL_NOTE : userSyncNote(flushed),
         elementCount: elements.length,
@@ -693,7 +696,7 @@ export const createScenesMcp = ({
       return result;
     };
 
-    const applyOpenEdit = async ({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, revision }) => {
+    const applyOpenEdit = async ({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision }) => {
       const edited = await appCommand({
         type: "edit",
         targetScene: before.scene,
@@ -706,13 +709,14 @@ export const createScenesMcp = ({
         ...(restyle ? { restyle } : {}),
         ...(reset ? { reset } : {}),
         ...(addTitleBlock ? { addTitleBlock } : {}),
+        ...(isPresentation === undefined ? {} : { isPresentation }),
         storeBaseline: "edit",
         revision,
       });
       return edited;
     };
 
-    const detachedEditCommand = ({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock }) => {
+    const detachedEditCommand = ({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation }) => {
       const command = {
         type: local ? "local-edit" : "scene-edit",
         ...(local ? { targetScene: name } : {}),
@@ -726,6 +730,7 @@ export const createScenesMcp = ({
         ...(restyle ? { restyle } : {}),
         ...(reset ? { reset } : {}),
         ...(addTitleBlock ? { addTitleBlock } : {}),
+        ...(isPresentation === undefined ? {} : { isPresentation }),
       };
       return command;
     };
@@ -1094,7 +1099,8 @@ export const createScenesMcp = ({
         {
           description: `Read the scene the user has open in Kurviq RIGHT NOW, including their unsaved manual edits, and find out what the USER changed since an agent last looked.
     Automatic change tracking: the app remembers (per scene, in the browser) what the canvas looked like after the last read_open_scene / edit_open_scene by any agent. Every call reports "userChanges" relative to that (added / modified with changedFields / deleted) and then moves the baseline to now. You don't need to remember anything: just call this before you edit, and it tells you what the user did in the meantime. With view=true you also get an IMAGE of the user's changes (or of the scene if nothing changed / first look).
-    Scene data: summary=true (default above ${SUMMARY_THRESHOLD} elements) gives an overview (bounds, counts, frames, all text labels with positions); region / elementIds give element data for a part; otherwise all elements. changesOnly=true skips the scene data.
+    Presentation: read_scene returns isPresentation. Set edit_scene(isPresentation: true/false) explicitly; frames alone do not make a presentation.
+  Scene data: summary=true (default above ${SUMMARY_THRESHOLD} elements) gives an overview (bounds, counts, frames, all text labels with positions); region / elementIds give element data for a part; otherwise all elements. changesOnly=true skips the scene data.
     since=<revision> (optional, advanced) diffs against a specific revision instead of the stored baseline.`,
           inputSchema: {
             scene: z
@@ -1175,6 +1181,7 @@ export const createScenesMcp = ({
             onConflict: ON_CONFLICT,
             ...EDIT_SOURCE,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
+            isPresentation: z.boolean().optional().describe("Saved presentation flag. Frames alone do not make a presentation. False keeps all content."),
             restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
               .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
@@ -1187,7 +1194,7 @@ export const createScenesMcp = ({
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, onConflict = "reject", upsert, restyle, reset, addTitleBlock, view = true }) => {
+        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, view = true }) => {
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
           // what did the user do since an agent last looked?
@@ -1221,7 +1228,7 @@ export const createScenesMcp = ({
             });
           }
 
-          const edited = await applyOpenEdit({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, revision });
+          const edited = await applyOpenEdit({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision });
           const { elements, ...info } = edited;
           delete info.agentBaseline;
 
@@ -1350,6 +1357,7 @@ export const createScenesMcp = ({
         {
           description: `Read a scene and find out what the USER changed since an agent last edited it. You work on your own copy (a headless Excalidraw), never in the user's browser: before reading, the user's app is asked to push its unpushed changes of this scene, so you see their latest work.
   userChanges lists what changed (added / modified with changedFields / deleted) since the last agent edit of this scene (remembered in Google Drive), or since revision=<since> if you pass one. The result has a "revision": pass it as basedOn to edit_scene, or as since to the next read_scene, to get exactly what changed in between. view=true adds an IMAGE of the user's changes (or of the scene).
+  Presentation: read_scene returns isPresentation. Set edit_scene(isPresentation: true/false) explicitly; frames alone do not make a presentation.
   Scene data: summary=true (default above ${SUMMARY_THRESHOLD} elements) gives an overview (bounds, counts, slides in deck order, all text labels with positions); slide = one slide's elements (number, frame id or "template"); region / elementIds give element data for a part; otherwise all elements. relative=true gives x / y of elements on a slide relative to the slide, as edits take them with "slide". changesOnly=true skips the scene data. sceneFile tells how big the file is (pictures).`,
           inputSchema: {
             name: SCENE_NAME,
@@ -1409,6 +1417,7 @@ ${EDIT_HELP}
             basedOn: z.string().optional().describe("The revision your edit is based on (from read_scene / edit_scene)"),
             onConflict: ON_CONFLICT,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
+            isPresentation: z.boolean().optional().describe("Saved presentation flag. Frames alone do not make a presentation. False keeps all content."),
             restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
               .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
@@ -1426,7 +1435,7 @@ ${EDIT_HELP}
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, onConflict = "reject", upsert, restyle, reset, addTitleBlock, requestId: givenRequestId, view = true }) => {
+        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, requestId: givenRequestId, view = true }) => {
           const requestId = givenRequestId || `edit-${newCheckpointId()}`;
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
@@ -1463,7 +1472,7 @@ ${EDIT_HELP}
           }
 
           // local-only scenes are edited in the user's app (their only copy)
-          const command = detachedEditCommand({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock });
+          const command = detachedEditCommand({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation });
           const send = () => (local ? appCommand : agentCommand)(command);
           const edited = await sendDetachedEdit(send, requestId);
           const after = {
@@ -1553,7 +1562,7 @@ ${EDIT_HELP}
     server.registerTool(
       "validate_deck",
       {
-        description: `CHECK a presentation (a scene with slides) the way a careful reviewer would, measured by Excalidraw itself: lists the slides in deck order (number, frame id, title, click steps, notes) and findings per slide: elements cut off at the slide edge, elements lying on a slide without being part of it (frameId missing: left out of presentations/PDFs), labels that don't fit their shape, free text bigger than its own box (the user's browser cuts it off at the box, although view_scene draws it whole), overlapping text, text over images, text too small or too low in contrast, click steps that never hide or have gaps, placeholders outside the template, missing speaker notes, wrong slide size.
+        description: `CHECK a presentation (isPresentation is the saved flag; frames alone do not make a presentation) the way a careful reviewer would, measured by Excalidraw itself: lists the slides in deck order (number, frame id, title, click steps, notes) and findings per slide: elements cut off at the slide edge, elements lying on a slide without being part of it (frameId missing: left out of presentations/PDFs), labels that don't fit their shape, free text bigger than its own box (the user's browser cuts it off at the box, although view_scene draws it whole), overlapping text, text over images, text too small or too low in contrast, click steps that never hide or have gaps, placeholders outside the template, missing speaker notes, wrong slide size.
   Text on a picture is checked against the picture's colors under it. Intended findings (a decorative circle bleeding off the slide, sticky notes on a mock UI) can be silenced per element: "customData": { "slides": { "ignore": ["clipped", "overlap"] } } (finding kinds, or true for all); on a slide frame for its slide-wide findings (e.g. ["notes"]).
   Run it after building or changing a deck; fix the findings with edit_scene, then look at the slides you changed with view_scene(slide: n).`,
         inputSchema: { name: SCENE_NAME },
@@ -1564,6 +1573,9 @@ ${EDIT_HELP}
         if (!file) {
           throw notFound(name);
         }
+        if (!presentationOf(file)) {
+          return text({ isPresentation: false, slides: [], findings: [], note: "This scene is not marked as a presentation." });
+        }
         const result = await agentCommand({
           type: "deck-check",
           elements: file.elements || [],
@@ -1573,7 +1585,7 @@ ${EDIT_HELP}
           deck: name,
           background: file.appState?.viewBackgroundColor || "#ffffff",
         });
-        return text(result);
+        return text({ ...result, isPresentation: presentationOf(file) });
       }),
     );
 
@@ -1706,7 +1718,7 @@ ${EDIT_HELP}
           source: "excalidraw-scenes-mcp",
           elements: sceneElements,
           // the name ties the content to this scene (the server rejects mismatches)
-          appState: { ...(existing?.appState || { viewBackgroundColor: "#ffffff", gridSize: 20 }), name },
+          appState: { ...(existing?.appState || { viewBackgroundColor: "#ffffff", gridSize: 20 }), name, kurviqPresentation: presentationOf({ elements: sceneElements, appState: existing?.appState }) },
           files,
         };
         if (local) {

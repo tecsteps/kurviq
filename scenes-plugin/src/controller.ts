@@ -1,3 +1,5 @@
+import { mergePresentation, restorePresentation } from "../../scenes-mcp/presentation.mjs";
+import { serializeAsJSON, presentationOf } from "./presentation";
 // Scenes: switching, saving and syncing with Drive. Talks to the editor only
 // through the public ExcalidrawImperativeAPI.
 //
@@ -16,7 +18,6 @@ import {
   getNonDeletedElements,
   restoreAppState,
   restoreElements,
-  serializeAsJSON,
 } from "@excalidraw/excalidraw";
 import { hashElementsVersion, hashString } from "@excalidraw/element";
 
@@ -192,6 +193,8 @@ const sceneHash = (
   hashString(
     JSON.stringify([
       appState.viewBackgroundColor,
+      (appState as any).kurviqPresentation,
+      (appState as any).kurviqPresentationAt ?? 0,
       getNonDeletedElements(elements).map(
         ({ version, versionNonce, updated, index, ...rest }) => rest,
       ),
@@ -202,7 +205,7 @@ const hashJson = (json: string) => {
   const data = JSON.parse(json);
   return sceneHash(
     restoreElements(data.elements, null, { repairBindings: true }),
-    { viewBackgroundColor: data.appState?.viewBackgroundColor ?? "#ffffff" },
+    { viewBackgroundColor: data.appState?.viewBackgroundColor ?? "#ffffff", kurviqPresentation: data.appState?.kurviqPresentation, kurviqPresentationAt: data.appState?.kurviqPresentationAt ?? 0 } as any,
   );
 };
 
@@ -401,8 +404,14 @@ class ScenesController {
       this.claimsCurrent = true; // this tab switched scenes (the user, or an agent showing one)
     }
     this.persistedCurrent = this.meta.current;
-    const stored = this.claimsCurrent ? null : loadMeta();
-    if (!stored || (stored.current !== null && !this.meta.scenes[stored.current])) {
+    const stored = loadMeta();
+    for (const [name, scene] of Object.entries(this.meta.scenes)) {
+      const remembered = stored.scenes[name];
+      if (typeof remembered?.kurviqPresentation === "boolean") {
+        Object.assign(scene, restorePresentation({ appState: scene }, remembered));
+      }
+    }
+    if (this.claimsCurrent || (stored.current !== null && !this.meta.scenes[stored.current])) {
       saveMeta(this.meta); // (the other tab's scene is gone: this one's then)
       return;
     }
@@ -468,7 +477,6 @@ class ScenesController {
         .finally(() => this.readyDeferred.resolve())
         .catch((error) => console.error("[scenes] could not initialize scene", error));
     };
-    waitForLoad();
     this.unsubscribeChange?.();
     this.api = api;
     this.unsubscribeChange = api.onChange((elements, appState) =>
@@ -485,6 +493,7 @@ class ScenesController {
       liveSync.start();
     }
     this.onSceneChange(api.getSceneElementsIncludingDeleted(), api.getAppState());
+    waitForLoad();
   }
 
   /**
@@ -496,6 +505,14 @@ class ScenesController {
     const current = this.meta.current;
     const shown = this.api?.getAppState().name;
     if (current === null || shown === current) {
+      const api = this.requireApi();
+      const presentation = this.rememberPresentation({
+        elements: api.getSceneElementsIncludingDeleted(),
+        appState: api.getAppState(),
+      }, current);
+      api.updateScene({ appState: presentation as any, captureUpdate: CaptureUpdateAction.NEVER });
+      await nextFrame();
+      this.recomputeDirty();
       return;
     }
     try {
@@ -606,8 +623,12 @@ class ScenesController {
     if (this.state.busy === "loading" && !force) {
       return;
     }
+    // Persist before Excalidraw's filtered reload copy; recover newer pending edits.
+    if (this.cacheCanvasPresentation(appState)) {
+      return;
+    }
     // cheap check first, onChange fires on every pointer move
-    const versionKey = `${hashElementsVersion(elements)}:${appState.viewBackgroundColor}`;
+    const versionKey = `${hashElementsVersion(elements)}:${appState.viewBackgroundColor}:${(appState as any).kurviqPresentation}:${(appState as any).kurviqPresentationAt ?? 0}`;
     if (LIVE_CAPABLE && liveSync.current()?.fileId === this.fileIdOf(this.meta.current)) {
       // live sync diffs the canvas when something changed or a gesture started / ended
       const liveKey = [
@@ -636,7 +657,7 @@ class ScenesController {
     if (this.meta.baseline === null) {
       if (this.meta.current === null || !this.meta.scenes[this.meta.current]?.baseMd5) {
         // untitled / never pushed: dirty as soon as there's something on the canvas
-        const dirty = getNonDeletedElements(elements).length > 0;
+        const dirty = getNonDeletedElements(elements).length > 0 || (appState as any).kurviqPresentation === true;
         if (dirty !== this.state.dirty) {
           this.setState({ dirty });
         }
@@ -1318,6 +1339,8 @@ class ScenesController {
         gridSize: restored.gridSize,
         gridStep: restored.gridStep,
         gridModeEnabled: restored.gridModeEnabled,
+        kurviqPresentation: presentationOf({ appState }),
+        kurviqPresentationAt: appState?.kurviqPresentationAt ?? 0,
       } as Record<string, unknown>;
     };
     const current = session.settings() as Record<string, unknown>;
@@ -1418,7 +1441,7 @@ class ScenesController {
     return {
       json: withFonts(serializeAsJSON(elements, appState, api.getFiles(), "local"), elements),
       hash: sceneHash(elements, appState),
-      isEmpty: elements.length === 0,
+      isEmpty: elements.length === 0 && !(appState as any).kurviqPresentation,
     };
   }
 
@@ -1459,9 +1482,38 @@ class ScenesController {
     this.sceneMeta(name).dirty = this.state.dirty;
   }
 
+  private cacheCanvasPresentation(appState: AppState) {
+    const content = appState as AppState & { kurviqPresentation?: boolean; kurviqPresentationAt?: number };
+    if (appState.isLoading || typeof content.kurviqPresentation !== "boolean" ||
+      (this.meta.current !== null && appState.name !== this.meta.current)) {
+      return false;
+    }
+    const presentation = this.rememberPresentation({ appState }, this.meta.current);
+    if (content.kurviqPresentation === presentation.kurviqPresentation &&
+      (content.kurviqPresentationAt ?? 0) === presentation.kurviqPresentationAt) {
+      return false;
+    }
+    this.requireApi().updateScene({ appState: presentation as any, captureUpdate: CaptureUpdateAction.NEVER });
+    return true;
+  }
+
+  private rememberPresentation(data: any, name: string | null) {
+    const scene = this.sceneMeta(name ?? UNTITLED);
+    const presentation = restorePresentation(data, scene);
+    if (scene.kurviqPresentation !== presentation.kurviqPresentation ||
+      scene.kurviqPresentationAt !== presentation.kurviqPresentationAt) {
+      Object.assign(scene, presentation);
+      this.persistMeta();
+    }
+    return restorePresentation({ appState: scene }, null);
+  }
+
+  private presentationMigrationBaseline: number | null = null;
+
   private applyScene(json: string | null, name: string | null, { keepView = false } = {}) {
     const api = this.requireApi();
     const data = json ? JSON.parse(json) : {};
+    this.presentationMigrationBaseline = json && typeof data.appState?.kurviqPresentation !== "boolean" ? hashJson(json) : null;
     // its custom fonts (the canvas redraws once they are loaded)
     registerSceneFonts(data).catch((error) => console.error("[scenes] could not load scene fonts", error));
     const elements = restoreElements(data.elements, null, { repairBindings: true });
@@ -1469,6 +1521,7 @@ class ScenesController {
     const files: BinaryFiles = data.files || {};
 
     const sceneAppState = {
+      ...this.rememberPresentation(data, name),
       name: name ?? restoredAppState.name,
       viewBackgroundColor: restoredAppState.viewBackgroundColor,
       gridSize: restoredAppState.gridSize,
@@ -1476,11 +1529,11 @@ class ScenesController {
       gridModeEnabled: restoredAppState.gridModeEnabled,
     };
     if (keepView) {
-      api.updateScene({ elements, appState: sceneAppState, captureUpdate: CaptureUpdateAction.NEVER });
+      api.updateScene({ elements, appState: sceneAppState as any, captureUpdate: CaptureUpdateAction.NEVER });
     } else {
       api.updateScene({
         elements,
-        appState: { ...sceneAppState, selectedElementIds: {}, selectedGroupIds: {}, editingGroupId: null },
+        appState: { ...sceneAppState, selectedElementIds: {}, selectedGroupIds: {}, editingGroupId: null } as any,
         captureUpdate: CaptureUpdateAction.NEVER,
       });
     }
@@ -1497,7 +1550,8 @@ class ScenesController {
   private async setBaselineFromCanvas() {
     await nextFrame();
     const api = this.requireApi();
-    this.meta.baseline = sceneHash(api.getSceneElements(), api.getAppState());
+    this.meta.baseline = this.presentationMigrationBaseline ?? sceneHash(api.getSceneElements(), api.getAppState());
+    this.presentationMigrationBaseline = null;
     this.persistMeta();
     this.recomputeDirty();
   }
@@ -1704,7 +1758,6 @@ class ScenesController {
       this.meta.current = name;
       this.meta.baseline = baseline;
       if (name === null) {
-        delete this.meta.scenes[UNTITLED];
         await deleteSnapshot(null);
       } else {
         const sceneMeta = this.sceneMeta(name);
@@ -1776,7 +1829,7 @@ class ScenesController {
       this.persistMeta();
       const api = this.api;
       this.detach();
-      api?.updateScene({ elements: [], appState: { name: "" }, captureUpdate: CaptureUpdateAction.NEVER });
+      api?.updateScene({ elements: [], appState: { name: "", kurviqPresentation: false } as any, captureUpdate: CaptureUpdateAction.NEVER });
     });
 
   /** create a new, empty named scene and switch to it */
@@ -2361,6 +2414,13 @@ class ScenesController {
     const mergedJson = JSON.stringify({
       ...mine,
       elements: merged.elements,
+      appState: {
+        ...mine.appState,
+        ...mergePresentation(
+          { ...mine.appState, kurviqPresentation: presentationOf(mine) },
+          { ...theirsData.appState, kurviqPresentation: presentationOf(theirsData) },
+        ),
+      },
       // only the pictures the merged scene still uses (deleted images leave no data behind)
       files: usedFiles(merged.elements, { ...theirsData.files, ...mine.files }),
       kurviqFonts: mergeFontLists(mine.kurviqFonts, theirsData.kurviqFonts),
@@ -3040,7 +3100,7 @@ class ScenesController {
     }
     api.updateScene({
       elements,
-      appState: { viewBackgroundColor: restoreAppState(data.appState, null).viewBackgroundColor },
+      appState: { viewBackgroundColor: restoreAppState(data.appState, null).viewBackgroundColor, kurviqPresentation: presentationOf(data) } as any,
       captureUpdate: CaptureUpdateAction.IMMEDIATELY,
     });
   };

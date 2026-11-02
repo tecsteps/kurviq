@@ -1,3 +1,4 @@
+import { serializeAsJSON, presentationOf } from "./presentation";
 // Co-working on the scene open in the editor: the agent reads the live canvas
 // (incl. the user's unsaved edits) and applies edits that merge with whatever
 // the user is doing: one undoable step per agent edit.
@@ -8,7 +9,6 @@ import {
   newElementWith,
   Fonts,
   restoreElements,
-  serializeAsJSON,
 } from "@excalidraw/excalidraw";
 
 import {
@@ -65,6 +65,22 @@ type BaselineOptions = {
   targetScene?: string | null;
 };
 
+/** Explicit false wins over presentation authoring options. */
+const editedPresentation = (command: EditOptions & { add?: any[]; update?: any[] }, appState: any): boolean => {
+  if (typeof command.isPresentation === "boolean") {
+    return command.isPresentation;
+  }
+  const authored = [...(command.add ?? []), ...(command.update ?? [])].some((el) =>
+    el.slide !== undefined || el.type === "slide" || el.type === "template" || !!el.customData?.slides);
+  return authored || !!command.restyle || !!command.reset || !!command.addTitleBlock || presentationOf({ appState });
+};
+
+const presentationSettings = (command: EditOptions & { add?: any[]; update?: any[] }, appState: any) => {
+  const value = editedPresentation(command, appState);
+  const touched = command.isPresentation !== undefined || value !== presentationOf({ appState });
+  return { ...appState, kurviqPresentation: value, kurviqPresentationAt: touched ? Date.now() : appState?.kurviqPresentationAt ?? 0 };
+};
+
 export type ReadCommand = { type: "read" } & BaselineOptions;
 
 /** detached mode: the agent edits its own copy of a scene and saves it to Drive */
@@ -80,6 +96,7 @@ export type SceneEditCommand = {
 
 /** how an agent's edit treats existing elements */
 export type EditOptions = {
+  isPresentation?: boolean;
   /** add with the id of an existing element replaces it */
   upsert?: boolean;
   /** every slide back to the template ("Reset all slides" in the app) */
@@ -157,6 +174,7 @@ export const readOpenScene = async (command: ReadCommand = READ_COMMAND) => {
     ...info,
     elements,
     viewBackgroundColor: api.getAppState().viewBackgroundColor,
+    isPresentation: presentationOf({ appState: api.getAppState() }),
     ...(await handleBaseline(info.scene, elements, command)),
   };
 };
@@ -822,10 +840,11 @@ export const editOpenScene = async (
     if (changes.clashes.length) {
       throw new Error(`The user changed ${changes.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
     }
-    pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId);
+    pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
   } else {
     api.updateScene({
       elements: images.elements,
+      appState: presentationSettings(command, api.getAppState()) as any,
       captureUpdate: CaptureUpdateAction.IMMEDIATELY, // user can undo agent edits
     });
     // the user sees what the agent changed (live scenes: liveSync shows it)
@@ -876,7 +895,7 @@ export const editSceneOnDrive = async (
     const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
     const elements = images.elements;
     const json = withSceneName(
-      withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements),
+      withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements),
       command.name, // ties the content to this scene
     );
     try {
@@ -918,8 +937,8 @@ const editLiveScene = async (
   if (changed.clashes.length) {
     throw new Error(`The user changed ${changed.clashes.join(", ")} while your edit was applied: read the scene again and redo the edit (nothing was changed)`);
   }
-  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId);
-  const json = withSceneName(withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements), command.name);
+  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
+  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements), command.name);
   const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
   return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0, ...(pending ? { pending } : {}) };
 };
@@ -989,7 +1008,7 @@ export const editLocalScene = async (
   const files = { ...data.files, ...command.files };
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
-  const json = withSceneName(withFonts(serializeAsJSON(elements, data.appState || {}, files, "local"), elements), command.name);
+  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements), command.name);
   await scenesController.writeLocalOnly(command.name, json);
   await setAgentBaseline(command.name, { at: new Date().toISOString(), action: "edit", elements });
   return {

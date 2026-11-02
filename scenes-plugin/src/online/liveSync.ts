@@ -1,3 +1,4 @@
+import { serializeAsJSON, presentationOf } from "../presentation";
 // Live sync, the tab's side (docs/live-sync/PROTOCOL.md §7): every Drive
 // scene saves through its own Durable Object (online/worker/scene.ts). The
 // DO orders the changes of all tabs, re-stamps them, stores them, sends them
@@ -26,7 +27,7 @@
 //            whole touching group is free of collisions are sent again
 
 import { showAgentChange } from "../agentGlow";
-import { CaptureUpdateAction, restoreElements, serializeAsJSON } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, restoreElements } from "@excalidraw/excalidraw";
 import { hashString } from "@excalidraw/element";
 import { createStore, get, set } from "idb-keyval";
 
@@ -100,7 +101,7 @@ import type { BinaryFileData, ExcalidrawImperativeAPI } from "@excalidraw/excali
 
 type El = { id: string; version: number; versionNonce: number; isDeleted?: boolean; [key: string]: any };
 
-export type Settings = { viewBackgroundColor: string; gridSize: number | null; gridStep: number; gridModeEnabled: boolean };
+export type Settings = { viewBackgroundColor: string; gridSize: number | null; gridStep: number; gridModeEnabled: boolean; kurviqPresentationAt?: number; kurviqPresentation?: boolean };
 
 /** where the user's latest change is: in this browser, on the server, in Drive (or nowhere: storage failed) */
 export type LiveStage = "saving" | "browser" | "server" | "drive" | "unsaved";
@@ -151,6 +152,8 @@ const settingsOf = (appState: any): Settings => ({
   gridSize: appState?.gridSize ?? null,
   gridStep: appState?.gridStep ?? 5,
   gridModeEnabled: !!appState?.gridModeEnabled,
+  kurviqPresentation: presentationOf({ appState }),
+  kurviqPresentationAt: appState?.kurviqPresentationAt ?? 0,
 });
 
 /** a reference refusal's detail "<element id>:<field>:<target>" */
@@ -1479,7 +1482,7 @@ export class LiveScene {
     const settingsStamp: Base = { v: 1, n: Math.floor(Math.random() * 2 ** 31) };
     const nameStamp: Base = { v: 1, n: Math.floor(Math.random() * 2 ** 31) };
     events.push(
-      { ...(await encodeEvent(this.key!, "set", SETTINGS_ID, settingsOf(data.appState), null)), v: settingsStamp },
+      { ...(await encodeEvent(this.key!, "set", SETTINGS_ID, settingsOf({ ...data.appState, kurviqPresentation: presentationOf(data) }), null)), v: settingsStamp },
       { ...(await encodeEvent(this.key!, "name", NAME_ID, { name: this.name }, null)), v: nameStamp },
     );
     this.synced.set(NAME_KEY, { stamp: nameStamp, el: { name: this.name } });
@@ -1532,7 +1535,7 @@ export class LiveScene {
     // the DO's state is the seed now (its welcome brings what changed since)
     this.confirmed = new Map(elements.map((el) => [el.id, el]));
     elements.forEach((el) => this.rememberStamp(el));
-    this.confirmedSettings = { value: settingsOf(data.appState), stamp: settingsStamp };
+    this.confirmedSettings = { value: settingsOf({ ...data.appState, kurviqPresentation: presentationOf(data) }), stamp: settingsStamp };
     this.confirmedFiles = new Set(used as Set<string>);
     this.confirmedFonts = new Map();
     for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {

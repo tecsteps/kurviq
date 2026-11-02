@@ -671,6 +671,9 @@ export const patchSlideData = (
   api: ExcalidrawImperativeAPI,
   patches: Map<string, Partial<SlideData>>,
 ) => {
+  if ([...patches.values()].some((patch) => patch.notes?.trim())) {
+    api.updateScene({ appState: { kurviqPresentation: true, kurviqPresentationAt: Date.now() } as any });
+  }
   const elements = api.getSceneElementsIncludingDeleted();
   update(
     api,
@@ -861,6 +864,7 @@ export const deleteSlides = (api: ExcalidrawImperativeAPI, ids: string[]) => {
 
 /** a new 16:9 slide after the last one (or after `after`) */
 export const addSlide = (api: ExcalidrawImperativeAPI, after?: string) => {
+  api.updateScene({ appState: { kurviqPresentation: true, kurviqPresentationAt: Date.now() } as any });
   const elements = api.getSceneElementsIncludingDeleted();
   const slides = getSlides(elements);
   const anchor = slides.find((s) => s.id === after) ?? slides.at(-1);
@@ -883,6 +887,7 @@ export const addSlide = (api: ExcalidrawImperativeAPI, after?: string) => {
 
 /** a template frame above the slides, with a footer to start from */
 export const createTemplate = (api: ExcalidrawImperativeAPI) => {
+  api.updateScene({ appState: { kurviqPresentation: true, kurviqPresentationAt: Date.now() } as any });
   const style = TEMPLATE_STYLE;
   const elements = api.getSceneElementsIncludingDeleted();
   if (getTemplate(elements)) {

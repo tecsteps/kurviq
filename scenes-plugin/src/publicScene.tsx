@@ -1,3 +1,4 @@
+import { presentationOf } from "./presentation";
 // Scenes to look at, shown read-only above the editor (slide by slide for
 // decks, the whole drawing otherwise). They are not added to the visitor's
 // scenes; "Make a copy" does that on purpose.
@@ -101,6 +102,7 @@ type Scene = {
   elements: any[];
   files: BinaryFiles;
   background: string;
+  isPresentation: boolean;
   /** the slides a presentation shows (backup slides left out) */
   slides: ReturnType<typeof getSlides>;
   /** each shown slide's number in the deck (as the editor counts, backup slides included): the URL's ?slide */
@@ -135,7 +137,7 @@ const parseScene = async (json: string, access: { public?: boolean; canEdit?: bo
   await registerSceneFonts(data);
   let elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
   // the template slide is a tool for editing: only who may edit sees it (with what is on it)
-  const template = access.canEdit ? null : getTemplate(elements);
+  const template = access.canEdit || !presentationOf(data) ? null : getTemplate(elements);
   if (template) {
     const gone = new Set(elements.filter((el) => el.id === template.id || el.frameId === template.id).map((el) => el.id));
     elements = elements.filter((el) => !gone.has(el.id) && !gone.has((el as { containerId?: string }).containerId ?? ""));
@@ -148,6 +150,7 @@ const parseScene = async (json: string, access: { public?: boolean; canEdit?: bo
     elements,
     files: data.files || {},
     background: data.appState?.viewBackgroundColor || "#ffffff",
+    isPresentation: presentationOf(data),
     slides,
     numbers: slides.map((frame) => all.indexOf(frame) + 1),
     ...access,
@@ -341,8 +344,12 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     return scene.slides[scene.numbers.findIndex((n) => n >= number)]?.id;
   };
 
+  useEffect(() => {
+    if (api && scene) api.updateScene({ appState: { kurviqPresentation: scene.isPresentation } as any });
+  }, [api, scene]);
+
   const present = (number?: number) => {
-    if (api && scene?.slides.length) {
+    if (api && scene?.isPresentation && scene.slides.length) {
       presenter.start(slideId(number));
     }
   };
@@ -377,7 +384,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     }
     if (event.key === "Escape") {
       publicScene.close();
-    } else if ((event.key === "p" || event.key === "F5") && scene?.slides.length) {
+    } else if ((event.key === "p" || event.key === "F5") && scene?.isPresentation && scene.slides.length) {
       event.preventDefault();
       present();
     }
@@ -398,7 +405,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
         <strong className="public-scene__title">{title}</strong>
         {scene?.by && <span className="public-scene__meta">by {scene.by}</span>}
         <span className="public-scene__spacer" />
-        {scene && scene.slides.length > 0 && (
+        {scene && scene.isPresentation && scene.slides.length > 0 && (
           <button
             type="button"
             className="slides-btn slides-btn--primary"
