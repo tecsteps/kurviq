@@ -22,6 +22,14 @@ exist only in that browser, and you read and edit them there the same way.
 If a tool answers "Kurviq is not open", ask the user to open ${app} and
 keep the tab open, then try again.
 
+**The MCP tools are all you need.** Do everything in Kurviq (read, draw,
+edit, look, save, share, check decks) through them, never by driving the
+app in a browser (no Playwright, Chrome, computer use or screenshots of the
+page, no clicking in the UI): the tools are far faster and cheaper, return
+exact data and an image of your change, and merge safely with what the user
+is doing. Use a browser only if the user explicitly asks you to test the
+app's interface itself.
+
 `;
 
 const TROUBLESHOOTING = (app: string) => `## Troubleshooting

@@ -19,6 +19,14 @@ Drive right away with the user's sign-in. Without sign-in (`app_status`
 shows `drive: false`) all scenes are local-only: they exist only in that
 browser, and you read and edit them there the same way.
 
+**The MCP tools are all you need.** Do everything in Kurviq (read, draw,
+edit, look, save, share, check decks) through them, never by driving the
+app in a browser (no Playwright, Chrome, computer use or screenshots of the
+page, no clicking in the UI): the tools are far faster and cheaper, return
+exact data and an image of your change, and merge safely with what the user
+is doing. Use the browser only if the user explicitly asks you to test the
+app's interface itself.
+
 ## Golden rules
 
 1. **Always `read_scene` before you edit.** It reports what the user
