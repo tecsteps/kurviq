@@ -1630,6 +1630,26 @@ class ScenesController {
       });
   }
 
+  /** a scene made here and never in Drive (it has no stored copy when it was empty): it opens empty */
+  private onlyInThisBrowser(name: string, meta: SceneMeta | undefined) {
+    return !!meta && (meta.localOnly || !meta.baseMd5) && !this.state.remote?.some((scene) => scene.name === name);
+  }
+
+  private async loadFromDriveOrEmpty(name: string, meta: SceneMeta | undefined) {
+    const onlyHere = this.onlyInThisBrowser(name, meta);
+    if (onlyHere && meta?.localOnly) {
+      return { json: null, md5: null };
+    }
+    try {
+      return await scenesApi.load(name);
+    } catch (error: any) {
+      if (onlyHere && error?.status === 404) {
+        return { json: null, md5: null };
+      }
+      throw error;
+    }
+  }
+
   private async loadOpeningScene(name: string | null) {
       const snapshot = await getSnapshot(name);
       let json: string | null = null;
@@ -1643,13 +1663,14 @@ class ScenesController {
         json = snapshot?.json ?? null;
         baseline = snapshot?.baseline ?? null;
       } else if (this.state.sync.driveOnline === false || this.state.sync.serverReachable === false) {
-        if (!snapshot) {
+        if (snapshot) {
+          json = snapshot.json;
+        } else if (!this.onlyInThisBrowser(name, meta)) {
           throw Object.assign(
             new Error(`"${name}" was never downloaded to this browser and Drive is not reachable`),
             { status: 503 },
           );
-        }
-        json = snapshot.json;
+        } // else: an empty scene that was never in Drive, nothing to download
       } else if (snapshot) {
         // show the local copy (no local changes) right away, check Drive in
         // the background; it is its own base
@@ -1657,7 +1678,7 @@ class ScenesController {
         checkDrive = true;
       } else {
         // never opened here: Drive's version is all there is
-        const latest = await scenesApi.load(name);
+        const latest = await this.loadFromDriveOrEmpty(name, meta);
         json = latest.json;
         loadedMd5 = latest.md5;
       }
