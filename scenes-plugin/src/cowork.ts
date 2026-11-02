@@ -862,7 +862,8 @@ export const editOpenScene = async (
     // a live scene: the agent's change goes out as its own batch (via "agent", with its id)
     const changes = liveDifference(live.elements(), images.elements.filter((el) => !el.isDeleted), readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...images.elements], edit.addedIds));
     if (changes.clashes.length) {
-      throw new Error(`The user changed ${changes.clashes.map((id) => `${id} (${changes.conflictFields[id].join(", ")})`).join(", ")} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
+      const conflicts = changes.clashes.map((id) => `${id} (${changes.conflictFields[id].join(", ")})`).join(", ");
+      throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
     }
     pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
   } else {
@@ -959,7 +960,8 @@ const editLiveScene = async (
   // against what the edit was made on: what the user did meanwhile stays
   const changed = liveDifference(live.elements(), elements, readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...images.elements], edit.addedIds));
   if (changed.clashes.length) {
-    throw new Error(`The user changed ${changed.clashes.map((id) => `${id} (${changed.conflictFields[id].join(", ")})`).join(", ")} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
+    const conflicts = changed.clashes.map((id) => `${id} (${changed.conflictFields[id].join(", ")})`).join(", ");
+    throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
   }
   const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
   const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements), command.name);

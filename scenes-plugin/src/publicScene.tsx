@@ -405,7 +405,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
         <strong className="public-scene__title">{title}</strong>
         {scene?.by && <span className="public-scene__meta">by {scene.by}</span>}
         <span className="public-scene__spacer" />
-        {scene && scene.isPresentation && scene.slides.length > 0 && (
+        {scene?.isPresentation && scene.slides.length > 0 && (
           <button
             type="button"
             className="slides-btn slides-btn--primary"

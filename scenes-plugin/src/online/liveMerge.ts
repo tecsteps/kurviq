@@ -254,6 +254,25 @@ const writerDeleted = (el: El, before: Map<string, El>, clashes: string[]) => {
   return true;
 };
 
+const appendDeletions = (
+  current: readonly El[],
+  nextIds: ReadonlySet<string>,
+  before: Map<string, El> | null,
+  clashes: string[],
+  changed: El[],
+  touched?: ReadonlySet<string>,
+) => {
+  for (const el of current) {
+    if ((touched && !touched.has(el.id)) || el.isDeleted || nextIds.has(el.id)) {
+      continue;
+    }
+    if (before && !writerDeleted(el, before, clashes)) {
+      continue;
+    }
+    changed.push({ ...el, isDeleted: true, version: el.version + 1, versionNonce: randomNonce() });
+  }
+};
+
 /**
  * A whole new state of the scene (an agent's save) against the live one:
  * the elements that differ, stamped above what the scene has, plus deletions
@@ -279,15 +298,7 @@ export const liveDifference = (current: readonly El[], next: readonly El[], base
     }
     changed.push({ ...el, version: Math.max(now?.version ?? 0, el.version) + 1, versionNonce: randomNonce() });
   }
-  for (const el of current) {
-    if ((touched && !touched.has(el.id)) || el.isDeleted || nextIds.has(el.id)) {
-      continue;
-    }
-    if (before && !writerDeleted(el, before, clashes)) {
-      continue;
-    }
-    changed.push({ ...el, isDeleted: true, version: el.version + 1, versionNonce: randomNonce() });
-  }
+  appendDeletions(current, nextIds, before, clashes, changed, touched);
   const conflictFields = Object.fromEntries(clashes.map((id) => [id, intentFields(before?.get(id), byId.get(id))]));
   if (overwrite && clashes.length) {
     const forced = liveDifference(current, next);

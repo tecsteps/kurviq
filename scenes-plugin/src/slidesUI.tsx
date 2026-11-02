@@ -946,7 +946,7 @@ export const SlidesSidebar = () => {
             onChange={(event) => api().updateScene({
               appState: { kurviqPresentation: event.target.checked, kurviqPresentationAt: Date.now() } as any,
             })}
-          />
+          />{" "}
           This scene is a presentation
         </label>
         {!isDeck(state) ? (
