@@ -402,6 +402,32 @@ class Presenter {
 
 export const presenter = new Presenter();
 
+// A presenter remote (Logitech and others) is a keyboard: next / back send PageDown / PageUp (see
+// onKey), the slideshow button F5 (some send Shift+F5: from the current slide) and on the next
+// press Esc. In the editor F5 starts presenting instead of reloading Kurviq; a scene without
+// slides keeps the browser's reload. Shared scenes' viewer handles F5 itself.
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "F5" || event.ctrlKey || event.metaKey || event.altKey || document.querySelector(".public-scene")) {
+        return;
+      }
+      if (presenter.getState().active) {
+        event.preventDefault(); // already presenting: never a reload
+        return;
+      }
+      if (!deck.getState().slides.length) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      presenter.start(event.shiftKey ? deck.getState().activeId ?? undefined : undefined);
+    },
+    true,
+  );
+}
+
 export const usePresenter = () => useSyncExternalStore(presenter.subscribe, presenter.getState);
 
 // -----------------------------------------------------------------------------
