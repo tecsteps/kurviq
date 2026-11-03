@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
+import { parseFontSize } from "./fontSize";
 
 import { IS_ONLINE } from "./api";
 import { addFont, customFonts, fontFromFile, fontFromGoogle } from "./fonts";
@@ -202,3 +203,37 @@ const AddFontDialog = () => {
 
 /** rendered next to the editor (see index.tsx) */
 export const AddFontOverlay = () => (useOpen() ? <AddFontDialog /> : null);
+
+/** Uses the editor's existing font-size action, including bound text and selection. */
+export const FontSizeInput = ({ value, options, onChange }: {
+  readonly value: number | null;
+  readonly options: readonly { readonly value: number; readonly text: string }[];
+  readonly onChange: (value: number) => void;
+  readonly group?: string;
+}) => {
+  const [draft, setDraft] = useState(value == null ? "" : String(value));
+  const cancelled = useRef(false);
+  useEffect(() => setDraft(value == null ? "" : String(value)), [value]);
+  const apply = () => {
+    if (cancelled.current) { cancelled.current = false; return; }
+    const parsed = parseFontSize(draft);
+    if (parsed !== null && parsed !== value) onChange(parsed);
+    setDraft(parsed == null ? "" : String(parsed));
+  };
+  return <>
+    <input aria-label="Font size" type="number" min="1" max="1000" step="any"
+      list="kurviq-font-sizes" value={draft} placeholder="Mixed"
+      style={{ width: "100%", minWidth: 0, color: "var(--text-primary-color)", background: "var(--island-bg-color)", border: "1px solid var(--default-border-color)", borderRadius: 4, padding: 6 }}
+      onChange={(event) => setDraft(event.target.value)} onBlur={apply}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
+        if (event.key === "Escape") {
+          cancelled.current = true;
+          setDraft(value == null ? "" : String(value));
+          event.currentTarget.blur();
+        }
+      }} />
+    <datalist id="kurviq-font-sizes">{options.map((option) => <option key={option.value} value={option.value}>{option.text}</option>)}</datalist>
+  </>;
+};

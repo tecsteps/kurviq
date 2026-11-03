@@ -738,6 +738,7 @@ export const createScenesMcp = ({
     };
 
     const detachedEditResult = ({ warning, conflicts, basedOn, changes, name, edited, requestId, local }) => {
+      warning = [warning, edited.imagesWithoutFile].filter(Boolean).join(" ");
       const result = text({
         ...(warning ? { warning } : {}),
         ...(conflicts.length ? { conflicts, conflictNote: CONFLICT_NOTE(basedOn) } : {}),
@@ -748,7 +749,7 @@ export const createScenesMcp = ({
         deleted: idList(edited.deleted),
         ...editExtras(edited),
         ...(edited.missingIds ? { missingIds: edited.missingIds } : {}),
-        // applied, Kurviq's server has not confirmed it yet: not an error, nothing to redo
+        // Applied; Kurviq's server has not confirmed it yet.
         ...(edited.pending ? { pending: edited.pending } : {}),
         requestId,
         // sha / commit: pre-rename tabs; remove after 2027-02
@@ -866,7 +867,7 @@ export const createScenesMcp = ({
         deleted: info.deleted,
         ...editExtras(info),
         ...(info.missingIds ? { missingIds: info.missingIds } : {}),
-        // applied, Kurviq's server has not confirmed it yet: not an error, nothing to redo
+        // Applied; Kurviq's server has not confirmed it yet.
         ...(info.pending ? { pending: info.pending } : {}),
         revision,
         note: liveEditNote(info),

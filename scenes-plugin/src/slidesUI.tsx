@@ -945,6 +945,7 @@ export const SlidesSidebar = () => {
             checked={state.isPresentation}
             onChange={(event) => api().updateScene({
               appState: { kurviqPresentation: event.target.checked, kurviqPresentationAt: Date.now() } as any,
+              captureUpdate: CaptureUpdateAction.NEVER,
             })}
           />{" "}
           This scene is a presentation

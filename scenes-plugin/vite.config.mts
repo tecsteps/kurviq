@@ -113,6 +113,14 @@ const customFonts = () => ({
   enforce: "pre" as const,
   transform(code: string, id: string) {
     const file = id.replaceAll("\\", "/").split("?")[0];
+    if (file.endsWith("/packages/excalidraw/actions/actionProperties.tsx")) {
+      const anchor = '<RadioSelection\n              group="font-size"';
+      if (!code.includes(anchor)) throw new Error("Font size control changed upstream");
+      return {
+        code: "import { FontSizeInput as KurviqFontSizeInput } from " + JSON.stringify(FONTS_UI_ENTRY) + ";\n" + code.replace(anchor, '<KurviqFontSizeInput\n              group="font-size"'),
+        map: null,
+      };
+    }
     if (!file.endsWith("/packages/excalidraw/components/FontPicker/FontPickerList.tsx")) {
       return null;
     }

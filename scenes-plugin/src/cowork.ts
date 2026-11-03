@@ -720,16 +720,16 @@ const resolvedSlides = (elements: readonly ExcalidrawElement[], items: any[]) =>
 };
 
 /** images whose file is in the scene but which were marked broken (e.g. a failed load in some browser) work again */
-const repairImages = (elements: readonly ExcalidrawElement[], files: BinaryFiles) => {
+export const repairImages = (elements: readonly ExcalidrawElement[], files: BinaryFiles) => {
   let repaired = 0;
-  let missingFiles = 0;
+  const missingFiles: string[] = [];
   const next = elements.map((el) => {
     if (el.type !== "image" || el.isDeleted) {
       return el;
     }
     const fileId = (el as any).fileId;
     if (!fileId || !files[fileId]) {
-      missingFiles++;
+      missingFiles.push(el.id);
       return el;
     }
     if ((el as any).status === "error" || (el as any).status === "pending") {
@@ -742,7 +742,7 @@ const repairImages = (elements: readonly ExcalidrawElement[], files: BinaryFiles
     elements: next,
     info: {
       ...(repaired ? { imagesRepaired: repaired } : {}),
-      ...(missingFiles ? { imagesWithoutFile: `${missingFiles} image elements have no image data in the scene (they show as placeholders): add them again (e.g. upload the file)` } : {}),
+      ...(missingFiles.length ? { imagesWithoutFile: missingFiles.join(", ") + ": picture missing, upload again" } : {}),
     },
   };
 };
@@ -870,7 +870,7 @@ export const editOpenScene = async (
     api.updateScene({
       elements: images.elements,
       appState: presentationSettings(command, api.getAppState()) as any,
-      captureUpdate: CaptureUpdateAction.IMMEDIATELY, // user can undo agent edits
+      captureUpdate: CaptureUpdateAction.NEVER, // agent changes do not enter the user history
     });
     // the user sees what the agent changed (live scenes: liveSync shows it)
     showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), images.elements as any);

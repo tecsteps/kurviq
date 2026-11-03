@@ -430,7 +430,7 @@ describe("onRefused: retries, peer queues and safe recovery", () => {
     expect(f.scene.dropColliding).not.toHaveBeenCalled();
     expect(f.scene.batches).toHaveLength(1);
   });
-  it.each([["a:containerId:b", ["a", "b"]], ["a:fileId:file:f", ["a"]], ["a:fontFamily:font#2000", ["a"]], ["unknown: a,b", ["a", "b"]]])("names the complete collision group for %s", async (detail, ids) => {
+  it.each([["a:containerId:b", ["a", "b"]], ["a:fontFamily:font#2000", ["a"]], ["unknown: a,b", ["a", "b"]]])("names the complete collision group for %s", async (detail, ids) => {
     const f = queued({ live: false });
     f.scene.dropColliding = vi.fn();
     await f.scene.onRefused(refusal("reference", detail as string));
@@ -721,4 +721,38 @@ describe("synchronous recovery prefixes", () => {
     expect(f.scene.makeOfflineCopy).toHaveBeenCalledOnce();
     await work;
   });
+});
+
+it("sets aside only an unavailable picture and sends the user's text", async () => {
+  const picture = el("broken", { type: "image", fileId: "absent", status: "error" });
+  const text = el("text", { type: "text", text: "edited" });
+  const f = fixture([picture, text]);
+  f.scene.note = vi.fn();
+  const b = batch([change(picture), change(text)]);
+  f.scene.batches = [b];
+  await f.scene.includeMissingFiles(b, undefined);
+  expect(b.changes.map((item: any) => item.id)).toEqual(["text"]);
+  expect(f.elements.get("broken")).toEqual(picture);
+  expect(f.scene.note).toHaveBeenCalledWith(expect.stringContaining("delete it or ask the agent"));
+  f.scene.send = vi.fn(() => true);
+  await LiveScene.prototype.sendBatch.call(f.scene, b);
+  expect(f.scene.send).toHaveBeenCalledWith(expect.objectContaining({ type: "batch", counter: 1 }));
+  expect(f.scene.parked.size).toBe(0);
+  await f.scene.onAck({ type: "ack", counter: 1, seq: 1, stamps: { text: { v: 2, n: 2 } } });
+  expect(b.state).toBe("acked");
+});
+
+it("keeps an offline copy even when picture data is unavailable", async () => {
+  const picture = el("broken", { type: "image", fileId: "absent", status: "pending" });
+  const f = fixture([picture, el("text", { text: "keep me" })]);
+  const saveCopy = vi.fn(async () => "Recovered");
+  Object.assign(f.host, { saveCopy });
+  f.scene.note = vi.fn();
+  const withFonts = (imports["../fonts"] as any).withFonts;
+  withFonts.mockImplementation((json: string) => json);
+  expect(await LiveScene.prototype.makeOfflineCopy.call(f.scene, "Recovery")).toBe(true);
+  const saved = JSON.parse(saveCopy.mock.calls[0][1]);
+  expect(saved.elements.find((item: any) => item.id === "broken").status).toBe("error");
+  expect(saved.elements.find((item: any) => item.id === "text").text).toBe("keep me");
+  expect(picture.status).toBe("pending");
 });

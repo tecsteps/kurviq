@@ -299,3 +299,10 @@ describe("agent edit pipeline", () => {
     });
     expect(result.elements[0]).toMatchObject({ width: 420, height: 65 });
   });
+
+it("names pictures the agent must upload again", () => {
+  const image = { id: "broken", type: "image", fileId: "missing", status: "error" };
+  const result = loaded.repairImages([image], {});
+  expect(result.info.imagesWithoutFile).toBe("broken: picture missing, upload again");
+  expect(result.elements[0]).toBe(image);
+});

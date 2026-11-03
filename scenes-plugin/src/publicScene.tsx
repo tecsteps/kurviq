@@ -345,7 +345,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
   };
 
   useEffect(() => {
-    if (api && scene) api.updateScene({ appState: { kurviqPresentation: scene.isPresentation } as any });
+    if (api && scene) api.updateScene({ appState: { kurviqPresentation: scene.isPresentation } as any, captureUpdate: CaptureUpdateAction.NEVER });
   }, [api, scene]);
 
   const present = (number?: number) => {

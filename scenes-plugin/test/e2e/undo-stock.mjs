@@ -242,3 +242,10 @@ if (errors.length) failures.push(`page errors: ${errors.join(" | ")}`);
 log(failures.length ? `FAIL:\n  ${failures.join("\n  ")}` : "PASS");
 await browser.close();
 process.exit(failures.length ? 1 : 0);
+
+// Owner regression to exercise with the real browser: deliver an agent edit,
+// manually replace schedule-discovery-title text from Initial discovery to 2,
+// deliver another agent edit on a different element and toggle presentation.
+// Press Cmd/Ctrl+Z and assert Initial discovery returns, including while a
+// missing-picture refusal is being recovered. Repeat with the peer modifying
+// that text between the user's edit and undo to record stock editor behaviour.

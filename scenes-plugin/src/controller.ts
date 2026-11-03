@@ -1542,9 +1542,6 @@ class ScenesController {
     if (fileList.length) {
       api.addFiles(fileList);
     }
-    if (!keepView) {
-      api.history.clear();
-    }
   }
 
   /** after loading a base version into the canvas: it is the new baseline */

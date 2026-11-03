@@ -274,7 +274,7 @@ const canvasSurface = (api: ExcalidrawImperativeAPI, _scene: () => LiveScene | n
       api.updateScene({
         elements: merge(elements),
         ...(settings ? { appState: settings as any } : {}),
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        captureUpdate: CaptureUpdateAction.NEVER,
       });
     },
     agentChange: (before, after) => showAgentChange(api, before as any, after as any),
@@ -2361,6 +2361,15 @@ export class LiveScene {
   }
 
   private async sendBatch(batch: QueuedBatch, extra: { losers?: WireEvent[] } = {}) {
+    await this.includeMissingFiles(batch, undefined);
+    await this.persist(batch);
+    if (this.unstored.has(batch.counter)) return;
+    if (!batch.changes.length) {
+      this.skipped.push(batch.counter);
+      await this.forget(batch);
+      this.pump();
+      return;
+    }
     this.inFlight.set(batch.counter, { at: Date.now(), ids: new Set(batch.changes.map((change) => change.id)) });
     const events: WireEvent[] = [];
     for (const change of batch.changes) {
@@ -2704,6 +2713,14 @@ export class LiveScene {
       await this.parkRefused(batch, refusal, reason);
       return;
     }
+    const missingReference = referenceOf(refusal.detail);
+    if (reason === "reference" && missingReference?.field === "fileId") {
+      await this.includeMissingFiles(batch, batch.changes.find((change) => change.id === missingReference.id)?.value);
+      await this.persist(batch);
+      this.inFlight.delete(batch.counter);
+      this.pump();
+      return;
+    }
     const current = new Map<string, El>();
     /** event keys the DO named as newer than this batch's base */
     const colliding = new Set<string>();
@@ -2764,8 +2781,19 @@ export class LiveScene {
       if (file) {
         this.confirmedFiles.delete(fileId);
         batch.changes.unshift({ k: "file", id: fileId, value: file, base: null, keys: null });
+      } else {
+        this.setAsideMissingPicture(batch, fileId);
       }
     }
+  }
+
+  private setAsideMissingPicture(batch: QueuedBatch, fileId: string) {
+    const missing = batch.changes.filter((change) => change.k === "el" && change.value?.fileId === fileId && !change.value.isDeleted);
+    if (!missing.length) return;
+    const ids = new Set(missing.map((change) => change.id));
+    batch.changes = batch.changes.filter((change) => change.k !== "el" || !ids.has(change.id));
+    ids.forEach((id) => this.protectedIds.add(id));
+    this.note("A picture is missing (" + [...ids].join(", ") + "): delete it or ask the agent to add it again.");
   }
 
   private async includeMissingFont(batch: QueuedBatch, el: El) {
@@ -3041,13 +3069,12 @@ export class LiveScene {
     };
     this.batches.filter((batch) => batch.state === "queued").forEach((batch) => batch.changes.forEach(take));
     this.draft.forEach(take);
-    const elements = [...byId.values()].filter((el) => !el.isDeleted);
-    // complete or not at all: every picture and font the elements use must be in it
-    const missingFile = elements.find((el) => el.fileId && el.type === "image" && !files[el.fileId]?.dataURL);
-    const missingFont = elements.find((el) => isCustomFontId(el.fontFamily) && !customFonts.get(el.fontFamily));
-    if (missingFile || missingFont) {
-      this.failCopy(new Error(missingFile ? `picture of ${missingFile.id} missing` : `font ${missingFont!.fontFamily} missing`));
-      return Promise.resolve(false);
+    const elements = [...byId.values()].filter((el) => !el.isDeleted).map((el) => ({ ...el }));
+    // Missing assets must not prevent preserving every recoverable edit.
+    for (const el of elements) {
+      if (el.type === "image" && el.fileId && !files[el.fileId]?.dataURL) {
+        el.status = "error";
+      }
     }
     const json = withFonts(serializeAsJSON(byIndex(elements) as any, settings as any, files as any, "local"), elements);
     // a copy covers exactly what it contains: the same content again needs no new one
@@ -3088,7 +3115,7 @@ export class LiveScene {
   private failCopy(error: unknown) {
     console.error("[live] the offline copy could not be stored", error);
     this.storageFailed = true;
-    this.note("Your offline changes could not be kept as a copy: export the scene now (they stay on your canvas meanwhile).");
+    this.note("Your offline changes could not be kept as a copy: " + String(error) + ". Export the scene now (they stay on your canvas meanwhile).");
   }
 
   // ---------------------------------------------------------------------------
