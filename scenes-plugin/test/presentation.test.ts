@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presentationOf, mergePresentation } from "../../scenes-mcp/presentation.mjs";
+import { presentationOf, mergePresentation, editedPresentation } from "../../scenes-mcp/presentation.mjs";
 import { buildSceneFile, subjectsOfFile } from "../../online/worker/serverMerge";
 
 const frames = Array.from({ length: 3 }, (_, i) => ({ id: `f${i}`, type: "frame", x: i * 200, y: 0, width: 180, height: 100 }));
@@ -36,5 +36,18 @@ describe("saved presentation setting", () => {
     const saved = JSON.parse(buildSceneFile(subjects, meta).json);
     saved.elements[0].customData = { slides: { notes: "later" } };
     expect(presentationOf(saved)).toBe(false);
+  });
+});
+
+describe("agent edits and the presentation flag", () => {
+  it("placing elements on a frame with slide does not make a scene a presentation", async () => {
+    const appState = { kurviqPresentation: false };
+    expect(editedPresentation({ add: [{ type: "text", slide: "flow-frame" }], update: [{ id: "a", slide: 2 }] } as any, appState)).toBe(false);
+  });
+
+  it("an explicit flag wins, a template does turn it on", async () => {
+    expect(editedPresentation({ isPresentation: true } as any, { kurviqPresentation: false })).toBe(true);
+    expect(editedPresentation({ isPresentation: false, add: [{ type: "template" }] } as any, { kurviqPresentation: true })).toBe(false);
+    expect(editedPresentation({ add: [{ type: "template" }] } as any, { kurviqPresentation: false })).toBe(true);
   });
 });

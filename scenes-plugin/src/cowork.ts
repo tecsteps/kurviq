@@ -1,5 +1,5 @@
 import { editorYield } from "./editorYield";
-import { serializeAsJSON, presentationOf } from "./presentation";
+import { serializeAsJSON, presentationOf, editedPresentation } from "./presentation";
 // Co-working on the scene open in the editor: the agent reads the live canvas
 // (incl. the user's unsaved edits) and applies edits that merge with whatever
 // the user is doing: one undoable step per agent edit.
@@ -64,16 +64,6 @@ type BaselineOptions = {
   revision?: string;
   /** the scene the agent means (routing); nothing is stored for another scene */
   targetScene?: string | null;
-};
-
-/** Explicit false wins over presentation authoring options. */
-const editedPresentation = (command: EditOptions & { add?: any[]; update?: any[] }, appState: any): boolean => {
-  if (typeof command.isPresentation === "boolean") {
-    return command.isPresentation;
-  }
-  const authored = [...(command.add ?? []), ...(command.update ?? [])].some((el) =>
-    el.slide !== undefined || el.type === "slide" || el.type === "template" || !!el.customData?.slides);
-  return authored || !!command.restyle || !!command.reset || !!command.addTitleBlock || presentationOf({ appState });
 };
 
 const presentationSettings = (command: EditOptions & { add?: any[]; update?: any[] }, appState: any) => {

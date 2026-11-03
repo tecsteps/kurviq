@@ -30,3 +30,17 @@ export const restorePresentation = (data, remembered) => {
     kurviqPresentationAt: content?.kurviqPresentationAt ?? 0,
   };
 };
+
+/**
+ * Does an agent edit leave the scene a presentation? An explicit flag wins. A
+ * "slide" value only says which frame an element belongs to (every agent edit on
+ * a multi-frame scene uses it): it never makes a scene a presentation.
+ */
+export const editedPresentation = (command, appState) => {
+  if (typeof command.isPresentation === "boolean") {
+    return command.isPresentation;
+  }
+  const authored = [...(command.add ?? []), ...(command.update ?? [])].some((el) =>
+    el.type === "slide" || el.type === "template" || !!el.customData?.slides);
+  return authored || !!command.restyle || !!command.reset || !!command.addTitleBlock || presentationOf({ appState });
+};
