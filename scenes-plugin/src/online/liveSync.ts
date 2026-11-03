@@ -3115,7 +3115,8 @@ export class LiveScene {
   private failCopy(error: unknown) {
     console.error("[live] the offline copy could not be stored", error);
     this.storageFailed = true;
-    this.note("Your offline changes could not be kept as a copy: " + String(error) + ". Export the scene now (they stay on your canvas meanwhile).");
+    const reason = error instanceof Error ? error.message : "storage error";
+    this.note("Your offline changes could not be kept as a copy: " + reason + ". Export the scene now (they stay on your canvas meanwhile).");
   }
 
   // ---------------------------------------------------------------------------
