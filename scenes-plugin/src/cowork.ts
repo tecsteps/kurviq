@@ -1,5 +1,5 @@
 import { editorYield } from "./editorYield";
-import { serializeAsJSON, presentationOf, editedPresentation } from "./presentation";
+import { serializeAsJSON, presentationOf, presentationEdit } from "./presentation";
 // Co-working on the scene open in the editor: the agent reads the live canvas
 // (incl. the user's unsaved edits) and applies edits that merge with whatever
 // the user is doing: one undoable step per agent edit.
@@ -66,11 +66,16 @@ type BaselineOptions = {
   targetScene?: string | null;
 };
 
-const presentationSettings = (command: EditOptions & { add?: any[]; update?: any[] }, appState: any) => {
-  const value = editedPresentation(command, appState);
-  const touched = command.isPresentation !== undefined || value !== presentationOf({ appState });
-  return { ...appState, kurviqPresentation: value, kurviqPresentationAt: touched ? Date.now() : appState?.kurviqPresentationAt ?? 0 };
+const presentationSettings = (command: EditOptions & { add?: any[]; update?: any[] }, appState: any, existing: readonly any[]) =>
+  ({ ...appState, ...presentationEdit(command, appState, existing) });
+
+const livePresentationSettings = (command: EditOptions & { add?: any[]; update?: any[] }, live: LivePresentation, existing: readonly any[]) => {
+  const current = live.settings();
+  const change = presentationEdit(command, current, existing);
+  return change ? { ...current, ...change } : null;
 };
+
+type LivePresentation = { settings(): any };
 
 export type ReadCommand = { type: "read" } & BaselineOptions;
 
@@ -855,11 +860,11 @@ export const editOpenScene = async (
       const conflicts = changes.clashes.map((id) => `${id} (${changes.conflictFields[id].join(", ")})`).join(", ");
       throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
     }
-    pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
+    pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
   } else {
     api.updateScene({
       elements: images.elements,
-      appState: presentationSettings(command, api.getAppState()) as any,
+      appState: presentationSettings(command, api.getAppState(), readState) as any,
       captureUpdate: CaptureUpdateAction.NEVER, // agent changes do not enter the user history
     });
     // the user sees what the agent changed (live scenes: liveSync shows it)
@@ -910,7 +915,7 @@ export const editSceneOnDrive = async (
     const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
     const elements = images.elements;
     const json = withSceneName(
-      withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements),
+      withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements),
       command.name, // ties the content to this scene
     );
     try {
@@ -953,8 +958,8 @@ const editLiveScene = async (
     const conflicts = changed.clashes.map((id) => `${id} (${changed.conflictFields[id].join(", ")})`).join(", ");
     throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
   }
-  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, presentationSettings(command, live.settings()));
-  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements), command.name);
+  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
+  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), command.name);
   const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
   return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0, ...(pending ? { pending } : {}) };
 };
@@ -1024,7 +1029,7 @@ export const editLocalScene = async (
   const files = { ...data.files, ...command.files };
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
-  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState), files, "local"), elements), command.name);
+  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), command.name);
   await scenesController.writeLocalOnly(command.name, json);
   await setAgentBaseline(command.name, { at: new Date().toISOString(), action: "edit", elements });
   return {

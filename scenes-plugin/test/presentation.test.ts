@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presentationOf, mergePresentation, editedPresentation } from "../../scenes-mcp/presentation.mjs";
+import { presentationOf, mergePresentation, editedPresentation, presentationEdit, presentationChange, presentationSave, restorePresentation } from "../../scenes-mcp/presentation.mjs";
 import { buildSceneFile, subjectsOfFile } from "../../online/worker/serverMerge";
 
 const frames = Array.from({ length: 3 }, (_, i) => ({ id: `f${i}`, type: "frame", x: i * 200, y: 0, width: 180, height: 100 }));
@@ -49,5 +49,45 @@ describe("agent edits and the presentation flag", () => {
     expect(editedPresentation({ isPresentation: true } as any, { kurviqPresentation: false })).toBe(true);
     expect(editedPresentation({ isPresentation: false, add: [{ type: "template" }] } as any, { kurviqPresentation: true })).toBe(false);
     expect(editedPresentation({ add: [{ type: "template" }] } as any, { kurviqPresentation: false })).toBe(true);
+  });
+});
+
+describe("explicit false survives unrelated and stale writes", () => {
+  const off = { kurviqPresentation: false, kurviqPresentationAt: 20 };
+  const on = { kurviqPresentation: true, kurviqPresentationAt: 10 };
+  const existing = [{ id: "template", type: "frame", customData: { slides: { role: "template", notes: "notes" } } }];
+
+  it.each([
+    { add: [{ type: "text", slide: 1 }] },
+    { update: [{ id: "a", slide: 2 }] },
+    { restyle: true }, { reset: "all" }, { addTitleBlock: true },
+    { update: existing },
+    { update: [{ id: "a", type: "slide", customData: { slides: { notes: "notes" } } }] },
+    { update: [{ id: "template", type: "template" }] },
+    { add: existing, upsert: true },
+    { add: [{ type: "slide" }] },
+  ])("does not author settings for %j", (command) => {
+    expect(presentationEdit(command, off, existing)).toBeNull();
+    expect(editedPresentation(command, off, existing)).toBe(false);
+    expect(off.kurviqPresentationAt).toBe(20);
+  });
+  it("explicit template authoring and flag edits still work", () => {
+    expect(presentationEdit({ add: [{ id: "new", type: "template" }] }, off, existing)?.kurviqPresentation).toBe(true);
+    expect(presentationEdit({ isPresentation: false, add: [{ type: "template" }] }, off)?.kurviqPresentation).toBe(false);
+  });
+  it("a later click wins even with a clock behind the previously observed writer", () => {
+    const click = presentationChange(false, { ...on, kurviqPresentationAt: 1000000 }, 5);
+    expect(click.kurviqPresentationAt).toBe(1000001);
+    expect(restorePresentation({ appState: { ...on, kurviqPresentationAt: 1000000 } }, click)).toEqual(click);
+  });
+  it("stale detached saves change only fields changed against their baseline", () => {
+    expect(presentationSave(on, on, off)).toEqual(off);
+    expect(presentationSave(on, null, off)).toEqual(off);
+    expect(presentationSave({ ...on, kurviqPresentationAt: 30 }, on, off).kurviqPresentation).toBe(true);
+  });
+  it("an older Drive file or legacy migration cannot replace explicit false", () => {
+    expect(restorePresentation({ appState: on }, off)).toEqual(off);
+    expect(restorePresentation({ elements: existing }, off)).toEqual(off);
+    expect(mergePresentation(off, on)).toEqual(off);
   });
 });

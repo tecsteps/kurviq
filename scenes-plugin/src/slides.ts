@@ -1,3 +1,4 @@
+import { presentationChange } from "./presentation";
 // Slides: every frame of a scene is a slide (like Excalidraw+). Everything
 // lives in the scene itself, in `customData.slides` of frames and elements,
 // so decks sync, merge and travel like any other scene:
@@ -670,9 +671,10 @@ const update = (api: ExcalidrawImperativeAPI, elements: readonly ExcalidrawEleme
 export const patchSlideData = (
   api: ExcalidrawImperativeAPI,
   patches: Map<string, Partial<SlideData>>,
+  { enablePresentation = true }: { enablePresentation?: boolean } = {},
 ) => {
-  if ([...patches.values()].some((patch) => patch.notes?.trim())) {
-    api.updateScene({ appState: { kurviqPresentation: true, kurviqPresentationAt: Date.now() } as any, captureUpdate: CaptureUpdateAction.NEVER });
+  if (enablePresentation && [...patches.values()].some((patch) => patch.notes?.trim())) {
+    api.updateScene({ appState: presentationChange(true, api.getAppState()) as any, captureUpdate: CaptureUpdateAction.NEVER });
   }
   const elements = api.getSceneElementsIncludingDeleted();
   update(
@@ -864,7 +866,7 @@ export const deleteSlides = (api: ExcalidrawImperativeAPI, ids: string[]) => {
 
 /** a new 16:9 slide after the last one (or after `after`) */
 export const addSlide = (api: ExcalidrawImperativeAPI, after?: string) => {
-  api.updateScene({ appState: { kurviqPresentation: true, kurviqPresentationAt: Date.now() } as any, captureUpdate: CaptureUpdateAction.NEVER });
+  api.updateScene({ appState: presentationChange(true, api.getAppState()) as any, captureUpdate: CaptureUpdateAction.NEVER });
   const elements = api.getSceneElementsIncludingDeleted();
   const slides = getSlides(elements);
   const anchor = slides.find((s) => s.id === after) ?? slides.at(-1);
@@ -887,7 +889,7 @@ export const addSlide = (api: ExcalidrawImperativeAPI, after?: string) => {
 
 /** a template frame above the slides, with a footer to start from */
 export const createTemplate = (api: ExcalidrawImperativeAPI) => {
-  api.updateScene({ appState: { kurviqPresentation: true, kurviqPresentationAt: Date.now() } as any, captureUpdate: CaptureUpdateAction.NEVER });
+  api.updateScene({ appState: presentationChange(true, api.getAppState()) as any, captureUpdate: CaptureUpdateAction.NEVER });
   const style = TEMPLATE_STYLE;
   const elements = api.getSceneElementsIncludingDeleted();
   if (getTemplate(elements)) {

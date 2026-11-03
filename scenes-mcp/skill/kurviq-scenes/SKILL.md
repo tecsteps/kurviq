@@ -217,7 +217,7 @@ instead of `text`, e.g. a title, a sentence and bullets in one box:
 
 ## Slides (presentations)
 
-The saved scene boolean `appState.kurviqPresentation` controls presentation UI. `read_scene` returns `isPresentation`; set it with `edit_scene({ name, isPresentation: true })` or false. Turning it off keeps all frames and content. Frames alone do not make a presentation. Slide, template and speaker note authoring enables it unless the edit explicitly sets false. Legacy scenes migrate once: only templates or speaker notes enable it.
+The saved scene boolean `appState.kurviqPresentation` controls presentation UI. `read_scene` returns `isPresentation`; set it with `edit_scene({ name, isPresentation: true })` or false. Turning it off keeps all frames and content. Frames alone do not make a presentation. Agent edits enable it only through `isPresentation: true` or adding a genuinely new template. Slide placement, updating existing slide metadata or notes, restyle, reset and addTitleBlock preserve the flag. UI presentation authoring enables it. Legacy scenes migrate once: only templates or speaker notes enable it.
 
 Every frame of a scene is a slide; the user presents with the "Slides" button
 (fullscreen, laser, presenter view, PDF). Build decks with `save_scene` /

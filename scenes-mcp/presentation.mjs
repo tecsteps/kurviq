@@ -31,16 +31,34 @@ export const restorePresentation = (data, remembered) => {
   };
 };
 
-/**
- * Does an agent edit leave the scene a presentation? An explicit flag wins. A
- * "slide" value only says which frame an element belongs to (every agent edit on
- * a multi-frame scene uses it): it never makes a scene a presentation.
- */
-export const editedPresentation = (command, appState) => {
-  if (typeof command.isPresentation === "boolean") {
-    return command.isPresentation;
+/** Only an explicit option or a genuinely new template authors a presentation. */
+export const presentationEdit = (command, appState, existing = []) => {
+  const ids = new Set(existing.map((el) => el.id));
+  const templateAdded = (command.add ?? []).some((el) =>
+    !ids.has(el.id) && (el.type === "template" ||
+      (el.type === "frame" && el.customData?.slides?.role === "template")));
+  if (typeof command.isPresentation !== "boolean" && !templateAdded) {
+    return null;
   }
-  const authored = [...(command.add ?? []), ...(command.update ?? [])].some((el) =>
-    el.type === "slide" || el.type === "template" || !!el.customData?.slides);
-  return authored || !!command.restyle || !!command.reset || !!command.addTitleBlock || presentationOf({ appState });
+  const value = typeof command.isPresentation === "boolean" ? command.isPresentation : true;
+  return presentationChange(value, appState);
+};
+
+/** A click follows all observed writes even if this device's clock is behind. */
+export const presentationChange = (on, appState, now = Date.now()) => ({
+  kurviqPresentation: on,
+  kurviqPresentationAt: Math.max(now, (appState?.kurviqPresentationAt ?? 0) + 1),
+});
+
+export const editedPresentation = (command, appState, existing = []) =>
+  presentationEdit(command, appState, existing)?.kurviqPresentation ?? presentationOf({ appState });
+
+/** A whole-scene save carries only presentation fields changed against its read. */
+export const presentationSave = (wanted, base, current) => {
+  if (!base || typeof wanted?.kurviqPresentation !== "boolean" ||
+    (wanted.kurviqPresentation === base.kurviqPresentation &&
+      (wanted.kurviqPresentationAt ?? 0) === (base.kurviqPresentationAt ?? 0))) {
+    return mergePresentation(current, null);
+  }
+  return mergePresentation(current, wanted);
 };

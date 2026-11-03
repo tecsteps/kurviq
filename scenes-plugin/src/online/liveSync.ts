@@ -1,5 +1,5 @@
 import { editorYield } from "../editorYield";
-import { serializeAsJSON, presentationOf } from "../presentation";
+import { serializeAsJSON, presentationOf, restorePresentation } from "../presentation";
 // Live sync, the tab's side (docs/live-sync/PROTOCOL.md §7): every Drive
 // scene saves through its own Durable Object (online/worker/scene.ts). The
 // DO orders the changes of all tabs, re-stamps them, stores them, sends them
@@ -1776,6 +1776,13 @@ export class LiveScene {
       return;
     }
     const before = new Map(this.surface.elements().map((el) => [el.id, stampOf(el)]));
+    if (settings) {
+      const recovered = { ...settings, ...restorePresentation({ appState: settings }, this.surface.settings()) };
+      if (!sameJson(recovered, settings)) {
+        this.addDraft("set", SETTINGS_ID, recovered, {});
+      }
+      settings = recovered;
+    }
     this.surface.apply({ elements, settings });
     const pending = this.pendingIds();
     for (const el of this.surface.elements()) {
@@ -1854,6 +1861,7 @@ export class LiveScene {
       return; // a welcome is on its way and carries it
     }
     await this.takeStamped(batch, { toCanvas: true });
+    this.collect();
     this.catchUp();
     this.seq = Math.max(this.seq, batch.seq);
     this.persistBaseSoon();
@@ -1897,6 +1905,11 @@ export class LiveScene {
     }
   }
 
+  private olderSettingsStamp(stamp: Base | null | undefined) {
+    const confirmed = this.confirmedSettings?.stamp;
+    return !!stamp && !!confirmed && stamp.v < confirmed.v;
+  }
+
   private async takeStamped(batch: StampedBatch, { toCanvas }: { toCanvas: boolean }) {
     if (batch.tab === this.tab?.tab && batch.counter !== undefined) {
       const own = this.batches.find((entry) => entry.counter === batch.counter);
@@ -1927,6 +1940,9 @@ export class LiveScene {
       if (event.k === "el") {
         await takeElement(event);
       } else if (event.k === "set") {
+        if (this.olderSettingsStamp(event.v)) {
+          return;
+        }
         const value = settingsOf(await this.decode(event)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         this.confirmedSettings = { value, stamp: event.v ?? null };
         if (toCanvas && !this.isPending(SETTINGS_KEY)) {
@@ -2464,7 +2480,7 @@ export class LiveScene {
       const stamp = ack.stamps[key];
       if (change.k === "el") {
         this.acknowledgeElement(change, key, stamp, ack, batch, canvas, restamp);
-      } else if (change.k === "set") {
+      } else if (change.k === "set" && !this.olderSettingsStamp(stamp)) {
         this.confirmedSettings = { value: change.value, stamp: stamp ?? null };
         this.synced.set(key, { stamp: stamp ?? null, el: change.value });
       } else if (change.k === "name") {
@@ -2613,6 +2629,9 @@ export class LiveScene {
           this.setConfirmed(el.id, el, "refused");
         }
       } else if (event.k === "set") {
+        if (this.olderSettingsStamp(event.v)) {
+          continue;
+        }
         this.confirmedSettings = { value: settingsOf(await this.decode(event)), stamp: event.v ?? null }; // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
         this.synced.set(SETTINGS_KEY, { stamp: event.v ?? null, el: this.confirmedSettings.value });
       } else if (event.k === "name") {
@@ -3251,6 +3270,9 @@ export class LiveScene {
 
   private async applyAgentEdit(elements: El[], files: BinaryFileData[], command: string | undefined, settings?: Settings | null) {
     await this.flush();
+    if (settings) {
+      settings = { ...settings, ...restorePresentation({ appState: settings }, this.surface.settings()) };
+    }
     // this edit's own batches: what was queued before (the user's, earlier agent edits) is not waited for
     const earlier = new Set(this.batches.map((batch) => batch.counter));
     this.agentMark = { command };

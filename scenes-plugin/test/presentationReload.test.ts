@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { restorePresentation } from "../../scenes-mcp/presentation.mjs";
+import { restorePresentation, presentationSave, presentationOf } from "../../scenes-mcp/presentation.mjs";
 
 // Execute the real controller lifecycle methods without the browser-only editor.
 const source = ts.createSourceFile("controller.ts", readFileSync(new URL("../src/controller.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
-const names = new Set(["cacheCanvasPresentation", "rememberPresentation", "adoptInitialCanvas", "onSceneChange", "persistMeta", "sceneMeta"]);
+const names = new Set(["liveWriteSettings", "cacheCanvasPresentation", "rememberPresentation", "adoptInitialCanvas", "onSceneChange", "persistMeta", "sceneMeta"]);
 const controller = source.statements.find((statement) => ts.isClassDeclaration(statement) && statement.name?.text === "ScenesController") as ts.ClassDeclaration;
 const methods = controller.members.filter((member) => member.name && names.has(member.name.getText(source))).map((member) => member.getText(source)).join("\n");
 const compiled = ts.transpileModule(`class Controller { ${methods} }; exports.Controller = Controller;`, {
@@ -14,10 +14,10 @@ const compiled = ts.transpileModule(`class Controller { ${methods} }; exports.Co
 const loaded = { exports: {} as Record<string, any> };
 let saved: any;
 const UNTITLED = "\u0000untitled";
-new Function("exports", "restorePresentation", "loadMeta", "saveMeta", "UNTITLED", "CaptureUpdateAction", "nextFrame", "LIVE_CAPABLE", "hashElementsVersion", "sceneHash", "getNonDeletedElements", compiled)(
+new Function("exports", "restorePresentation", "loadMeta", "saveMeta", "UNTITLED", "CaptureUpdateAction", "nextFrame", "LIVE_CAPABLE", "hashElementsVersion", "sceneHash", "getNonDeletedElements", "presentationSave", "presentationOf", "restoreAppState", compiled)(
   loaded.exports, restorePresentation,
   () => structuredClone(saved), (meta: any) => { saved = structuredClone(meta); },
-  UNTITLED, { NEVER: "never" }, async () => {}, false, () => 1, () => 2, (elements: any[]) => elements,
+  UNTITLED, { NEVER: "never" }, async () => {}, false, () => 1, () => 2, (elements: any[]) => elements, presentationSave, presentationOf, (app: any) => app,
 );
 
 const fixture = (current: string | null = "local", remembered?: any) => {
@@ -76,5 +76,19 @@ describe("presentation reload recovery", () => {
     reload.setElements([{ type: "frame", customData: { slides: { notes: "notes" } } }]);
     await reload.instance.adoptInitialCanvas();
     expect(reload.api.getAppState().kurviqPresentation).toBe(false);
+  });
+});
+
+describe("stale detached whole-scene saves", () => {
+  const on = { kurviqPresentation: true, kurviqPresentationAt: 10 };
+  const off = { kurviqPresentation: false, kurviqPresentationAt: 20 };
+  it("sends no settings when the agent did not change presentation fields", () => {
+    const f = fixture("Drive", off);
+    expect(f.instance.liveWriteSettings({ appState: on }, { appState: on }, { settings: () => off })).toBeNull();
+  });
+  it("rebases an unrelated background change on current false", () => {
+    const f = fixture("Drive", off);
+    const settings = f.instance.liveWriteSettings({ appState: { ...on, viewBackgroundColor: "blue" } }, { appState: on }, { settings: () => off });
+    expect(settings).toMatchObject({ ...off, viewBackgroundColor: "blue" });
   });
 });

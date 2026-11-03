@@ -1,4 +1,4 @@
-import { presentationOf } from "../../scenes-mcp/presentation.mjs";
+import { presentationOf, presentationEdit, restorePresentation } from "../../scenes-mcp/presentation.mjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readFileSync } from "node:fs";
@@ -19,7 +19,7 @@ const resetTemplateChanges = vi.fn<any>();
 const resetToTemplate = vi.fn<any>();
 const dependencies: Record<string, any> = {
   "./editorYield": { editorYield: async () => {} },
-  "./presentation": { presentationOf, serializeAsJSON: (...args: any[]) => JSON.stringify({ elements: args[0], appState: args[1], files: args[2] }) },
+  "./presentation": { presentationOf, presentationEdit, restorePresentation, serializeAsJSON: (...args: any[]) => JSON.stringify({ elements: args[0], appState: args[1], files: args[2] }) },
   "@excalidraw/excalidraw": {
     CaptureUpdateAction: {},
     newElementWith: (el: any, patch: any) => ({ ...el, ...patch, version: el.version + 1 }),

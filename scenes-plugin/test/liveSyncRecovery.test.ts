@@ -1,4 +1,4 @@
-import { presentationOf } from "../../scenes-mcp/presentation.mjs";
+import { presentationOf, presentationEdit, restorePresentation } from "../../scenes-mcp/presentation.mjs";
 // Pin the recovery paths before splitting them. The engine's private entry
 // points are called directly so these tests need no browser or live server.
 import { readFileSync } from "node:fs";
@@ -24,7 +24,7 @@ const compiled = ts.transpileModule(source.replaceAll("import.meta.env", "({})")
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const imports: Record<string, unknown> = {
-  "../presentation": { presentationOf, serializeAsJSON: (...args: any[]) => JSON.stringify({ elements: args[0], appState: args[1], files: args[2] }) },
+  "../presentation": { presentationOf, presentationEdit, restorePresentation, serializeAsJSON: (...args: any[]) => JSON.stringify({ elements: args[0], appState: args[1], files: args[2] }) },
   "../agentGlow": { showAgentChange: vi.fn() },
   "@excalidraw/excalidraw": { CaptureUpdateAction: { NEVER: "never" }, restoreElements: vi.fn(), serializeAsJSON: vi.fn() },
   "@excalidraw/element": { hashString: vi.fn() },
@@ -237,6 +237,40 @@ describe("reconcile: recovery before replacing local work", () => {
 });
 
 describe("presentation metadata in live settings", () => {
+  it("ignores an old settings echo by server stamp even when its wall clock is ahead", async () => {
+    const f = fixture();
+    f.scene.confirmedSettings = { value: { ...settings, kurviqPresentation: false, kurviqPresentationAt: 20 }, stamp: { v: 5, n: 1 } };
+    await f.scene.takeStamped({ tab: "other", seq: 3, events: [event("set", "settings", { ...settings, kurviqPresentation: true, kurviqPresentationAt: 9999 }, { v: { v: 4, n: 2 } })] }, { toCanvas: true });
+    expect(f.scene.confirmedSettings.value.kurviqPresentation).toBe(false);
+    expect(f.apply).not.toHaveBeenCalled();
+  });
+  it("does not restore true from an acknowledgement older than the confirmed settings", async () => {
+    const f = fixture();
+    const current = { ...settings, kurviqPresentation: false, kurviqPresentationAt: 20 };
+    f.scene.confirmedSettings = { value: current, stamp: { v: 5, n: 1 } };
+    f.scene.synced.set("set:settings", { el: current, stamp: { v: 5, n: 1 } });
+    f.scene.batches = [batch([change({ ...settings, kurviqPresentation: true, kurviqPresentationAt: 10 }, { k: "set", id: "settings" })])];
+    await f.scene.onAck({ type: "ack", counter: 1, seq: 1, stamps: { "set:settings": { v: 4, n: 1 } } });
+    expect(f.scene.confirmedSettings.value).toEqual(current);
+    expect(f.scene.synced.get("set:settings").el).toEqual(current);
+  });
+  it("keeps a user's later click made while an agent edit waits for flush", async () => {
+    const f = fixture();
+    f.scene.flush.mockImplementation(async () => f.scene.surface.apply({ settings: { ...settings, kurviqPresentation: false, kurviqPresentationAt: 20 } }));
+    f.scene.collect = vi.fn();
+    f.scene.agentBatchesConfirmed = vi.fn(async () => null);
+    await f.scene.applyAgentEdit([], [], undefined, { ...settings, kurviqPresentation: true, kurviqPresentationAt: 10 });
+    expect(f.app().kurviqPresentation).toBe(false);
+    expect(f.app().kurviqPresentationAt).toBe(20);
+  });
+  it("retains and queues local false when reconnecting to an older true", async () => {
+    const f = fixture();
+    f.scene.surface.apply({ settings: { ...settings, kurviqPresentation: false, kurviqPresentationAt: 20 } });
+    f.scene.confirmedSettings = { value: { ...settings, kurviqPresentation: true, kurviqPresentationAt: 10 }, stamp: { v: 1, n: 1 } };
+    await f.scene.reconcile([]);
+    expect(f.app().kurviqPresentation).toBe(false);
+    expect(f.scene.draft.get("set:settings")?.value.kurviqPresentation).toBe(false);
+  });
   it.each([true, false])("applies explicit %s from the room without consulting frames", async (flag) => {
     const f = fixture([el("a")]);
     const value = { ...settings, kurviqPresentation: flag, kurviqPresentationAt: 123 };

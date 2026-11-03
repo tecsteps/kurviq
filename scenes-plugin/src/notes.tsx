@@ -243,7 +243,7 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
     host.current!.appendChild(root);
 
     let saved = notes;
-    const save = () => {
+    const save = (enablePresentation = true) => {
       const text = root.value as string;
       element.originalText = text;
       const next = text.trim() ? markdownOf(richDocOf(element, text) ?? docFromPlain(text)) : "";
@@ -251,7 +251,7 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
         saved = next;
         const api = deck.getApi();
         if (api) {
-          patchSlideData(api, new Map([[id, { notes: next || undefined }]]));
+          patchSlideData(api, new Map([[id, { notes: next || undefined }]]), { enablePresentation });
         }
       }
     };
@@ -274,7 +274,7 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
     selection?.addRange(range);
     return () => {
       clearTimeout(timer);
-      save();
+      save(false);
       root.removeEventListener("input", onInput);
       root.remove();
     };

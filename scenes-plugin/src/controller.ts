@@ -1,5 +1,5 @@
 import { editorYield } from "./editorYield";
-import { mergePresentation, restorePresentation } from "../../scenes-mcp/presentation.mjs";
+import { mergePresentation, restorePresentation, presentationSave } from "../../scenes-mcp/presentation.mjs";
 import { serializeAsJSON, presentationOf } from "./presentation";
 // Scenes: switching, saving and syncing with Drive. Talks to the editor only
 // through the public ExcalidrawImperativeAPI.
@@ -1349,7 +1349,9 @@ class ScenesController {
     if (data.appState) {
       const wanted = settingsOf(data.appState);
       const read = base ? settingsOf(base.appState) : current;
-      const mine = Object.keys(wanted).filter((key) => JSON.stringify(wanted[key]) !== JSON.stringify(read[key]));
+      Object.assign(wanted, presentationSave(wanted, base?.appState, current));
+      const compared: Record<string, unknown> = { ...read, ...presentationSave(null, null, current) };
+      const mine = Object.keys(wanted).filter((key) => JSON.stringify(wanted[key]) !== JSON.stringify(compared[key]));
       if (mine.length) {
         settings = { ...current };
         for (const key of mine) {
@@ -3098,7 +3100,7 @@ class ScenesController {
     }
     api.updateScene({
       elements,
-      appState: { viewBackgroundColor: restoreAppState(data.appState, null).viewBackgroundColor, kurviqPresentation: presentationOf(data) } as any,
+      appState: { viewBackgroundColor: restoreAppState(data.appState, null).viewBackgroundColor, ...restorePresentation(data, api.getAppState()) } as any,
       captureUpdate: CaptureUpdateAction.IMMEDIATELY,
     });
   };

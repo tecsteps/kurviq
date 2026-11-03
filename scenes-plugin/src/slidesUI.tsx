@@ -1,3 +1,4 @@
+import { presentationChange } from "./presentation";
 // The "Slides" sidebar: the deck of the open scene (frames as slides),
 // per-slide settings, reveal steps, and the deck's template + style.
 
@@ -39,8 +40,9 @@ const useDeck = () => useSyncExternalStore(deck.subscribe, deck.getState);
 
 /** the scene is (or is not) a presentation: the saved flag, nothing else changes */
 export const setPresentation = (on: boolean) => {
-  deck.getApi()?.updateScene({
-    appState: { kurviqPresentation: on, kurviqPresentationAt: Date.now() } as any,
+  const api = deck.getApi();
+  api?.updateScene({
+    appState: presentationChange(on, api.getAppState()) as any,
     captureUpdate: CaptureUpdateAction.NEVER,
   });
 };
