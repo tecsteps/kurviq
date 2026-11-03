@@ -37,6 +37,16 @@ export const SLIDES_SIDEBAR_NAME = "slides";
 
 const useDeck = () => useSyncExternalStore(deck.subscribe, deck.getState);
 
+/** the scene is (or is not) a presentation: the saved flag, nothing else changes */
+export const setPresentation = (on: boolean) => {
+  deck.getApi()?.updateScene({
+    appState: { kurviqPresentation: on, kurviqPresentationAt: Date.now() } as any,
+    captureUpdate: CaptureUpdateAction.NEVER,
+  });
+};
+
+export const usePresentation = () => useSyncExternalStore(deck.subscribe, deck.getState).isPresentation;
+
 const api = () => {
   const value = deck.getApi();
   if (!value) {
@@ -939,17 +949,6 @@ export const SlidesSidebar = () => {
         <div className="scenes-sidebar__title">Slides</div>
       </Sidebar.Header>
       <div className="slides-body">
-        <label>
-          <input
-            type="checkbox"
-            checked={state.isPresentation}
-            onChange={(event) => api().updateScene({
-              appState: { kurviqPresentation: event.target.checked, kurviqPresentationAt: Date.now() } as any,
-              captureUpdate: CaptureUpdateAction.NEVER,
-            })}
-          />{" "}
-          This scene is a presentation
-        </label>
         {!isDeck(state) ? (
           <SlidesEmpty />
         ) : (

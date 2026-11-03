@@ -35,12 +35,26 @@ await page.evaluate(async (n) => {
   await window.__scenes.open(n);
   window.__scenes.getApi().toggleSidebar({ name: "slides", force: true });
 }, name);
-await page.waitForSelector('input[type="checkbox"]');
-const checked = () => page.evaluate(() => [...document.querySelectorAll("label")].find((el) => el.textContent.includes("This scene is a presentation"))?.querySelector("input")?.checked);
+// the switch sits in the scene panel: the scene pill opens the list, the pen of the current scene its panel
+const panelSwitch = async () => {
+  if (!(await page.$('input[aria-label="Presentation"]'))) {
+    await page.click(".scenes-pill");
+    await page.waitForSelector(".scenes-switcher__row--current .scenes-switcher__pen", { timeout: 5000 });
+    await page.click(".scenes-switcher__row--current .scenes-switcher__pen");
+    await page.waitForSelector('input[aria-label="Presentation"]', { timeout: 5000 });
+  }
+};
+const checked = async () => {
+  await panelSwitch();
+  return page.evaluate(() => document.querySelector('input[aria-label="Presentation"]')?.checked);
+};
 ok(await checked() === false, "three frames default to non presentation");
 const presentVisible = () => page.evaluate(() => [...document.querySelectorAll(".scenes-top-right button")].some((el) => el.textContent.trim() === "Present"));
 ok(await presentVisible() === false, "no Present button for three frames");
-const togglePresentation = () => page.evaluate(() => [...document.querySelectorAll("label")].find((el) => el.textContent.includes("This scene is a presentation"))?.querySelector("input")?.click());
+const togglePresentation = async () => {
+  await panelSwitch();
+  await page.evaluate(() => document.querySelector('input[aria-label="Presentation"]')?.click());
+};
 await togglePresentation();
 await sleep(800);
 ok(await checked() === true, "explicit toggle enables presentation");

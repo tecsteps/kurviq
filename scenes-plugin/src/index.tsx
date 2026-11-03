@@ -30,7 +30,7 @@ import { QuickTip } from "./quickTip";
 import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
-import { SLIDES_SIDEBAR_NAME, SlidesSidebar } from "./slidesUI";
+import { SLIDES_SIDEBAR_NAME, SlidesSidebar, setPresentation, usePresentation } from "./slidesUI";
 import { connectGoogle, connection, enterSpace, pickerAvailable, pickFiles, sharedFileId, sharedWithMe } from "./online/drive";
 import type { SharedWithMe } from "./online/drive";
 import {
@@ -1064,6 +1064,20 @@ const SceneAutoSync = ({ item, global }: { item: SceneListItem; global: boolean 
   );
 };
 
+/** the scene is a presentation: a switch (it also turns it on, like "Start a presentation"); off keeps every frame */
+const ScenePresentationSwitch = () => {
+  const on = usePresentation();
+  return (
+    <QuickTip tip={on ? "This scene is a presentation. Switch off to hide Present and the slide tools (frames stay)." : "Make this scene a presentation"} label={false}>
+      <label className="scenes-switch scenes-switch--inline">
+        <input type="checkbox" role="switch" checked={on} aria-label="Presentation" onChange={(event) => setPresentation(event.target.checked)} />
+        <span className="scenes-switch__track" />
+        <span className="scenes-switch__label">Presentation</span>
+      </label>
+    </QuickTip>
+  );
+};
+
 /** confirm text for deleting a scene: says exactly what will be lost */
 const confirmDelete = (item: SceneListItem) => {
   const deleteDescription = () => {
@@ -1463,7 +1477,10 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
     current !== null &&
     !prompt && (
       <div className="scenes-current__footer">
-        {currentItem && withDrive && !currentItem.localOnly && <SceneAutoSync item={currentItem} global={autoSync} />}
+        <div className="scenes-current__options">
+          {currentItem && withDrive && !currentItem.localOnly ? <SceneAutoSync item={currentItem} global={autoSync} /> : <span />}
+          <ScenePresentationSwitch />
+        </div>
         {(status === "behind" || status === "ahead" || status === "diverged") && currentItem?.inDrive && (
           <button
             type="button"

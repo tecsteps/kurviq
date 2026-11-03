@@ -973,6 +973,30 @@
     gap: 0.35rem;
   }
 
+  .scenes-current__options {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+
+  .scenes-switch--inline {
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--color-gray-50);
+    position: relative;
+
+    .scenes-switch__track {
+      margin-top: 0;
+    }
+
+    .scenes-switch__label {
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+  }
+
   .scenes-scene-sync {
     display: flex;
     align-items: center;
