@@ -206,6 +206,15 @@
     gap: 6px;
     align-items: center;
 
+    // the size field of the size popover: a short number field
+    &.rt-toolbar__sizeform {
+      margin-bottom: 6px;
+
+      input {
+        width: 76px;
+      }
+    }
+
     input {
       width: 240px;
       height: 30px;

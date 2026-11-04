@@ -4,6 +4,7 @@
 import { FONT_FAMILY } from "@excalidraw/common";
 
 import type { RichEditorApi } from "./editor";
+import { parseFontSize } from "../fontSize";
 import { safeLink } from "./model";
 
 import type { ParaKind } from "./model";
@@ -215,9 +216,53 @@ export const createToolbar = (
     el.setAttribute("aria-label", "Text formatting");
     keepFocus(el);
 
-    const size = button("size", `Text size (${MOD}${SHIFT}. / ${MOD}${SHIFT},)`, "", (anchor) =>
+    // any size: type a number (Enter or Apply), or pick one of the presets below
+    const sizeForm = (current: number | null, base: number) => {
+      const form = ownerDocument.createElement("form");
+      form.className = "rt-toolbar__link rt-toolbar__sizeform";
+      form.noValidate = true;
+      const input = ownerDocument.createElement("input");
+      input.type = "number";
+      input.min = "1";
+      input.max = "1000";
+      input.step = "any";
+      input.setAttribute("aria-label", "Text size");
+      input.placeholder = "Mixed";
+      input.value = current === null ? "" : String(Math.round(current * 100) / 100);
+      const apply = ownerDocument.createElement("button");
+      apply.type = "submit";
+      apply.textContent = "Set";
+      form.append(input, apply);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const value = parseFontSize(input.value);
+        closePopover();
+        api.restoreFocus();
+        if (value !== null) {
+          api.setMark("z", value / base);
+        }
+      });
+      input.addEventListener("keydown", (event) => {
+        event.stopPropagation();
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closePopover();
+          api.restoreFocus();
+        }
+      });
+      api.suspendBlur();
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 0);
+      return form;
+    };
+
+    const size = button("size", `Text size (${MOD}${SHIFT}. / ${MOD}${SHIFT},)`, "", (anchor) => {
+      api.saveSelection();
       openPopover(anchor, (pop) => {
         const { size: current, base } = api.state();
+        pop.appendChild(sizeForm(current, base));
         const list = ownerDocument.createElement("div");
         list.className = "rt-toolbar__sizes";
         const sizes = [...new Set([...SIZES, Math.round(base)])].sort((a, b) => a - b);
@@ -233,8 +278,8 @@ export const createToolbar = (
           list.appendChild(item);
         }
         pop.appendChild(list);
-      }),
-    );
+      }, true);
+    });
     size.classList.add("rt-toolbar__button--size");
 
     // the font (of the whole text): its name, a list to pick another
