@@ -509,7 +509,8 @@ names a different scene than the one it is saved as.
 
 | tool | |
 |---|---|
-| `read_me`, `create_view` | upstream excalidraw-mcp drawing tools (create_view returns a `checkpointId`) |
+| `read_me` | Kurviq's element reference (`scenes-mcp/skill/kurviq-scenes/REFERENCE.md`) |
+| `create_view` | upstream excalidraw-mcp drawing tool (returns a `checkpointId`) |
 | `read_scene` | a scene + what the user changed since the agent's last edit (`userChanges`), with a `revision` |
 | `edit_scene` | add / update / delete elements; the user's tab merges and saves it right away |
 | `view_scene` | PNG image of a scene or a draft, optionally zoomed |

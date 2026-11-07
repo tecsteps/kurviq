@@ -41,6 +41,7 @@ const MAX_CHANGE_DETAILS = 25;
  * @param {"detached" | "live"} options.mode
  * @param {string} options.appHint the app's URL (in messages to agents)
  * @param {string} options.skill SKILL.md (the server's instructions)
+ * @param {string} options.reference REFERENCE.md (what read_me returns: the element format, editing, text, slides)
  * @param {(server: McpServer, store: object) => void} options.registerUpstream registers excalidraw-mcp's tools
  * @param {(name: string, pdf: Uint8Array, file?: string) => Promise<object>} options.savePdf
  * @param {boolean} [options.livePreview] live mode: mirror create_view into the app
@@ -54,6 +55,7 @@ export const createScenesMcp = ({
   mode,
   appHint,
   skill,
+  reference,
   registerUpstream,
   savePdf,
   livePreview = true,
@@ -459,7 +461,7 @@ export const createScenesMcp = ({
     ? "Big edits: put them in a JSON file and pass file (absolute path)."
     : `Big edits: upload the JSON ({ "add", "update", "delete" }) with curl --data-binary @edit.json to the upload address in read_me and pass the payloadId it answers (nothing passes through your context twice).`;
 
-  const IMAGES_HELP = `Images and icons: add { "type": "image", "id": "...", "x": 0, "y": 0, "width": 48, plus ONE of "src" (${LOCAL_FILES ? "absolute file path, " : ""}http(s) URL or data URL of a png/jpg/gif/webp/svg), "svg" (inline SVG markup) or "icon" ("lucide:<name>", e.g. "lucide:database", or "simple-icons:<slug>", e.g. "simple-icons:github"; "color" tints it)${LOCAL_FILES ? "" : ', or "fileId" of an image you uploaded (read_me: "Images from your machine")'} }. width or height alone keeps the aspect ratio. Size pictures for the scene first (every picture travels inside the scene file; on a 1920×1080 slide about twice the shown size is plenty; WebP or JPEG beats PNG): Kurviq keeps them as you add them. At most 20 images fetched per call (src / icon; uploaded fileIds don't count).
+  const IMAGES_HELP = `Images and icons: add { "type": "image", "id": "...", "x": 0, "y": 0, "width": 48, plus ONE of "src" (${LOCAL_FILES ? "absolute file path, " : ""}http(s) URL or data URL of a png/jpg/gif/webp/svg), "svg" (inline SVG markup) or "icon" ("lucide:<name>", e.g. "lucide:database", or "simple-icons:<slug>", e.g. "simple-icons:github"; "color" tints it)${LOCAL_FILES ? "" : ', or "fileId" of an image you uploaded (read_me: "Images from your machine")'} }. width or height alone keeps the aspect ratio. Size pictures for the scene first: each travels inside the scene file (sizes and limits: read_me).
   Labels: label { text, strokeColor, fontSize, fontFamily, textAlign, verticalAlign }. The text is dark (#1e1e1e) unless you set strokeColor; the label's id is "<shape id>-label"; a shape grows so that no word of its label is broken.`;
 
   const FORMAT_HELP = String.raw`  - Format a phrase without resending the text (it applies to the text as it is NOW, so the user's edits of it stay): { "id": "t1", "format": { "match": "A company transformation.", "color": "#1565c0", "bold": true } } (id: the text, or the shape whose label it is). bold / italic / underline / strike: true or false (removes); color / highlight / link / size (relative to fontSize): a value or null (removes); occurrence: n (default 1) or "all"; an array formats several phrases. match is exact text without list markers ("\n" between lines); not found is an error (nothing changed). Not together with text / markdown in the same update. It clashes with the user's text edit only if the phrase is gone.`;
@@ -574,7 +576,7 @@ export const createScenesMcp = ({
   - summary=true (default for scenes with more than ${SUMMARY_THRESHOLD} elements): overview only: scene bounds, element counts, frames and all text labels with their positions. Use it to find the part you need.
   - region or elementIds: only the elements in that area / those elements (+ their labels).
   - otherwise all elements (compact).
-  Always returns a checkpointId of the FULL scene. To modify the scene, call create_view with [{"type":"restoreCheckpoint","id":"<checkpointId>"}, ...new elements / {"type":"delete","ids":"..."}] and then save_scene with the checkpointId create_view returns. To LOOK at a scene, use view_scene.`,
+  Always returns a checkpointId of the FULL scene (for view_scene, or as the start of a NEW drawing with create_view + save_scene). To change this scene use read_scene + edit_scene; to LOOK at it, view_scene.`,
         inputSchema: {
           name: SCENE_NAME,
           summary: z.boolean().optional().describe("Return an overview instead of elements"),
@@ -1161,7 +1163,7 @@ export const createScenesMcp = ({
         {
           description: `Edit the scene open in the user's app, live and in place, merged with the user's own work (never overwrites their other changes) and undoable by the user as one step (Cmd/Ctrl+Z). This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to Google Drive and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
     Safety net: before applying, it checks whether the USER changed the scene since an agent last read/edited it. If so, the result starts with a WARNING listing the user's changes (plus an image of them). An update entry that sets a property the user changed on that element (text, position, size, a style, a customData key, a shape's label) or of an element they deleted is NOT applied (onConflict "reject", default) but listed in "conflicts" with their current values; "overwrite" applies it anyway (still listed). The rest of the edit applies. Calling read_open_scene first avoids surprises.
-    - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
+    - add: JSON array string of new elements (format: read_me; labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
     - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element. Like in the editor, a moved / resized shape takes its label and bound arrows along, and a moved frame (slide) takes everything on it. A shape's label: { "id": "box", "label": { "text": "…", "fontSize": 28 } } (changes it or adds one; it is re-wrapped and the shape grows to fit).
     - delete: ids to remove (a container's label goes with it).
   ${FORMAT_HELP}
@@ -1171,7 +1173,7 @@ export const createScenesMcp = ({
   ${IMAGES_HELP}
   Returns an IMAGE of the edited area (view=false to skip). Nothing is applied if the user switched to another scene since your last read (or pass expectScene explicitly).`,
           inputSchema: {
-            add: z.string().optional().describe("JSON array string of new elements (create_view format)"),
+            add: z.string().optional().describe("JSON array string of new elements (format: read_me)"),
             update: z
               .array(z.object({ id: z.string() }).passthrough())
               .optional()
@@ -1358,7 +1360,7 @@ export const createScenesMcp = ({
       server.registerTool(
         "read_scene",
         {
-          description: `Read a scene and find out what the USER changed since an agent last edited it. You work on your own copy (a headless Excalidraw), never in the user's browser: before reading, the user's app is asked to push its unpushed changes of this scene, so you see their latest work.
+          description: `Read a scene and find out what the USER changed since an agent last edited it. Before reading, the user's app is asked to push its unpushed changes of this scene, so you see their latest work.
   userChanges lists what changed (added / modified with changedFields / deleted) since the last agent edit of this scene (remembered in Google Drive), or since revision=<since> if you pass one. The result has a "revision": pass it as basedOn to edit_scene, or as since to the next read_scene, to get exactly what changed in between. view=true adds an IMAGE of the user's changes (or of the scene).
   Presentation: read_scene returns isPresentation. Set edit_scene(isPresentation: true/false) explicitly; frames alone do not make a presentation.
   Scene data: summary=true (default above ${SUMMARY_THRESHOLD} elements) gives an overview (bounds, counts, slides in deck order, all text labels with positions); slide = one slide's elements (number, frame id or "template"); region / elementIds give element data for a part; otherwise all elements. relative=true gives x / y of elements on a slide relative to the slide, as edits take them with "slide". changesOnly=true skips the scene data. sceneFile tells how big the file is (pictures).`,
@@ -1396,9 +1398,9 @@ export const createScenesMcp = ({
       server.registerTool(
         "edit_scene",
         {
-          description: `Edit a scene: applied in your own headless Excalidraw to the newest version and saved to Google Drive right away (one version per edit). The user's app picks it up within seconds and merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call the scenes server's HTTP API yourself (direct writes are refused).
+          description: `Edit a scene: applied with the real Excalidraw to the newest version and saved right away (one version per edit). Call read_me once before your first edit (the element reference). The user's app picks it up within seconds and merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call the scenes server's HTTP API yourself (direct writes are refused).
   Safety net: the user's app first pushes its unpushed changes of this scene. If the user changed the scene since basedOn (the revision from your last read_scene / edit_scene; default: the last agent edit), the result starts with a WARNING listing their changes (plus an image). With basedOn, an update entry that sets a property the user changed on that element since then (text / markdown, position (x, y, also slide-relative), size, a style like strokeColor or fontSize, a customData key, a shape's label) or of an element they deleted is NOT applied (onConflict "reject", the default): it comes back in "conflicts" ({ id, properties, yours, theirs: their current values, for text their text and markdown, resolution }); rebase it on their version and send it again. onConflict "overwrite" applies it anyway (still listed). The other updates, adds and deletes apply; if nothing is left, nothing is changed.
-  - add: JSON array string of new elements in create_view format (labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
+  - add: JSON array string of new elements (format: read_me; labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
   - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element (labels are text elements with containerId). Send only what you change: resending a whole markdown to color one phrase clashes with the user's edit of that text; use format.
 ${FORMAT_HELP}
   - delete: ids to remove (a container's label goes with it).
@@ -1410,7 +1412,7 @@ ${EDIT_HELP}
   Returns an IMAGE of the edited area (view=false to skip) and the new revision.`,
           inputSchema: {
             name: SCENE_NAME,
-            add: z.string().optional().describe("JSON array string of new elements (create_view format)"),
+            add: z.string().optional().describe("JSON array string of new elements (format: read_me)"),
             update: z
               .array(z.object({ id: z.string() }).passthrough())
               .optional()
@@ -1671,7 +1673,7 @@ ${EDIT_HELP}
     server.registerTool(
       "save_scene",
       {
-        description: `Save a NEW drawing as a scene: writes scenes/<name>.excalidraw, saves it to Google Drive.
+        description: `Save a NEW drawing as a scene: writes scenes/<name>.excalidraw, saves it to Google Drive. Call read_me once before your first drawing (the element reference).
   Provide EITHER checkpointId (from create_view: draw with create_view, then save its checkpoint) OR elements (same JSON format as create_view, incl. restoreCheckpoint/delete). open=true switches the user's app to it${MODE === "detached" ? " (only when the user asked to see it)" : ""}.
   NOT for changing an existing scene: the user's app holds the newest version (possibly with unpushed edits) and syncs it to Google Drive by itself (auto-sync), so writing to Google Drive directly races with it and causes conflicts. To change an existing scene: ${MODE === "detached" ? "read_scene + edit_scene" : "open_scene(name) if it isn't open, then read_open_scene + edit_open_scene; the app pushes"}. save_scene refuses existing scenes unless replace=true: for when the user explicitly wants the whole scene replaced by a new drawing, or when the app isn't open in any browser (the app merges it on its next sync).
   ${IMAGES_HELP}
@@ -1679,7 +1681,7 @@ ${EDIT_HELP}
         inputSchema: {
           name: SCENE_NAME,
           checkpointId: z.string().optional().describe("Checkpoint id returned by create_view / get_scene"),
-          elements: z.string().optional().describe("JSON array string of elements (create_view format)"),
+          elements: z.string().optional().describe("JSON array string of elements (format: read_me)"),
           ...(LOCAL_FILES
             ? { elementsFile: z.string().optional().describe("Absolute path of a JSON file with the elements array (instead of elements)") }
             : { payloadId: PAYLOAD_ID }),
@@ -2061,37 +2063,22 @@ ${EDIT_HELP}
     { name, version: "1.0.0" },
     { instructions: INSTRUCTIONS },
   );
-  /** read_me also explains what this app adds: images/icons, ER heads, slides */
-  // (online: "Images from your machine" holds the upload address the tool descriptions point to)
-  const SKILL_EXTRAS = ["## Editing elements", "## Limits", "## Formatted text", "## Slides (presentations)", "## Images from your machine"]
-    .map((heading) => {
-      const start = INSTRUCTIONS.indexOf(heading);
-      const end = INSTRUCTIONS.indexOf("\n## ", start + heading.length);
-      if (start < 0) {
-        return "";
-      }
-      return INSTRUCTIONS.slice(start, end < 0 ? undefined : end).trim();
-    })
-    .filter(Boolean)
-    .join("\n\n");
+  /**
+   * read_me: Kurviq's own element reference instead of excalidraw-mcp's cheat
+   * sheet (that one is written for create_view in a chat: long streaming
+   * examples, and advice that is wrong here, e.g. on text width). The workflow
+   * is in the instructions, the format here: each fact in one place.
+   */
+  const READ_ME = {
+    title: "Kurviq element reference",
+    description:
+      "Kurviq's reference for writing elements: format (shapes, labels, text boxes, fonts, arrows, images, icons), colors, edit_scene details, limits, formatted text, slides and create_view drafts. Call it once before your first edit or drawing.",
+  };
   const registerTool = server.registerTool.bind(server);
   server.registerTool = (name, config, handler) =>
-    registerTool(
-      name,
-      config,
-      name === "read_me"
-        ? async (...args) => {
-            const result = await handler(...args);
-            return {
-              ...result,
-              content: [
-                ...result.content,
-                { type: "text", text: `# Kurviq's extras (scenes, formatted text, slides, images)\n\n${SKILL_EXTRAS}` },
-              ],
-            };
-          }
-        : handler,
-    );
+    name === "read_me"
+      ? registerTool(name, { ...config, ...READ_ME }, async () => ({ content: [{ type: "text", text: reference }] }))
+      : registerTool(name, config, handler);
   registerUpstream(server, previewingStore);
   server.registerTool = registerTool;
   registerSceneTools(server);

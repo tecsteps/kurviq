@@ -1,5 +1,7 @@
-// The agent instructions of the Kurviq MCP: the local skill
-// (scenes-mcp/skill/kurviq-scenes/SKILL.md), with what differs online.
+// The agent instructions of the Kurviq MCP and what its read_me returns: the
+// local skill and reference (scenes-mcp/skill/kurviq-scenes/SKILL.md,
+// REFERENCE.md), with what differs online.
+import localReference from "../../scenes-mcp/skill/kurviq-scenes/REFERENCE.md";
 import localSkill from "../../scenes-mcp/skill/kurviq-scenes/SKILL.md";
 
 const INTRO = (app: string) => `# Kurviq: how to work with the user's drawings
@@ -39,14 +41,13 @@ const TROUBLESHOOTING = (app: string) => `## Troubleshooting
 - "Google Drive is not connected": the user can sign in with Google in the
   scene list (Sign in with Google); until then, work with local-only scenes.
 - Local file paths (edit files, image src) and PDF export are not available
-  through the Kurviq MCP: upload images and big edits (see "Images from your
-  machine"); the user exports PDFs in Kurviq (Slides sidebar → PDF).
-- "The Kurviq tab did not answer": the edit may still land. Call it again
-  with the same \`requestId\` (it is never applied twice), and check
-  \`app_status\` → \`health\`. Background tabs may answer more slowly because browsers throttle timers.
-  Wait and retry with the same requestId (never applied twice); edits are not lost.
-  Keep working on other tasks. Only mention the tab to the user if retries
-  still fail after about 2 minutes.
+  through the Kurviq MCP: upload images and big edits (read_me: "Images from
+  your machine"); the user exports PDFs in Kurviq (Slides sidebar → PDF).
+- A timeout or "the Kurviq tab did not answer": the edit may still land.
+  Retry with the same \`requestId\` (never applied twice) and check
+  \`app_status\` → \`health\`. Background tabs answer more slowly (browsers
+  throttle them): keep working on other things; mention the tab to the user
+  only if retries still fail after about 2 minutes.
 `;
 
 const UPLOADS = (uploadUrl: string) => `## Images from your machine (photos, illustrations, screenshots)
@@ -99,7 +100,26 @@ const section = (text: string, heading: string) => {
   return [start, end < 0 ? text.length : end + 1] as const;
 };
 
-export const kurviqSkill = (app: string, uploadUrl = "<the upload address from the MCP server's instructions>") => {
+/** what differs online in both texts: no local files, no PDF export, Kurviq's server instead of the local one */
+const online = (text: string) =>
+  text
+    // " (localhost:3101)" with the whitespace before it (no regex: Sonar S8786)
+    .split("(localhost:3101)").map((part, index, parts) => (index < parts.length - 1 ? part.trimEnd() : part)).join("")
+    .replaceAll("the scenes server's HTTP API", "Kurviq's or Google's HTTP API (except the upload address from `read_me`)")
+    .replace(/absolute file path,\s+/g, "")
+    .replace(/ Local file paths must lie inside[\s\S]*?at most 5 MB\./, "")
+    .replace(/ \(also in REFERENCE\.md next to this\s+file\)/, "")
+    .replace(
+      /- \*\*Big edits:\*\* write[\s\S]*?instead of pasting it into the call\./,
+      '- **Big edits:** upload them as JSON and pass `payloadId` (see "Images from your machine").',
+    )
+    .replace(
+      /- PDF: `export_pdf\(name\)`[\s\S]*?selectable text\./,
+      "- PDF: the user exports the deck in Kurviq (Slides sidebar → PDF).",
+    );
+
+/** the server's instructions: how to work with the user's scenes */
+export const kurviqSkill = (app: string) => {
   let text = String(localSkill).replace(/^---[\s\S]*?---\s*/, "");
   const intro = text.indexOf("## Golden rules");
   text = INTRO(app) + text.slice(intro);
@@ -109,18 +129,9 @@ export const kurviqSkill = (app: string, uploadUrl = "<the upload address from t
       text = text.slice(0, range[0]) + text.slice(range[1]);
     }
   }
-  text = text
-    // " (localhost:3101)" with the whitespace before it (no regex: Sonar S8786)
-    .split("(localhost:3101)").map((part, index, parts) => (index < parts.length - 1 ? part.trimEnd() : part)).join("")
-    .replaceAll("the scenes server's HTTP API", "Kurviq's or Google's HTTP API")
-    .replace(/absolute file path,\s+/g, "")
-    .replace(
-      /- \*\*Big edits:\*\* write[\s\S]*?instead of pasting it into the call\./,
-      '- **Big edits:** upload them as JSON and pass `payloadId` (see "Images from your machine").',
-    )
-    .replace(
-      /- PDF: `export_pdf\(name\)`[\s\S]*?selectable text\./,
-      "- PDF: the user exports the deck in Kurviq (Slides sidebar → PDF).",
-    );
-  return `${text.trimEnd()}\n\n${UPLOADS(uploadUrl)}\n${TROUBLESHOOTING(app)}`;
+  return `${online(text).trimEnd()}\n\n${TROUBLESHOOTING(app)}`;
 };
+
+/** what read_me returns: the element reference, with the upload address for images and big edits */
+export const kurviqReference = (uploadUrl = "<the upload address>") =>
+  `${online(String(localReference)).trimEnd()}\n\n${UPLOADS(uploadUrl)}`;

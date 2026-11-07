@@ -117,7 +117,7 @@ The tools describe themselves, so plain requests work:
 
 | Tool | What it does |
 |---|---|
-| `read_me` | Element format cheat sheet: shapes, labels, arrows, colors. The agent calls it once before drawing. |
+| `read_me` | Kurviq's element reference: format, colors, edit details, formatted text, slides, images. The agent calls it once before writing. |
 | `create_view` | Draws a new diagram and returns a `checkpointId` (a draft, kept in your open tab). |
 | **`view_scene`** | **Returns an actual PNG image to the agent**, of a scene or a draft. Optional `elementIds` / `region` zoom in, `maxSize` caps the size. `slide: 3` shows a slide exactly as presented (template, page numbers), `step: 1` after the first click; `slides: "all"` puts the whole deck in one image. |
 | **`validate_deck`** | Checks a presentation slide by slide, measured by Excalidraw: cut-off, overlapping, overflowing, too small or low-contrast text, text hidden under shapes, elements not part of their slide, broken click steps, missing notes. Also lists the slides. |
@@ -143,14 +143,14 @@ The tools describe themselves, so plain requests work:
 
 **Safety net:** if you changed something since the agent's version (`basedOn`), the answer starts with a **WARNING** listing your changes plus an image of them, so the agent re-checks. Where the agent's update sets the same property of the same element you changed (e.g. the text you just edited, the position of a box you moved, the color you picked) or touches an element you deleted, that update is **not applied** but returned in `conflicts` (your current value next to the agent's), so the agent rebases on your version; its other changes apply. The agent can pass `onConflict: "overwrite"` to apply them anyway (still listed). To color or bold a phrase, agents use `format: { match, color, bold }`, which styles the text as it is now and keeps your words.
 
-These rules are built into the MCP server's instructions (sent to every agent that connects) and into the Claude Code skill `kurviq-scenes` (`scenes-mcp/skill/kurviq-scenes/SKILL.md`, linked to `~/.claude/skills/`).
+These rules are built into the MCP server's instructions (sent to every agent that connects) and into the Claude Code skill `kurviq-scenes` (`scenes-mcp/skill/kurviq-scenes/SKILL.md`, linked to `~/.claude/skills/`); the element format is what `read_me` returns (`REFERENCE.md` next to it).
 
 ### Slides
 
 Agents can build whole decks: frames are slides (`customData.slides` holds
 order, notes, skip), elements can appear click by click (`step`), and one
 template frame carries header, footer, logo and the deck style. The format
-is in the skill (`scenes-mcp/skill/kurviq-scenes/SKILL.md`, "Slides").
+is in the element reference (`read_me`, `scenes-mcp/skill/kurviq-scenes/REFERENCE.md`, "Slides").
 Template copies on the slides are made by your app when it opens the deck.
 
 ### Seeing scenes (huge ones too)

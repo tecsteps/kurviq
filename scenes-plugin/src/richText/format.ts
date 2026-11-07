@@ -1,7 +1,7 @@
 // Formatting part of a text for agents, without resending it: an update's
 // `format: { match: "a phrase", color: "#1565c0", bold: true }` styles that
 // phrase in the element's CURRENT text (so whatever else the user changed in
-// it stays). See SKILL.md.
+// it stays). See REFERENCE.md, "Formatted text".
 
 import { formatRange, normalizeDoc, paraText } from "./model";
 

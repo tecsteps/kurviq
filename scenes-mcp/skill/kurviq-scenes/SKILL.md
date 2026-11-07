@@ -32,34 +32,34 @@ app's interface itself.
 1. **Always `read_scene` before you edit.** It reports what the user
    changed since an agent last edited the scene (`userChanges`), found in the
    scene's Drive history, so it works across conversations and agents.
-2. **Edit with `edit_scene`**, not by re-creating the scene. It changes only
+2. **Call `read_me` once before you write elements** (edits, new drawings):
+   it is the element reference (see "Writing elements" below).
+3. **Edit with `edit_scene`**, not by re-creating the scene. It changes only
    the elements you name; the user's other work is untouched. Pass the
    `revision` from your last `read_scene` / `edit_scene` as `basedOn`.
-3. **Look at the result.** `edit_scene` returns an image of what you
+4. **Look at the result.** `edit_scene` returns an image of what you
    changed. Use `view_scene` whenever you need to see something; it returns a
    real PNG.
-4. If `edit_scene` answers with a **WARNING**, the user changed the scene
-   since your version (`basedOn`). Updates that set a property the user
-   changed on the same element (its text, position, size, a color, a
-   `customData` key) or of an element they deleted are **not applied**: they
-   come back in `conflicts` (`yours` / `theirs`, for text the user's text and
-   `markdown`). Rebase them on the user's version and send them again
-   (`onConflict: "overwrite"` only if the user wants your version). Your
-   other changes were applied on top: check the user's changes (listed +
-   image) and fix your edit if it clashes with them.
-5. **Stick to the scene the user asked for.** If they say "this drawing",
+5. If `edit_scene` answers with a **WARNING**, the user changed the scene
+   since your `basedOn`. Updates of properties they changed come back in
+   `conflicts` (`yours` / `theirs`) and are not applied: rebase them on the
+   user's version and send them again (`onConflict: "overwrite"` only if the
+   user wants your version). Check their changes (listed + image) against
+   the rest of your edit.
+6. **Stick to the scene the user asked for.** If they say "this drawing",
    `app_status` tells you which scene they have open.
-6. **Don't touch the user's view.** `open_scene` (and `open: true`) switches
+7. **Don't touch the user's view.** `open_scene` (and `open: true`) switches
    what the user sees: only when they ask you to show them something.
-7. **Only these tools, never around them.** You never push, sync or write
+8. **Only these tools, never around them.** You never push, sync or write
    scene files yourself: `edit_scene` hands your change to the user's
    Kurviq tab, which saves it; the user's app syncs their own work by
    itself (auto-sync). Never call the scenes server's HTTP API
    (localhost:3101) with curl or scripts, and never write `.excalidraw`
    files or Drive files yourself: direct writes are refused, and they would
    bypass merging and the user's unpushed work. If a tool can't do what you need,
-   tell the user instead of working around it. Never overwrite an existing
-   scene with `save_scene`. Conflicts: `get_conflict` / `resolve_conflict`.
+   tell the user instead of working around it. Replace a whole scene
+   (`save_scene(replace: true)`) only when the user explicitly asks for it.
+   Sync conflicts: `get_conflict` / `resolve_conflict`.
 
 ## Co-working loop
 
@@ -76,115 +76,12 @@ edit_scene("X", basedOn: r3, …)                → next change
 `deleted` elements. "No earlier agent edit found" means everything is new to
 you.
 
-## Editing elements (`edit_scene`)
+## Writing elements: `read_me`
 
-- `add`: JSON array string, same format as `create_view` (call `read_me` once
-  for the format): shapes with `label: { text }`, arrows with
-  `startBinding` / `endBinding: { elementId, fixedPoint }`; arrows may bind
-  to existing shapes. Use new unique ids.
-- `update`: `[{ "id": "...", ...props }]`: move (`x`, `y`), resize, recolor,
-  change `text` of a text element (a shape's label is a text element with
-  `containerId` = the shape id).
-- `delete`: ids (a shape's label goes with it; a deleted slide frame takes
-  everything on it along, template copies included, like in the editor).
-- Conflicts (with `basedOn`): an `update` entry that sets a property the
-  user changed since then is left out and listed in `conflicts` (element id,
-  `properties` such as `text`, `position`, `size`, `strokeColor`,
-  `label.text`, `customData.slides.notes`, `deleted`; `yours`, `theirs`,
-  `resolution: "rejected"`). The other entries, adds and deletes still apply;
-  if nothing is left, nothing is changed. `onConflict: "overwrite"` applies
-  them anyway (listed as `"overwritten"`). Send only what you mean to change:
-  a resent `markdown` to color one word clashes with the user's edit of that
-  text, `format` does not.
-- Layer order: `"zIndex": "front"` / `"back"` (above / below everything else
-  on its slide) or `"above"` / `"below": "<element id>"`, in `update` or on
-  added elements (e.g. a label added after a picture: `"zIndex": "front"`).
-- Ids: ids of deleted elements can be used again. `upsert: true` lets `add`
-  replace existing elements with the same id (instead of an error).
-- Changing `fontFamily` / `fontSize` of a text measures it again. A free text
-  with `width` is a box from `x` to `x + width`: its lines wrap at the width
-  and `textAlign` aligns them inside (`"autoResize": true` instead: one line,
-  aligned in that box).
-- Retries are safe: every edit has a `requestId` (yours, or the one the
-  result names). Sent again with the same `requestId`, an edit that already
-  landed is not applied twice (`alreadyApplied` in the result). After a
-  timeout, retry with the same `requestId`; `app_status` → `health` shows
-  whether the user's app is busy.
-- Label an existing shape: add `{ "type": "text", "id": "...", "text": "...",
-  "containerId": "<shape id>" }`; it is centered automatically.
-- Labels (`label: { text, strokeColor, fontSize, … }`) are dark (#1e1e1e)
-  unless you set `strokeColor`, their id is `<shape id>-label`, and a shape
-  grows so that no word of its label is broken.
-- **Images and icons:** add `{ "type": "image", "id": "...", "x": 0, "y": 0,
-  "width": 48 }` plus one of `"src"` (absolute file path, http(s) URL or data
-  URL), `"svg"` (inline SVG markup) or `"icon"` (`"lucide:database"`,
-  `"simple-icons:github"`, tinted with `"color"`). Works in `edit_scene` and
-  `save_scene`; `create_view` drafts can't hold images. Size pictures for the
-  scene first: each one travels inside the scene file (Kurviq online: 30 MB
-  per scene, stored at about 1.8× its size). On a 1920×1080 slide about twice
-  the size it is shown at is plenty; WebP (keeps transparency) or JPEG beats
-  PNG. Kurviq keeps pictures as you add them: shrinking is your call.
-- **ER diagrams:** arrows take crow's-foot heads: `startArrowhead` /
-  `endArrowhead` = `cardinality_one`, `cardinality_many`,
-  `cardinality_one_or_many`, `cardinality_exactly_one`,
-  `cardinality_zero_or_one`, `cardinality_zero_or_many`. Tables are plain
-  rectangles with a text label.
-- **Big edits:** write `{ "add": [...], "update": [...], "delete": [...] }` to
-  a JSON file and pass `file: "/abs/path.json"` (`save_scene`:
-  `elementsFile`) instead of pasting it into the call.
-
-## Limits
-
-- Per call: at most 20 images fetched (`src` / `icon`; uploaded `fileId`s
-  don't count), 200 items in `measure_text`.
-- Selections return at most 150 elements; change reports give details for
-  25 elements per kind, the rest as ids.
-- Slide numbers (`"slide": 3`, `view_scene(slide: 3)`) count in deck order
-  as it is at that moment, after the deletions of the same edit: they shift
-  when slides are deleted, added or moved. Address slides by frame id
-  (`"slide": "s12"`) in edits; the result's `slideNumbers` says which frame
-  each number hit.
-- Coordinates: `read_scene` gives scene coordinates; with `relative: true`,
-  elements on a slide get `x` / `y` from the slide's corner plus
-  `"slide": "<frame id>"`, the form edits take. `read_scene(name, slide: 3)`
-  gives one slide's elements.
-
-## Formatted text (bold, lists, colors in one text)
-
-One text element (or a shape's label) can mix formatting: write `markdown`
-instead of `text`, e.g. a title, a sentence and bullets in one box:
-
-```json
-{ "type": "text", "id": "t1", "x": 100, "y": 100, "fontSize": 28, "fontFamily": 6,
-  "markdown": "# Quarterly plan\nWe focus on **three** things:\n- Ship the editor\n  - nested, {size=0.8}smaller{/}\n1. First\n2. Second\n[x] Done\n[ ] Open" }
-```
-
-- Lines: `# ` / `## ` / `### ` headings (bold, 1.6× / 1.3× / 1.1× size),
-  `- ` bullets, `1. ` numbered, `[ ] ` / `[x] ` checklist; 2 spaces per
-  nesting level. Inline: `**bold**`, `*italic*`, `__underline__`,
-  `~~strike~~`, `[text](https://…)`, and
-  `{color=#e03131 highlight=#ffec99 size=0.8}text{/}` (size relative to the
-  element's `fontSize`). Escape a literal `*` etc. with `\`.
-- Labels: `label: { "markdown": "**Title**\n- point" }`. List items are
-  left-aligned in centered text; the rest keeps `textAlign`.
-- Edit with `update: [{ "id": "t1", "markdown": "…" }]` or
-  `{ "id": "<shape>", "label": { "markdown": "…" } }`. A plain `text` update
-  drops the formatting.
-- Format part of a text without resending it (the text stays as it is now,
-  including the user's edits): `{ "id": "t1", "format": { "match": "A
-  company transformation.", "color": "#1565c0", "bold": true } }` (`id`: the
-  text, or the shape whose label it is). Keys: `bold`, `italic`, `underline`,
-  `strike` (`false` removes), `color`, `highlight`, `size` (relative), `link`
-  (`null` removes); `occurrence`: n (default 1) or `"all"`; an array formats
-  several phrases. `match` is exact text without list markers (`\n` between
-  lines); not found is an error and nothing is changed. Not together with
-  `text` / `markdown` in the same update.
-- A wrapping text box: `"width": 800, "autoResize": false` (lines wrap at
-  800px; `x` is its left edge).
-- Reading a scene shows formatted texts with `markdown` next to `text` (the
-  plain words, list markers included). `measure_text` takes `markdown` too.
-- The user formats text in the app with a toolbar above the text being
-  edited, or the usual shortcuts (⌘B, ⌘I, ⌘U, ⌘⇧X, ⌘⇧7/8/9 lists, ⌘K link).
+`read_me` returns the element reference (also in REFERENCE.md next to this
+file): element format, colors, edit details, limits, formatted text
+(`markdown`, `format`), slides (presentation flag, templates, steps,
+`validate_deck`) and `create_view` drafts.
 
 ## Seeing scenes (they can be huge)
 
@@ -195,13 +92,11 @@ instead of `text`, e.g. a title, a sentence and bullets in one box:
 - Big scenes: `read_scene(name, summary: true)` / `get_scene(name, summary: true)`
   give an overview (bounds, counts, frames, text labels with positions, 100
   per page: `textsOffset` for more) to find the right region first.
-  Selections return at most 150 elements; change reports give details for
-  25 elements per kind and ids for the rest.
 
 ## New scenes and managing scenes
 
-- New drawing: `read_me` → `create_view` → `view_scene(checkpointId)` →
-  `save_scene(name, checkpointId)`. `save_scene` refuses existing scenes
+- New drawing: `save_scene(name, elements)`, or a `create_view` draft saved
+  with `save_scene(name, checkpointId)`. `save_scene` refuses existing scenes
   (change those with `edit_scene`); `replace: true` only when the user
   explicitly wants the whole scene replaced by a new drawing.
 - `rename_scene(name, newName)`, `clone_scene(name, newName)`,
@@ -214,111 +109,6 @@ instead of `text`, e.g. a title, a sentence and bullets in one box:
   status in their app: synced · ahead (not pushed) · behind (newer in
   Drive) · diverged · conflict · local (not in Drive) · "auto-sync off" (the
   user pushes when they decide).
-
-## Slides (presentations)
-
-The saved scene boolean `appState.kurviqPresentation` controls presentation UI. `read_scene` returns `isPresentation`; set it with `edit_scene({ name, isPresentation: true })` or false. Turning it off keeps all frames and content. Frames alone do not make a presentation. Agent edits enable it only through `isPresentation: true` or adding a genuinely new template. Slide placement, updating existing slide metadata or notes, restyle, reset and addTitleBlock preserve the flag. UI presentation authoring enables it. Legacy scenes migrate once: only templates or speaker notes enable it.
-
-Every frame of a scene is a slide; the user presents with the "Slides" button
-(fullscreen, laser, presenter view, PDF). Build decks with `save_scene` /
-`edit_scene`:
-
-- A slide: `{ "type": "frame", "id": "s1", "x": 100, "y": 100, "width": 1920,
-  "height": 1080, "name": "Title", "children": [ids of its elements],
-  "customData": { "slides": { "order": 0, "notes": "speaker notes" } } }`.
-  Speaker notes may use the same markdown as text (`**bold**`, `- ` bullets,
-  `1. ` lists …); the presenter view shows them formatted.
-  Elements added later to a slide get `"frameId": "s1"`. Lay slides out in a
-  row with a gap (e.g. 240) and keep everything inside its frame.
-- Slide-relative placement: give an element `"slide": 3` (number in deck
-  order, a frame id, or `"template"`) and its `x` / `y` count from that
-  slide's top-left corner; it becomes part of the slide. Works in
-  `save_scene` and in `edit_scene` (`add` and `update`).
-- In the slide frame's `customData.slides`: `"skip": true` hides a slide
-  (not presented, not in the PDF; the user sees it grayed out, and it is
-  listed with `"hidden": true` in a summary's frames; `"skip": null` shows it
-  again); `"template": false` turns the template off for that slide (title
-  slides).
-- Click-by-click reveals: `"customData": { "slides": { "step": 1 } }` on
-  elements (1, 2, 3 …; a shape's label follows its shape).
-- Template: one frame with `"customData": { "slides": { "role": "template",
-  "theme": { "transition": "glide" } } }` ("glide" or "cut": how the camera
-  moves between slides). Its elements (header, footer, logo, background,
-  headline, eyebrow) are the deck's style and are copied onto every slide when you save or
-  edit the deck (and by the user's app). Template texts may use
-  placeholders: `{page}` (slide number), `{total}` (number of slides),
-  `{title}` (the slide frame's name), `{deck}` (the scene name), `{date}`
-  (today, in the viewer's locale). They are filled in only in template
-  elements. The copies (ids `<element>~<slide>`) follow their template
-  element property by property: change the template for every slide; what
-  is changed on one slide (a color, a position …) stays there, everything
-  else keeps following. `reset: ["<frame id>"]` (or slide numbers) brings
-  the template's version back on those slides, `restyle: true` on all, like
-  the app's buttons.
-- Headline and eyebrow: template texts with `"customData": { "slides":
-  { "role": "headline" } }` / `"eyebrow"` place and style every slide's
-  headline / eyebrow (the template's text is the default, e.g. `{title}`).
-  Their copies are the slide's own words: update the copy's `text` (or
-  `markdown`), e.g. `{ "id": "<template headline id>~<frame id>", "text":
-  "Our plan" }`; read_scene lists them. Every template has both (the app adds
-  them once to an older template when it opens the deck; `addTitleBlock:
-  true` does it right away); a deleted one stays deleted. A template text
-  with `"role": "body"` is the body text sample: not copied to slides, its
-  font / size / color are the style of new text (text you add without
-  `fontFamily` / `fontSize` / `strokeColor` takes them, as in the app).
-- Text alignment: give a text `width` and it becomes a box from `x` to
-  `x + width`: lines wrap at the width and `textAlign` (left, center, right)
-  aligns them inside it (e.g. a caption centered under a shape, a paragraph).
-  Without `width`, `x` is the left edge, the center or the right edge,
-  following `textAlign`.
-- Closed, filled lines (area charts, outlines): `"type": "line"` with the
-  last point equal to the first, `"polygon": true` and a `backgroundColor`.
-- Fonts: besides Excalidraw's own (`fontFamily` 5 Excalifont, 6 Nunito,
-  7 Lilita One, 8 Comic Shanns, 2 Helvetica, 3 Cascadia), any font from
-  Google Fonts works by its exact name, e.g. `"fontFamily": "Inter"` (also
-  in labels): the app fetches it on first use and the
-  font travels with the scene. `add_font("Inter")` adds one ahead (e.g.
-  before `measure_text`). `app_status` lists the added fonts as
-  `customFonts`. Font files (not on Google Fonts) are added by the user:
-  font picker → "Add font…" → Font file.
-- Deck style: there is no separate theme. Style the template's elements
-  (headline, eyebrow, footer …) like any element; every slide follows, what
-  was changed on one slide stays there (read_scene: `changedOnSlide`).
-  `restyle: true` brings every slide back to the template ("Reset all
-  slides"), `reset` single slides or copies (also just some changes).
-- A neutral, modern look (instead of the hand-drawn default): `"fontFamily":
-  "Inter"`, text `#111827`, lines `#334155`, `"roughness": 0`, titles 72,
-  body 36 (on the template's headline and on what you add), white or `#f8fafc` slides, one accent color (e.g.
-  `#2563eb`), fills like `#e0e7ff` / `#f1f5f9`, and `"roughness": 0` on
-  shapes. Excalidraw's palette in `read_me` is hand-drawn-sketch style.
-  Make slides visual: shapes, arrows, icons, sticky notes (`"type":
-  "stickynote"` with `label`), crow's-foot ER diagrams, hand-drawn charts;
-  not just bullet text.
-- Sticky notes show their creation date in the bottom-right corner (e.g.
-  "21 Oct"). Pass `"created": null` to leave it out (cleaner on slides).
-- Arrows that should route around boxes at right angles: `"elbowed": true`
-  (with `startBinding` / `endBinding`).
-- Text padding of a shape (distance of its label from the border):
-  `"customData": { "textPadding": 20 }` (default 5).
-- Changing a deck with `edit_scene` works like the editor: moving or
-  resizing a shape moves its label and the arrows bound to it; moving a
-  slide frame moves everything on it; `{ "id": "box", "label": { "text":
-  "New" } }` changes (or adds) a shape's label, which is re-wrapped and the
-  shape grows to fit.
-- Check your work: `validate_deck(name)` lists the slides and finds cut-off,
-  overlapping, overflowing, too small or low-contrast text, elements not
-  part of their slide, broken click steps and missing notes.
-  `view_scene(name, slide: 3)` shows slide 3 exactly as presented (template
-  included); add `step: 1` to see it after the first click. Text on a
-  picture is checked against the picture's colors under it. Intended
-  findings can be silenced on the element: `"customData": { "slides":
-  { "ignore": ["clipped", "overlap"] } }` (finding kinds, or `true`).
-  `view_scene(name, slides: "all")` shows the whole deck in one image
-  (`steps: true`: every click state).
-- `measure_text(items)` tells you how wide and tall text will be (and how it
-  wraps at `maxWidth`) before you place it: size boxes and cells with it.
-- PDF: `export_pdf(name)` (all slides, or `slides: [1, 3]`) writes a PDF
-  with real, selectable text.
 
 ## Local-only scenes
 
@@ -394,11 +184,11 @@ push now.
 
 ## Troubleshooting
 
-- Background tabs may answer more slowly because browsers throttle timers.
-  Wait and retry with the same requestId (never applied twice); edits are not lost.
-  Keep working on other tasks. Only mention the tab to the user if retries
-  still fail after about 2 minutes.
-
+- A timeout or "the Kurviq tab did not answer": retry with the same
+  `requestId` (never applied twice) and check `app_status` → `health`.
+  Background tabs answer more slowly (browsers throttle them): keep working
+  on other things; mention the tab to the user only if retries still fail
+  after about 2 minutes.
 - "Scenes server not reachable": the user runs `npm start` in the project
   folder (kurviq).
 - "Kurviq is not open": ask the user to open the app (http://draw.test) in

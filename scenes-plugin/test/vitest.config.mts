@@ -8,6 +8,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
+  // .md files as text, like the Worker build (online/build-worker.mjs): the agent instructions
+  plugins: [{ name: "md-as-text", transform: (code: string, id: string) => (id.endsWith(".md") ? `export default ${JSON.stringify(code)};` : undefined) }],
   resolve: {
     alias: {
       "fractional-indexing": fileURLToPath(

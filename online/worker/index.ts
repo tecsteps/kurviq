@@ -39,7 +39,7 @@ import type { SceneRoutesEnv } from "./sceneRoutes";
 import { handlePublicApi, handleSharedPage } from "./shared";
 import { handlePubApi } from "./pubLinks";
 import type { PubEnv } from "./pubLinks";
-import { kurviqSkill } from "./skill";
+import { kurviqReference, kurviqSkill } from "./skill";
 import { feedbackStats, handleStatsDev, mcpStats, pageStats, publicReadStats, routeStats } from "./stats";
 import type { StatsEnv } from "./stats";
 import { handleContact } from "./contact";
@@ -130,7 +130,7 @@ const handleUpload = async (request: Request, env: Env, access: Access | null) =
     return new Response(null, { status: 204, headers: CORS });
   }
   if (!access) {
-    return answer(404, { error: "Unknown or expired upload address: read_me (or the tool descriptions) has the current one" });
+    return answer(404, { error: "Unknown or expired upload address: read_me has the current one" });
   }
   if (request.method !== "POST") {
     return answer(405, { error: "POST the image file as the request body: curl --data-binary @image.png <this URL>" });
@@ -286,7 +286,8 @@ const handleMcp = async (request: Request, env: Env, access: Access, ctx: Execut
     // no access to the agent's files here: images and big edits are uploaded
     localFiles: false,
     uploadUrl: access.uploadUrl,
-    skill: kurviqSkill(app, access.uploadUrl),
+    skill: kurviqSkill(app),
+    reference: kurviqReference(access.uploadUrl),
     unreachable,
     serverFetch: (pathname: string, init: RequestInit = {}) => stub.fetch(toPairing(access, pathname, init, app)),
     registerUpstream: (mcp: unknown, store: unknown) => registerTools(mcp as any, "/bundle", store as any),

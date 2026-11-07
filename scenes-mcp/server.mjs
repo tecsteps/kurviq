@@ -56,6 +56,7 @@ const server = createScenesMcp({
   mode: env.SCENES_AGENT_MODE === "live" ? "live" : "detached",
   appHint: (env.SCENES_APP_URL || "http://localhost:3001").replace(/\/$/, ""),
   skill: readFileSync(path.join(HERE, "skill", "kurviq-scenes", "SKILL.md"), "utf8"),
+  reference: readFileSync(path.join(HERE, "skill", "kurviq-scenes", "REFERENCE.md"), "utf8"),
   registerUpstream: (mcp, store) => registerTools(mcp, path.join(WORKSPACE, "excalidraw-mcp", "dist"), store),
   livePreview: process.env.SCENES_LIVE_PREVIEW !== "false",
   savePdf: async (name, pdf, file) => {

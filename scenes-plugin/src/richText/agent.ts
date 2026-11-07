@@ -1,5 +1,5 @@
 // Formatted text for agents: `markdown` instead of `text` on a text element,
-// on a shape's `label`, or in an update (see SKILL.md).
+// on a shape's `label`, or in an update (see REFERENCE.md, "Formatted text").
 
 import { docFromMarkdown, isPlainDoc, markdownOf, plainOf, richDocOf } from "./model";
 
