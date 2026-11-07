@@ -177,8 +177,13 @@ Every frame is a slide; the user presents with the "Slides" button
 - **A slide:** `{ "type": "frame", "id": "s1", "x": 100, "y": 100, "width":
   1920, "height": 1080, "name": "Title", "children": [ids], "customData": {
   "slides": { "order": 0, "notes": "speaker notes" } } }`. Notes take the
-  same markdown as text. Lay slides out in a row with a gap (e.g. 240) and keep
-  everything inside its frame; elements added later get `"frameId": "s1"`.
+  same markdown as text. Keep everything inside its frame; elements added
+  later get `"frameId": "s1"`.
+- **Where slides lie:** Kurviq's grid, 7 per row, 240 apart, in deck order.
+  While the slides are in that grid, adding, deleting or reordering slides
+  re-arranges it. Moving frames yourself (`x` / `y` on a frame, e.g. more room
+  between rows) keeps your layout; everything on a frame moves with it, and
+  later edits leave the layout as it is.
 - **Placing on a slide:** `"slide": 3` (deck number, frame id or
   `"template"`) makes `x` / `y` count from that slide's corner and the element
   part of it (`add` and `update`, `save_scene` too).

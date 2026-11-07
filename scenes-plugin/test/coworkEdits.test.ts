@@ -56,7 +56,7 @@ const dependencies: Record<string, any> = {
   "./richText/model": { docFromPlain, isPlainDoc, richDocOf },
   "./slides": {
     addTitleBlock,
-    followDeckOrder: (_before: any[], after: any[]) => after,
+    followDeckOrder: vi.fn((_before: any[], after: any[]) => after),
     getSlides: (elements: any[]) => elements.filter((el) => el.type === "frame" && !el.isDeleted),
     placeOnSlides: (items: any[]) => items,
     resetTemplateChanges,
@@ -78,6 +78,8 @@ runInNewContext(compiled.outputText, {
   Map, Set, Date, Math, Error,
 });
 const applyEdits: typeof import("../src/cowork").applyEdits = loaded.applyEdits;
+const movesFrames: typeof import("../src/cowork").movesFrames = loaded.movesFrames;
+const followDeckOrder = dependencies["./slides"].followDeckOrder;
 
 const el = (id: string, props: Record<string, any> = {}): any => ({
   id, type: "rectangle", version: 1, x: 0, y: 0, width: 100, height: 50,
@@ -305,4 +307,27 @@ it("names pictures the agent must upload again", () => {
   const result = loaded.repairImages([image], {});
   expect(result.info.imagesWithoutFile).toBe("broken: picture missing, upload again");
   expect(result.elements[0]).toBe(image);
+});
+
+describe("slide frames moved by an agent", () => {
+  const frame = (id: string, x: number) => el(id, { type: "frame", x, width: 1920, height: 1080 });
+
+  it("an update of a frame's x or y is the agent's layout", () => {
+    const before = [frame("q11", 0), el("box")];
+    expect(movesFrames(before, [{ id: "q11", y: 2000 }])).toBe(true);
+    expect(movesFrames(before, [{ id: "q11", x: 2260 }])).toBe(true);
+    expect(movesFrames(before, [{ id: "q11", name: "Agenda" }])).toBe(false);
+    expect(movesFrames(before, [{ id: "box", y: 2000 }])).toBe(false);
+    expect(movesFrames(before, undefined)).toBe(false);
+  });
+
+  it("keeps frames where the agent put them instead of snapping the deck back to its grid", async () => {
+    await edit([frame("q11", 0), frame("q12", 2160)], { update: [{ id: "q11", y: 2000 }] });
+    expect(followDeckOrder).not.toHaveBeenCalled();
+  });
+
+  it("still follows the deck order when no frame is moved", async () => {
+    await edit([frame("q11", 0), frame("q12", 2160)], { update: [{ id: "q11", name: "Agenda" }] });
+    expect(followDeckOrder).toHaveBeenCalledTimes(1);
+  });
 });

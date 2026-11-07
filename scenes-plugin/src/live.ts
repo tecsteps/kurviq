@@ -965,6 +965,14 @@ const handleCommand = async (event: { id: string; command: Command }, reply: (pa
   }
 };
 
+if (import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE) {
+  // end-to-end tests (dev, and builds for the fake Google): run an agent's command as the MCP would
+  (window as any).__agentCommand = (command: Command) =>
+    new Promise((resolve) => {
+      handleCommand({ id: `e2e-${Date.now()}`, command }, resolve).catch(() => {});
+    });
+}
+
 // -----------------------------------------------------------------------------
 // online (Kurviq): one WebSocket per tab to this browser's pairing; the
 // remote MCP's commands arrive here, results go back the same way

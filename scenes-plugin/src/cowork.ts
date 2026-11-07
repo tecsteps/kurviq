@@ -77,6 +77,12 @@ const livePresentationSettings = (command: EditOptions & { add?: any[]; update?:
 
 type LivePresentation = { settings(): any };
 
+/** does the edit set the position of an existing slide frame (then the agent, not the grid, lays out the slides) */
+export const movesFrames = (before: readonly ExcalidrawElement[], updates: readonly any[] | undefined) => {
+  const frames = new Set(before.filter((el) => el.type === "frame" && !el.isDeleted).map((el) => el.id));
+  return (updates ?? []).some((update) => frames.has(update.id) && (update.x !== undefined || update.y !== undefined));
+};
+
 export type ReadCommand = { type: "read" } & BaselineOptions;
 
 /** detached mode: the agent edits its own copy of a scene and saves it to Drive */
@@ -675,8 +681,11 @@ export const applyEdits = async (
   elements = layoutAfterEdit(elements, textUpdated, reshaped);
   const moved = moveLayers(elements, moves.filter((move) => !missing.includes(move.id)));
   elements = moved.elements;
-  // a slide placed in the deck by number lands there on the canvas too (if the slides were Kurviq's grid)
-  elements = followDeckOrder(input, elements);
+  // a slide placed in the deck by number lands there on the canvas too (if the slides were Kurviq's grid);
+  // an edit that moves slide frames itself lays them out as it wants
+  if (!movesFrames(input, command.update)) {
+    elements = followDeckOrder(input, elements);
+  }
 
   const editResult = () => {
     return {
