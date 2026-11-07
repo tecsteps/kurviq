@@ -592,7 +592,7 @@ const out = await post(alice, "/auth/logout-all");
 ok(out.status === 200 && out.data.scenes >= 1, "sign out everywhere finds the scenes holding her token", out);
 const closedAll = await a7.next(() => false, 2000);
 ok(a7.closed || a7.inbox.some((m) => m.type === "closed" && m.reason === "access"), "her live connections close", a7.closed);
-const afterOut = await fetch(`${B}/scene/${encodeURIComponent(fileId)}/ticket`, { method: "POST", headers: { Origin: B, Cookie: cookieBefore, "Content-Type": "application/json" }, body: "{}" });
+const afterOut = await fetch(`${B}/scene/${encodeURIComponent(fileId)}/ticket`, { method: "POST", headers: { Origin: B, Cookie: cookieBefore, "Content-Type": "application/json" }, body: "{}" }); // NOSONAR S8476: test client of the local test Worker given by BASE; the id comes from that Worker and is URL-encoded
 ok(afterOut.status === 401, "the old session can't get tickets any more", afterOut.status);
 
 
