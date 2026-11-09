@@ -456,13 +456,49 @@ const KURVIQ_STATIC = `<style>.kq-static{opacity:0;animation:kq-static-show .3s 
     <noscript><style>.kq-static{opacity:1;animation:none}</style></noscript>
     <div id="root"><main class="kq-static" style="max-width:40rem;margin:12vh auto;padding:0 1.5rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#555;line-height:1.55">
       <h1 style="color:#1f1d3a;font-size:2rem;margin:0 0 .5rem">Kurviq: hand-drawn diagrams, synced with Google Drive</h1>
-      <p>Kurviq is a free online whiteboard built on <a href="https://github.com/excalidraw/excalidraw">Excalidraw</a>. Sketch diagrams with a hand-drawn look, organise them as named scenes, present them as slides and write formatted text. No account needed: your drawings stay in your browser. <a href="/features">All features</a>.</p>
+      <p>Kurviq is a free online whiteboard built on <a href="https://github.com/excalidraw/excalidraw">Excalidraw</a>. Sketch diagrams with a hand-drawn look, organise them as named scenes, present them as slides and write formatted text. No account needed: your drawings stay in your browser. <a href="/about">About Kurviq</a> · <a href="/features">All features</a>.</p>
       <h2 style="font-size:1.1rem;color:#1f1d3a">Sync with Google Drive, share with anyone</h2>
       <p>Sign in with Google to keep your scenes in your Google Drive, on all your devices. Share a scene with people or by link, like a Google Doc; changes are merged element by element.</p>
       <h2 style="font-size:1.1rem;color:#1f1d3a">AI agents draw with you</h2>
       <p>Connect Claude, Codex, Cursor or any MCP client to Kurviq and it reads, draws and edits your scenes while you work. Agents: see <a href="/llms.txt">llms.txt</a>.</p>
       <p><a href="https://github.com/tecsteps/kurviq">Open source (MIT)</a> · unofficial, not affiliated with Excalidraw · <a href="/third-party-licenses.txt">licenses</a> · <a href="/imprint">imprint</a> · <a href="/privacy">privacy</a> · <a href="/terms">terms</a></p>
     </main></div>`;
+
+const ABOUT_TITLE = "Free online whiteboard with slides, Google Drive sync and AI agents";
+const ABOUT_DESCRIPTION =
+  "Kurviq is a free online whiteboard built on Excalidraw: hand-drawn diagrams as named scenes, slides with a presenter view, formatted text, sync and sharing through your Google Drive, and AI agents (Claude, Codex, Cursor) that draw with you via MCP. No account needed.";
+/** questions on the about page (online/pages/about.html), also as FAQ structured data */
+const ABOUT_FAQ: [string, string][] = [
+  ["Is Kurviq free?", "Yes. No account, no subscription, no ads."],
+  ["Where are my drawings stored?", "In your browser. If you sign in with Google, also in your own Google Drive, one .excalidraw file per scene."],
+  ["Do I need an account?", "No. Sign in with Google only if you want sync across devices, sharing or live collaboration."],
+  ["Can I open my Excalidraw files?", "Yes. Kurviq reads and writes the normal .excalidraw format, so your drawings also open in Excalidraw."],
+  ["Which AI agents work with Kurviq?", "Any client that speaks MCP (Model Context Protocol), for example Claude Code, Claude, Codex and Cursor."],
+  ["Is Kurviq made by the Excalidraw team?", "No. Kurviq is an unofficial extension of Excalidraw by Fabian Wesner, not affiliated with Excalidraw."],
+];
+const ABOUT_HEAD = `<meta name="description" content="${ABOUT_DESCRIPTION}" />
+<link rel="canonical" href="${SITE}/about" />
+<meta property="og:site_name" content="Kurviq" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="${SITE}/about" />
+<meta property="og:title" content="Kurviq: ${ABOUT_TITLE}" />
+<meta property="og:description" content="${ABOUT_DESCRIPTION}" />
+<meta property="og:image" content="${SITE}/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<script type="application/ld+json">${JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: ABOUT_FAQ.map(([name, text]) => ({ "@type": "Question", name, acceptedAnswer: { "@type": "Answer", text } })),
+})}</script>
+`;
+/** the plain pages (online/pages/<page>.html in _layout.html); only those with a head are indexed */
+const KURVIQ_PAGES: { page: string; title: string; head?: string }[] = [
+  { page: "about", title: ABOUT_TITLE, head: ABOUT_HEAD },
+  { page: "imprint", title: "Imprint / Impressum" },
+  { page: "privacy", title: "Privacy / Datenschutz" },
+  { page: "terms", title: "Terms of Use / Nutzungsbedingungen" },
+  { page: "contact", title: "Contact / Kontakt" },
+];
 
 /** branded files written over upstream's (Excalidraw-branded) ones in the build */
 const KURVIQ_FILES: Record<string, string> = {
@@ -617,15 +653,17 @@ const kurviqOnline = () => ({
         fonts: true,
       }),
     });
-    // imprint and privacy notice: plain pages around the app
+    // plain pages around the app: the about page for search engines, imprint, privacy notice, terms, contact
     const layout = readFileSync(path.join(ONLINE_DIR, "pages/_layout.html"), "utf8");
-    for (const [page, title, lang] of [["imprint", "Imprint / Impressum", "en"], ["privacy", "Privacy / Datenschutz", "en"], ["terms", "Terms of Use / Nutzungsbedingungen", "en"], ["contact", "Contact / Kontakt", "en"]]) {
+    for (const { page, title, head } of KURVIQ_PAGES) {
       this.emitFile({
         type: "asset",
         fileName: `${page}.html`,
         source: layout
-          .replace("{{lang}}", lang)
+          .replace("{{lang}}", "en")
           .replace("{{title}}", title)
+          .replace("{{robots}}", head ? "index, follow, max-image-preview:large" : "noindex, follow")
+          .replace("{{head}}", head ?? "")
           .replace("{{content}}", readFileSync(path.join(ONLINE_DIR, `pages/${page}.html`), "utf8")),
       });
     }
@@ -637,7 +675,8 @@ const kurviqOnline = () => ({
     this.emitFile({
       type: "asset",
       fileName: "sitemap.xml",
-      source: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${SITE}/</loc><lastmod>${new Date().toISOString().slice(0, 10)}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>\n  <url><loc>${SITE}/features</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>\n</urlset>\n`,
+      // only canonical, indexable pages (/features is the app showing a deck: its canonical is /)
+      source: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${SITE}/</loc><lastmod>${new Date().toISOString().slice(0, 10)}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>\n  <url><loc>${SITE}/about</loc><lastmod>${new Date().toISOString().slice(0, 10)}</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>\n</urlset>\n`,
     });
   },
   // after upstream's public files were copied: Kurviq's icons and images instead
@@ -762,7 +801,7 @@ const kurviqPwa = () =>
       // the precache must not answer page loads itself ("/" is not index.html; the plain pages are not
       // precached at all, they always come from the network); index.html stays precached as the offline shell
       directoryIndex: null,
-      globIgnores: ["fonts.css", "**/locales/**", "service-worker.js", "**/*.chunk-*.js", "**/CodeMirrorEditor-*.js", "imprint.html", "privacy.html", "terms.html", "contact.html"],
+      globIgnores: ["fonts.css", "**/locales/**", "service-worker.js", "**/*.chunk-*.js", "**/CodeMirrorEditor-*.js", "about.html", "imprint.html", "privacy.html", "terms.html", "contact.html"],
       // only this site's own files, matched by path (a pattern on the whole URL
       // would also catch API requests that happen to contain "woff2");
       // new cache names, so entries of the old, too broad rules are never served
@@ -777,7 +816,7 @@ const kurviqPwa = () =>
           urlPattern: ({ request, url, sameOrigin }) =>
             sameOrigin &&
             request.mode === "navigate" &&
-            ![/^\/auth\//, /^\/drive\//, /^\/oauth\//, /^\/\.well-known\//, /^\/mcp(\/|$)/, /^\/live\//, /^\/scene\//, /^\/api\//, /^\/llms\.txt$/, /^\/(imprint|privacy|terms|contact)(\.html)?$/, /\.txt$/].some((re) => re.test(url.pathname)),
+            ![/^\/auth\//, /^\/drive\//, /^\/oauth\//, /^\/\.well-known\//, /^\/mcp(\/|$)/, /^\/live\//, /^\/scene\//, /^\/api\//, /^\/llms\.txt$/, /^\/(about|imprint|privacy|terms|contact)(\.html)?$/, /\.txt$/].some((re) => re.test(url.pathname)),
           handler: "NetworkFirst",
           options: {
             cacheName: "kurviq-pages",

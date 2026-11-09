@@ -1,0 +1,61 @@
+<style>
+  .cta { display: inline-block; font-weight: 600; color: #fff; background: #5b57d1; border-radius: 8px; padding: .6rem 1.2rem; text-decoration: none; margin: .5rem 0 1rem; }
+  .cta:hover { background: #4a46b8; }
+  .lead { font-size: 1.1rem; }
+  dt { font-weight: 600; margin-top: 1rem; }
+  dd { margin: .25rem 0 0; }
+</style>
+
+<h1>Kurviq: a free online whiteboard with slides, Google Drive sync and AI agents</h1>
+
+<p class="lead">Kurviq is a free whiteboard in your browser, built on the excellent
+<a href="https://github.com/excalidraw/excalidraw">Excalidraw</a>. Sketch diagrams with a hand-drawn look, keep many
+drawings as named scenes, present them as slides, write formatted text, and let AI agents draw with you. No account
+needed: your drawings stay in your browser, or in your own Google Drive.</p>
+
+<p><a class="cta" href="/">Start drawing</a> &nbsp;<a href="/features">See all features as a slide deck</a></p>
+
+<h2>Everything Excalidraw does, plus:</h2>
+<ul>
+  <li><strong>Scenes:</strong> many drawings, each with a name and its own address, like <code>kurviq.com/roadmap</code>. Switch, rename, duplicate or delete them in the Scenes sidebar.</li>
+  <li><strong>Google Drive sync:</strong> sign in with Google and every scene is a file in a folder "Kurviq" in your Drive, saved by itself a few seconds after you stop drawing, on all your devices. Kurviq sees only the files it made or you opened with it.</li>
+  <li><strong>Work together:</strong> share a scene with people by email, as in Google Drive ("Can edit" or "Can view"). Their changes are merged with yours element by element, live.</li>
+  <li><strong>Share a link:</strong> a link for the people you added, or for everyone (no sign-in needed to view or present), with short links like <code>kurviq.com/pub/my-talk</code>.</li>
+  <li><strong>AI agents that draw with you:</strong> connect Claude Code, Codex, Cursor, Claude or any MCP client. Your agent reads, draws and edits your scenes while you watch; your own changes are never overwritten.</li>
+  <li><strong>Slides:</strong> every frame is a slide. Present fullscreen with a laser pointer, a presenter view with notes and timer, click-by-click steps, a template for header, footer and logo, and a slide sorter.</li>
+  <li><strong>Formatted text:</strong> bold, italic, underline, colors, highlights, bullets, numbered lists, checklists and links in one text, with the usual shortcuts; pasting from Google Docs keeps the formatting.</li>
+  <li><strong>Any font:</strong> any Google Fonts family or your own font file; it travels with the scene.</li>
+  <li><strong>PDF export:</strong> one page per slide, real selectable text, small files.</li>
+  <li><strong>Private:</strong> no account, no ads, no tracking. It works offline and can be installed as an app.</li>
+  <li><strong>Open source:</strong> MIT licensed, on <a href="https://github.com/tecsteps/kurviq">GitHub</a>. Run it on your own machine with the same Drive sync and a local MCP server for agents.</li>
+</ul>
+
+<h2>Who it is for</h2>
+<p>People who think in boxes and arrows: software architects drawing systems, consultants sketching processes,
+speakers who want slides that look hand-made, teams planning on one shared canvas, and anyone who wants an AI agent
+to turn an idea into a diagram they can keep editing by hand.</p>
+
+<h2>How AI agents work with Kurviq</h2>
+<p>Kurviq is an MCP server. Click <strong>MCP</strong> in the app and give the link to your agent. The agent works
+through your open Kurviq tab: it reads what you drew, adds and changes elements, checks a deck for cut-off or
+low-contrast text, and gets a picture of every change. You keep drawing at the same time; Kurviq merges both. Details
+for agents: <a href="/llms.txt">llms.txt</a>.</p>
+
+<h2>Questions</h2>
+<dl>
+  <dt>Is Kurviq free?</dt>
+  <dd>Yes. No account, no subscription, no ads.</dd>
+  <dt>Where are my drawings stored?</dt>
+  <dd>In your browser. If you sign in with Google, also in your own Google Drive, one <code>.excalidraw</code> file per scene. On their way to Drive, live changes pass through Kurviq's server encrypted; it cannot read them. See <a href="/privacy">privacy</a>.</dd>
+  <dt>Do I need an account?</dt>
+  <dd>No. Sign in with Google only if you want sync across devices, sharing or live collaboration.</dd>
+  <dt>Can I open my Excalidraw files?</dt>
+  <dd>Yes. Kurviq reads and writes the normal <code>.excalidraw</code> format, so your drawings also open in Excalidraw.</dd>
+  <dt>Which AI agents work with Kurviq?</dt>
+  <dd>Any client that speaks MCP (Model Context Protocol), for example Claude Code, Claude, Codex and Cursor.</dd>
+  <dt>Is Kurviq made by the Excalidraw team?</dt>
+  <dd>No. Kurviq is an unofficial extension of Excalidraw by <a href="https://www.linkedin.com/in/fabian-wesner/">Fabian Wesner</a>, not affiliated with Excalidraw.</dd>
+</dl>
+
+<p><a class="cta" href="/">Start drawing</a></p>
+<p class="muted"><a href="/contact">Contact</a> · <a href="/third-party-licenses.txt">Licenses</a></p>

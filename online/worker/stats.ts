@@ -33,6 +33,7 @@ import { DurableObject } from "cloudflare:workers";
 
 /** the plain pages around the app (built from online/pages) */
 const PLAIN_PAGES: Record<string, string> = {
+  "/about": "about",
   "/imprint": "imprint",
   "/privacy": "privacy",
   "/terms": "terms",

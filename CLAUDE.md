@@ -78,7 +78,7 @@ precached app shell (offline start); an offline load is not counted, a slow
 one is (its request still reached the Worker). The service worker forwards the
 load with `Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: empty` (the browser's
 own navigation has `document`); both count, and a 304 (revalidated page) counts
-too. The plain pages (imprint, privacy, terms, contact) and the Worker's routes
+too. The plain pages (about, imprint, privacy, terms, contact) and the Worker's routes
 are not handled by the service worker at all. Navigation preload is off on
 purpose: it would send navigations the service worker leaves alone (e.g.
 `/auth/callback` with a one-time code) to the Worker twice.
@@ -94,7 +94,7 @@ An hour or day without any activity has no rows (read it as 0).
 
 | table | metric | dim | meaning |
 |---|---|---|---|
-| hourly | `views` | `app` (/ and any /<scene>), `shared` (/s/… and /pub/… viewer), `features` (Kurviq's own public scene), `imprint`, `privacy`, `terms`, `contact` | page loads that reached the Worker, by entry (see the service worker note) |
+| hourly | `views` | `app` (/ and any /<scene>), `shared` (/s/… and /pub/… viewer), `features` (Kurviq's own public scene), `about` (the indexable page for search engines), `imprint`, `privacy`, `terms`, `contact` | page loads that reached the Worker, by entry (see the service worker note) |
 | hourly | `views_country` | ISO country (`XX` unknown, `T1` Tor) | page loads (all entries) by country |
 | hourly | `views_device` | `desktop`, `mobile`, `tablet` | page loads by device class |
 | hourly | `public_reads` | `all` | public scenes read through `/api/public/<id>` (viewers and link previews; version polls not counted; cache hits included) |

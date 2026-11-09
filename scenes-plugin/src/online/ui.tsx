@@ -1611,6 +1611,9 @@ const FeedbackLink = () => {
 export const KurviqLegalLinks = () => (
   <span className="kq-legal">
     <FeedbackLink />
+    <a href="/about" target="_blank" rel="noopener">
+      About
+    </a>
     <a href="/imprint" target="_blank" rel="noopener">
       Imprint
     </a>
