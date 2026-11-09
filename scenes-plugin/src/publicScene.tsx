@@ -21,6 +21,7 @@ import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
 import { getSlides, getTemplate } from "./slides";
 import { deck } from "./deck";
+import { viewTarget } from "./viewTarget";
 import { presenter, usePresenter } from "./present";
 import { liveSync } from "./online/liveSync";
 import { KurviqLegalLinks, KurviqSocials } from "./online/ui";
@@ -229,9 +230,11 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
       return;
     }
     const giveBack = deck.borrow(api);
-    // the whole scene in view (as big as it fits)
+    // the whole scene in view (as big as it fits); a presentation's slides only, so stray
+    // elements beside the deck don't pull it off center
+    const target = viewTarget(api.getSceneElements(), !!scene?.isPresentation);
     const fit = setTimeout(
-      () => api.setViewport({ target: api.getSceneElements(), fit: "contain", offsets: { top: 48, bottom: 64, left: 48, right: 48 } }),
+      () => api.setViewport({ target, fit: "contain", offsets: { top: 48, bottom: 64, left: 48, right: 48 } }),
       100,
     );
     return () => {
