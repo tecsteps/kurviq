@@ -232,9 +232,14 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     const giveBack = deck.borrow(api);
     // the whole scene in view (as big as it fits); a presentation's slides only, so stray
     // elements beside the deck don't pull it off center
-    const target = viewTarget(api.getSceneElements(), !!scene?.isPresentation);
+    // (read after the delay: the canvas has no elements yet when the API arrives)
     const fit = setTimeout(
-      () => api.setViewport({ target, fit: "contain", offsets: { top: 48, bottom: 64, left: 48, right: 48 } }),
+      () =>
+        api.setViewport({
+          target: viewTarget(api.getSceneElements(), !!scene?.isPresentation),
+          fit: "contain",
+          offsets: { top: 48, bottom: 64, left: 48, right: 48 },
+        }),
       100,
     );
     return () => {
