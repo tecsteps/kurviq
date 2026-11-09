@@ -8,11 +8,11 @@ import { presentationOf } from "./presentation";
 //    with the link" without sign-in, else with the visitor's own Drive
 //    access (see readSharedScene)
 
-import { CaptureUpdateAction, Excalidraw, Footer, MainMenu, restoreElements } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, Footer, MainMenu, getCommonBounds, restoreElements } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { AppState, BinaryFiles, ExcalidrawImperativeAPI, NormalizedZoomValue } from "@excalidraw/excalidraw/types";
 
 import { IS_ONLINE } from "./api";
 import { OPENING_KEY, scenesController } from "./controller";
@@ -21,7 +21,7 @@ import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
 import { getSlides, getTemplate } from "./slides";
 import { deck } from "./deck";
-import { viewTarget } from "./viewTarget";
+import { fitView, viewTarget } from "./viewTarget";
 import { presenter, usePresenter } from "./present";
 import { liveSync } from "./online/liveSync";
 import { KurviqLegalLinks, KurviqSocials } from "./online/ui";
@@ -233,15 +233,14 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     // the whole scene in view (as big as it fits); a presentation's slides only, so stray
     // elements beside the deck don't pull it off center
     // (read after the delay: the canvas has no elements yet when the API arrives)
-    const fit = setTimeout(
-      () =>
-        api.setViewport({
-          target: viewTarget(api.getSceneElements(), !!scene?.isPresentation),
-          fit: "contain",
-          offsets: { top: 48, bottom: 64, left: 48, right: 48 },
-        }),
-      100,
-    );
+    // (below Excalidraw's 10 % if needed: a big deck is entirely in view)
+    const fit = setTimeout(() => {
+      const target = viewTarget(api.getSceneElements(), !!scene?.isPresentation);
+      if (target.length) {
+        const view = fitView(getCommonBounds(target), api.getAppState(), { top: 48, bottom: 64, left: 48, right: 48 });
+        api.updateScene({ appState: { ...view, zoom: { value: view.zoom.value as NormalizedZoomValue } }, captureUpdate: CaptureUpdateAction.NEVER });
+      }
+    }, 100);
     return () => {
       clearTimeout(fit);
       presenter.stop();
