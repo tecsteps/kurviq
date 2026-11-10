@@ -723,6 +723,31 @@ const resolvedSlides = (elements: readonly ExcalidrawElement[], items: any[]) =>
   );
 };
 
+/**
+ * Images the edit adds, or points at another picture, whose picture is
+ * nowhere (not in the scene, not among this browser's agent uploads): the
+ * edit is refused, so no broken image is left behind. Images that were
+ * already broken before the edit don't block it.
+ */
+export const refuseImagesWithoutFile = (before: readonly ExcalidrawElement[], after: readonly ExcalidrawElement[], files: BinaryFiles) => {
+  const earlier = new Map(before.map((el) => [el.id, el]));
+  const missing = after.filter((el) => {
+    if (el.type !== "image" || el.isDeleted) {
+      return false;
+    }
+    const fileId = (el as any).fileId;
+    const old = earlier.get(el.id) as any;
+    const isNew = !old || old.isDeleted || old.fileId !== fileId;
+    return isNew && (!fileId || !files[fileId]);
+  });
+  if (missing.length) {
+    const list = missing.map((el) => `${el.id} (fileId ${(el as any).fileId ?? "none"})`).join(", ");
+    throw new Error(
+      `Pictures missing for ${list}: neither in the scene nor among this browser's uploads (it keeps the newest 100). Upload them again, or use src / svg / icon, and repeat the edit (nothing was changed)`,
+    );
+  }
+};
+
 /** images whose file is in the scene but which were marked broken (e.g. a failed load in some browser) work again */
 export const repairImages = (elements: readonly ExcalidrawElement[], files: BinaryFiles) => {
   let repaired = 0;
@@ -858,6 +883,7 @@ export const editOpenScene = async (
     scene ?? "Untitled",
   );
 
+  refuseImagesWithoutFile(readState as ExcalidrawElement[], elements, { ...api.getFiles(), ...command.files } as BinaryFiles);
   const images = repairImages(elements, api.getFiles());
   const live = scenesController.liveCurrent();
   /** applied, not confirmed by Kurviq's server yet (it goes out by itself) */
@@ -921,6 +947,7 @@ export const editSceneOnDrive = async (
       command.name,
     );
     const files = { ...data.files, ...command.files };
+    refuseImagesWithoutFile(data.elements || [], edit.elements, files);
     const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
     const elements = images.elements;
     const json = withSceneName(
@@ -959,6 +986,7 @@ const editLiveScene = async (
   const readState = structuredClone(live.elements());
   const edit = await applyEdits(restoreElements(structuredClone(readState) as any, null, { repairBindings: true }), command, convert, command.name);
   const files = { ...data.files, ...command.files };
+  refuseImagesWithoutFile(readState as any, edit.elements, files);
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
   // against what the edit was made on: what the user did meanwhile stays
@@ -1036,6 +1064,7 @@ export const editLocalScene = async (
     command.name,
   );
   const files = { ...data.files, ...command.files };
+  refuseImagesWithoutFile(data.elements || [], edit.elements, files);
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
   const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), command.name);

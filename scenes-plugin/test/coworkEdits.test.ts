@@ -309,6 +309,29 @@ it("names pictures the agent must upload again", () => {
   expect(result.elements[0]).toBe(image);
 });
 
+describe("agent images whose picture is nowhere", () => {
+  const image = (id: string, fileId: string, extra: object = {}) => ({ id, type: "image", fileId, ...extra });
+  const refuse = (before: any[], after: any[], files: Record<string, unknown>) => () => loaded.refuseImagesWithoutFile(before, after, files);
+
+  it("refuses an added image without its picture and names it", () => {
+    expect(refuse([], [image("im1", "f1")], {})).toThrow(/Pictures missing for im1 \(fileId f1\).*nothing was changed/);
+  });
+  it("accepts an added image whose picture comes with the edit or is in the scene", () => {
+    expect(refuse([], [image("im1", "f1")], { f1: {} })).not.toThrow();
+  });
+  it("refuses an update that points an image at a picture that is nowhere", () => {
+    expect(refuse([image("im1", "f1")], [image("im1", "f2")], { f1: {} })).toThrow(/im1 \(fileId f2\)/);
+  });
+  it("does not block an edit because of an image that was already broken", () => {
+    const broken = image("old", "gone", { status: "error" });
+    expect(refuse([broken], [broken, { id: "t", type: "text" }], {})).not.toThrow();
+  });
+  it("lets a deleted image go and treats a restored one as new", () => {
+    expect(refuse([image("im1", "gone")], [image("im1", "gone", { isDeleted: true })], {})).not.toThrow();
+    expect(refuse([image("im1", "gone", { isDeleted: true })], [image("im1", "gone")], {})).toThrow(/im1/);
+  });
+});
+
 describe("slide frames moved by an agent", () => {
   const frame = (id: string, x: number) => el(id, { type: "frame", x, width: 1920, height: 1080 });
 
