@@ -36,7 +36,7 @@ import { createStore, get, set } from "idb-keyval";
 import { addFont, customFonts, isCustomFontId, withFonts } from "../fonts";
 import { getUpload } from "../uploads";
 
-import { authPost, connection, driveScenes, liveSocketUrl, signOutListeners } from "./drive";
+import { authPost, connection, driveScenes, liveSocketUrl, otherAccount, recheckConnection, signOutListeners } from "./drive";
 import { createReceiver, sendMessage } from "./frames";
 import { decodeEvent, encodeEvent, importSceneKey } from "./liveCrypto";
 import {
@@ -3582,7 +3582,8 @@ class LiveSync {
   /** the signed-in account (its sub; its email until the Worker sends the sub) */
   accountId() {
     const user = connection.getState().user;
-    if (!user || !connection.getState().drive) {
+    // another account than this tab's scenes belong to: none of them connects (the tab moves)
+    if (!user || !connection.getState().drive || otherAccount()) {
       return null;
     }
     if (user.sub) {
@@ -3642,6 +3643,8 @@ class LiveSync {
   accountSwitched() {
     this.account = null;
     this.followAccount(true);
+    // the tab's sign-in learns the new account too (its scenes are another space's)
+    recheckConnection().catch((error) => console.error("[live] background operation failed", error));
   }
 
   private followAccount(force = false) {

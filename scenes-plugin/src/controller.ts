@@ -505,6 +505,11 @@ class ScenesController {
   private async adoptInitialCanvas() {
     const current = this.meta.current;
     const shown = this.api?.getAppState().name;
+    if (current === null && (await this.untitledWasStashed())) {
+      // the canvas was cleared on leaving (another space, e.g. after signing in): the untitled scene comes back
+      await this.openInner(null, { stash: false, force: true });
+      return;
+    }
     if (current === null || shown === current) {
       const api = this.requireApi();
       const presentation = this.rememberPresentation({
@@ -522,6 +527,17 @@ class ScenesController {
     } catch (error) {
       console.error("[scenes] could not load the current scene", error);
     }
+  }
+
+  /** the untitled scene was stored on leaving (its content) and the canvas shows nothing */
+  private async untitledWasStashed() {
+    if (!this.meta.scenes[UNTITLED]?.dirty) {
+      return false;
+    }
+    if (this.requireApi().getSceneElementsIncludingDeleted().some((element) => !element.isDeleted)) {
+      return false;
+    }
+    return !!(await getSnapshot(null).catch(() => undefined));
   }
 
   /** the restored canvas is the current scene: a live one connects now */
@@ -1026,35 +1042,6 @@ class ScenesController {
     if (on) {
       void this.syncNow({ refresh: true });
     }
-  };
-
-  /**
-   * Signed in with a Google account this browser didn't sync with (the first
-   * one, or another): what it knew about Drive is void. Its scenes stay in
-   * this browser (local only) until the user puts them in Drive.
-   */
-  resetRemoteState = async () => {
-    await this.ready;
-    for (const [name, meta] of Object.entries(this.meta.scenes)) {
-      if (name === UNTITLED) {
-        continue;
-      }
-      meta.baseMd5 = null;
-      delete meta.remoteMd5;
-      delete meta.conflict;
-      delete meta.renamedFrom;
-      delete meta.adopt;
-      delete meta.keptLocal;
-      delete meta.live;
-      meta.localOnly = true;
-    }
-    this.meta.pendingDeletes = {};
-    this.meta.baseline = null;
-    this.persistMeta();
-    this.setState({ remote: null, conflict: null });
-    this.recomputeDirty();
-    this.refresh();
-    void this.syncNow({ refresh: true });
   };
 
   /** per-scene override; undefined = follow the global switch */

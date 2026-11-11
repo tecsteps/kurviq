@@ -22,6 +22,7 @@
 import { createStore, del, get, set } from "idb-keyval";
 
 import { isSceneName } from "../../../scenes-mcp/sceneName.mjs";
+import { accountKey, spaceAccountOf } from "../spaces";
 import { currentSpace, SPACE_KEY } from "../storage";
 
 import google from "../../../online/google.json";
@@ -77,6 +78,17 @@ const setConnection = (patch: Partial<ConnectionState>) => {
   listeners.forEach((listener) => listener());
 };
 
+/** the account this tab's own scenes belong to (null: the scenes made signed out, or a shared scene's space) */
+export const spaceAccount = spaceAccountOf(currentSpace);
+
+/**
+ * Signed in with another account than the one this tab's scenes belong to
+ * (or signed in while the tab shows the signed-out scenes): nothing may sync,
+ * those scenes are not this account's. The tab moves to the account's own
+ * space (online/ui.tsx). A shared scene's space works with any account.
+ */
+export const otherAccount = () => !sharedFileId && !!state.user && accountKey(state.user.email) !== spaceAccount;
+
 export const connection = {
   subscribe: (listener: () => void) => {
     listeners.add(listener);
@@ -86,7 +98,7 @@ export const connection = {
   },
   getState: () => state,
   /** signed in with Drive access: scenes sync */
-  isActive: () => !!state.user && state.drive && !state.lost && !state.needsAccess,
+  isActive: () => !!state.user && state.drive && !state.lost && !state.needsAccess && !otherAccount(),
 };
 
 // the local install's sealed session (kurviq.com can't set it a cookie here)
@@ -243,7 +255,22 @@ const forgetConnection = () => {
   setConnection({ user: null, drive: false });
   signOutListeners.forEach((listener) => listener()); // NOSONAR S4158: exported set populated by live-sync subscribers
 };
-tabsChannel?.addEventListener("message", (event) => event.data === "disconnected" && forgetConnection());
+tabsChannel?.addEventListener("message", (event) => {
+  if (event.data === "disconnected") {
+    forgetConnection();
+  } else if (event.data === "signed-in") {
+    recheckConnection().catch(() => {});
+  }
+});
+
+/** ask again who is signed in (another tab may have signed in with another account) */
+export const recheckConnection = () => {
+  token = null;
+  return checkConnection();
+};
+
+/** this tab just signed in: the other tabs check which account it is */
+export const announceSignIn = () => tabsChannel?.postMessage("signed-in");
 
 export const disconnectGoogle = async () => {
   const session = IS_LOCAL_INSTALL ? localSession() : null;
@@ -389,7 +416,7 @@ const drive = async (
 
   for (let attempt = 0; ; attempt++) {
     const value = await getToken();
-    if (!value) {
+    if (!value || otherAccount()) {
       throw notConnectedError();
     }
     const isJson = body !== undefined && !(typeof body === "string" || body instanceof Blob || body instanceof Uint8Array);

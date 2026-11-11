@@ -12,10 +12,13 @@ import type { ReactNode } from "react";
 
 import { scenesController } from "../controller";
 import { QuickTip } from "../quickTip";
+import { LEGACY_ACCOUNT_KEY, OWN_SPACE_KEY, ownSpaceTarget, spaceMoves } from "../spaces";
+import { currentSpace, moveSpaceData } from "../storage";
 
 import {
   CONNECTING_KEY,
   FOLDER_NAME,
+  announceSignIn,
   changeRole,
   checkConnection,
   claimPubName,
@@ -37,6 +40,8 @@ import {
   shareLink,
   showDriveShareDialog,
   sharedFileId,
+  signOutListeners,
+  spaceAccount,
 } from "./drive";
 import { pairing } from "./pairing";
 import { liveSync } from "./liveSync";
@@ -85,9 +90,14 @@ let notice: string | null = null;
 let started = false;
 /** the answer of a Google redirect, read before anything can rewrite the URL */
 const googleAnswer = new URLSearchParams(window.location.search).get("google");
-
-/** the Google account this browser's scenes were synced with last (switching accounts resyncs everything) */
-const ACCOUNT_KEY = "kurviq-drive-account";
+/** the address the page was opened with (the router may rewrite it before the sign-in is known) */
+const landing = (() => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("google");
+  return url;
+})();
+/** the tab worked in its space once (a later switch starts from where it is then, not from `landing`) */
+let settledInSpace = false;
 
 // after signing in: a short dialog (sync is on / Drive access missing)
 type Setup = null | { step: "done"; candidates: { name: string; ticked: boolean }[] } | { step: "nodrive" };
@@ -113,6 +123,89 @@ const useSetup = () =>
 const activateSync = async () => {
   scenesController.syncNow({ refresh: true }).catch((error) => console.error("[drive]", error));
   return scenesController.signInCandidates();
+};
+
+const legacyAccount = () => {
+  try {
+    return localStorage.getItem(LEGACY_ACCOUNT_KEY);
+  } catch {
+    return null;
+  }
+};
+
+/** pages that are not one of the user's own scenes keep their address when the tab changes space */
+const KEEP_PATH = /^\/(?:s|pub)\/|^\/features(?:\/|$)/;
+
+/**
+ * Where the tab goes in its new space: pages that are no own scene stay, and
+ * a scene's address (e.g. a link opened signed out, then signed in) unless
+ * that scene was one of the old space's and did not come along under its
+ * name: then the new space's open scene ("/").
+ */
+const pathAfterSwitch = (oldScenes: Set<string>, renames: Map<string, string>) => {
+  const from = settledInSpace ? new URL(window.location.href) : landing;
+  const { pathname } = from;
+  if (KEEP_PATH.test(pathname)) {
+    return from.href;
+  }
+  let name: string | null = null;
+  try {
+    name = decodeURIComponent(pathname.slice(1));
+  } catch {}
+  const kept = !!name && (!oldScenes.has(name) || renames.get(name) === name);
+  return kept ? from.href : `${window.location.origin}/`;
+};
+
+let switching = false;
+
+/**
+ * This tab's own scenes are another space's now (signed in with an account,
+ * or signed out): the open scene is stored, scenes that move along move (see
+ * spaceMoves), and the page reloads into the space. A sign-in's answer goes
+ * along, so the dialog after sign-in still appears there.
+ */
+const switchOwnSpace = async (target: string, signIn: string | null) => {
+  if (switching) {
+    return;
+  }
+  switching = true;
+  const oldScenes = new Set(scenesController.getState().list.flatMap((item) => (item.name ? [item.name] : [])));
+  await scenesController.leaveForReload();
+  const legacy = legacyAccount();
+  let renames = new Map<string, string>();
+  const moves = async () => {
+    for (const move of spaceMoves(currentSpace, target, legacy)) {
+      const moved = await moveSpaceData(move.from, move.to, move.keepSync); // NOSONAR S9382: in order on purpose (moves write the same stores)
+      if (move.to === target) {
+        renames = moved;
+      }
+    }
+    if (legacy) {
+      localStorage.removeItem(LEGACY_ACCOUNT_KEY);
+    }
+  };
+  try {
+    // one tab at a time (several tabs may follow the same sign-in)
+    await (navigator.locks ? navigator.locks.request("kurviq-space-move", moves) : moves());
+  } catch (error) {
+    // nothing is lost: the scenes stay where they were (the move clears its source last)
+    console.error("[drive] could not move the scenes to the account's space", error);
+  }
+  try {
+    if (target) {
+      localStorage.setItem(OWN_SPACE_KEY, target);
+    } else {
+      localStorage.removeItem(OWN_SPACE_KEY);
+    }
+  } catch {}
+  const url = new URL(pathAfterSwitch(oldScenes, renames));
+  if (signIn) {
+    url.searchParams.set("google", signIn);
+    try {
+      sessionStorage.setItem(CONNECTING_KEY, String(Date.now()));
+    } catch {}
+  }
+  window.location.replace(url.toString());
 };
 
 /** back to the user's own scenes, from a shared scene's space */
@@ -152,26 +245,35 @@ export const startDrive = () => {
     sessionStorage.removeItem(CONNECTING_KEY);
   } catch {}
   let afterSignIn = asked ? answer : null;
+  if (answer === "connected" || answer === "nodrive") {
+    // the other tabs check who is signed in now (only a check: harmless for a link carrying the answer)
+    announceSignIn();
+  }
+  // signed out on purpose: the tab leaves the account's scenes (they stay in this browser for its next sign-in)
+  signOutListeners.add(() => {
+    if (spaceAccount) {
+      switchOwnSpace("", null).catch((error) => console.error("[drive]", error));
+    } else if (sharedFileId) {
+      try {
+        localStorage.removeItem(OWN_SPACE_KEY);
+      } catch {}
+    }
+  });
   let last = "";
   connection.subscribe(() => {
     const { user, drive } = connection.getState();
     if (user === undefined) {
       return;
     }
-    scenesController.setSignedIn(!!user && drive && !sharedFileId);
-    if (user && drive && !sharedFileId) {
-      let previous: string | null = null;
-      try {
-        previous = localStorage.getItem(ACCOUNT_KEY);
-        localStorage.setItem(ACCOUNT_KEY, user.email);
-      } catch {}
-      if (previous !== user.email) {
-        // what this browser knew about the remote side was another Drive's
-        // (another account, or none yet): its scenes stay here (local only)
-        // until the user picks which go to Drive (the dialog after sign-in)
-        scenesController.resetRemoteState().catch((error) => console.error("[drive]", error));
-      }
+    const target = ownSpaceTarget(currentSpace, user?.email ?? null, legacyAccount());
+    if (target !== null) {
+      // these scenes are not this account's: the tab moves to the account's own (nothing syncs before)
+      scenesController.setSignedIn(false);
+      switchOwnSpace(target, afterSignIn).catch((error) => console.error("[drive]", error));
+      return;
     }
+    settledInSpace = true;
+    scenesController.setSignedIn(!!user && drive && !sharedFileId);
     if (afterSignIn) {
       const what = afterSignIn;
       afterSignIn = null;
@@ -332,7 +434,7 @@ export const WelcomeConnectDrive = () => {
 const confirmSignOut = () => {
   if (
     window.confirm(
-      "Sign out of Google in this browser? Your scenes stay here; changes are synced again once you sign in.",
+      "Sign out of Google in this browser? This account's scenes stay in this browser and come back, synced again, when you sign in with it. Signed out (or with another account) you see other scenes.",
     )
   ) {
     disconnectGoogle().catch((error) => console.error("[drive]", error));
@@ -346,6 +448,23 @@ export const DrivePanel = () => {
 
   if (user === undefined) {
     return <section className="kq-card kq-muted">Checking Google sign-in…</section>;
+  }
+  if (!user && spaceAccount) {
+    // the sign-in expired (not signed out on purpose): the account's scenes stay on screen
+    return (
+      <section className="kq-card">
+        {notice && <div className="kq-notice">{notice}</div>}
+        <div className="kq-card__title">Not signed in any more</div>
+        <div className="kq-muted">
+          These are the scenes of {spaceAccount}. Your changes are kept in this browser; sign in with that account to
+          sync them with Google Drive again.
+        </div>
+        {error && <div className="scenes-error">{error}</div>}
+        <div className="scenes-row">
+          <SignInButton label="Sign in again" />
+        </div>
+      </section>
+    );
   }
   if (!user) {
     return (

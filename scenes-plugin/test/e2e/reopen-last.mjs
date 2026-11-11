@@ -30,7 +30,7 @@ const page = async (tag) => {
     window.__metaWrites = 0;
     const setItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {
-      if (key === "excalidraw-scenes") window.__metaWrites++;
+      if (key === "excalidraw-scenes" + (localStorage.getItem("kurviq-own-space") ? "@" + localStorage.getItem("kurviq-own-space") : "")) window.__metaWrites++; // the scenes of the signed-in account
       return setItem.call(this, key, value);
     };
   });
@@ -42,7 +42,7 @@ const ready = async (p) => {
   await sleep(2500); // the router and the first sync
 };
 const current = (p) => p.evaluate(() => window.__scenes.getState().current);
-const stored = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("excalidraw-scenes") || "{}").current ?? null);
+const stored = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("excalidraw-scenes" + (localStorage.getItem("kurviq-own-space") ? "@" + localStorage.getItem("kurviq-own-space") : "")) || "{}").current ?? null);
 const draw = (p) =>
   p.evaluate(() => {
     const api = window.__scenes.getApi();

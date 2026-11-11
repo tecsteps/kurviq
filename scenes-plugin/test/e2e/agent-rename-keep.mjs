@@ -112,7 +112,7 @@ log("keepOnlyHere unshared:", keep2, "status", await owner.evaluate((n) => windo
 const after = await admin(`file?fileId=${fileId}`);
 ok((after.trashed ?? after.file?.trashed) === true, "keep only here trashes remote file");
 log("trashed", JSON.stringify(after.trashed ?? after.file?.trashed), "list", JSON.stringify(await owner.evaluate(() => window.__scenes.getState().list.map((i) => `${i.name}:${i.status}`))));
-log("meta", JSON.stringify(await owner.evaluate(() => JSON.parse(localStorage.getItem("excalidraw-scenes")).scenes)));
+log("meta", JSON.stringify(await owner.evaluate(() => JSON.parse(localStorage.getItem("excalidraw-scenes" + (localStorage.getItem("kurviq-own-space") ? "@" + localStorage.getItem("kurviq-own-space") : ""))).scenes)));
 log("activity", JSON.stringify(await owner.evaluate(() => window.__scenes.getState().activity.map((a) => a.text))));
 await browser.close();
 process.exitCode = failed ? 1 : 0;

@@ -67,7 +67,7 @@ const state = (page) =>
     const conf = [...s.confirmed.values()].map((e) => `${e.id.slice(0, 4)}${e.isDeleted ? "(del)" : ""}v${e.version}`);
     return `phase=${s.phase} seq=${s.seq} canvas=[${canvas}] confirmed=[${conf}] batches=${s.batches.map((b) => b.counter + b.state).join(",")}`;
   });
-const names = (page) => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("excalidraw-scenes") || "{}").scenes || {}));
+const names = (page) => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("excalidraw-scenes" + (localStorage.getItem("kurviq-own-space") ? "@" + localStorage.getItem("kurviq-own-space") : "")) || "{}").scenes || {}));
 await draw(a, 500, 400);
 for (let i = 0; i < 22; i++) await sleep(1000); // NOSONAR S9382: in order on purpose (waits for sync before opening the second tab)
 log("A pill", await a.$eval(".scenes-pill", (el) => el.getAttribute("title")));

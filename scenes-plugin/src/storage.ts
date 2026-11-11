@@ -7,31 +7,35 @@
 //  - snapshots of inactive scenes in IndexedDB (incl. image files, which
 //    would quickly blow the localStorage quota)
 
-import { createStore, del, delMany, get, keys, set } from "idb-keyval";
+import { clear, createStore, del, delMany, get, keys, set } from "idb-keyval";
 
-// Kurviq: each space keeps its own scenes in the browser. "" is the user's
-// own scenes (their Kurviq folder in Google Drive); "f:<fileId>" is a scene
-// someone shared (one Drive file). Spaces of older versions (one per
+import { mergeSpaceMeta, OWN_SPACE_KEY, pickSpace, SPACE_KEY, spaceSuffix } from "./spaces";
+
+// Kurviq: each space keeps its own scenes in the browser (see ./spaces.ts):
+// "" the scenes made signed out, "a:<email>" an account's own scenes,
+// "f:<fileId>" a scene someone shared. Spaces of older versions (one per
 // repository, before Drive) are not opened any more; their data in the
 // browser is left as it is.
-export const SPACE_KEY = "kurviq-space";
+export { SPACE_KEY, spaceSuffix };
 export const currentSpace = (() => {
   try {
-    const space = localStorage.getItem(SPACE_KEY) || "";
-    if (space && !/^f:[\w-]{10,200}$/.test(space)) {
+    const shared = localStorage.getItem(SPACE_KEY);
+    const space = pickSpace(shared, localStorage.getItem(OWN_SPACE_KEY));
+    if (shared && space !== shared) {
       localStorage.removeItem(SPACE_KEY);
-      return "";
     }
     return space;
   } catch {
     return "";
   }
 })();
-/** suffix of this space's storage keys */
-export const spaceSuffix = (space: string) => (space ? `@${space}` : "");
 
-export const META_KEY = `excalidraw-scenes${spaceSuffix(currentSpace)}`;
-const snapshotStore = createStore(`excalidraw-scenes-db${spaceSuffix(currentSpace)}`, "snapshots");
+const metaKeyOf = (space: string) => `excalidraw-scenes${spaceSuffix(space)}`;
+const snapshotStoreOf = (space: string) => createStore(`excalidraw-scenes-db${spaceSuffix(space)}`, "snapshots");
+const agentStoreOf = (space: string) => createStore(`excalidraw-scenes-agent${spaceSuffix(space)}`, "data");
+
+export const META_KEY = metaKeyOf(currentSpace);
+const snapshotStore = snapshotStoreOf(currentSpace);
 
 /** key used for the scene that has not been named / saved yet */
 export const UNTITLED = "\u0000untitled";
@@ -152,7 +156,7 @@ export const migrateMeta = (meta: { scenes?: Record<string, unknown> }) => {
   return changed;
 };
 
-export const loadMeta = (): ScenesMeta => {
+export const loadMeta = (key = META_KEY): ScenesMeta => {
   const fallback: ScenesMeta = {
     current: null,
     baseline: null,
@@ -161,7 +165,7 @@ export const loadMeta = (): ScenesMeta => {
     pendingDeletes: {},
   };
   try {
-    const raw = localStorage.getItem(META_KEY);
+    const raw = localStorage.getItem(key);
     if (raw) {
       const meta: ScenesMeta = { ...fallback, ...JSON.parse(raw) };
       let dropped = false;
@@ -173,7 +177,7 @@ export const loadMeta = (): ScenesMeta => {
       }
       const migrated = migrateMeta(meta);
       if (migrated || dropped) {
-        saveMeta(meta);
+        saveMeta(meta, key);
       }
       for (const scene of Object.values(meta.scenes)) {
         if (scene.baseMd5 === undefined) {
@@ -189,9 +193,9 @@ export const loadMeta = (): ScenesMeta => {
   return fallback;
 };
 
-export const saveMeta = (meta: ScenesMeta) => {
+export const saveMeta = (meta: ScenesMeta, key = META_KEY) => {
   try {
-    localStorage.setItem(META_KEY, JSON.stringify(meta));
+    localStorage.setItem(key, JSON.stringify(meta));
   } catch (error) {
     console.error(error);
   }
@@ -213,7 +217,7 @@ export const deleteSnapshot = (name: string | null) =>
 // stateless
 // -----------------------------------------------------------------------------
 
-const agentStore = createStore(`excalidraw-scenes-agent${spaceSuffix(currentSpace)}`, "data");
+const agentStore = agentStoreOf(currentSpace);
 
 /** what the canvas looked like when an agent last read / edited it */
 export type AgentBaseline = { at: string; action: string; elements: unknown[] };
@@ -277,4 +281,67 @@ export const setCheckpoint = (id: string, data: unknown) => {
   });
   checkpointWrites = write.catch(() => {});
   return write;
+};
+
+// -----------------------------------------------------------------------------
+// moving scenes from one space to another (see ./spaces.ts: spaceMoves)
+// -----------------------------------------------------------------------------
+
+/** a moved scene's key in the agent store (its baseline is per scene name) */
+const movedAgentKey = (key: string, renames: Map<string, string>) => {
+  if (!key.startsWith("baseline:")) {
+    return key;
+  }
+  return `baseline:${renames.get(key.slice("baseline:".length)) ?? key.slice("baseline:".length)}`;
+};
+
+/**
+ * Move the scenes of space `from` into space `to` (the tab is not using
+ * either: it reloads afterwards). Scenes `to` has a name for already get a
+ * free name. The target is written completely before the source is cleared,
+ * so an interruption loses nothing (at worst, scenes are there twice).
+ * Returns the moved scenes' new names (see mergeSpaceMeta).
+ */
+export const moveSpaceData = async (from: string, to: string, keepSync: boolean) => {
+  const fromKey = metaKeyOf(from);
+  if (localStorage.getItem(fromKey) === null) {
+    return new Map<string, string>();
+  }
+  const toKey = metaKeyOf(to);
+  const target = localStorage.getItem(toKey) === null ? null : loadMeta(toKey);
+  const source = loadMeta(fromKey);
+  const fromSnapshots = snapshotStoreOf(from);
+  const toSnapshots = snapshotStoreOf(to);
+  if (target) {
+    // into scenes that are there already: only scenes with content of their own (a tab
+    // that still had the source open may have written back metadata of scenes moved before)
+    const stored = new Set((await keys(fromSnapshots)).map(String));
+    source.scenes = Object.fromEntries(Object.entries(source.scenes).filter(([name]) => stored.has(name)));
+  }
+  const { meta, renames } = mergeSpaceMeta(target, source, keepSync);
+
+  for (const [name, renamed] of renames) {
+    const snapshot = await get(name, fromSnapshots); // NOSONAR S9382: one at a time on purpose (a snapshot can be many MB)
+    if (snapshot !== undefined) {
+      await set(renamed, snapshot, toSnapshots);
+    }
+  }
+
+  const fromAgent = agentStoreOf(from);
+  const toAgent = agentStoreOf(to);
+  for (const key of (await keys(fromAgent)).map(String)) {
+    const value = await get(key, fromAgent); // NOSONAR S9382: one at a time on purpose (a checkpoint can be many MB)
+    if (key === "checkpoint-index") {
+      const known = (await get<Record<string, number>>(key, toAgent)) ?? {};
+      await set(key, { ...known, ...value }, toAgent);
+    } else {
+      await set(movedAgentKey(key, renames), value, toAgent);
+    }
+  }
+
+  saveMeta(meta, toKey);
+  localStorage.removeItem(fromKey);
+  await clear(fromSnapshots);
+  await clear(fromAgent);
+  return renames;
 };

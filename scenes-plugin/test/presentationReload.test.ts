@@ -5,7 +5,7 @@ import { restorePresentation, presentationSave, presentationOf } from "../../sce
 
 // Execute the real controller lifecycle methods without the browser-only editor.
 const source = ts.createSourceFile("controller.ts", readFileSync(new URL("../src/controller.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
-const names = new Set(["liveWriteSettings", "cacheCanvasPresentation", "rememberPresentation", "adoptInitialCanvas", "onSceneChange", "persistMeta", "sceneMeta"]);
+const names = new Set(["liveWriteSettings", "cacheCanvasPresentation", "rememberPresentation", "adoptInitialCanvas", "untitledWasStashed", "onSceneChange", "persistMeta", "sceneMeta"]);
 const controller = source.statements.find((statement) => ts.isClassDeclaration(statement) && statement.name?.text === "ScenesController") as ts.ClassDeclaration;
 const methods = controller.members.filter((member) => member.name && names.has(member.name.getText(source))).map((member) => member.getText(source)).join("\n");
 const compiled = ts.transpileModule(`class Controller { ${methods} }; exports.Controller = Controller;`, {
