@@ -46,6 +46,8 @@ import {
 import type { AuthEnv, Session } from "./auth";
 import { driveCall, driveUrls, getFile, patchFile, problemOf, readLimited } from "./driveApi";
 import type { Claims } from "./scene";
+import { folderFileAccess } from "./folders";
+import type { FoldersEnv } from "./folders";
 
 export type SceneRoutesEnv = AuthEnv & {
   SCENE: DurableObjectNamespace;
@@ -272,8 +274,38 @@ const claimsOf = async (ctx: Ctx, kind: Claims["kind"], fileId: string, session:
   return claims;
 };
 
-const sealedToken = (ctx: Ctx, fileId: string, session: Session) =>
-  sealSceneToken(ctx.env, fileId, session.sub!, session.r, session.iat ?? 0, Date.now() + TOKEN_LEASE_MS);
+/** the refresh token the scene object saves this person's changes with: their own, or a shared folder owner's */
+const sealedToken = (ctx: Ctx, fileId: string, session: Session, refresh: string) =>
+  sealSceneToken(ctx.env, fileId, session.sub!, refresh, session.iat ?? 0, Date.now() + TOKEN_LEASE_MS);
+
+type DriveAccess = {
+  /** access token for Drive calls about the file */
+  token: string;
+  /** refresh token for the scene object's saves */
+  refresh: string;
+  /** a shared folder's scene: the role in the folder (else Drive's canEdit decides) */
+  role: "edit" | "read" | null;
+};
+
+/**
+ * Whose access reaches the file: the person's own, or for a scene in a folder
+ * shared with them (the tab names the folder) its owner's, after checking the
+ * person against the folder's permissions (./folders.ts). Or the answer to give.
+ */
+const driveAccess = async (ctx: Ctx, fileId: string, session: Session): Promise<DriveAccess | Response> => {
+  const folderId = typeof ctx.body.folderId === "string" ? ctx.body.folderId : null;
+  if (!folderId) {
+    return { token: session.a, refresh: session.r, role: null };
+  }
+  const access = await folderFileAccess(ctx, ctx.env as FoldersEnv, folderId, fileId, session);
+  if (access instanceof Response) {
+    return access;
+  }
+  return { token: access.token, refresh: access.refresh, role: access.role === "writer" ? "edit" : "read" };
+};
+
+/** the file as this person sees it: through a shared folder it is never theirs */
+const asSeen = (file: any, access: DriveAccess) => (access.role === null ? file : { ...file, ownedByMe: false });
 
 const fileProblem = (ctx: Ctx, file: { status: number; data: any; text: string }) => {
   const problem = problemOf(file);
@@ -307,23 +339,27 @@ const ticket = async (ctx: Ctx, fileId: string) => {
     return who;
   }
   const { session } = who;
-  const file = await getFile(ctx.env, session.a, fileId, FILE_FIELDS);
+  const access = await driveAccess(ctx, fileId, session);
+  if (access instanceof Response) {
+    return access;
+  }
+  const file = await getFile(ctx.env, access.token, fileId, FILE_FIELDS);
   if (file.status !== 200) {
     return fileProblem(ctx, file);
   }
   if (!liveEnabled(ctx.env, session.user.email, file.data.appProperties)) {
     return answer(ctx, 200, { enabled: false });
   }
-  const role = file.data.capabilities?.canEdit ? "edit" : "read";
-  const key = await sceneKey(ctx, fileId, session.a, file.data, role, session.sub!);
-  await keepWatch(ctx, fileId, session.a, key.watch);
+  const role = access.role ?? (file.data.capabilities?.canEdit ? "edit" : "read");
+  const key = await sceneKey(ctx, fileId, access.token, file.data, role, session.sub!);
+  await keepWatch(ctx, fileId, access.token, key.watch);
   if (!("key" in key) || !key.key) {
     const status = keyFailureStatus(key.code);
     return answer(ctx, status, { enabled: false, code: key.code, error: `Live sync can't start yet: ${key.code}` });
   }
-  const claims = await claimsOf(ctx, "ticket", fileId, session, file.data, role, key.keyId);
+  const claims = await claimsOf(ctx, "ticket", fileId, session, asSeen(file.data, access), role, key.keyId);
   if (role === "edit") {
-    claims.token = await sealedToken(ctx, fileId, session);
+    claims.token = await sealedToken(ctx, fileId, session, access.refresh);
   }
   const { token: _token, nonce: _nonce, ...proofClaims } = claims;
   const proof: Claims = { ...proofClaims, kind: "proof", exp: Date.now() + PROOF_VALID_MS };
@@ -401,7 +437,16 @@ const renew = async (ctx: Ctx, fileId: string) => {
   if (who instanceof Response) {
     return renewSignInFailure(ctx, fileId, old, tab, who, extend);
   }
-  const file = await getFile(ctx.env, who.session.a, fileId, FILE_FIELDS);
+  const access = await driveAccess(ctx, fileId, who.session);
+  if (access instanceof Response) {
+    if (access.status === 503) {
+      return extend();
+    }
+    // the folder isn't shared with them any more: the access ends (no extension)
+    await toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab });
+    return access;
+  }
+  const file = await getFile(ctx.env, access.token, fileId, FILE_FIELDS);
   if (file.status !== 200) {
     if (problemOf(file) === "unreachable") {
       return extend();
@@ -410,9 +455,9 @@ const renew = async (ctx: Ctx, fileId: string) => {
     await toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab });
     return fileProblem(ctx, file);
   }
-  const role = file.data.capabilities?.canEdit ? "edit" : "read";
-  const proof = await claimsOf(ctx, "proof", fileId, who.session, file.data, role, old.keyId);
-  const forDo: Claims = { ...proof, ...(role === "edit" ? { token: await sealedToken(ctx, fileId, who.session) } : {}) };
+  const role = access.role ?? (file.data.capabilities?.canEdit ? "edit" : "read");
+  const proof = await claimsOf(ctx, "proof", fileId, who.session, asSeen(file.data, access), role, old.keyId);
+  const forDo: Claims = { ...proof, ...(role === "edit" ? { token: await sealedToken(ctx, fileId, who.session, access.refresh) } : {}) };
   const done = await toScene(ctx.env, fileId, "/renew", {
     tab,
     claims: forDo,
@@ -420,7 +465,7 @@ const renew = async (ctx: Ctx, fileId: string) => {
     trashed: !!file.data.trashed,
     head: proof.head,
   });
-  await keepWatch(ctx, fileId, who.session.a, done.watch);
+  await keepWatch(ctx, fileId, access.token, done.watch);
   return answer(ctx, 200, {
     proof: await seal(ctx.env, proof, PROOF),
     expiresAt: proof.exp,
@@ -434,11 +479,16 @@ const reconcile = async (ctx: Ctx, fileId: string) => {
   if (who instanceof Response) {
     return who;
   }
-  const file = await getFile(ctx.env, who.session.a, fileId, "id");
+  const access = await driveAccess(ctx, fileId, who.session);
+  if (access instanceof Response) {
+    return access;
+  }
+  const file = await getFile(ctx.env, access.token, fileId, "id");
   if (file.status !== 200) {
     return fileProblem(ctx, file);
   }
-  const done = await toScene(ctx.env, fileId, "/reconcile-token", { token: who.session.a, sub: who.session.sub });
+  // the token stays on the server: the scene object merges with it
+  const done = await toScene(ctx.env, fileId, "/reconcile-token", { token: access.token, sub: who.session.sub });
   return answer(ctx, 200, { ok: !!done.ok, ...(who.sealedLocal ? { session: who.sealedLocal } : {}) });
 };
 

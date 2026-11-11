@@ -59,6 +59,41 @@ export const sharedFileId = currentSpace.startsWith("f:") ? currentSpace.slice(2
 export const folderSpace = (folderId: string) => `d:${folderId}`;
 export const sharedFolderId = currentSpace.startsWith("d:") ? currentSpace.slice(2) : null;
 
+/**
+ * The shared folder a scene's file is in, as far as this browser knows: live
+ * sync names it to Kurviq's server (which then uses the folder owner's access),
+ * also for queues sent from another space after the tab was closed.
+ */
+const FOLDER_FILES_KEY = "kurviq-folder-files";
+const FOLDER_FILES_MAX = 2000;
+
+const folderFiles = (): Record<string, string> => {
+  try {
+    const known = JSON.parse(localStorage.getItem(FOLDER_FILES_KEY) || "{}");
+    return known && typeof known === "object" ? known : {};
+  } catch {
+    return {};
+  }
+};
+
+export const folderOfFile = (fileId: string): string | null => folderFiles()[fileId] ?? null;
+
+/** a shared folder's files, remembered (the newest win when there are too many) */
+const rememberFolderFiles = (folderId: string, fileIds: string[]) => {
+  const known = folderFiles();
+  if (fileIds.every((fileId) => known[fileId] === folderId)) {
+    return;
+  }
+  for (const fileId of fileIds) {
+    delete known[fileId];
+    known[fileId] = folderId;
+  }
+  const entries = Object.entries(known).slice(-FOLDER_FILES_MAX);
+  try {
+    localStorage.setItem(FOLDER_FILES_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {}
+};
+
 // -----------------------------------------------------------------------------
 // connection: who is signed in (cookie, via the Worker)
 // -----------------------------------------------------------------------------
@@ -750,6 +785,7 @@ const fetchSharedSpace = async (fileId: string, files: Map<string, DriveFile>) =
 const fetchFolderSpace = async (files: Map<string, DriveFile>) => {
   await fetchFolderScenes(files);
   if (sharedFolderId) {
+    rememberFolderFiles(sharedFolderId, [...files.values()].map((file) => file.id));
     const first = [...files.values()][0];
     const owner = first ? ownerName(first) : "Its owner";
     readOnly = folderRole === "reader" ? `${owner} shared this folder with you to view` : null;
@@ -799,16 +835,6 @@ const readOnlyError = (reason: string) => httpError(403, `Read only: ${reason}`,
 const requireWritable = () => {
   if (readOnly) {
     throw readOnlyError(readOnly);
-  }
-};
-
-/**
- * A scene its owner saves live, in a shared folder: its Durable Object is its
- * only writer, and this person's Kurviq can't reach it (yet): changes stay here.
- */
-const requireFolderWritable = (file: DriveFile | null, name: string) => {
-  if (sharedFolderId && file?.appProperties?.kurviqSync === LIVE_MARKER) {
-    throw httpError(423, `"${name}" is saved live by its owner: your changes to it stay in this browser (it can't be changed from a shared folder yet)`);
   }
 };
 
@@ -900,7 +926,7 @@ const markAgentVersion = async (file: DriveFile, revision: string) => {
 // their Durable Object (online/liveSync.ts registers these)
 // -----------------------------------------------------------------------------
 
-export const isLiveFile = (file: { appProperties?: Record<string, string> }) => !sharedFolderId && file.appProperties?.kurviqSync === LIVE_MARKER;
+export const isLiveFile = (file: { appProperties?: Record<string, string> }) => file.appProperties?.kurviqSync === LIVE_MARKER;
 
 export type LiveWrite = { fileId: string; name: string; json: string; baseMd5?: string; source?: string };
 let liveWriter: ((write: LiveWrite) => Promise<{ md5: string; driveRevision: string | null; changed: boolean }>) | null = null;
@@ -980,7 +1006,6 @@ export const driveScenes = {
     requireWritable();
     const checksum = md5(encodeBytes(json));
     const file = await locate(name);
-    requireFolderWritable(file, name);
     if (file && isLiveFile(file)) {
       // the scene saves through its Durable Object: never a second writer
       // (CONCEPT "Old app versions"); agents' writes go through live sync
@@ -1046,7 +1071,6 @@ export const driveScenes = {
     if (sharedFileId) {
       throw httpError(403, `"${name}" belongs to ${ownerName(file)}: only they can delete it`);
     }
-    requireFolderWritable(file, name);
     if (isLiveFile(file)) {
       // its Durable Object stops saving first (and confirms), then the file goes to the trash
       if (!liveRemover) {
@@ -1081,7 +1105,6 @@ export const driveScenes = {
     if (current.files.has(to)) {
       throw httpError(409, `A scene named "${to}" already exists in Google Drive`, { exists: true });
     }
-    requireFolderWritable(file, from);
     if (isLiveFile(file)) {
       // a rename of a live scene is an event like any other (the DO renames the file)
       if (!liveRenamer) {

@@ -5,8 +5,12 @@ Shared folders: route chosen 2026-11-11 (see "Shared folders through the
 owner's sign-in"); built 2026-11-11 (phase 1: see and open read-only;
 phase 2: edit, create, rename, delete through the server; phase 3: agents):
 `online/worker/folders.ts`, `online/worker/folderRules.ts`, e2e
-`scenes-plugin/test/e2e/shared-folder.mjs`. Not yet: live sync inside a
-shared folder (a scene its owner saves live is view-only there).
+`scenes-plugin/test/e2e/shared-folder.mjs` (also with `KURVIQ_LIVE=off`).
+Live sync works inside shared folders too: the tab names the folder in the
+ticket / renew / reconcile requests (`folderOfFile`), the routes check the
+person against the folder and use the owner's access, and the scene's Durable
+Object saves the person's changes with the owner's refresh token (sealed for
+that person and file, like any author's).
 
 ## Why
 

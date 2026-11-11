@@ -36,7 +36,7 @@ import { createStore, get, set } from "idb-keyval";
 import { addFont, customFonts, isCustomFontId, withFonts } from "../fonts";
 import { getUpload } from "../uploads";
 
-import { authPost, connection, driveScenes, liveSocketUrl, otherAccount, recheckConnection, signOutListeners } from "./drive";
+import { authPost, connection, driveScenes, folderOfFile, liveSocketUrl, otherAccount, recheckConnection, signOutListeners } from "./drive";
 import { createReceiver, sendMessage } from "./frames";
 import { decodeEvent, encodeEvent, importSceneKey } from "./liveCrypto";
 import {
@@ -355,6 +355,12 @@ type StoredBase = {
   settings: { value: Settings; stamp: Base | null } | null;
   files: string[];
   fonts: [string, number][];
+};
+
+/** a scene in a folder someone shared: Kurviq's server reaches it with the folder owner's access */
+const viaFolder = (fileId: string) => {
+  const folderId = folderOfFile(fileId);
+  return folderId ? { folderId } : {};
 };
 
 let baseStore: ReturnType<typeof createStore> | null = null;
@@ -941,7 +947,7 @@ export class LiveScene {
     this.phase = "connecting";
     let answer: TicketAnswer;
     try {
-      answer = await authPost(`/scene/${encodeURIComponent(this.fileId)}/ticket`, { protocol: LIVE_PROTOCOL });
+      answer = await authPost(`/scene/${encodeURIComponent(this.fileId)}/ticket`, { protocol: LIVE_PROTOCOL, ...viaFolder(this.fileId) });
     } catch (error: any) {
       this.ticketFailed(error);
       return;
@@ -1145,7 +1151,7 @@ export class LiveScene {
       return;
     }
     try {
-      const answer = await authPost(`/scene/${encodeURIComponent(this.fileId)}/renew`, { tab: this.tab?.tab, proof: this.proof });
+      const answer = await authPost(`/scene/${encodeURIComponent(this.fileId)}/renew`, { tab: this.tab?.tab, proof: this.proof, ...viaFolder(this.fileId) });
       this.proof = answer.proof ?? this.proof;
       if (answer.role && answer.role !== this.role) {
         this.role = answer.role;
@@ -1246,7 +1252,7 @@ export class LiveScene {
       case "renew-now":
         return this.renew();
       case "need-token":
-        await authPost(`/scene/${encodeURIComponent(this.fileId)}/reconcile`, { tab: this.tab?.tab }).catch(() => {});
+        await authPost(`/scene/${encodeURIComponent(this.fileId)}/reconcile`, { tab: this.tab?.tab, ...viaFolder(this.fileId) }).catch(() => {});
         return;
       case "keep-local":
         this.keepLocalAnswer?.(message);

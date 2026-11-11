@@ -11,15 +11,22 @@
 //                              keyed hashes of their emails / domains.
 //   POST /folders              a person's Kurviq: the folders shared with them,
 //                              with their scenes (checked with Drive, every time)
+//   live sync of a scene in a shared folder: the ticket, renewal and reconcile
+//                              routes (./sceneRoutes.ts) get the folder's id
+//                              from the tab and ask folderFileAccess here: the
+//                              caller's role from the folder's permissions, the
+//                              owner's access for Drive, and the owner's refresh
+//                              token for the scene's Durable Object, which saves
+//                              the caller's changes with it.
 //   POST /folders/<id>/drive   one Drive call in that folder, made with the
 //                              owner's access after checking the caller's role
 //                              and that the call is about this folder only
 //                              (./folderRules.ts): reads for everyone it is
 //                              shared with; Kurviq's own writes (a scene's
 //                              content, a new scene, rename, bin, an agent
-//                              version's mark) for those who may edit. Scenes
-//                              the owner saves live (their Durable Object is
-//                              the only writer) stay read-only here for now.
+//                              version's mark) for those who may edit. A live
+//                              scene's content is written by its Durable Object
+//                              only (live sync, with the owner's access).
 //
 // The sign-in (cookie, or the local install's sealed session) and the sign-out
 // everywhere guard are the live sync routes' (./sceneRoutes.ts).
@@ -209,6 +216,35 @@ const enter = async (ctx: Ctx, env: FoldersEnv, row: FolderRow, session: Session
   return { token, role };
 };
 
+/**
+ * Live sync of a scene in a shared folder: the caller's role in the folder,
+ * an access token of its owner and the owner's refresh token (sealed for the
+ * scene's Durable Object by the caller), after checking that the file is in
+ * the folder. Or the answer to give.
+ */
+export const folderFileAccess = async (ctx: Ctx, env: FoldersEnv, folderId: string, fileId: string, session: Session) => {
+  if (!FOLDER_ID_RE.test(folderId)) {
+    return fail(ctx, 400, "bad-request", "Not a folder id");
+  }
+  const row = await folderRow(env, folderId);
+  if (!row) {
+    return fail(ctx, 403, "no-access", "This folder is not shared (any more)");
+  }
+  const way = await enter(ctx, env, row, session);
+  if (way instanceof Response) {
+    return way.status === 404 ? fail(ctx, 403, "no-access", "This folder is not shared (any more)") : way;
+  }
+  const sealed = await unsealSceneToken(env, row.token, tokenPurpose(row.folder_id), row.owner_sub);
+  const file = await getFile(env, way.token, fileId, "parents");
+  if (file.status !== 200 && problemOf(file) === "unreachable") {
+    return fail(ctx, 503, "google-unreachable", "Google Drive is not reachable");
+  }
+  if (!sealed || file.status !== 200 || !Array.isArray(file.data?.parents) || !file.data.parents.includes(folderId)) {
+    return fail(ctx, 403, "no-access", "No access to this file through Kurviq");
+  }
+  return { token: way.token, refresh: sealed.r, role: way.role };
+};
+
 const folderRow = async (env: FoldersEnv, folderId: string) =>
   (await database(env)).prepare("SELECT * FROM shared_folders WHERE folder_id = ?").bind(folderId).first<FolderRow>();
 
@@ -375,8 +411,9 @@ const writableFile = async (ctx: Ctx, env: FoldersEnv, token: string, call: Writ
   if (!Array.isArray(file.data?.parents) || !file.data.parents.includes(folderId) || file.data.mimeType !== SCENE_MIME) {
     return notInFolder(ctx, role);
   }
-  if (file.data.appProperties?.kurviqSync === LIVE_MARKER) {
-    return fail(ctx, 409, "live", "Its owner saves this scene live: it can't be changed from a shared folder yet");
+  // a live scene's content is written only by its Durable Object (renames, the bin and marks are fine)
+  if (call.kind === "content" && file.data.appProperties?.kurviqSync === LIVE_MARKER) {
+    return fail(ctx, 409, "live", "This scene is saved live: its content is written by Kurviq's server only");
   }
   return null;
 };

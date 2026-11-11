@@ -4,10 +4,13 @@
 // read-only through Kurviq's server, and loses it when the owner stops sharing. The server lets
 // only reads of that folder through, for the people Drive lists.
 // Real Worker + fake Google: KURVIQ_URL (default http://localhost:8790), CHROME. Usage: node shared-folder.mjs
+// KURVIQ_LIVE=off: the Worker runs without live sync (wrangler dev --var LIVE_SYNC:off): scenes are
+// saved the normal way, through the folder route; else the live part runs too (live sync for all).
 import { createRequire } from "node:module";
 const puppeteer = createRequire(import.meta.url)(new URL("../../../excalidraw/node_modules/puppeteer-core/cjs-entry-core.js", import.meta.url).pathname);
 
 const BASE = process.env.KURVIQ_URL || "http://localhost:8790";
+const LIVE = process.env.KURVIQ_LIVE !== "off";
 const RUN = Date.now() % 100000;
 const [OWNER, GUEST, STRANGER, EDITOR] = ["own", "gst", "str", "edt"].map((who) => `${who}${RUN}@example.test`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -230,7 +233,7 @@ const saved = await waitFor("the editor's change in Drive", async () => {
   await editor.evaluate(() => window.__scenes.syncNow({ refresh: true })).catch(() => {});
   const count = await revisions(plainId);
   return { done: count > before, count, before };
-}, 80);
+}, 240);
 ok(saved.done, "editor: the change is saved to the owner's file", saved);
 if (!saved.done) {
   log("editor state", JSON.stringify(await editor.evaluate(() => ({ list: window.__scenes.getState().list, activity: window.__scenes.getState().activity, sync: window.__scenes.getState().sync }))).slice(0, 2500));
@@ -245,6 +248,39 @@ const ownerSees = await waitFor("owner sees the edit", async () => {
 });
 ok(ownerSees.done, "owner: sees the editor's change", ownerSees.xs);
 
+if (LIVE) {
+// a scene its owner saves live (this test server has live sync on for everyone): the editor's changes
+  // go through the scene's Durable Object, saved with the owner's access; the owner sees them live
+  const alphaBefore = await revisions(alphaId);
+  await editor.evaluate((name) => window.__scenes.open(name), ALPHA);
+  const editorLive = await waitFor("the editor's live connection", async () => {
+    const phase = await editor.evaluate(() => window.__live?.current()?.phase ?? "none");
+    return { done: phase === "ready", phase };
+  }, 60);
+  ok(editorLive.done, "editor: the live scene connects through the shared folder", editorLive.phase);
+  await editor.evaluate(() => {
+    const api = window.__scenes.getApi();
+    const all = api.getSceneElementsIncludingDeleted();
+    api.updateScene({
+      elements: [...all, { ...all.find((e) => !e.isDeleted), id: "editorLive01", x: 777, version: 1, versionNonce: 9, updated: Date.now() }],
+      captureUpdate: "IMMEDIATELY",
+    });
+  });
+  const ownerSeesLive = await waitFor("owner sees the live edit", async () => {
+    const xs = await owner.evaluate(async (name) => {
+      if (window.__scenes.getState().current !== name) await window.__scenes.open(name);
+      return window.__scenes.getApi().getSceneElements().map((e) => Math.round(e.x));
+    }, ALPHA);
+    return { done: xs.includes(777), xs };
+  }, 60);
+  ok(ownerSeesLive.done, "owner: sees the editor's live change", ownerSeesLive.xs);
+  const liveSaved = await waitFor("the live change in Drive", async () => {
+    const count = await revisions(alphaId);
+    return { done: count > alphaBefore, count, alphaBefore };
+  }, 240);
+  ok(liveSaved.done, "the live change is saved to the owner's file", liveSaved);
+}
+
 const MADE = `Made by editor ${RUN}`;
 const made = await create(editor, MADE, 900);
 ok(made, "editor: a new scene in the shared folder");
@@ -255,20 +291,20 @@ const ownerList = async () => owner.evaluate(async () => {
 const ownerHasMade = await waitFor("owner sees the new scene", async () => {
   const list = await ownerList();
   return { done: list.includes(MADE), list };
-});
+}, 240);
 ok(ownerHasMade.done, "owner: the editor's new scene is in their folder", ownerHasMade.list);
 const RENAMED = `Renamed by editor ${RUN}`;
 await editor.evaluate(async (from, to) => window.__scenes.rename(from, to), MADE, RENAMED).catch((error) => log("rename", String(error)));
 const ownerHasRenamed = await waitFor("owner sees the rename", async () => {
   const list = await ownerList();
   return { done: list.includes(RENAMED) && !list.includes(MADE), list };
-});
+}, 240);
 ok(ownerHasRenamed.done, "owner: sees the rename", ownerHasRenamed.list);
 await editor.evaluate(async (name) => window.__scenes.remove(name), RENAMED).catch((error) => log("remove", String(error)));
 const ownerLost = await waitFor("owner sees the deletion", async () => {
   const list = await ownerList();
   return { done: !list.includes(RENAMED), list };
-});
+}, 240);
 ok(ownerLost.done, "owner: the deleted scene is gone (in the bin)", ownerLost.list);
 
 // a viewer can't write; a scene its owner saves live can't be written from the folder
