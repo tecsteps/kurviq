@@ -166,7 +166,8 @@ const later = await waitFor("the new scene", async () => {
 ok(later.done, "the new scene is listed for the guest", later.list);
 
 // 6. the server lets only reads of this folder through
-const listPath = `/files?q=${encodeURIComponent(`'${folderId}' in parents and trashed=false`)}&fields=files(id,name)`;
+const listQuery = `'${folderId}' in parents and trashed=false`;
+const listPath = `/files?q=${encodeURIComponent(listQuery)}&fields=files(id,name)`;
 const okList = await proxy(guest, folderId, "GET", listPath);
 ok(okList.status === 200 && okList.body.status === 200, "proxy: the folder's listing", okList.body.status);
 const alphaId = shared?.scenes.find((s) => s.name === ALPHA)?.fileId;

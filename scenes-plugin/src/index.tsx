@@ -31,9 +31,20 @@ import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar, setPresentation, usePresentation } from "./slidesUI";
-import { connectGoogle, connection, enterFolder, enterSpace, pickerAvailable, pickFiles, sharedFileId, sharedFolderId, sharedFolders, sharedWithMe } from "./online/drive";
-import type { SharedFolder } from "./online/drive";
-import type { SharedWithMe } from "./online/drive";
+import {
+  connectGoogle,
+  connection,
+  enterFolder,
+  enterSpace,
+  pickerAvailable,
+  pickFiles,
+  sharedFileId,
+  sharedFolderId,
+  sharedFolders,
+  sharedWithMe,
+  type SharedFolder,
+  type SharedWithMe,
+} from "./online/drive";
 import {
   ConnectDriveOffer,
   DriveDialogs,
@@ -569,8 +580,9 @@ const SceneSwitcher = ({
     return nameOf(a)!.localeCompare(nameOf(b)!) || (a.item ? -1 : 1);
   };
   // this tab's scenes first, then one group per shared folder
+  own.sort(byName);
   const items: Entry[] = [
-    ...own.sort(byName),
+    ...own,
     ...folders.flatMap((folder) =>
       folder.scenes
         .filter((scene) => matchesFilter(scene.name, query, null))

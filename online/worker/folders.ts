@@ -235,11 +235,9 @@ const register = async (ctx: Ctx, env: FoldersEnv) => {
     .bind(folderId, session.sub, session.user.name ?? session.user.email, String(folder.data.name ?? "Kurviq"), token, new Date().toISOString())
     .run();
   await db.prepare("DELETE FROM shared_folder_members WHERE folder_id = ?").bind(folderId).run();
-  for (const member of members) {
-    await db // NOSONAR S9382: a handful of rows, written one after the other
-      .prepare("INSERT OR IGNORE INTO shared_folder_members (member, folder_id) VALUES (?, ?)")
-      .bind(await memberHash(env, member), folderId)
-      .run();
+  const hashes = await Promise.all(members.map((member) => memberHash(env, member)));
+  for (const hash of hashes) {
+    await db.prepare("INSERT OR IGNORE INTO shared_folder_members (member, folder_id) VALUES (?, ?)").bind(hash, folderId).run(); // NOSONAR S9382: a handful of rows, written one after the other
   }
   permissionCache.delete(folderId);
   ownerTokens.delete(folderId);

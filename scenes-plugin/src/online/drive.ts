@@ -690,6 +690,32 @@ const fetchFolderScenes = async (files: Map<string, DriveFile>) => {
   } while (pageToken);
 };
 
+/** a shared scene's space: its one file */
+const fetchSharedSpace = async (fileId: string, files: Map<string, DriveFile>) => {
+  const file = await fetchSharedFile(fileId);
+  if (!file) {
+    setConnection({ needsAccess: true });
+    throw notConnectedError();
+  }
+  setConnection({ needsAccess: false, lost: null });
+  readOnly = file.capabilities?.canEdit === false ? `${ownerName(file)} shared "${sceneNameOf(file) ?? file.name}" with you to view` : null;
+  const name = sceneNameOf(file);
+  if (name && isSceneName(name)) {
+    files.set(name, file);
+  }
+};
+
+/** the user's own Kurviq folder, or a shared folder (read-only for now) */
+const fetchFolderSpace = async (files: Map<string, DriveFile>) => {
+  await fetchFolderScenes(files);
+  if (sharedFolderId) {
+    const owner = [...files.values()][0];
+    readOnly = `${owner ? ownerName(owner) : "Its owner"} shared this folder with you: its scenes can be viewed in Kurviq (editing comes later)`;
+  } else {
+    registerShare().catch(() => {});
+  }
+};
+
 /** the scenes of this space (name -> file); a cached copy for a few seconds */
 const fetchScenes = async (force = false): Promise<Listing> => {
   if (listing && !force && Date.now() - listing.fetchedAt < 5_000) {
@@ -698,25 +724,9 @@ const fetchScenes = async (force = false): Promise<Listing> => {
   try {
     const files = new Map<string, DriveFile>();
     if (sharedFileId) {
-      const file = await fetchSharedFile(sharedFileId);
-      if (!file) {
-        setConnection({ needsAccess: true });
-        throw notConnectedError();
-      }
-      setConnection({ needsAccess: false, lost: null });
-      readOnly = file.capabilities?.canEdit === false ? `${ownerName(file)} shared "${sceneNameOf(file) ?? file.name}" with you to view` : null;
-      const name = sceneNameOf(file);
-      if (name && isSceneName(name)) {
-        files.set(name, file);
-      }
+      await fetchSharedSpace(sharedFileId, files);
     } else {
-      await fetchFolderScenes(files);
-      if (sharedFolderId) {
-        const owner = [...files.values()][0];
-        readOnly = `${owner ? ownerName(owner) : "Its owner"} shared this folder with you: its scenes can be viewed in Kurviq (editing comes later)`;
-      } else {
-        registerShare().catch(() => {});
-      }
+      await fetchFolderSpace(files);
     }
     listing = { files, fetchedAt: Date.now() };
     remote.online = true;
