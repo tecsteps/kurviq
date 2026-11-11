@@ -421,6 +421,32 @@ const extendProof = async (ctx: Ctx, fileId: string, old: Claims, tab: string) =
   return answer(ctx, 200, { proof: await seal(ctx.env, proof, PROOF), expiresAt: until, role: proof.role, extended: true });
 };
 
+/**
+ * A renewal's check with Drive: the person's access and the file, or the
+ * answer to give (Google unreachable: the proof is extended; a refusal ends
+ * the tab's access, no extension)
+ */
+const renewalAccess = async (ctx: Ctx, fileId: string, session: Session, revoke: () => Promise<unknown>, extend: () => Promise<Response>) => {
+  const access = await driveAccess(ctx, fileId, session);
+  if (access instanceof Response) {
+    if (access.status === 503) {
+      return extend();
+    }
+    // the folder isn't shared with them any more
+    await revoke();
+    return access;
+  }
+  const file = await getFile(ctx.env, access.token, fileId, FILE_FIELDS);
+  if (file.status !== 200) {
+    if (problemOf(file) === "unreachable") {
+      return extend();
+    }
+    await revoke();
+    return fileProblem(ctx, file);
+  }
+  return { access, file };
+};
+
 const renew = async (ctx: Ctx, fileId: string) => {
   const old = await unseal<Claims>(ctx.env, typeof ctx.body.proof === "string" ? ctx.body.proof : undefined, PROOF);
   const tab = typeof ctx.body.tab === "string" ? ctx.body.tab.slice(0, 64) : "";
@@ -437,24 +463,11 @@ const renew = async (ctx: Ctx, fileId: string) => {
   if (who instanceof Response) {
     return renewSignInFailure(ctx, fileId, old, tab, who, extend);
   }
-  const access = await driveAccess(ctx, fileId, who.session);
-  if (access instanceof Response) {
-    if (access.status === 503) {
-      return extend();
-    }
-    // the folder isn't shared with them any more: the access ends (no extension)
-    await toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab });
-    return access;
+  const checked = await renewalAccess(ctx, fileId, who.session, () => toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab }), extend);
+  if (checked instanceof Response) {
+    return checked;
   }
-  const file = await getFile(ctx.env, access.token, fileId, FILE_FIELDS);
-  if (file.status !== 200) {
-    if (problemOf(file) === "unreachable") {
-      return extend();
-    }
-    // a refusal ends the access (no extension)
-    await toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab });
-    return fileProblem(ctx, file);
-  }
+  const { access, file } = checked;
   const role = access.role ?? (file.data.capabilities?.canEdit ? "edit" : "read");
   const proof = await claimsOf(ctx, "proof", fileId, who.session, asSeen(file.data, access), role, old.keyId);
   const forDo: Claims = { ...proof, ...(role === "edit" ? { token: await sealedToken(ctx, fileId, who.session, access.refresh) } : {}) };
