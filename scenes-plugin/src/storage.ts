@@ -295,6 +295,26 @@ const movedAgentKey = (key: string, renames: Map<string, string>) => {
   return `baseline:${renames.get(key.slice("baseline:".length)) ?? key.slice("baseline:".length)}`;
 };
 
+type Store = ReturnType<typeof createStore>;
+
+/** one stored value, copied to another key / store (if there is one) */
+const copyEntry = async (key: string, to: string, fromStore: Store, toStore: Store) => {
+  const value = await get(key, fromStore);
+  if (value !== undefined) {
+    await set(to, value, toStore);
+  }
+};
+
+/** one agent store entry, into another space: a scene's baseline under its new name, checkpoint indexes merged */
+const moveAgentEntry = async (key: string, renames: Map<string, string>, fromAgent: Store, toAgent: Store) => {
+  if (key !== CHECKPOINT_INDEX) {
+    return copyEntry(key, movedAgentKey(key, renames), fromAgent, toAgent);
+  }
+  const known = (await get<Record<string, number>>(key, toAgent)) ?? {};
+  const moved = (await get<Record<string, number>>(key, fromAgent)) ?? {};
+  await set(key, { ...known, ...moved }, toAgent);
+};
+
 /**
  * Move the scenes of space `from` into space `to` (the tab is not using
  * either: it reloads afterwards). Scenes `to` has a name for already get a
@@ -321,22 +341,13 @@ export const moveSpaceData = async (from: string, to: string, keepSync: boolean)
   const { meta, renames } = mergeSpaceMeta(target, source, keepSync);
 
   for (const [name, renamed] of renames) {
-    const snapshot = await get(name, fromSnapshots); // NOSONAR S9382: one at a time on purpose (a snapshot can be many MB)
-    if (snapshot !== undefined) {
-      await set(renamed, snapshot, toSnapshots);
-    }
+    await copyEntry(name, renamed, fromSnapshots, toSnapshots); // NOSONAR S9382: one at a time on purpose (a snapshot can be many MB)
   }
 
   const fromAgent = agentStoreOf(from);
   const toAgent = agentStoreOf(to);
   for (const key of (await keys(fromAgent)).map(String)) {
-    const value = await get(key, fromAgent); // NOSONAR S9382: one at a time on purpose (a checkpoint can be many MB)
-    if (key === "checkpoint-index") {
-      const known = (await get<Record<string, number>>(key, toAgent)) ?? {};
-      await set(key, { ...known, ...value }, toAgent);
-    } else {
-      await set(movedAgentKey(key, renames), value, toAgent);
-    }
+    await moveAgentEntry(key, renames, fromAgent, toAgent); // NOSONAR S9382: one at a time on purpose (a checkpoint can be many MB)
   }
 
   saveMeta(meta, toKey);

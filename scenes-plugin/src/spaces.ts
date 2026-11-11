@@ -132,18 +132,15 @@ export const freeName = (name: string, taken: (name: string) => boolean) => {
  * The source's open scene becomes the open one: the user was looking at it.
  */
 export const mergeSpaceMeta = (target: ScenesMeta | null, source: ScenesMeta, keepSync: boolean) => {
-  const merged: ScenesMeta = target
-    ? { ...target, scenes: { ...target.scenes }, pendingDeletes: { ...target.pendingDeletes } }
-    : { ...source, scenes: {}, pendingDeletes: keepSync ? { ...source.pendingDeletes } : {}, current: null, baseline: null };
+  const merged = mergeBase(target, source, keepSync);
   const renames = new Map<string, string>();
   const taken = (name: string) => name in merged.scenes || name in merged.pendingDeletes;
   for (const [name, meta] of Object.entries(source.scenes)) {
-    if (name === UNTITLED) {
-      continue;
+    if (name !== UNTITLED) {
+      const to = freeName(name, taken);
+      merged.scenes[to] = keepSync && to === name ? { ...meta } : asLocalOnly(meta);
+      renames.set(name, to);
     }
-    const to = freeName(name, taken);
-    merged.scenes[to] = keepSync && to === name ? { ...meta } : asLocalOnly(meta);
-    renames.set(name, to);
   }
   const untitled = source.scenes[UNTITLED];
   if (untitled) {
@@ -157,4 +154,12 @@ export const mergeSpaceMeta = (target: ScenesMeta | null, source: ScenesMeta, ke
     merged.baseline = null;
   }
   return { meta: merged, renames };
+};
+
+/** what a merge starts from: a copy of `target`, or the source's settings without scenes */
+const mergeBase = (target: ScenesMeta | null, source: ScenesMeta, keepSync: boolean): ScenesMeta => {
+  if (target) {
+    return { ...target, scenes: { ...target.scenes }, pendingDeletes: { ...target.pendingDeletes } };
+  }
+  return { ...source, scenes: {}, pendingDeletes: keepSync ? { ...source.pendingDeletes } : {}, current: null, baseline: null };
 };
