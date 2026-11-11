@@ -22,7 +22,7 @@ import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from
 import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
 import { scenesController } from "./controller";
 import { liveSync } from "./online/liveSync";
-import { connection, claimPubName, linkAccessOf, listPermissions, loadPubName, pubLink, releasePubName, setLinkAccess, shareLink } from "./online/drive";
+import { connection, claimPubName, linkAccessOf, spaceAccount, listPermissions, loadPubName, pubLink, releasePubName, setLinkAccess, shareLink } from "./online/drive";
 import {
   editLocalScene,
   editOpenScene,
@@ -571,6 +571,8 @@ const status = () => {
     // fonts the user added (besides Excalidraw's own): usable by name as fontFamily
     customFonts: customFonts.list().map((font) => font.family),
     drive: driveStatus(sync),
+    // whose scenes this tab shows: each Google account has its own in the browser (null: scenes made signed out)
+    account: spaceAccount ?? connection.getState().user?.email ?? null,
     lastCheckedAt: sync.lastCheckedAt,
     // the health of this tab: what it is working on (an edit or picture running for minutes is stuck)
     busy: [...busy.values()].map(({ what, since }) => `${what} for ${Math.round((Date.now() - since) / 1000)} s`),
