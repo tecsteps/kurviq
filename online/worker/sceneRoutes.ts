@@ -64,7 +64,7 @@ const OUTAGE_GRACE_MS = 2 * 3_600_000;
 const WATCH_MS = 24 * 3_600_000;
 const FILE_FIELDS = "id,name,trashed,ownedByMe,headRevisionId,md5Checksum,modifiedTime,capabilities(canEdit),appProperties";
 
-type Ctx = {
+export type Ctx = {
   request: Request;
   env: SceneRoutesEnv;
   url: URL;
@@ -77,7 +77,7 @@ type Ctx = {
   touch?: string;
 };
 
-const answer = (ctx: Ctx, status: number, body: unknown) => {
+export const answer = (ctx: Ctx, status: number, body: unknown) => {
   const headers = new Headers({ "Content-Type": "application/json", "Cache-Control": "no-store" });
   ctx.cookies.forEach((value) => headers.append("Set-Cookie", value));
   if (ctx.local && ctx.origin) {
@@ -87,7 +87,7 @@ const answer = (ctx: Ctx, status: number, body: unknown) => {
   return new Response(JSON.stringify(body), { status, headers });
 };
 
-const fail = (ctx: Ctx, status: number, code: string, error: string) => answer(ctx, status, { error, code });
+export const fail = (ctx: Ctx, status: number, code: string, error: string) => answer(ctx, status, { error, code });
 
 const sceneStub = (env: SceneRoutesEnv, fileId: string) => env.SCENE.get(env.SCENE.idFromName(fileId));
 const accountStub = (env: SceneRoutesEnv, sub: string) => env.ACCOUNT.get(env.ACCOUNT.idFromName(sub));
@@ -107,7 +107,7 @@ const accountEpoch = async (env: SceneRoutesEnv, sub: string, touch?: string) =>
 };
 
 /** this site's pages, or the local install */
-const sameSite = (ctx: Ctx) =>
+export const sameSite = (ctx: Ctx) =>
   ctx.origin === ctx.url.origin || (devGate(ctx.env, ctx.request) && !!ctx.env.DEV_ORIGIN && ctx.origin === ctx.env.DEV_ORIGIN);
 
 /**
@@ -115,7 +115,7 @@ const sameSite = (ctx: Ctx) =>
  * `sub`, or the answer to give. A refreshed session goes back with the answer
  * (cookie, or `session` for the local install).
  */
-const signedIn = async (ctx: Ctx): Promise<{ session: Session; sealedLocal?: string } | Response> => {
+export const signedIn = async (ctx: Ctx): Promise<{ session: Session; sealedLocal?: string } | Response> => {
   const session = ctx.local ? await localSession(ctx.env, ctx.body.session, ctx.origin) : await cookieSession(ctx.request, ctx.env);
   if (!session) {
     return fail(ctx, 401, "signed-out", "Not signed in");

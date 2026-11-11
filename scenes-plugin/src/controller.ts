@@ -24,7 +24,7 @@ import { hashElementsVersion, hashString } from "@excalidraw/element";
 
 import { mergeFontLists, registerSceneFonts, withFonts } from "./fonts";
 import { scenesApi } from "./api";
-import { connection, driveScenes, setLiveWriters, sharedFileId } from "./online/drive";
+import { connection, driveScenes, setLiveWriters, sharedFileId, sharedFolderId } from "./online/drive";
 import { liveDifference } from "./online/liveMerge";
 import { liveSync } from "./online/liveSync";
 import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
@@ -1167,8 +1167,9 @@ class ScenesController {
     }
     const name = this.meta.current;
     const fileId = this.fileIdOf(name);
-    // signed in with Drive (also in a shared scene's space, where "signedIn" is about new scenes)
-    if (name === null || !fileId || !connection.isActive() || this.isLocalOnly(name) || this.meta.scenes[name]?.renamedFrom) {
+    // signed in with Drive (also in a shared scene's space, where "signedIn" is about new scenes);
+    // a shared folder's scenes are read through Kurviq's server, without live sync (for now)
+    if (name === null || !fileId || !connection.isActive() || sharedFolderId || this.isLocalOnly(name) || this.meta.scenes[name]?.renamedFrom) {
       liveSync.detachCanvas();
       return;
     }

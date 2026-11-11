@@ -1,5 +1,5 @@
 <h1>Privacy <span class="muted">/ Datenschutz</span></h1>
-<p class="muted">Last updated / Stand: 31 October 2026 · <a href="#de">Deutsche Fassung unten</a></p>
+<p class="muted">Last updated / Stand: 11 November 2026 · <a href="#de">Deutsche Fassung unten</a></p>
 
 <p><strong>In short:</strong> Kurviq has no user accounts and no tracking. Your drawings are stored in your browser and, if you
 sign in with Google, in your own Google Drive; on their way there they pass through our server, encrypted. We count usage only
@@ -29,7 +29,7 @@ email address, profile picture and account id, and access only to Drive files it
 (<code>drive.file</code>; <code>drive.install</code> adds "Open with Kurviq" in Drive). Two cookies are set, both strictly
 necessary (§25(2) No. 2 TDDDG): <code>kq_google</code>, encrypted, holds Google's sign-in so you stay signed in (400 days, renewed
 on use; the local install keeps it in its browser storage for 90 days instead), and <code>kq_oauth_state</code> protects the
-sign-in (1 hour). Our server only issues one-hour access tokens and stores none, except for live sync (below). Legal basis: Art.
+sign-in (1 hour). Our server only issues one-hour access tokens and stores none, except for live sync and shared folders (below). Legal basis: Art.
 6(1)(b) GDPR. "Sign out" ends it in this browser; <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>
 removes Kurviq's access altogether.</p>
 
@@ -60,6 +60,16 @@ to 30 days.</li>
 People you share with load the scene from Google with their own sign-in and, for live-synced scenes, connect to our server as
 above. To open a file shared with you, Kurviq may show Google's Picker (a script from Google LLC, USA). For scenes shared with
 "Anyone with the link", our server reads the file for viewers and Cloudflare caches it for one minute.</p>
+
+<h2>Shared folders (optional)</h2>
+<p>If you share your Kurviq folder in Google Drive, Kurviq can't open its files for the people you share it with by their own
+sign-in (it only reaches files it made for them). So our server opens the folder for them with your Google access: your Kurviq
+tells the server that the folder is shared; the server then keeps your Google refresh token, encrypted with a key outside the
+database, and a list of the people and domains the folder is shared with, as keyed hashes of their email addresses, plus your
+display name and the folder's name, which they see. For each request of someone you shared with, it checks with Google that the
+folder is still shared with them, and reads only that folder and its scenes for them. Retention: as long as the folder is shared,
+renewed while you use Kurviq, at most 90 days after your Kurviq last checked it; deleted when you stop sharing, sign out
+everywhere or remove Kurviq's access at Google. Legal basis: Art. 6(1)(b) GDPR.</p>
 
 <h2>Fonts from Google Fonts (optional)</h2>
 <p>When you add a Google font, our server fetches it from Google (cached by Cloudflare for a day), so Google doesn't see you.</p>
@@ -129,7 +139,7 @@ du damit öffnest (<code>drive.file</code>; <code>drive.install</code> ergänzt 
 gesetzt, beide unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG): <code>kq_google</code>, verschlüsselt, enthält die Anmeldung bei
 Google, damit du angemeldet bleibst (400 Tage, bei Nutzung verlängert; die lokale Installation bewahrt sie stattdessen 90 Tage im
 Browserspeicher auf), und <code>kq_oauth_state</code> sichert die Anmeldung ab (1 Stunde). Unser Server stellt nur einstündige
-Zugangstokens aus und speichert keine, außer für die Live-Synchronisierung (unten). Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.
+Zugangstokens aus und speichert keine, außer für die Live-Synchronisierung und geteilte Ordner (unten). Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.
 „Sign out" beendet die Anmeldung in diesem Browser; unter
 <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> entfernst du Kurviqs Zugriff ganz.</p>
 
@@ -161,6 +171,17 @@ Tage. Cloudflare kann gelöschte Daten bis zu 30 Tage lang wiederherstellen.</li
 und verbinden sich bei live synchronisierten Szenen wie oben mit unserem Server. Um eine mit dir geteilte Datei zu öffnen, zeigt
 Kurviq eventuell Googles Picker (ein Skript der Google LLC, USA). Bei Szenen für „Anyone with the link" liest unser Server die Datei
 für Betrachter, und Cloudflare hält sie eine Minute im Cache.</p>
+
+<h2>Geteilte Ordner (optional)</h2>
+<p>Wenn du deinen Kurviq-Ordner in Google Drive teilst, kann Kurviq dessen Dateien für die Personen, mit denen du teilst, nicht mit
+deren eigener Anmeldung öffnen (es erreicht nur Dateien, die es für sie angelegt hat). Deshalb öffnet unser Server den Ordner für
+sie mit deinem Google-Zugriff: Dein Kurviq meldet dem Server, dass der Ordner geteilt ist; der Server bewahrt dann dein
+Google-Refresh-Token auf, verschlüsselt mit einem Schlüssel außerhalb der Datenbank, und eine Liste der Personen und Domains, mit
+denen der Ordner geteilt ist, als mit einem geheimen Schlüssel gebildete Hashwerte ihrer E-Mail-Adressen, außerdem deinen Anzeigenamen und den Namen des
+Ordners, die sie sehen. Bei jeder Anfrage einer dieser Personen prüft er bei Google, dass der Ordner noch mit ihr geteilt ist, und
+liest für sie nur diesen Ordner und seine Szenen. Speicherdauer: solange der Ordner geteilt ist, verlängert, solange du Kurviq
+nutzt, höchstens 90 Tage nach der letzten Prüfung durch dein Kurviq; gelöscht, wenn du das Teilen beendest, „Sign out everywhere"
+nutzt oder Kurviqs Zugriff bei Google entfernst. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.</p>
 
 <h2>Schriften von Google Fonts (optional)</h2>
 <p>Fügst du eine Google-Schrift hinzu, holt unser Server sie bei Google (Cloudflare hält sie einen Tag im Cache); Google sieht dich

@@ -40,6 +40,7 @@ import {
   shareLink,
   showDriveShareDialog,
   sharedFileId,
+  sharedFolderId,
   signOutListeners,
   spaceAccount,
 } from "./drive";
@@ -253,7 +254,7 @@ export const startDrive = () => {
   signOutListeners.add(() => {
     if (spaceAccount) {
       switchOwnSpace("", null).catch((error) => console.error("[drive]", error));
-    } else if (sharedFileId) {
+    } else if (sharedFileId || sharedFolderId) {
       try {
         localStorage.removeItem(OWN_SPACE_KEY);
       } catch {}
@@ -273,13 +274,13 @@ export const startDrive = () => {
       return;
     }
     settledInSpace = true;
-    scenesController.setSignedIn(!!user && drive && !sharedFileId);
+    scenesController.setSignedIn(!!user && drive && !sharedFileId && !sharedFolderId);
     if (afterSignIn) {
       const what = afterSignIn;
       afterSignIn = null;
       if (user && !drive) {
         setSetup({ step: "nodrive" });
-      } else if (user && what === "connected" && !sharedFileId && !window.location.pathname.startsWith("/s/")) {
+      } else if (user && what === "connected" && !sharedFileId && !sharedFolderId && !window.location.pathname.startsWith("/s/")) {
         activateSync().then((candidates) => setSetup({ step: "done", candidates })).catch((error) => console.error("[drive]", error));
       }
     }
@@ -443,7 +444,7 @@ const confirmSignOut = () => {
 
 /** top of the Scenes sidebar: the Google Drive connection of this browser */
 export const DrivePanel = () => {
-  const { user, drive, error, needsAccess } = useConnection();
+  const { user, drive, error, needsAccess, lost } = useConnection();
   const { remote } = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
 
   if (user === undefined) {
@@ -501,6 +502,23 @@ export const DrivePanel = () => {
         <button type="button" className="scenes-link kq-left" onClick={() => disconnectGoogle()}>
           Sign out
         </button>
+      </section>
+    );
+  }
+  if (sharedFolderId) {
+    return (
+      <section className="kq-card">
+        <div className="kq-card__title">A folder shared with you</div>
+        <div className="kq-muted">
+          {lost ??
+            "These scenes are in someone's Kurviq folder, shared with you in Google Drive. You can view them here; editing them in Kurviq comes later."}
+        </div>
+        <div className="scenes-row">
+          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => leaveSharedScene()}>
+            Back to my scenes
+          </button>
+        </div>
+        <span className="kq-muted kq-left">as {user.email}</span>
       </section>
     );
   }

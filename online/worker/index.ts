@@ -3,6 +3,7 @@
 //   /auth/*          Sign in with Google (./auth.ts): stateless, encrypted cookie
 //   /scene/<fileId>/…  live sync of a Drive scene: tickets, WebSocket, proofs (./sceneRoutes.ts, ./scene.ts)
 //   /drive/notify    Drive's push notifications for live scenes
+//   /folders, /folders/…  shared folders through the owner's sign-in (./folders.ts)
 //   /live/<key>      WebSocket of a Kurviq tab to its agent pairing (./pairing.ts)
 //   /mcp             remote MCP for agents (scenes-mcp/tools.mjs), answered
 //                    through the pairing's open Kurviq tab; agents sign in
@@ -35,6 +36,8 @@ import { handleFakeGoogle } from "./fakeGoogle";
 import { handleFonts } from "./fonts";
 import { bearerPairing, handleOAuth, pairingName, unauthorized, uploadPairing, uploadToken } from "./oauth";
 import { handleSceneRoutes } from "./sceneRoutes";
+import { handleFolderRoutes } from "./folders";
+import type { FoldersEnv } from "./folders";
 import type { SceneRoutesEnv } from "./sceneRoutes";
 import { handlePublicApi, handleSharedPage } from "./shared";
 import { handlePubApi } from "./pubLinks";
@@ -55,7 +58,7 @@ export { AccountGuard } from "./account";
 export { FakeGoogle } from "./fakeGoogle";
 export { Stats } from "./stats";
 
-type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & PubEnv & {
+type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & FoldersEnv & StatsEnv & ContactEnv & PubEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -455,6 +458,13 @@ export default {
     if (sceneRoute) {
       routeStats(request, sceneRoute, env, ctx);
       return sceneRoute;
+    }
+
+    // shared folders through the owner's sign-in (docs/folders/CONCEPT.md)
+    const folderRoute = await handleFolderRoutes(request, env);
+    if (folderRoute) {
+      routeStats(request, folderRoute, env, ctx);
+      return folderRoute;
     }
 
     const auth = await handleAuth(request, env);

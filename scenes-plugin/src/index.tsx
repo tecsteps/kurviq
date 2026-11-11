@@ -11,7 +11,7 @@ import {
   pencilIcon,
   save,
 } from "@excalidraw/excalidraw/components/icons";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import clsx from "clsx";
 
@@ -31,7 +31,8 @@ import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar, setPresentation, usePresentation } from "./slidesUI";
-import { connectGoogle, connection, enterSpace, pickerAvailable, pickFiles, sharedFileId, sharedWithMe } from "./online/drive";
+import { connectGoogle, connection, enterFolder, enterSpace, pickerAvailable, pickFiles, sharedFileId, sharedFolderId, sharedFolders, sharedWithMe } from "./online/drive";
+import type { SharedFolder } from "./online/drive";
 import type { SharedWithMe } from "./online/drive";
 import {
   ConnectDriveOffer,
@@ -44,6 +45,7 @@ import {
   ReadOnlyGuard,
   SceneSharing,
   UpdateBanner,
+  leaveSharedScene,
   openShareDialog,
   startDrive,
 } from "./online/ui";
@@ -485,6 +487,24 @@ const useCloseOnOutsidePointer = (onClose: () => void) => {
  * Scenes others shared with the user are listed too; each opens in a space
  * of its own (the tab reloads into it).
  */
+/**
+ * The heading above a group of the scene list: this tab's scenes ("My scenes",
+ * or the shared folder it shows), then each folder shared with the user.
+ */
+const groupHeading = (folder: SharedFolder | undefined, previous: SharedFolder | undefined, index: number) => {
+  if (index > 0 && folder === previous) {
+    return null;
+  }
+  if (!folder) {
+    return <div className="scenes-switcher__group">{sharedFolderId ? "This shared folder" : "My scenes"}</div>;
+  }
+  return (
+    <div className="scenes-switcher__group">
+      {folder.name} <span className="scenes-switcher__group-owner">· shared by {folder.owner}</span>
+    </div>
+  );
+};
+
 const SceneSwitcher = ({
   onClose,
   onManageScene,
@@ -500,33 +520,46 @@ const SceneSwitcher = ({
   const [picked, setActive] = useState<number | null>(null);
   const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
   // scenes others shared with the user (not the one this tab shows)
-  const [others, setOthers] = useState<SharedWithMe[]>([]);
+  const [sharedScenes, setOthers] = useState<SharedWithMe[]>([]);
+  // folders others shared with the user (not the one this tab shows), each a group of its own
+  const [folders, setFolders] = useState<SharedFolder[]>([]);
   useEffect(() => {
     if (signedIn) {
       sharedWithMe().then(
         (found) => setOthers(found.filter((entry) => entry.fileId !== sharedFileId)),
         () => setOthers([]),
       );
+      sharedFolders().then(
+        (found) => setFolders(found.filter((folder) => folder.folderId !== sharedFolderId)),
+        () => setFolders([]),
+      );
     }
   }, [signedIn]);
+  // a scene of a shared folder is listed in its folder's group, not again on its own
+  const inFolders = new Set(folders.flatMap((folder) => folder.scenes.map((scene) => scene.fileId)));
+  const others = sharedScenes.filter((shared) => !inFolders.has(shared.fileId));
 
   useCloseOnOutsidePointer(onClose);
 
   const needle = query.trim().toLowerCase();
-  type Entry = { item: SceneListItem; owner: string | null } | { item?: undefined; owner: string; name: string; fileId: string };
-  const items: Entry[] = [
+  type Entry =
+    | { item: SceneListItem; owner: string | null; folder?: undefined }
+    | { item?: undefined; owner: string; name: string; fileId: string; folder?: SharedFolder };
+  const own: Entry[] = [
     ...list.filter((item) => matchesFilter(item.name, query, current)).map((item) => ({ item, owner: null })),
     ...others
       .filter((shared) => matchesFilter(shared.name, query, null))
       .map((shared) => ({ owner: shared.owner, name: shared.name, fileId: shared.fileId })),
   ];
+  const folderScenes = folders.flatMap((folder) => folder.scenes.map((scene) => ({ folder, scene })));
   // the filter stays when another scene is opened: say what it hides, or the scenes look gone
   const hidden =
     list.length - list.filter((item) => matchesFilter(item.name, query, current)).length +
-    others.length - others.filter((shared) => matchesFilter(shared.name, query, null)).length;
+    others.length - others.filter((shared) => matchesFilter(shared.name, query, null)).length +
+    folderScenes.length - folderScenes.filter(({ scene }) => matchesFilter(scene.name, query, null)).length;
   const nameOf = (entry: Entry) => (entry.item ? entry.item.name : entry.name);
-  // one list, by name (Untitled first), each scene with its space when there are several
-  items.sort((a, b) => {
+  // by name (Untitled first), each scene with its space when there are several
+  const byName = (a: Entry, b: Entry) => {
     if (nameOf(a) === null) {
       return -1;
     }
@@ -534,8 +567,18 @@ const SceneSwitcher = ({
       return 1;
     }
     return nameOf(a)!.localeCompare(nameOf(b)!) || (a.item ? -1 : 1);
-  });
+  };
+  // this tab's scenes first, then one group per shared folder
+  const items: Entry[] = [
+    ...own.sort(byName),
+    ...folders.flatMap((folder) =>
+      folder.scenes
+        .filter((scene) => matchesFilter(scene.name, query, null))
+        .map((scene): Entry => ({ owner: folder.owner, name: scene.name, fileId: scene.fileId, folder })),
+    ),
+  ];
   const showOwner = others.length > 0;
+  const grouped = folders.length > 0 || !!sharedFolderId;
   // "create" only when the text matches no scene (a sticky filter such as a
   // customer name shouldn't offer itself as a new scene every time)
   const canCreate =
@@ -552,7 +595,11 @@ const SceneSwitcher = ({
     onClose();
     if (index < items.length) {
       const entry = items[index];
-      if (!entry.item) {
+      if (entry.folder) {
+        // a scene of a shared folder: the tab switches into the folder's space and opens it
+        const { folder, name } = entry;
+        scenesController.leaveForReload().then(() => enterFolder(folder.folderId, name)).catch(ignore);
+      } else if (!entry.item) {
         // a scene someone shared: the tab switches into its space and opens it
         const { fileId, name } = entry;
         scenesController.leaveForReload().then(() => enterSpace(fileId, `/s/${fileId}/${encodeURIComponent(name)}`)).catch(ignore);
@@ -621,13 +668,15 @@ const SceneSwitcher = ({
         {items.map((entry, index) => {
           const { item } = entry;
           const isCurrent = !!item && item.name === current;
+          const heading = grouped ? groupHeading(entry.folder, items[index - 1]?.folder, index) : null;
           return (
+            <Fragment key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `shared\u0000${entry.fileId}`}>
+            {heading}
             <div
               className={clsx("scenes-switcher__row", {
                 "scenes-switcher__row--current": isCurrent,
                 "scenes-switcher__row--active": index === active,
               })}
-              key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `shared\u0000${entry.fileId}`}
               onMouseEnter={() => setActive(index)}
             >
               <button
@@ -638,7 +687,7 @@ const SceneSwitcher = ({
                 onClick={() => choose(index)}
               >
                 <span className="scenes-switcher__name">{nameOf(entry) ?? UNTITLED_LABEL}</span>
-                {showOwner && entry.owner && (
+                {showOwner && entry.owner && !entry.folder && (
                   <QuickTip
                     tip={`Shared with you by ${entry.owner}: opening it switches this tab to it`}
                     className="scenes-switcher__owner scenes-switcher__owner--other"
@@ -680,6 +729,7 @@ const SceneSwitcher = ({
                 )}
               </span>
             </div>
+            </Fragment>
           );
         })}
         {canCreate && (
@@ -734,6 +784,18 @@ const SceneSwitcher = ({
             <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Shared with you…
           </button>
         </QuickTip>
+      )}
+      {sharedFolderId && (
+        <button
+          type="button"
+          className="scenes-switcher__manage"
+          onClick={() => {
+            onClose();
+            leaveSharedScene().catch(ignore);
+          }}
+        >
+          <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Back to my scenes
+        </button>
       )}
       <button type="button" className="scenes-switcher__manage" onClick={onDrive}>
         <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Google Drive…

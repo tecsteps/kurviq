@@ -49,6 +49,14 @@ const IS_LOCAL_INSTALL = AUTH_BASE !== "";
 /** the space of a scene someone shared: "f:<fileId>" (see ../storage.ts) */
 export const fileSpace = (fileId: string) => `f:${fileId}`;
 export const sharedFileId = currentSpace.startsWith("f:") ? currentSpace.slice(2) : null;
+/**
+ * The space of a folder someone shared ("d:<folderId>"): Kurviq can't reach
+ * its files with this person's own Drive access (drive.file), so every Drive
+ * call goes through Kurviq's server, made with the owner's sign-in
+ * (online/worker/folders.ts). Read-only for now.
+ */
+export const folderSpace = (folderId: string) => `d:${folderId}`;
+export const sharedFolderId = currentSpace.startsWith("d:") ? currentSpace.slice(2) : null;
 
 // -----------------------------------------------------------------------------
 // connection: who is signed in (cookie, via the Worker)
@@ -87,7 +95,7 @@ export const spaceAccount = spaceAccountOf(currentSpace);
  * those scenes are not this account's. The tab moves to the account's own
  * space (online/ui.tsx). A shared scene's space works with any account.
  */
-export const otherAccount = () => !sharedFileId && !!state.user && accountKey(state.user.email) !== spaceAccount;
+export const otherAccount = () => !sharedFileId && !sharedFolderId && !!state.user && accountKey(state.user.email) !== spaceAccount;
 
 export const connection = {
   subscribe: (listener: () => void) => {
@@ -414,6 +422,9 @@ const drive = async (
     return body as BodyInit;
   };
 
+  if (sharedFolderId) {
+    return folderDrive(sharedFolderId, url, method, raw);
+  }
   for (let attempt = 0; ; attempt++) {
     const value = await getToken();
     if (!value || otherAccount()) {
@@ -442,6 +453,47 @@ const drive = async (
     checkDriveResponse(res, data);
     return { status: res.status, data, text };
   }
+};
+
+/** why a shared folder can't be reached, as the user reads it */
+const folderLost = (code: string | undefined) =>
+  code === "no-access" ? "This folder is not shared with you any more" : "This folder is not shared any more (its owner stopped sharing it)";
+
+/**
+ * A Drive call in a shared folder's space: through Kurviq's server, which
+ * makes it with the owner's access after checking it (reads of this folder
+ * and its scenes only).
+ */
+const folderDrive = async (folderId: string, url: string, method: string, raw: boolean): Promise<DriveResponse> => {
+  if (!(await getToken())) {
+    throw notConnectedError();
+  }
+  if (method !== "GET") {
+    throw readOnlyError(readOnly ?? "this shared folder can only be viewed in Kurviq for now");
+  }
+  if (url.startsWith("https://") || url.startsWith(UPLOAD)) {
+    throw httpError(400, "Not available in a shared folder");
+  }
+  let answer: { status: number; text: string; role?: string };
+  try {
+    answer = await authPost(`/folders/${folderId}/drive`, { method, path: url });
+  } catch (error: any) {
+    if (error.code === "not-shared" || error.code === "no-access") {
+      setConnection({ lost: folderLost(error.code) });
+      throw notConnectedError();
+    }
+    throw error;
+  }
+  setConnection({ lost: null });
+  let data: any = null;
+  if (!raw || answer.status !== 200) {
+    try {
+      data = answer.text ? JSON.parse(answer.text) : null;
+    } catch {
+      data = null;
+    }
+  }
+  return { status: answer.status, data, text: answer.text };
 };
 
 const fail = (res: DriveResponse, what: string): never => {
@@ -577,6 +629,9 @@ const findFolder = async (): Promise<string> => {
 };
 
 const folderId = () => {
+  if (sharedFolderId) {
+    return Promise.resolve(sharedFolderId);
+  }
   folderRequest ??= (
     navigator.locks ? (navigator.locks.request("kurviq-drive-folder", findFolder) as unknown as Promise<string>) : findFolder()
   ).catch((error) => {
@@ -656,6 +711,12 @@ const fetchScenes = async (force = false): Promise<Listing> => {
       }
     } else {
       await fetchFolderScenes(files);
+      if (sharedFolderId) {
+        const owner = [...files.values()][0];
+        readOnly = `${owner ? ownerName(owner) : "Its owner"} shared this folder with you: its scenes can be viewed in Kurviq (editing comes later)`;
+      } else {
+        registerShare().catch(() => {});
+      }
     }
     listing = { files, fetchedAt: Date.now() };
     remote.online = true;
@@ -777,7 +838,7 @@ const markAgentVersion = async (file: DriveFile, revision: string) => {
 // their Durable Object (online/liveSync.ts registers these)
 // -----------------------------------------------------------------------------
 
-export const isLiveFile = (file: { appProperties?: Record<string, string> }) => file.appProperties?.kurviqSync === LIVE_MARKER;
+export const isLiveFile = (file: { appProperties?: Record<string, string> }) => !sharedFolderId && file.appProperties?.kurviqSync === LIVE_MARKER;
 
 export type LiveWrite = { fileId: string; name: string; json: string; baseMd5?: string; source?: string };
 let liveWriter: ((write: LiveWrite) => Promise<{ md5: string; driveRevision: string | null; changed: boolean }>) | null = null;
@@ -1317,6 +1378,75 @@ export const sharedWithMe = (): Promise<SharedWithMe[]> => {
   });
   sharedList = { at: Date.now(), value };
   return value;
+};
+
+// -----------------------------------------------------------------------------
+// shared folders (docs/folders/CONCEPT.md): a Kurviq folder its owner shared in
+// Google Drive. The owner's Kurviq tells Kurviq's server (registerShare);
+// everyone it is shared with finds it (sharedFolders) and opens it in its own
+// space, read through the server with the owner's sign-in.
+// -----------------------------------------------------------------------------
+
+/** the owner's Kurviq asks Drive whether its folder is shared this often (and renews the server's copy of its sign-in) */
+const SHARE_CHECK_MS = 30 * 60_000;
+const shareKey = () => `kurviq-folder-share:${state.user?.email ?? ""}`;
+
+/**
+ * The owner's side: when the Kurviq folder is shared in Drive (or was, and
+ * isn't any more), Kurviq's server is told; it reads the folder's sharing
+ * itself and keeps (or forgets) the owner's sign-in for it.
+ */
+const registerShare = async () => {
+  if (sharedFileId || sharedFolderId || !state.user || !state.drive) {
+    return;
+  }
+  let known: { at: number; shared: boolean } | null = null;
+  try {
+    known = JSON.parse(localStorage.getItem(shareKey()) || "null");
+  } catch {}
+  if (known && Date.now() - known.at < SHARE_CHECK_MS) {
+    return;
+  }
+  const folder = await folderId();
+  const res = await drive(`/files/${folder}?fields=id,shared`);
+  if (res.status !== 200) {
+    return;
+  }
+  let shared = res.data?.shared === true;
+  // not shared and known not to be: nothing to tell (a browser that doesn't know asks once,
+  // so a share that ended while it was registered from another browser is forgotten too)
+  if (shared || known?.shared !== false) {
+    shared = (await authPost("/folders/register", { folderId: folder })).shared === true;
+  }
+  try {
+    localStorage.setItem(shareKey(), JSON.stringify({ at: Date.now(), shared }));
+  } catch {}
+};
+
+export type SharedFolderScene = { name: string; fileId: string; modifiedTime: string | null };
+export type SharedFolder = { folderId: string; name: string; owner: string; role: "writer" | "reader"; scenes: SharedFolderScene[] };
+
+let folderList: { at: number; value: Promise<SharedFolder[]> } | null = null;
+
+/** the folders others shared with this user, with their scenes (asked again after a minute) */
+export const sharedFolders = (): Promise<SharedFolder[]> => {
+  if (folderList && Date.now() - folderList.at < 60_000) {
+    return folderList.value;
+  }
+  const value = authPost("/folders").then((answer) => (Array.isArray(answer.folders) ? (answer.folders as SharedFolder[]) : []));
+  value.catch(() => {
+    folderList = null;
+  });
+  folderList = { at: Date.now(), value };
+  return value;
+};
+
+/** open a scene of a shared folder in the folder's space (the page reloads into it) */
+export const enterFolder = (folderId: string, name: string | null) => {
+  try {
+    localStorage.setItem(SPACE_KEY, folderSpace(folderId));
+  } catch {}
+  window.location.href = name ? `/${encodeURIComponent(name)}` : "/";
 };
 
 /** open a scene in its own space (the page reloads into it); null = the user's own scenes */

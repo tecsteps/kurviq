@@ -44,6 +44,7 @@ describe("spaces: which scenes a tab works with", () => {
 
   it("picks an open shared scene first, then the account's own scenes, else the signed-out ones", () => {
     expect(pickSpace("f:abcdefghijklmnop", "a:x@example.com")).toBe("f:abcdefghijklmnop");
+    expect(pickSpace("d:abcdefghijklmnop", "a:x@example.com")).toBe("d:abcdefghijklmnop");
     expect(pickSpace(null, "a:x@example.com")).toBe("a:x@example.com");
     expect(pickSpace(null, null)).toBe("");
     // invalid values (old repository spaces, garbage) count as unset
@@ -61,6 +62,8 @@ describe("spaces: which scenes a tab works with", () => {
     expect(ownSpaceTarget("", null, null)).toBeNull();
     // a shared scene's space works with any account
     expect(ownSpaceTarget("f:abcdefghijklmnop", "b@example.com", null)).toBeNull();
+    // and so does a shared folder's
+    expect(ownSpaceTarget("d:abcdefghijklmnop", "b@example.com", null)).toBeNull();
   });
 
   it("sends the scenes of before spaces per account to their account, whoever signs in", () => {

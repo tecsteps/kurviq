@@ -5,13 +5,15 @@
 //                   Drive): accounts never see each other's scenes, even in
 //                   one browser
 //  - "f:<fileId>"   a scene someone shared (one Drive file)
+//  - "d:<folderId>" a folder someone shared (their Kurviq folder, read and
+//                   written through Kurviq's server with the owner's sign-in)
 // Pure helpers only (no storage access), so they can be tested.
 
 import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
 
 import type { SceneMeta, ScenesMeta } from "./storage";
 
-/** the space of a shared scene ("f:<fileId>"), set while one is open */
+/** the space of a shared scene ("f:<fileId>") or folder ("d:<folderId>"), set while one is open */
 export const SPACE_KEY = "kurviq-space";
 /** the space of the user's own scenes ("a:<email>"; none = signed out) */
 export const OWN_SPACE_KEY = "kurviq-own-space";
@@ -21,7 +23,7 @@ export const LEGACY_ACCOUNT_KEY = "kurviq-drive-account";
 /** key used for the scene that has not been named / saved yet (also in ./storage.ts) */
 const UNTITLED = "\u0000untitled";
 
-const SHARED_RE = /^f:[\w-]{10,200}$/;
+const SHARED_RE = /^[fd]:[\w-]{10,200}$/;
 const ACCOUNT_RE = /^a:[^\s@/]{1,200}@[^\s@/]{1,200}$/;
 
 /** an account's id in spaces: its email, lowercased */
@@ -30,8 +32,11 @@ export const accountKey = (email: string) => email.trim().toLowerCase();
 /** the space of an account's own scenes */
 export const ownSpaceOf = (email: string) => `a:${accountKey(email)}`;
 
-/** the account a space belongs to (null: the signed-out space or a shared scene's) */
+/** the account a space belongs to (null: the signed-out space or a shared scene's / folder's) */
 export const spaceAccountOf = (space: string) => (ACCOUNT_RE.test(space) ? space.slice(2) : null);
+
+/** a shared scene's or folder's space (it works with whoever is signed in) */
+export const isSharedSpace = (space: string) => space.startsWith("f:") || space.startsWith("d:");
 
 /** suffix of a space's storage keys */
 export const spaceSuffix = (space: string) => (space ? `@${space}` : "");
@@ -56,10 +61,10 @@ export const pickSpace = (shared: string | null, own: string | null) => {
  * Signed in: that account's space. Signed out (or the sign-in expired): the
  * tab stays, unless the signed-out space still holds an account's scenes from
  * before spaces per account (legacy), which go to that account's space. A
- * shared scene's space never moves (it is about one file, not an account).
+ * shared scene's or folder's space never moves (it is not an account's).
  */
 export const ownSpaceTarget = (space: string, email: string | null, legacy: string | null): string | null => {
-  if (space.startsWith("f:")) {
+  if (isSharedSpace(space)) {
     return null;
   }
   if (email) {

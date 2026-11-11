@@ -1,7 +1,10 @@
 # Scene folders: concept
 
-Status: decided with the owner on 2026-11-10, **not implemented yet**. Start
-with the feasibility check below before building anything.
+Status: decided with the owner on 2026-11-10, **not implemented yet**.
+Shared folders: route chosen 2026-11-11 (see "Shared folders through the
+owner's sign-in"); phase 1 (see a shared folder, open its scenes read-only)
+built 2026-11-11: `online/worker/folders.ts`, `online/worker/folderRules.ts`,
+e2e `scenes-plugin/test/e2e/shared-folder.mjs`.
 
 ## Why
 
@@ -60,6 +63,86 @@ else shared with them, including scenes added to it later?
   each was opened once (Picker multi-select of the folder's files, or the
   share mail's links), and newly added scenes need a new pick. Weaker than the
   decision; go back to the owner before building it.
+
+## Shared folders through the owner's sign-in (route chosen 2026-11-11)
+
+The feasibility question is settled the other way round: the recipient's
+Kurviq gets no `drive.file` access to files it did not create, however the
+folder is shared (tried 2026-11-11: the owner shared the whole Kurviq folder
+in Google Drive; the recipient's Drive shows all scenes, the recipient's
+Kurviq none). Full `drive` access (restricted scope, yearly security
+assessment, "all your files" consent) is rejected. Instead **Kurviq's server
+works on the shared folder with the owner's sign-in**, for the people Drive
+lists as having access. Behaviour for the recipient: like Google Drive.
+
+### What the user sees
+
+- The scene list: **"My scenes"** (the own Kurviq folder) first, then **one
+  group per folder shared with you**, possibly several, from several people:
+  "<folder name> · shared by <owner>", with all its scenes. New scenes in it
+  show up by themselves, removed access makes the group disappear.
+- Opening a scene of a shared folder switches the tab to that folder (its own
+  space, `d:<folderId>`, like a shared scene's space today): the list then
+  shows that folder's scenes as its own, with "Back to my scenes". Edit /
+  view as Drive allows (Editor / Viewer on the folder).
+- Editors can also create, rename and delete scenes in a shared folder (as in
+  Drive). The owner sees their changes in their own Kurviq like any other.
+- Sharing works the way the owner already did it: **share the folder in
+  Google Drive** (or later from Kurviq's folder Share… dialog). No extra step
+  in Kurviq except that the owner opens Kurviq once after sharing (see below).
+
+### How it works
+
+1. **Owner's side (registration).** The owner's Kurviq reads the permissions
+   of its own Kurviq folder (allowed: Kurviq created it) when it lists its
+   scenes, at most every few minutes. If people besides the owner have access,
+   it tells the Worker (`POST /folders/register`, with the sign-in cookie /
+   local session). The Worker stores, per shared folder: folder id, owner
+   (sub, name), the owner's refresh token **sealed** (TOKEN_KEY, like live
+   sync's author tokens), and the members as keyed hashes of their emails
+   with their role. Unshared again (only the owner left): the entry and the
+   token are deleted.
+2. **Recipient's side (discovery).** The recipient's Kurviq asks
+   `GET /folders` (signed in): the Worker looks up the folders whose member
+   hashes contain the recipient's email and answers name, owner, role.
+3. **Access check, every request.** Before anything is read or written for a
+   recipient, the Worker re-reads the folder's permissions with the owner's
+   token (cached a few minutes): the recipient's email must be there (user
+   permission; domain permission matching the email's domain), role from it.
+   Removing someone in Drive cuts them off within minutes; the owner signing
+   out everywhere, revoking Kurviq or deleting the folder ends the whole share.
+4. **Reading and writing.** The recipient's Kurviq never calls Drive for a
+   shared folder: list, read, save (with the version it is based on, like
+   today's conditional upload), create, rename and delete go through the
+   Worker (`/folders/<id>/…`), which calls Drive with the owner's token.
+   Live sync of a scene in a shared folder: the scene's Durable Object saves
+   recipients' changes with the owner's access (tickets checked as in 3).
+5. **Attribution.** Drive records the owner's account as the one who changed
+   a file (the app acts as the owner). Kurviq's own history and live sync keep
+   the real author (name / pseudonym as today).
+
+### Rules
+
+- Only folders Kurviq created (the Kurviq folder; later the subfolders of
+  this concept) can be shared this way. Group permissions in Drive can't be
+  resolved by Kurviq: share with people (emails) or a whole domain.
+- The sealed owner token lives as long as the folder is shared (not just until
+  a save, unlike live sync's author tokens). It is used only for that folder's
+  files and permissions. `/privacy` says so.
+- The owner must open Kurviq after sharing (registration runs in the owner's
+  browser). Until then, the recipient's list shows nothing for that folder.
+- Nothing about a recipient is stored except the keyed hash of their email in
+  the folder's member list.
+
+### Phases
+
+1. Worker: folder registry (D1 table `shared_folders`), registration from the
+   owner's list refresh, discovery, access check, read-only list + read.
+   Recipient: shared folder groups in the list, open a scene read-only.
+2. Writing: save / create / rename / delete through the Worker; live sync with
+   the owner's access for scenes in shared folders.
+3. Agents (MCP): shared folders in `list_scenes` / `app_status`; edits through
+   the tab as today.
 
 ## Design notes
 
