@@ -750,8 +750,9 @@ const fetchSharedSpace = async (fileId: string, files: Map<string, DriveFile>) =
 const fetchFolderSpace = async (files: Map<string, DriveFile>) => {
   await fetchFolderScenes(files);
   if (sharedFolderId) {
-    const owner = [...files.values()][0];
-    readOnly = folderRole === "reader" ? `${owner ? ownerName(owner) : "Its owner"} shared this folder with you to view` : null;
+    const first = [...files.values()][0];
+    const owner = first ? ownerName(first) : "Its owner";
+    readOnly = folderRole === "reader" ? `${owner} shared this folder with you to view` : null;
   } else {
     registerShare().catch(() => {});
   }

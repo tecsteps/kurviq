@@ -494,7 +494,7 @@ export const handleFolderRoutes = async (request: Request, env: FoldersEnv): Pro
     return fail(ctx, 503, "not-configured", "Shared folders are not configured on this server");
   }
   // a Drive call may carry a whole scene; everything else is small
-  const text = await readLimited(request.body, /\/drive$/.test(url.pathname) ? DRIVE_BODY_BYTES : BODY_BYTES);
+  const text = await readLimited(request.body, url.pathname.endsWith("/drive") ? DRIVE_BODY_BYTES : BODY_BYTES);
   if (text === null) {
     return fail(ctx, 413, "too-big", "Request too big");
   }

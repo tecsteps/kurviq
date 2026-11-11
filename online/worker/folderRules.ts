@@ -240,33 +240,80 @@ const writeParams = (search: string, uploadType: string | null): URLSearchParams
 export const isSceneFileName = (name: unknown) =>
   typeof name === "string" && name.endsWith(EXTENSION) && isSceneName(name.slice(0, -EXTENSION.length));
 
+/** an agent version's mark: only Kurviq's own properties, short texts */
+const agentProperties = (value: unknown) => {
+  const properties = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : [];
+  return properties.length > 0 && properties.every(([name, text]) => AGENT_PROPERTIES.has(name) && typeof text === "string" && text.length <= 200);
+};
+
+/** why one metadata field can't be written (null: it can) */
+const fieldProblem = (key: string, value: unknown) => {
+  switch (key) {
+    case "name":
+      return isSceneFileName(value) ? null : "not a scene name";
+    case "trashed":
+      return typeof value === "boolean" ? null : "trashed must be true or false";
+    case "appProperties":
+      return agentProperties(value) ? null : "properties not allowed";
+    default:
+      return `field not allowed: ${key}`;
+  }
+};
+
 /** a metadata change Kurviq makes: rename, (un)trash, an agent version's mark; nothing else */
 export const checkMetadata = (metadata: unknown): { metadata: Record<string, unknown> } | Refusal => {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return { refused: "metadata missing" };
-  }
-  const entries = Object.entries(metadata as Record<string, unknown>);
+  const entries = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? Object.entries(metadata) : [];
   if (!entries.length) {
     return { refused: "metadata missing" };
   }
   for (const [key, value] of entries) {
-    if (key === "name" && !isSceneFileName(value)) {
-      return { refused: "not a scene name" };
-    }
-    if (key === "trashed" && typeof value !== "boolean") {
-      return { refused: "trashed must be true or false" };
-    }
-    if (key === "appProperties") {
-      const properties = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : null;
-      if (!properties?.length || properties.some(([name, text]) => !AGENT_PROPERTIES.has(name) || typeof text !== "string" || text.length > 200)) {
-        return { refused: "properties not allowed" };
-      }
-    }
-    if (!["name", "trashed", "appProperties"].includes(key)) {
-      return { refused: `field not allowed: ${key}` };
+    const problem = fieldProblem(key, value);
+    if (problem) {
+      return { refused: problem };
     }
   }
   return { metadata: metadata as Record<string, unknown> };
+};
+
+/** a write to Drive's upload address: a scene's new content, or a new scene */
+const classifyUpload = (method: string, parts: string[], search: string): WriteCall | Refusal => {
+  const params = writeParams(search, method === "POST" ? "multipart" : "media");
+  if ("refused" in params) {
+    return params;
+  }
+  if (method === "POST" && parts.length === 1) {
+    return { kind: "create", search: params.toString() };
+  }
+  if (method === "PATCH" && parts.length === 2) {
+    return { kind: "content", fileId: parts[1], search: params.toString() };
+  }
+  return { refused: "call not allowed" };
+};
+
+/** a revision kept for good (or let go again): nothing but keepForever */
+const classifyKeep = (fileId: string, revisionId: string, json: unknown): WriteCall | Refusal => {
+  const body = json as { keepForever?: unknown } | null;
+  if (!body || typeof body.keepForever !== "boolean" || Object.keys(body).length !== 1) {
+    return { refused: "only keepForever" };
+  }
+  return { kind: "keep", fileId, revisionId, keepForever: body.keepForever };
+};
+
+/** a metadata write (PATCH on Drive's API address): a file's metadata or a revision's */
+const classifyMetadata = (parts: string[], search: string, json: unknown): WriteCall | Refusal => {
+  const [, fileId, sub, revisionId] = parts;
+  const params = writeParams(search, null);
+  if ("refused" in params) {
+    return params;
+  }
+  if (parts.length === 2) {
+    const checked = checkMetadata(json);
+    return "refused" in checked ? checked : { kind: "metadata", fileId, search: params.toString(), metadata: checked.metadata };
+  }
+  if (sub === "revisions" && parts.length === 4 && REVISION_RE.test(revisionId)) {
+    return classifyKeep(fileId, revisionId, json);
+  }
+  return { refused: "call not allowed" };
 };
 
 /**
@@ -281,39 +328,13 @@ export const classifyWrite = (method: string, target: string, path: string, json
   if (parts[0] !== "files" || (parts[1] !== undefined && !ID_RE.test(parts[1]))) {
     return { refused: "call not allowed" };
   }
-  const [, fileId, sub, revisionId] = parts;
   if (target === "upload") {
-    const params = writeParams(search, method === "POST" ? "multipart" : "media");
-    if ("refused" in params) {
-      return params;
-    }
-    if (method === "POST" && parts.length === 1) {
-      return { kind: "create", search: params.toString() };
-    }
-    if (method === "PATCH" && parts.length === 2) {
-      return { kind: "content", fileId, search: params.toString() };
-    }
+    return classifyUpload(method, parts, search);
+  }
+  if (target !== "api" || method !== "PATCH" || parts.length < 2) {
     return { refused: "call not allowed" };
   }
-  if (target !== "api" || method !== "PATCH" || !fileId) {
-    return { refused: "call not allowed" };
-  }
-  const params = writeParams(search, null);
-  if ("refused" in params) {
-    return params;
-  }
-  if (parts.length === 2) {
-    const checked = checkMetadata(json);
-    return "refused" in checked ? checked : { kind: "metadata", fileId, search: params.toString(), metadata: checked.metadata };
-  }
-  if (sub === "revisions" && parts.length === 4 && REVISION_RE.test(revisionId)) {
-    const body = json as { keepForever?: unknown } | null;
-    if (!body || typeof body.keepForever !== "boolean" || Object.keys(body).length !== 1) {
-      return { refused: "only keepForever" };
-    }
-    return { kind: "keep", fileId, revisionId, keepForever: body.keepForever };
-  }
-  return { refused: "call not allowed" };
+  return classifyMetadata(parts, search, json);
 };
 
 /**
@@ -363,8 +384,10 @@ export const writeUrl = (api: string, upload: string, call: WriteCall) => {
       return `${upload}/files/${call.fileId}?${call.search}`;
     case "create":
       return `${upload}/files?${call.search}`;
-    case "metadata":
-      return `${api}/files/${call.fileId}${call.search ? `?${call.search}` : ""}`;
+    case "metadata": {
+      const query = call.search ? "?" + call.search : "";
+      return `${api}/files/${call.fileId}${query}`;
+    }
     default:
       return `${api}/files/${call.fileId}/revisions/${call.revisionId}`;
   }
