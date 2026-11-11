@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { asRecipient, callUrl, classifyRead, listQuery, lookupKeys, memberKeys, roleFor } from "../../online/worker/folderRules";
+import {
+  asRecipient,
+  callUrl,
+  classifyRead,
+  classifyWrite,
+  createBody,
+  listQuery,
+  lookupKeys,
+  memberKeys,
+  parseCreate,
+  roleFor,
+  writeUrl,
+} from "../../online/worker/folderRules";
 
 const FOLDER = "folder0123456789";
 const FILE = "file0123456789ab";
@@ -88,5 +100,62 @@ describe("shared folders: which Drive calls pass", () => {
       nextPageToken: "x",
     });
     expect(asRecipient({ id: FILE, name: "a" }, "reader")).toEqual({ id: FILE, name: "a" });
+  });
+});
+
+describe("shared folders: which writes pass", () => {
+  it("lets Kurviq's own writes through: content, new scene, rename, bin, agent mark, keep a version", () => {
+    expect(classifyWrite("PATCH", "upload", `/files/${FILE}?uploadType=media&fields=id,md5Checksum&supportsAllDrives=true`)).toMatchObject({ kind: "content", fileId: FILE });
+    expect(classifyWrite("POST", "upload", "/files?uploadType=multipart&fields=id")).toMatchObject({ kind: "create" });
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}?fields=id&supportsAllDrives=true`, { name: "Plan 2.excalidraw" })).toMatchObject({ kind: "metadata", metadata: { name: "Plan 2.excalidraw" } });
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}?fields=id`, { trashed: true })).toMatchObject({ kind: "metadata" });
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}?fields=id`, { appProperties: { agentRev: "r1", agentAt: "2026-11-11T00:00:00Z" } })).toMatchObject({ kind: "metadata" });
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}/revisions/0B12`, { keepForever: true })).toEqual({ kind: "keep", fileId: FILE, revisionId: "0B12", keepForever: true });
+  });
+
+  it("refuses everything else", () => {
+    // moving out of the folder, sharing, other fields, other properties, odd names
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}?addParents=x&removeParents=${FOLDER}`, { name: "a.excalidraw" })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}`, { parents: ["x"] })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}`, { name: "a.excalidraw", mimeType: "text/plain" })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}`, { appProperties: { kurviqSync: "live" } })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}`, { name: "../evil.excalidraw" })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}`, { name: "notes.txt" })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}`, { trashed: "yes" })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}`, {})).toHaveProperty("refused");
+    expect(classifyWrite("POST", "api", `/files/${FILE}/permissions`, { role: "writer" })).toHaveProperty("refused");
+    expect(classifyWrite("DELETE", "api", `/files/${FILE}`)).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "api", `/files/${FILE}/revisions/0B12`, { keepForever: true, published: true })).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "upload", `/files/${FILE}?uploadType=multipart`)).toHaveProperty("refused");
+    expect(classifyWrite("POST", "upload", "/files?uploadType=media")).toHaveProperty("refused");
+    expect(classifyWrite("PATCH", "upload", "/files/short?uploadType=media")).toHaveProperty("refused");
+    expect(classifyWrite("POST", "api", "/files?fields=id", { name: "a.excalidraw" })).toHaveProperty("refused");
+  });
+
+  it("builds Drive addresses only from the checked parts", () => {
+    const content = classifyWrite("PATCH", "upload", `/files/${FILE}?uploadType=media&fields=id`) as any;
+    expect(writeUrl("https://api", "https://up", content)).toBe(`https://up/files/${FILE}?uploadType=media&fields=id`);
+    const keep = classifyWrite("PATCH", "api", `/files/${FILE}/revisions/0B12`, { keepForever: false }) as any;
+    expect(writeUrl("https://api", "https://up", keep)).toBe(`https://api/files/${FILE}/revisions/0B12`);
+  });
+
+  it("reads a new scene's upload and rebuilds it with Kurviq's metadata in the folder", () => {
+    const boundary = "kurviqabc";
+    const upload =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: "Plan.excalidraw", parents: ["elsewhere"], appProperties: { kurviqSync: "live" } })}\r\n` +
+      `--${boundary}\r\nContent-Type: application/vnd.excalidraw+json\r\n\r\n{"type":"excalidraw"}\r\n--${boundary}--`;
+    const parsed = parseCreate(`multipart/related; boundary=${boundary}`, upload);
+    expect(parsed).toEqual({ name: "Plan.excalidraw", content: '{"type":"excalidraw"}' });
+    const rebuilt = createBody(FOLDER, parsed!.name, parsed!.content, "b2");
+    expect(rebuilt.contentType).toBe("multipart/related; boundary=b2");
+    expect(parseCreate(rebuilt.contentType, rebuilt.body)).toEqual(parsed);
+    const metadata = JSON.parse(rebuilt.body.split("\r\n\r\n")[1].split("\r\n")[0]);
+    expect(metadata).toEqual({ name: "Plan.excalidraw", mimeType: "application/vnd.excalidraw+json", parents: [FOLDER], appProperties: { kurviq: "scene", fmt: "1" } });
+  });
+
+  it("refuses uploads that aren't a scene", () => {
+    expect(parseCreate("application/json", "{}")).toBeNull();
+    expect(parseCreate("multipart/related; boundary=x", "--x\r\n\r\n{}\r\n--x--")).toBeNull();
+    expect(parseCreate("multipart/related; boundary=x", `--x\r\nA: b\r\n\r\n${JSON.stringify({ name: "a.txt" })}\r\n--x\r\nA: b\r\n\r\n{}\r\n--x--`)).toBeNull();
   });
 });

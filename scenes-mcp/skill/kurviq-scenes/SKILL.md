@@ -109,6 +109,11 @@ file): element format, colors, edit details, limits, formatted text
   status in their app: synced · ahead (not pushed) · behind (newer in
   Drive) · diverged · conflict · local (not in Drive) · "auto-sync off" (the
   user pushes when they decide).
+- **Shared folders**: folders others shared with the user are in
+  `app_status` → `sharedFolders` (owner, role, scenes). Your tools work on the
+  scene list the user's tab shows (`app_status` → `space`): to work in a
+  shared folder, ask the user to open it (scene list → its group). There your
+  edits save to the owner's folder; with role reader, scenes are view-only.
 
 ## Local-only scenes
 

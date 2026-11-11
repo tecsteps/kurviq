@@ -22,7 +22,21 @@ import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from
 import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
 import { scenesController } from "./controller";
 import { liveSync } from "./online/liveSync";
-import { connection, claimPubName, linkAccessOf, spaceAccount, listPermissions, loadPubName, pubLink, releasePubName, setLinkAccess, shareLink } from "./online/drive";
+import {
+  connection,
+  claimPubName,
+  linkAccessOf,
+  spaceAccount,
+  listPermissions,
+  loadPubName,
+  pubLink,
+  releasePubName,
+  setLinkAccess,
+  sharedFileId,
+  sharedFolderId,
+  sharedFolders,
+  shareLink,
+} from "./online/drive";
 import {
   editLocalScene,
   editOpenScene,
@@ -573,6 +587,7 @@ const status = () => {
     drive: driveStatus(sync),
     // whose scenes this tab shows: each Google account has its own in the browser (null: scenes made signed out)
     account: spaceAccount ?? connection.getState().user?.email ?? null,
+    space: spaceOf(),
     lastCheckedAt: sync.lastCheckedAt,
     // the health of this tab: what it is working on (an edit or picture running for minutes is stuck)
     busy: [...busy.values()].map(({ what, since }) => `${what} for ${Math.round((Date.now() - since) / 1000)} s`),
@@ -598,12 +613,40 @@ const status = () => {
   };
 };
 
+/** what this tab's scene list is: the user's own scenes, a shared folder, or one shared scene */
+const spaceOf = () => {
+  if (sharedFolderId) {
+    return "a shared folder (someone's Kurviq folder shared with the user): list_scenes and the scene tools work on its scenes, saved to the owner's folder";
+  }
+  return sharedFileId ? "one scene someone shared with the user" : "the user's own scenes";
+};
+
+/** the folders others shared with the user (each a group in their scene list) */
+const sharedFolderStatus = async () => {
+  if (!connection.isActive()) {
+    return {};
+  }
+  try {
+    const folders = (await sharedFolders()).filter((folder) => folder.folderId !== sharedFolderId);
+    if (!folders.length) {
+      return {};
+    }
+    return {
+      sharedFolders: folders.map((folder) => ({ name: folder.name, owner: folder.owner, role: folder.role, scenes: folder.scenes.map((scene) => scene.name) })),
+      sharedFoldersInfo:
+        "Folders others shared with the user (role writer: they may edit). Your tools work on the scene list the user's tab shows: to work in one of these folders, ask the user to open it (scene list → the folder's group); don't switch their tab yourself.",
+    };
+  } catch {
+    return {};
+  }
+};
+
 /** app_status: right after the tab opened, wait a moment for its first Drive check */
 const statusSettled = async () => {
   for (let i = 0; i < 25 && !scenesController.getState().sync.lastCheckedAt && !scenesController.getState().sync.notConnected; i++) {
     await editorYield(200); // NOSONAR S9382: in order on purpose (polls Drive status with a delay between checks)
   }
-  return status();
+  return { ...status(), ...(await sharedFolderStatus()) };
 };
 
 /**

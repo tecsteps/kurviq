@@ -14,7 +14,12 @@
 //   POST /folders/<id>/drive   one Drive call in that folder, made with the
 //                              owner's access after checking the caller's role
 //                              and that the call is about this folder only
-//                              (./folderRules.ts). Read-only for now.
+//                              (./folderRules.ts): reads for everyone it is
+//                              shared with; Kurviq's own writes (a scene's
+//                              content, a new scene, rename, bin, an agent
+//                              version's mark) for those who may edit. Scenes
+//                              the owner saves live (their Durable Object is
+//                              the only writer) stay read-only here for now.
 //
 // The sign-in (cookie, or the local install's sealed session) and the sign-out
 // everywhere guard are the live sync routes' (./sceneRoutes.ts).
@@ -23,8 +28,23 @@ import { accessFromRefresh, accountEpochOf, isLocalOrigin, sealSceneToken, unsea
 import type { Session } from "./auth";
 import { DOWNLOAD_BYTES, driveCall, driveUrls, getFile, problemOf, readLimited } from "./driveApi";
 import { keyedHash } from "./feedback";
-import { asRecipient, callUrl, classifyRead, listQuery, lookupKeys, memberKeys, roleFor } from "./folderRules";
-import type { DrivePermission, FolderRole, ProxyCall } from "./folderRules";
+import { LIVE_MARKER } from "../../scenes-plugin/src/online/liveProtocol";
+
+import {
+  SCENE_MIME,
+  asRecipient,
+  callUrl,
+  classifyRead,
+  classifyWrite,
+  createBody,
+  listQuery,
+  lookupKeys,
+  memberKeys,
+  parseCreate,
+  roleFor,
+  writeUrl,
+} from "./folderRules";
+import type { DrivePermission, FolderRole, ProxyCall, WriteCall } from "./folderRules";
 import { answer, fail, sameSite, signedIn } from "./sceneRoutes";
 import type { Ctx, SceneRoutesEnv } from "./sceneRoutes";
 
@@ -51,6 +71,8 @@ const TOKEN_DAYS = 90;
 /** a folder's permissions, as Drive gave them, are used this long before they are asked again */
 const PERMISSIONS_MS = 2 * 60_000;
 const BODY_BYTES = 32 * 1024;
+/** a Drive call through /folders/<id>/drive may carry a whole scene (pictures included) */
+const DRIVE_BODY_BYTES = DOWNLOAD_BYTES + 1024 * 1024;
 const PERMISSION_FIELDS = "nextPageToken,permissions(type,role,emailAddress,domain,deleted)";
 
 export const FOLDERS_SCHEMA = [
@@ -314,6 +336,93 @@ const inFolder = async (env: FoldersEnv, token: string, call: ProxyCall, folderI
   return Array.isArray(file.data?.parents) && file.data.parents.includes(folderId);
 };
 
+/** the answer of a Drive call, as the recipient sees it (their rights, not the owner's) */
+const driveAnswer = (ctx: Ctx, res: { status: number; data: any; text: string }, role: FolderRole, raw: boolean, sealedLocal?: string) => {
+  const text = !raw && res.status === 200 && res.data ? JSON.stringify(asRecipient(res.data, role)) : res.text;
+  return answer(ctx, 200, { status: res.status, text, role, ...(sealedLocal ? { session: sealedLocal } : {}) });
+};
+
+const notInFolder = (ctx: Ctx, role: FolderRole) =>
+  answer(ctx, 200, { status: 404, text: JSON.stringify({ error: { code: 404, message: "File not found in this folder" } }), role });
+
+/** a read in the folder */
+const proxyRead = async (ctx: Ctx, env: FoldersEnv, folderId: string, token: string, role: FolderRole, sealedLocal?: string) => {
+  const call = classifyRead(folderId, "GET", String(ctx.body.path ?? ""));
+  if ("refused" in call) {
+    return fail(ctx, 403, "refused", `Not allowed in a shared folder: ${call.refused}`);
+  }
+  const contained = await inFolder(env, token, call, folderId);
+  if (contained === "unreachable") {
+    return fail(ctx, 503, "google-unreachable", "Google Drive is not reachable");
+  }
+  if (!contained) {
+    return notInFolder(ctx, role);
+  }
+  const media = call.kind !== "list" && call.kind !== "revisions" && call.media;
+  const res = await driveCall(callUrl(driveUrls(env).api, call), token, media ? { timeoutMs: 60_000, maxBytes: DOWNLOAD_BYTES } : {});
+  return driveAnswer(ctx, res, role, media, sealedLocal);
+};
+
+/** the file a write is about: in the folder, a scene, not saved live by its owner (or the answer to give) */
+const writableFile = async (ctx: Ctx, env: FoldersEnv, token: string, call: WriteCall, folderId: string, role: FolderRole) => {
+  if (call.kind === "create") {
+    return null;
+  }
+  const file = await getFile(env, token, call.fileId, "parents,mimeType,appProperties");
+  if (file.status !== 200) {
+    return problemOf(file) === "unreachable" ? fail(ctx, 503, "google-unreachable", "Google Drive is not reachable") : notInFolder(ctx, role);
+  }
+  if (!Array.isArray(file.data?.parents) || !file.data.parents.includes(folderId) || file.data.mimeType !== SCENE_MIME) {
+    return notInFolder(ctx, role);
+  }
+  if (file.data.appProperties?.kurviqSync === LIVE_MARKER) {
+    return fail(ctx, 409, "live", "Its owner saves this scene live: it can't be changed from a shared folder yet");
+  }
+  return null;
+};
+
+/** the Drive request of an allowed write */
+const writeRequest = (env: FoldersEnv, folderId: string, call: WriteCall, ctx: Ctx) => {
+  const urls = driveUrls(env);
+  const url = writeUrl(urls.api, urls.upload, call);
+  switch (call.kind) {
+    case "content":
+      return typeof ctx.body.text === "string" ? { url, init: { method: "PATCH", body: ctx.body.text, contentType: SCENE_MIME, timeoutMs: 60_000 } } : null;
+    case "create": {
+      const parsed = typeof ctx.body.text === "string" ? parseCreate(String(ctx.body.contentType ?? ""), ctx.body.text) : null;
+      if (!parsed) {
+        return null;
+      }
+      const upload = createBody(folderId, parsed.name, parsed.content, `kurviq${crypto.randomUUID().replaceAll("-", "")}`);
+      return { url, init: { method: "POST", body: upload.body, contentType: upload.contentType, timeoutMs: 60_000 } };
+    }
+    case "metadata":
+      return { url, init: { method: "PATCH", json: call.metadata } };
+    default:
+      return { url, init: { method: "PATCH", json: { keepForever: call.keepForever } } };
+  }
+};
+
+/** a write in the folder (people who may edit it) */
+const proxyWrite = async (ctx: Ctx, env: FoldersEnv, folderId: string, token: string, role: FolderRole, sealedLocal?: string) => {
+  if (role !== "writer") {
+    return fail(ctx, 403, "read-only", "This folder is shared with you to view");
+  }
+  const call = classifyWrite(String(ctx.body.method ?? ""), String(ctx.body.target ?? "api"), String(ctx.body.path ?? ""), ctx.body.json);
+  if ("refused" in call) {
+    return fail(ctx, 403, "refused", `Not allowed in a shared folder: ${call.refused}`);
+  }
+  const refused = await writableFile(ctx, env, token, call, folderId, role);
+  if (refused) {
+    return refused;
+  }
+  const request = writeRequest(env, folderId, call, ctx);
+  if (!request) {
+    return fail(ctx, 400, "bad-request", "Not a scene");
+  }
+  return driveAnswer(ctx, await driveCall(request.url, token, request.init), role, false, sealedLocal);
+};
+
 /** one Drive call in a shared folder, made with the owner's access */
 const proxy = async (ctx: Ctx, env: FoldersEnv, folderId: string) => {
   const who = await signedIn(ctx);
@@ -328,21 +437,10 @@ const proxy = async (ctx: Ctx, env: FoldersEnv, folderId: string) => {
   if (way instanceof Response) {
     return way;
   }
-  const call = classifyRead(folderId, String(ctx.body.method ?? "GET"), String(ctx.body.path ?? ""));
-  if ("refused" in call) {
-    return fail(ctx, 403, "refused", `Not allowed in a shared folder: ${call.refused}`);
-  }
-  const contained = await inFolder(env, way.token, call, folderId);
-  if (contained === "unreachable") {
-    return fail(ctx, 503, "google-unreachable", "Google Drive is not reachable");
-  }
-  if (!contained) {
-    return answer(ctx, 200, { status: 404, text: JSON.stringify({ error: { code: 404, message: "File not found in this folder" } }) });
-  }
-  const media = call.kind !== "list" && call.kind !== "revisions" && call.media;
-  const res = await driveCall(callUrl(driveUrls(env).api, call), way.token, media ? { timeoutMs: 60_000, maxBytes: DOWNLOAD_BYTES } : {});
-  const text = !media && res.status === 200 && res.data ? JSON.stringify(asRecipient(res.data, way.role as FolderRole)) : res.text;
-  return answer(ctx, 200, { status: res.status, text, role: way.role, ...(who.sealedLocal ? { session: who.sealedLocal } : {}) });
+  const method = String(ctx.body.method ?? "GET");
+  return method === "GET"
+    ? proxyRead(ctx, env, folderId, way.token, way.role, who.sealedLocal)
+    : proxyWrite(ctx, env, folderId, way.token, way.role, who.sealedLocal);
 };
 
 const dispatch = async (ctx: Ctx, env: FoldersEnv, path: string) => {
@@ -395,7 +493,8 @@ export const handleFolderRoutes = async (request: Request, env: FoldersEnv): Pro
   if (!env.TOKEN_KEY) {
     return fail(ctx, 503, "not-configured", "Shared folders are not configured on this server");
   }
-  const text = await readLimited(request.body, BODY_BYTES);
+  // a Drive call may carry a whole scene; everything else is small
+  const text = await readLimited(request.body, /\/drive$/.test(url.pathname) ? DRIVE_BODY_BYTES : BODY_BYTES);
   if (text === null) {
     return fail(ctx, 413, "too-big", "Request too big");
   }

@@ -9,7 +9,7 @@ const puppeteer = createRequire(import.meta.url)(new URL("../../../excalidraw/no
 
 const BASE = process.env.KURVIQ_URL || "http://localhost:8790";
 const RUN = Date.now() % 100000;
-const [OWNER, GUEST, STRANGER] = ["own", "gst", "str"].map((who) => `${who}${RUN}@example.test`);
+const [OWNER, GUEST, STRANGER, EDITOR] = ["own", "gst", "str", "edt"].map((who) => `${who}${RUN}@example.test`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const t0 = Date.now();
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a);
@@ -172,7 +172,7 @@ const okList = await proxy(guest, folderId, "GET", listPath);
 ok(okList.status === 200 && okList.body.status === 200, "proxy: the folder's listing", okList.body.status);
 const alphaId = shared?.scenes.find((s) => s.name === ALPHA)?.fileId;
 const write = await proxy(guest, folderId, "PATCH", `/files/${alphaId}`);
-ok(write.status === 403 && write.body.code === "refused", "proxy: writes refused", write);
+ok(write.status === 403 && write.body.code === "read-only", "proxy: a viewer's writes are refused", write);
 const otherList = await proxy(guest, folderId, "GET", `/files?q=${encodeURIComponent("trashed=false")}`);
 ok(otherList.status === 403, "proxy: other listings refused", otherList.status);
 const strangerRead = await proxy(stranger, folderId, "GET", listPath);
@@ -184,7 +184,124 @@ const outsideId = outside.fileId ?? outside.id ?? outside.file?.id;
 const outsideRead = await proxy(guest, folderId, "GET", `/files/${outsideId}?alt=media`);
 ok(!!outsideId && outsideRead.status === 200 && outsideRead.body.status === 404, "proxy: a file outside the folder is not found", { outsideId, outsideRead });
 
-// 7. the owner stops sharing: the guest loses the folder
+// 7. someone who may edit: changes, new scenes, renames and deletions reach the owner's folder
+await admin("share", { fileId: folderId, email: EDITOR, role: "writer" });
+await ownerChecks(owner);
+// a scene saved the normal way (not live: this test server has live sync on for everyone, and the
+// owner's open scenes become live), added to the folder as Drive's web UI would
+const PLAIN = `Plain ${RUN}`;
+const plainScene = { type: "excalidraw", version: 2, source: "test", elements: [{ id: "plain0000001", type: "rectangle", x: 100, y: 100, width: 80, height: 50, angle: 0, strokeColor: "#1e1e1e", backgroundColor: "transparent", fillStyle: "solid", strokeWidth: 2, strokeStyle: "solid", roughness: 1, opacity: 100, groupIds: [], frameId: null, index: "a0", roundness: null, seed: 1, version: 1, versionNonce: 1, isDeleted: false, boundElements: null, updated: 1, link: null, locked: false }], appState: { viewBackgroundColor: "#ffffff" }, files: {} };
+const plain = await admin("write", { email: OWNER, name: `${PLAIN}.excalidraw`, mimeType: "application/vnd.excalidraw+json", parents: [folderId], content: JSON.stringify(plainScene), appProperties: { kurviq: "scene", fmt: "1" } });
+const plainId = plain.fileId ?? plain.id ?? plain.file?.id;
+await admin("grant", { email: OWNER, fileId: plainId });
+const editor = await signIn(EDITOR);
+const editorFolders = await waitFor("editor's folder", async () => {
+  const answer = await folders(editor);
+  return { done: !!answer.body.folders?.some((folder) => folder.folderId === folderId && folder.role === "writer"), answer };
+});
+ok(editorFolders.done, "editor: the folder is shared with them to edit");
+// agents (app_status) see the shared folder and which scene list the tab shows
+const agentStatus = (page) => page.evaluate(async () => (await window.__agentCommand({ type: "status" })).result ?? {});
+const ownStatus = await agentStatus(editor);
+ok(/own scenes/.test(ownStatus.space) && ownStatus.sharedFolders?.some((folder) => folder.role === "writer" && folder.scenes.includes(ALPHA)), "app_status: shared folders for agents", { space: ownStatus.space, sharedFolders: ownStatus.sharedFolders });
+await editor.evaluate((space) => localStorage.setItem("kurviq-space", space), `d:${folderId}`);
+await editor.goto(`${BASE}/${encodeURIComponent(PLAIN)}`, { waitUntil: "domcontentloaded" });
+await ready(editor);
+for (let i = 0; i < 40 && (await editor.evaluate(() => window.__scenes?.getState().current).catch(() => null)) !== PLAIN; i++) await sleep(250); // NOSONAR S9382: polling in order on purpose
+const editable = await editor.evaluate(() => ({
+  current: window.__scenes.getState().current,
+  readOnly: window.__scenes.getState().sync.readOnly,
+  viewMode: window.__scenes.getApi().getAppState().viewModeEnabled,
+}));
+ok(editable.current === PLAIN && !editable.readOnly && !editable.viewMode, "editor: the scene opens editable", editable);
+const folderStatus = await agentStatus(editor);
+ok(/shared folder/.test(folderStatus.space) && folderStatus.scenes.some((line) => line.startsWith(PLAIN)), "app_status: in the shared folder, its scenes", { space: folderStatus.space, scenes: folderStatus.scenes });
+const revisions = async (fileId) => (await admin(`revisions?fileId=${fileId}`)).revisions?.length ?? (await admin(`file?fileId=${fileId}`)).revisions?.length ?? 0;
+const before = await revisions(plainId);
+await editor.evaluate(() => {
+  const api = window.__scenes.getApi();
+  const all = api.getSceneElementsIncludingDeleted();
+  api.updateScene({
+    elements: [...all, { ...all.find((e) => !e.isDeleted), id: "editorEdit01", x: 700, version: 1, versionNonce: 7, updated: Date.now() }],
+    captureUpdate: "IMMEDIATELY",
+  });
+});
+const saved = await waitFor("the editor's change in Drive", async () => {
+  await editor.evaluate(() => window.__scenes.syncNow({ refresh: true })).catch(() => {});
+  const count = await revisions(plainId);
+  return { done: count > before, count, before };
+}, 80);
+ok(saved.done, "editor: the change is saved to the owner's file", saved);
+if (!saved.done) {
+  log("editor state", JSON.stringify(await editor.evaluate(() => ({ list: window.__scenes.getState().list, activity: window.__scenes.getState().activity, sync: window.__scenes.getState().sync }))).slice(0, 2500));
+}
+const ownerSees = await waitFor("owner sees the edit", async () => {
+  const xs = await owner.evaluate(async (name) => {
+    await window.__scenes.syncNow({ refresh: true });
+    await window.__scenes.open(name);
+    return window.__scenes.getApi().getSceneElements().map((e) => Math.round(e.x));
+  }, PLAIN);
+  return { done: xs.includes(700), xs };
+});
+ok(ownerSees.done, "owner: sees the editor's change", ownerSees.xs);
+
+const MADE = `Made by editor ${RUN}`;
+const made = await create(editor, MADE, 900);
+ok(made, "editor: a new scene in the shared folder");
+const ownerList = async () => owner.evaluate(async () => {
+  await window.__scenes.syncNow({ refresh: true });
+  return window.__scenes.getState().list.map((item) => item.name);
+});
+const ownerHasMade = await waitFor("owner sees the new scene", async () => {
+  const list = await ownerList();
+  return { done: list.includes(MADE), list };
+});
+ok(ownerHasMade.done, "owner: the editor's new scene is in their folder", ownerHasMade.list);
+const RENAMED = `Renamed by editor ${RUN}`;
+await editor.evaluate(async (from, to) => window.__scenes.rename(from, to), MADE, RENAMED).catch((error) => log("rename", String(error)));
+const ownerHasRenamed = await waitFor("owner sees the rename", async () => {
+  const list = await ownerList();
+  return { done: list.includes(RENAMED) && !list.includes(MADE), list };
+});
+ok(ownerHasRenamed.done, "owner: sees the rename", ownerHasRenamed.list);
+await editor.evaluate(async (name) => window.__scenes.remove(name), RENAMED).catch((error) => log("remove", String(error)));
+const ownerLost = await waitFor("owner sees the deletion", async () => {
+  const list = await ownerList();
+  return { done: !list.includes(RENAMED), list };
+});
+ok(ownerLost.done, "owner: the deleted scene is gone (in the bin)", ownerLost.list);
+
+// a viewer can't write; a scene its owner saves live can't be written from the folder
+const readerWrite = await proxy(guest, folderId, "PATCH", `/files/${alphaId}?fields=id`);
+ok(readerWrite.status === 403 && readerWrite.body.code === "read-only", "proxy: a viewer can't write", readerWrite);
+const betaId = shared?.scenes.find((s) => s.name === BETA)?.fileId;
+await admin("write", { email: OWNER, fileId: betaId, content: "{}", appProperties: { kurviqSync: "do-1" } });
+const liveWrite = await editor.evaluate(
+  async (folderId, fileId) => {
+    const res = await fetch(`/folders/${folderId}/drive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "PATCH", target: "upload", path: `/files/${fileId}?uploadType=media`, text: "{}" }),
+    });
+    return { status: res.status, body: await res.json() };
+  },
+  folderId, betaId,
+);
+ok(liveWrite.status === 409 && liveWrite.body.code === "live", "proxy: a live-saved scene is refused", liveWrite);
+const outsideWrite = await editor.evaluate(
+  async (folderId, fileId) => {
+    const res = await fetch(`/folders/${folderId}/drive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "PATCH", target: "api", path: `/files/${fileId}?fields=id`, json: { name: "Taken.excalidraw" } }),
+    });
+    return { status: res.status, body: await res.json() };
+  },
+  folderId, outsideId,
+);
+ok(outsideWrite.status === 200 && outsideWrite.body.status === 404, "proxy: a file outside the folder can't be written", outsideWrite);
+
+// 8. the owner stops sharing: the guest loses the folder
 await admin("unshare", { fileId: folderId, email: GUEST });
 await ownerChecks(owner);
 const gone = await waitFor("unshare", async () => {

@@ -274,7 +274,8 @@ export const startDrive = () => {
       return;
     }
     settledInSpace = true;
-    scenesController.setSignedIn(!!user && drive && !sharedFileId && !sharedFolderId);
+    // a shared folder takes new scenes like the user's own (when they may edit it); a shared scene doesn't
+    scenesController.setSignedIn(!!user && drive && !sharedFileId);
     if (afterSignIn) {
       const what = afterSignIn;
       afterSignIn = null;
@@ -511,7 +512,7 @@ export const DrivePanel = () => {
         <div className="kq-card__title">A folder shared with you</div>
         <div className="kq-muted">
           {lost ??
-            "These scenes are in someone's Kurviq folder, shared with you in Google Drive. You can view them here; editing them in Kurviq comes later."}
+            "These scenes are in someone's Kurviq folder, shared with you in Google Drive. If they let you edit it, your changes, new scenes, renames and deletions are saved to their folder, for everyone it is shared with."}
         </div>
         <div className="scenes-row">
           <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => leaveSharedScene()}>

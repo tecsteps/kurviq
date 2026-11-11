@@ -53,7 +53,8 @@ export const sharedFileId = currentSpace.startsWith("f:") ? currentSpace.slice(2
  * The space of a folder someone shared ("d:<folderId>"): Kurviq can't reach
  * its files with this person's own Drive access (drive.file), so every Drive
  * call goes through Kurviq's server, made with the owner's sign-in
- * (online/worker/folders.ts). Read-only for now.
+ * (online/worker/folders.ts): reads for everyone it is shared with, Kurviq's
+ * own writes for those who may edit.
  */
 export const folderSpace = (folderId: string) => `d:${folderId}`;
 export const sharedFolderId = currentSpace.startsWith("d:") ? currentSpace.slice(2) : null;
@@ -423,7 +424,7 @@ const drive = async (
   };
 
   if (sharedFolderId) {
-    return folderDrive(sharedFolderId, url, method, raw);
+    return folderDrive(sharedFolderId, url, { method, raw, body, contentType });
   }
   for (let attempt = 0; ; attempt++) {
     const value = await getToken();
@@ -459,32 +460,72 @@ const drive = async (
 const folderLost = (code: string | undefined) =>
   code === "no-access" ? "This folder is not shared with you any more" : "This folder is not shared any more (its owner stopped sharing it)";
 
+/** what this user may do in the shared folder this tab shows (the server says with every answer) */
+let folderRole: "writer" | "reader" | null = null;
+
+/** a request body as the folder route takes it: text, or JSON */
+const folderBody = async (body: BodyInit | object | undefined): Promise<{ text?: string; json?: unknown }> => {
+  if (body === undefined) {
+    return {};
+  }
+  if (typeof body === "string") {
+    return { text: body };
+  }
+  if (body instanceof Blob) {
+    return { text: await body.text() };
+  }
+  if (body instanceof Uint8Array) {
+    return { text: new TextDecoder().decode(body) };
+  }
+  return { json: body };
+};
+
+/** the server's refusal of a folder call, as the app reads it */
+const folderError = (error: any) => {
+  if (error.code === "not-shared" || error.code === "no-access") {
+    setConnection({ lost: folderLost(error.code) });
+    return notConnectedError();
+  }
+  if (error.code === "read-only") {
+    return readOnlyError("this folder is shared with you to view");
+  }
+  if (error.code === "live") {
+    return httpError(423, error.message);
+  }
+  return error;
+};
+
 /**
  * A Drive call in a shared folder's space: through Kurviq's server, which
- * makes it with the owner's access after checking it (reads of this folder
- * and its scenes only).
+ * makes it with the owner's access after checking it (this folder and its
+ * scenes only; writes for those who may edit).
  */
-const folderDrive = async (folderId: string, url: string, method: string, raw: boolean): Promise<DriveResponse> => {
+const folderDrive = async (
+  folderId: string,
+  url: string,
+  { method, raw, body, contentType }: { method: string; raw: boolean; body?: BodyInit | object; contentType?: string },
+): Promise<DriveResponse> => {
   if (!(await getToken())) {
     throw notConnectedError();
   }
-  if (method !== "GET") {
-    throw readOnlyError(readOnly ?? "this shared folder can only be viewed in Kurviq for now");
-  }
-  if (url.startsWith("https://") || url.startsWith(UPLOAD)) {
+  let target = "api";
+  let path = url;
+  if (url.startsWith(UPLOAD)) {
+    target = "upload";
+    path = url.slice(UPLOAD.length);
+  } else if (url.startsWith(API)) {
+    path = url.slice(API.length);
+  } else if (url.startsWith("https://")) {
     throw httpError(400, "Not available in a shared folder");
   }
-  let answer: { status: number; text: string; role?: string };
+  let answer: { status: number; text: string; role?: "writer" | "reader" };
   try {
-    answer = await authPost(`/folders/${folderId}/drive`, { method, path: url });
+    answer = await authPost(`/folders/${folderId}/drive`, { method, target, path, ...(await folderBody(body)), ...(contentType ? { contentType } : {}) });
   } catch (error: any) {
-    if (error.code === "not-shared" || error.code === "no-access") {
-      setConnection({ lost: folderLost(error.code) });
-      throw notConnectedError();
-    }
-    throw error;
+    throw folderError(error);
   }
   setConnection({ lost: null });
+  folderRole = answer.role ?? folderRole;
   let data: any = null;
   if (!raw || answer.status !== 200) {
     try {
@@ -710,7 +751,7 @@ const fetchFolderSpace = async (files: Map<string, DriveFile>) => {
   await fetchFolderScenes(files);
   if (sharedFolderId) {
     const owner = [...files.values()][0];
-    readOnly = `${owner ? ownerName(owner) : "Its owner"} shared this folder with you: its scenes can be viewed in Kurviq (editing comes later)`;
+    readOnly = folderRole === "reader" ? `${owner ? ownerName(owner) : "Its owner"} shared this folder with you to view` : null;
   } else {
     registerShare().catch(() => {});
   }
@@ -757,6 +798,16 @@ const readOnlyError = (reason: string) => httpError(403, `Read only: ${reason}`,
 const requireWritable = () => {
   if (readOnly) {
     throw readOnlyError(readOnly);
+  }
+};
+
+/**
+ * A scene its owner saves live, in a shared folder: its Durable Object is its
+ * only writer, and this person's Kurviq can't reach it (yet): changes stay here.
+ */
+const requireFolderWritable = (file: DriveFile | null, name: string) => {
+  if (sharedFolderId && file?.appProperties?.kurviqSync === LIVE_MARKER) {
+    throw httpError(423, `"${name}" is saved live by its owner: your changes to it stay in this browser (it can't be changed from a shared folder yet)`);
   }
 };
 
@@ -928,6 +979,7 @@ export const driveScenes = {
     requireWritable();
     const checksum = md5(encodeBytes(json));
     const file = await locate(name);
+    requireFolderWritable(file, name);
     if (file && isLiveFile(file)) {
       // the scene saves through its Durable Object: never a second writer
       // (CONCEPT "Old app versions"); agents' writes go through live sync
@@ -993,6 +1045,7 @@ export const driveScenes = {
     if (sharedFileId) {
       throw httpError(403, `"${name}" belongs to ${ownerName(file)}: only they can delete it`);
     }
+    requireFolderWritable(file, name);
     if (isLiveFile(file)) {
       // its Durable Object stops saving first (and confirms), then the file goes to the trash
       if (!liveRemover) {
@@ -1027,6 +1080,7 @@ export const driveScenes = {
     if (current.files.has(to)) {
       throw httpError(409, `A scene named "${to}" already exists in Google Drive`, { exists: true });
     }
+    requireFolderWritable(file, from);
     if (isLiveFile(file)) {
       // a rename of a live scene is an event like any other (the DO renames the file)
       if (!liveRenamer) {

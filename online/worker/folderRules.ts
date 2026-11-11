@@ -1,3 +1,5 @@
+import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
+
 // Shared folders (docs/folders/CONCEPT.md, "Shared folders through the
 // owner's sign-in"): the rules, without I/O. Which Drive calls a recipient's
 // Kurviq may make in a shared folder (they are made with the owner's access,
@@ -142,7 +144,7 @@ const fileCall = (parts: string[], params: URLSearchParams, media: boolean): Pro
  */
 export const classifyRead = (folderId: string, method: string, path: string): ProxyCall | Refusal => {
   if (method !== "GET") {
-    return { refused: "shared folders are read-only for now" };
+    return { refused: "not a read" };
   }
   const [pathname, search = ""] = path.split("?", 2);
   const params = readParams(search);
@@ -202,4 +204,168 @@ export const asRecipient = (data: unknown, role: FolderRole) => {
     return { ...list, files: list.files.map((file) => asRecipientFile(file, role)) };
   }
   return asRecipientFile(data, role);
+};
+
+// -----------------------------------------------------------------------------
+// writes (people with edit rights on the folder): what Kurviq itself writes
+// -----------------------------------------------------------------------------
+
+export const SCENE_MIME = "application/vnd.excalidraw+json";
+const EXTENSION = ".excalidraw";
+/** query parameters a write may carry */
+const WRITE_PARAMS = new Set(["uploadType", "fields", "supportsAllDrives"]);
+/** the file properties Kurviq sets on a scene when an agent saved it (driveScenes.save) */
+const AGENT_PROPERTIES = new Set(["agentRev", "agentAt"]);
+
+export type WriteCall =
+  | { kind: "content"; fileId: string; search: string }
+  | { kind: "create"; search: string }
+  | { kind: "metadata"; fileId: string; search: string; metadata: Record<string, unknown> }
+  | { kind: "keep"; fileId: string; revisionId: string; keepForever: boolean };
+
+const writeParams = (search: string, uploadType: string | null): URLSearchParams | Refusal => {
+  const params = new URLSearchParams(search);
+  for (const key of params.keys()) {
+    if (!WRITE_PARAMS.has(key)) {
+      return { refused: `parameter not allowed: ${key}` };
+    }
+  }
+  if (params.get("uploadType") !== uploadType) {
+    return { refused: "upload type not allowed" };
+  }
+  return params;
+};
+
+/** a scene's file name: "<valid scene name>.excalidraw" */
+export const isSceneFileName = (name: unknown) =>
+  typeof name === "string" && name.endsWith(EXTENSION) && isSceneName(name.slice(0, -EXTENSION.length));
+
+/** a metadata change Kurviq makes: rename, (un)trash, an agent version's mark; nothing else */
+export const checkMetadata = (metadata: unknown): { metadata: Record<string, unknown> } | Refusal => {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return { refused: "metadata missing" };
+  }
+  const entries = Object.entries(metadata as Record<string, unknown>);
+  if (!entries.length) {
+    return { refused: "metadata missing" };
+  }
+  for (const [key, value] of entries) {
+    if (key === "name" && !isSceneFileName(value)) {
+      return { refused: "not a scene name" };
+    }
+    if (key === "trashed" && typeof value !== "boolean") {
+      return { refused: "trashed must be true or false" };
+    }
+    if (key === "appProperties") {
+      const properties = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : null;
+      if (!properties?.length || properties.some(([name, text]) => !AGENT_PROPERTIES.has(name) || typeof text !== "string" || text.length > 200)) {
+        return { refused: "properties not allowed" };
+      }
+    }
+    if (!["name", "trashed", "appProperties"].includes(key)) {
+      return { refused: `field not allowed: ${key}` };
+    }
+  }
+  return { metadata: metadata as Record<string, unknown> };
+};
+
+/**
+ * A write in a shared folder: a scene's new content, a new scene, a rename,
+ * moving one to the bin (or back), an agent version's mark. target: "api" or
+ * "upload" (Drive's upload address). Whether the file is in the folder (and
+ * not saved live by its owner) is checked with Drive afterwards.
+ */
+export const classifyWrite = (method: string, target: string, path: string, json?: unknown): WriteCall | Refusal => {
+  const [pathname, search = ""] = path.split("?", 2);
+  const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (parts[0] !== "files" || (parts[1] !== undefined && !ID_RE.test(parts[1]))) {
+    return { refused: "call not allowed" };
+  }
+  const [, fileId, sub, revisionId] = parts;
+  if (target === "upload") {
+    const params = writeParams(search, method === "POST" ? "multipart" : "media");
+    if ("refused" in params) {
+      return params;
+    }
+    if (method === "POST" && parts.length === 1) {
+      return { kind: "create", search: params.toString() };
+    }
+    if (method === "PATCH" && parts.length === 2) {
+      return { kind: "content", fileId, search: params.toString() };
+    }
+    return { refused: "call not allowed" };
+  }
+  if (target !== "api" || method !== "PATCH" || !fileId) {
+    return { refused: "call not allowed" };
+  }
+  const params = writeParams(search, null);
+  if ("refused" in params) {
+    return params;
+  }
+  if (parts.length === 2) {
+    const checked = checkMetadata(json);
+    return "refused" in checked ? checked : { kind: "metadata", fileId, search: params.toString(), metadata: checked.metadata };
+  }
+  if (sub === "revisions" && parts.length === 4 && REVISION_RE.test(revisionId)) {
+    const body = json as { keepForever?: unknown } | null;
+    if (!body || typeof body.keepForever !== "boolean" || Object.keys(body).length !== 1) {
+      return { refused: "only keepForever" };
+    }
+    return { kind: "keep", fileId, revisionId, keepForever: body.keepForever };
+  }
+  return { refused: "call not allowed" };
+};
+
+/**
+ * The parts of a new scene's upload (multipart/related: metadata JSON, then
+ * the content), or null when it isn't one.
+ */
+export const parseCreate = (contentType: string, body: string): { name: string; content: string } | null => {
+  const boundary = /boundary=([^;\s]+)/.exec(contentType)?.[1];
+  if (!/^multipart\/related/i.test(contentType) || !boundary) {
+    return null;
+  }
+  const parts = body.split(`--${boundary}`);
+  // "", metadata part, content part, "--"
+  if (parts.length !== 4 || parts[0] !== "" || !parts[3].startsWith("--")) {
+    return null;
+  }
+  const split = (part: string) => {
+    const at = part.indexOf("\r\n\r\n");
+    return at < 0 ? null : part.slice(at + 4).replace(/\r\n$/, "");
+  };
+  const metadataText = split(parts[1]);
+  const content = split(parts[2]);
+  if (metadataText === null || content === null) {
+    return null;
+  }
+  try {
+    const metadata = JSON.parse(metadataText);
+    return isSceneFileName(metadata?.name) ? { name: metadata.name, content } : null;
+  } catch {
+    return null;
+  }
+};
+
+/** the upload of a new scene in the folder: Kurviq's own metadata, whatever was asked */
+export const createBody = (folderId: string, name: string, content: string, boundary: string) => {
+  const metadata = { name, mimeType: SCENE_MIME, parents: [folderId], appProperties: { kurviq: "scene", fmt: "1" } };
+  return {
+    body: `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${SCENE_MIME}\r\n\r\n${content}\r\n--${boundary}--`,
+    contentType: `multipart/related; boundary=${boundary}`,
+  };
+};
+
+/** the Drive address of an allowed write */
+export const writeUrl = (api: string, upload: string, call: WriteCall) => {
+  switch (call.kind) {
+    case "content":
+      return `${upload}/files/${call.fileId}?${call.search}`;
+    case "create":
+      return `${upload}/files?${call.search}`;
+    case "metadata":
+      return `${api}/files/${call.fileId}${call.search ? `?${call.search}` : ""}`;
+    default:
+      return `${api}/files/${call.fileId}/revisions/${call.revisionId}`;
+  }
 };
