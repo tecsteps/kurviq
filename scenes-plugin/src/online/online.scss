@@ -743,3 +743,55 @@
   gap: 0.5rem;
   margin-top: 0.25rem;
 }
+
+// the share dialog: the scene's folder is shared (who has every scene in it), and where each person's access comes from
+.excalidraw .kq-share__folder {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--border-radius-lg, 0.5rem);
+  background: var(--color-surface-low, rgba(0, 0, 0, 0.04));
+  font-size: 0.85rem;
+
+  p {
+    margin: 0 0 8px;
+  }
+}
+
+.excalidraw .kq-share__from {
+  color: var(--color-gray-60);
+  font-size: 0.75rem;
+}
+
+// above Google's share dialog while it is in the page: close it when it hangs, or share in Drive instead
+.kq-rescue {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 2147483647;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  border-radius: 10px;
+  background: #1e1e2e;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  color: #fff;
+  font: 14px/1.4 system-ui, sans-serif;
+
+  button {
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+  }
+}

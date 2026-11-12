@@ -25,7 +25,9 @@ import {
   connectGoogle,
   connection,
   disconnectGoogle,
+  driveWebLink,
   enterSpace,
+  folderSharingOf,
   getByline,
   linkAccessOf,
   listPermissions,
@@ -50,7 +52,9 @@ import { PUB_MAX, pubNameProblem, toPubName } from "./pubName";
 
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "../../../scenes-mcp/feedback.mjs";
 import type { SceneListItem } from "../controller";
-import type { LinkAccess, Permission } from "./drive";
+import type { FolderSharing, LinkAccess, Permission } from "./drive";
+import { audienceText, folderAudience, rowAccess } from "./folderAccess";
+import type { RowAccess } from "./folderAccess";
 
 import lilitaLatin from "@excalidraw/excalidraw/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYEF8RXi4EwQ.woff2";
 
@@ -942,21 +946,135 @@ const ShortLink = ({ fileId, sceneName, restricted }: { fileId: string; sceneNam
   );
 };
 
+/**
+ * Google's share dialog (ShareClient) runs with the browser's first Google
+ * account: when that isn't the one signed in to Kurviq it shows "sharing is
+ * unavailable", and its OK button breaks, leaving an overlay that blocks the
+ * page. While Google's dialog is in the page, a bar above it can close it and
+ * offers Drive's own page instead (opened as the right account).
+ */
+const GoogleShareRescue = ({ target, onClose }: { target: { id: string; folder: boolean; before: Set<Element> }; onClose: () => void }) => {
+  // what Google's dialog added to the page that can be seen (its own hidden helper frames stay for the next try)
+  const googleNodes = () =>
+    Array.from(document.body.children).filter(
+      (node) => !target.before.has(node) && !node.classList.contains("kq-rescue") && node.getClientRects().length > 0,
+    );
+  useEffect(() => {
+    let seen = false;
+    const check = () => {
+      const present = googleNodes().length > 0;
+      seen ||= present;
+      if (seen && !present) {
+        onClose();
+      }
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { childList: true });
+    check();
+    return () => observer.disconnect();
+  }, [target]);
+  const close = () => {
+    googleNodes().forEach((node) => node.remove());
+    onClose();
+  };
+  const email = connection.getState().user?.email;
+  return createPortal(
+    <div className="kq-rescue" role="status">
+      <span>Google's dialog shows an error or doesn't react?</span>
+      <button type="button" onClick={close}>
+        Close it
+      </button>
+      <button
+        type="button"
+        title={email ? `Opens Google Drive as ${email}: use Share at the top right` : undefined}
+        onClick={() => {
+          close();
+          window.open(driveWebLink(target.id, target.folder), "kurviq-drive-share", "popup,width=1100,height=780");
+        }}
+      >
+        Share in Drive instead
+      </button>
+    </div>,
+    document.body,
+  );
+};
+
+const ROLE_TEXT: Record<string, string> = { writer: "can edit", reader: "can view", commenter: "can view" };
+
+/** above the people: the scene's folder is shared, so these people have every scene in it */
+const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareFolder: () => void }) => {
+  if (folder.kind === "theirs") {
+    return (
+      <p className="kq-share__folder">
+        You have this scene through the folder <strong>"{folder.name}"</strong>, which {folder.owner} shares with you (you{" "}
+        {ROLE_TEXT[folder.role]}).
+      </p>
+    );
+  }
+  const text = audienceText(folderAudience(folder.permissions));
+  if (!text) {
+    return null;
+  }
+  return (
+    <div className="kq-share__folder">
+      <p>
+        This scene is in your folder <strong>"{folder.name}"</strong>, which is shared with {text.whom}: they {text.what}.
+      </p>
+      <div className="scenes-row">
+        <button type="button" className="scenes-btn" onClick={onShareFolder}>
+          Folder sharing…
+        </button>
+        <a className="scenes-link" href={driveWebLink(folder.folderId, true)} target="_blank" rel="noopener noreferrer">
+          Open the folder in Drive
+        </a>
+      </div>
+    </div>
+  );
+};
+
+/** where a person's access comes from, under their address (only when the folder is shared) */
+const accessNote = (access: RowAccess, folder: FolderSharing | null) => {
+  if (!folder || folder.kind !== "mine") {
+    return null;
+  }
+  switch (access.kind) {
+    case "folder":
+      return `Whole folder "${folder.name}"`;
+    case "more":
+      return `This scene; ${ROLE_TEXT[access.folderRole] ?? "can view"} the whole folder`;
+    default:
+      return "This scene only";
+  }
+};
+
 const ShareDialog = ({ name }: { name: string }) => {
   const [fileId, setFileId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<Permission[] | null>(null);
+  const [folder, setFolder] = useState<FolderSharing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rescue, setRescue] = useState<{ id: string; folder: boolean; before: Set<Element> } | null>(null);
   const me = connection.getState().user?.email?.toLowerCase();
   const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
+  // a scene of a folder shared with this person: Kurviq reaches it only through its server, who has access is the owner's business
+  const inFolderSpace = !!sharedFolderId;
 
-  const reload = async (id: string) => setPermissions(await listPermissions(id));
+  const reload = async (id: string) => {
+    if (inFolderSpace) {
+      setPermissions([]);
+      return;
+    }
+    setPermissions(await listPermissions(id));
+  };
+  const reloadFolder = (id: string) =>
+    folderSharingOf(id).then(setFolder, (err) => console.error("[drive] the scene's folder", err));
 
   useEffect(() => {
     scenesController
       .fileForSharing(name)
       .then(async (id) => {
         setFileId(id);
+        reloadFolder(id);
         await reload(id);
       })
       .catch((err) => setError(err.message));
@@ -967,16 +1085,19 @@ const ShareDialog = ({ name }: { name: string }) => {
     if (!fileId) {
       return;
     }
-    const onFocus = () => reload(fileId).catch(() => {});
+    const onFocus = () => {
+      reload(fileId).catch(() => {});
+      reloadFolder(fileId);
+    };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [fileId]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeShareDialog();
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && !rescue && closeShareDialog();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [rescue]);
 
   const run = async (what: () => Promise<unknown>) => {
     if (!fileId) {
@@ -995,8 +1116,27 @@ const ShareDialog = ({ name }: { name: string }) => {
     }
   };
 
+  /** Google's share dialog for the scene or its folder; who has access is asked again for a while (it says nothing when it closes) */
+  const shareInGoogle = (id: string, isFolder: boolean) => {
+    const before = new Set(Array.from(document.body.children));
+    showDriveShareDialog(id).then(
+      () => setRescue({ id, folder: isFolder, before }),
+      (err) => setError(err.message),
+    );
+    const until = Date.now() + 5 * 60_000;
+    const poll = window.setInterval(() => {
+      if (Date.now() > until || !document.querySelector(".kq-share")) {
+        window.clearInterval(poll);
+      } else {
+        reload(fileId!).catch(() => {});
+        reloadFolder(fileId!);
+      }
+    }, 4000);
+  };
+
   const people = (permissions ?? []).filter((permission) => permission.type !== "anyone");
   const access = permissions ? linkAccessOf(permissions) : "restricted";
+  const folderPermissions = folder?.kind === "mine" ? folder.permissions : [];
   // the copy buttons give the short link once there is one
   usePubName(fileId);
   const link = fileId ? sceneLink(fileId, name) : null;
@@ -1011,38 +1151,24 @@ const ShareDialog = ({ name }: { name: string }) => {
           </button>
         </div>
         {!permissions && !error && <p className="kq-muted">Saving it to Google Drive and asking who has access…</p>}
-        {permissions && (
+        {permissions && folder && <FolderNote folder={folder} onShareFolder={() => shareInGoogle(folder.folderId, true)} />}
+        {permissions && !inFolderSpace && (
           <>
             <div className="kq-share__drive">
-              <button
-                type="button"
-                className="scenes-btn scenes-btn--primary"
-                onClick={() => {
-                  showDriveShareDialog(fileId!).catch((err) => setError(err.message));
-                  // Google's dialog says nothing when it closes: ask Drive who has access for a while
-                  const until = Date.now() + 5 * 60_000;
-                  const poll = window.setInterval(() => {
-                    if (Date.now() > until || !document.querySelector(".kq-share")) {
-                      window.clearInterval(poll);
-                    } else {
-                      reload(fileId!).catch(() => {});
-                    }
-                  }, 4000);
-                }}
-              >
+              <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => shareInGoogle(fileId!, false)}>
                 Share in Google Drive
               </button>
               <span className="kq-muted">
                 Google's own share dialog: its invitations arrive reliably. Asks you to sign in or shows an error? Your
-                browser blocks Google's cookies here:{" "}
+                browser blocks Google's cookies here, or its first Google account isn't the one you use in Kurviq:{" "}
                 <a
                   className="scenes-link"
-                  href={`https://drive.google.com/file/d/${fileId}/view`}
+                  href={driveWebLink(fileId!)}
                   target="kurviq-drive-share"
                   rel="noopener"
                   onClick={(event) => {
                     event.preventDefault();
-                    window.open(`https://drive.google.com/file/d/${fileId}/view`, "kurviq-drive-share", "popup,width=1100,height=780");
+                    window.open(driveWebLink(fileId!), "kurviq-drive-share", "popup,width=1100,height=780");
                   }}
                 >
                   open it in Drive
@@ -1058,19 +1184,23 @@ const ShareDialog = ({ name }: { name: string }) => {
             <ul className="kq-share__people">
               {people.map((person) => {
                 const isMe = person.emailAddress?.toLowerCase() === me;
+                const from = rowAccess(person, folderPermissions);
+                const note = accessNote(from, folder);
+                const fixed = person.role === "owner" || isMe || from.kind === "folder";
                 return (
                   <li key={person.id}>
                     <span className="kq-share__avatar" aria-hidden="true">
-                      {(person.displayName || person.emailAddress || "?").charAt(0).toUpperCase()}
+                      {(person.displayName || person.emailAddress || person.domain || "?").charAt(0).toUpperCase()}
                     </span>
                     <span className="kq-share__who">
                       <span className="kq-share__name">
-                        {person.displayName || person.emailAddress}
+                        {person.displayName || person.emailAddress || person.domain}
                         {isMe && " (you)"}
                       </span>
                       {person.displayName && person.emailAddress && <span className="kq-muted">{person.emailAddress}</span>}
+                      {note && !isMe && person.role !== "owner" && <span className="kq-share__from">{note}</span>}
                     </span>
-                    {person.role === "owner" || isMe ? (
+                    {fixed ? (
                       <span className="kq-muted kq-share__role">{ROLE_LABEL[person.role] ?? person.role}</span>
                     ) : (
                       <select
@@ -1084,7 +1214,7 @@ const ShareDialog = ({ name }: { name: string }) => {
                       >
                         <option value="writer">Can edit</option>
                         <option value="reader">Can view</option>
-                        <option value="remove">Remove access</option>
+                        {from.kind === "direct" && <option value="remove">Remove access</option>}
                       </select>
                     )}
                   </li>
@@ -1108,29 +1238,27 @@ const ShareDialog = ({ name }: { name: string }) => {
             <p className="kq-muted">{LINK_HINT[access]}</p>
             {fileId && access !== "restricted" && <Byline fileId={fileId} />}
             {fileId && <ShortLink fileId={fileId} sceneName={name} restricted={access === "restricted"} />}
-            <div className="scenes-row">
-              <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />
-              {presentation && (
-                <CopyLink
-                  className="scenes-btn"
-                  link={fileId ? sceneLink(fileId, name, { present: true }) : null}
-                  label="Copy presentation link"
-                  tip="Copies a link that starts presenting this scene"
-                />
-              )}
-              <a
-                className="scenes-link"
-                href={`https://drive.google.com/file/d/${fileId}/view`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open in Drive
-              </a>
-            </div>
           </>
+        )}
+        {permissions && (
+          <div className="scenes-row">
+            <CopyLink className="scenes-btn" link={link} label="Copy link" icon={LINK_ICON} tip="Copies the link to this scene" />
+            {presentation && (
+              <CopyLink
+                className="scenes-btn"
+                link={fileId ? sceneLink(fileId, name, { present: true }) : null}
+                label="Copy presentation link"
+                tip="Copies a link that starts presenting this scene"
+              />
+            )}
+            <a className="scenes-link" href={fileId ? driveWebLink(fileId) : undefined} target="_blank" rel="noopener noreferrer">
+              Open in Drive
+            </a>
+          </div>
         )}
         {error && <p className="scenes-error">{error}</p>}
       </div>
+      {rescue && <GoogleShareRescue target={rescue} onClose={() => setRescue(null)} />}
     </div>
   );
 };

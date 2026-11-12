@@ -200,17 +200,55 @@
 
   // a group of the list: "My scenes", then each folder shared with the user
   .scenes-switcher__group {
-    padding: 0.6rem 0.6rem 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    width: 100%;
+    padding: 0.6rem 0.6rem 0.25rem 0.35rem;
+    border: none;
+    border-radius: 0.4rem;
+    background: none;
     color: var(--color-gray-60);
+    font: inherit;
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.02em;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text-primary-color);
+    }
+  }
+
+  .scenes-switcher__group-chevron {
+    flex: none;
+    transition: transform 0.12s ease;
+
+    &--open {
+      transform: rotate(90deg);
+    }
+  }
+
+  .scenes-switcher__group-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     text-transform: uppercase;
   }
 
   .scenes-switcher__group-owner {
+    flex: none;
     font-weight: 400;
-    text-transform: none;
+    white-space: nowrap;
+  }
+
+  .scenes-switcher__group-count {
+    margin-left: auto;
+    padding: 0 0.4rem;
+    border-radius: 999px;
+    background: var(--color-gray-10);
+    font-weight: 500;
   }
 
   .scenes-switcher__manage {

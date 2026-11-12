@@ -1223,6 +1223,7 @@ export type Permission = {
   type: "user" | "group" | "domain" | "anyone";
   role: Role;
   emailAddress?: string;
+  domain?: string;
   displayName?: string;
   photoLink?: string;
 };
@@ -1231,7 +1232,7 @@ export type LinkAccess = "restricted" | "reader" | "writer";
 
 export const listPermissions = async (fileId: string): Promise<Permission[]> => {
   const res = await drive(
-    `/files/${fileId}/permissions?fields=permissions(id,type,role,emailAddress,displayName,photoLink,deleted)&supportsAllDrives=true`,
+    `/files/${fileId}/permissions?fields=permissions(id,type,role,emailAddress,domain,displayName,photoLink,deleted)&supportsAllDrives=true`,
   );
   if (res.status !== 200) {
     fail(res, "Who has access could not be read");
@@ -1527,6 +1528,42 @@ export const sharedFolders = (): Promise<SharedFolder[]> => {
   });
   folderList = { at: Date.now(), value };
   return value;
+};
+
+/**
+ * The folder a scene is shared through, for the share panel: "mine" (the
+ * user's own Kurviq folder, with who has access to it: they have every scene
+ * in it), "theirs" (a folder someone shares with the user), or null (the
+ * scene is shared on its own, or the folder isn't shared).
+ */
+export type FolderSharing =
+  | { kind: "mine"; folderId: string; name: string; permissions: Permission[] }
+  | { kind: "theirs"; folderId: string; name: string; owner: string; role: "writer" | "reader" };
+
+export const folderSharingOf = async (fileId: string): Promise<FolderSharing | null> => {
+  const known = sharedFolderId ?? folderOfFile(fileId);
+  const theirs = (await sharedFolders().catch((): SharedFolder[] => [])).find(
+    (folder) => folder.folderId === known || folder.scenes.some((scene) => scene.fileId === fileId),
+  );
+  if (theirs) {
+    return { kind: "theirs", folderId: theirs.folderId, name: theirs.name, owner: theirs.owner, role: theirs.role };
+  }
+  if (sharedFileId || sharedFolderId) {
+    return null;
+  }
+  const own = await folderId();
+  const res = await drive(`/files/${fileId}?fields=parents&supportsAllDrives=true`);
+  if (res.status !== 200 || !(res.data.parents as string[] | undefined)?.includes(own)) {
+    return null;
+  }
+  return { kind: "mine", folderId: own, name: FOLDER_NAME, permissions: await listPermissions(own) };
+};
+
+/** Drive's own page of a file or folder, opened as the account signed in to Kurviq (not the browser's first Google account) */
+export const driveWebLink = (id: string, folder = false) => {
+  const page = folder ? `https://drive.google.com/drive/folders/${id}` : `https://drive.google.com/file/d/${id}/view`;
+  const email = state.user?.email;
+  return email ? `${page}?authuser=${encodeURIComponent(email)}` : page;
 };
 
 /** open a scene of a shared folder in the folder's space (the page reloads into it) */

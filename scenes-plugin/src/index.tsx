@@ -27,6 +27,8 @@ import { TemplateChangesBar } from "./templateChanges";
 import { installTitleTips } from "./titleTips";
 import { ICON_PATHS } from "./icons";
 import { QuickTip } from "./quickTip";
+import { GROUPS_KEY, folderGroup, isOpen, ownGroup, readGroups, toggled } from "./sceneGroups";
+import type { GroupState } from "./sceneGroups";
 import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
@@ -500,20 +502,44 @@ const useCloseOnOutsidePointer = (onClose: () => void) => {
  */
 /**
  * The heading above a group of the scene list: this tab's scenes ("My scenes",
- * or the shared folder it shows), then each folder shared with the user.
+ * or the shared folder it shows), then each folder shared with the user. A
+ * click folds or unfolds the group (folded: how many scenes it holds).
  */
-const groupHeading = (folder: SharedFolder | undefined, previous: SharedFolder | undefined, index: number) => {
-  if (index > 0 && folder === previous) {
-    return null;
+const GroupHeading = ({ folder, open, total, onToggle }: { folder?: SharedFolder; open: boolean; total: number; onToggle: () => void }) => (
+  <button type="button" className="scenes-switcher__group" aria-expanded={open} onClick={onToggle}>
+    <svg
+      className={clsx("scenes-switcher__group-chevron", { "scenes-switcher__group-chevron--open": open })}
+      viewBox="0 0 20 20"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M8 5l5 5-5 5" />
+    </svg>
+    <span className="scenes-switcher__group-name">{groupName(folder)}</span>
+    {folder && <span className="scenes-switcher__group-owner">· shared by {folder.owner}</span>}
+    {!open && <span className="scenes-switcher__group-count">{total}</span>}
+  </button>
+);
+
+const groupName = (folder: SharedFolder | undefined) => {
+  if (folder) {
+    return folder.name;
   }
-  if (!folder) {
-    return <div className="scenes-switcher__group">{sharedFolderId ? "This shared folder" : "My scenes"}</div>;
+  return sharedFolderId ? "This shared folder" : "My scenes";
+};
+
+const loadGroups = () => {
+  try {
+    return readGroups(localStorage.getItem(GROUPS_KEY));
+  } catch {
+    return {};
   }
-  return (
-    <div className="scenes-switcher__group">
-      {folder.name} <span className="scenes-switcher__group-owner">· shared by {folder.owner}</span>
-    </div>
-  );
 };
 
 const SceneSwitcher = ({
@@ -534,6 +560,8 @@ const SceneSwitcher = ({
   const [sharedScenes, setOthers] = useState<SharedWithMe[]>([]);
   // folders others shared with the user (not the one this tab shows), each a group of its own
   const [folders, setFolders] = useState<SharedFolder[]>([]);
+  // folded / unfolded groups, remembered in this browser
+  const [groups, setGroups] = useState<GroupState>(loadGroups);
   useEffect(() => {
     if (signedIn) {
       sharedWithMe().then(
@@ -579,18 +607,31 @@ const SceneSwitcher = ({
     }
     return nameOf(a)!.localeCompare(nameOf(b)!) || (a.item ? -1 : 1);
   };
-  // this tab's scenes first, then one group per shared folder
+  // this tab's scenes first, then one group per shared folder; folded groups list nothing (a filter searches them all)
   own.sort(byName);
-  const items: Entry[] = [
-    ...own,
-    ...folders.flatMap((folder) =>
-      folder.scenes
+  const grouped = folders.length > 0 || !!sharedFolderId;
+  const shows = (key: string) => !grouped || !!needle || isOpen(groups, key);
+  const sections = [
+    { key: ownGroup(sharedFolderId), folder: undefined, total: list.length + others.length, entries: own },
+    ...folders.map((folder) => ({
+      key: folderGroup(folder.folderId),
+      folder,
+      total: folder.scenes.length,
+      entries: folder.scenes
         .filter((scene) => matchesFilter(scene.name, query, null))
         .map((scene): Entry => ({ owner: folder.owner, name: scene.name, fileId: scene.fileId, folder })),
-    ),
+    })),
   ];
+  const items: Entry[] = sections.flatMap((section) => (shows(section.key) ? section.entries : []));
+  const toggleGroup = (key: string) => {
+    const next = toggled(groups, key);
+    setGroups(next);
+    setActive(null);
+    try {
+      localStorage.setItem(GROUPS_KEY, JSON.stringify(next));
+    } catch {}
+  };
   const showOwner = others.length > 0;
-  const grouped = folders.length > 0 || !!sharedFolderId;
   // "create" only when the text matches no scene (a sticky filter such as a
   // customer name shouldn't offer itself as a new scene every time)
   const canCreate =
@@ -650,6 +691,72 @@ const SceneSwitcher = ({
     }
   };
 
+  const renderRow = (entry: Entry, index: number) => {
+    const { item } = entry;
+    const isCurrent = !!item && item.name === current;
+    return (
+      <Fragment key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `shared\u0000${entry.fileId}`}>
+      <div
+        className={clsx("scenes-switcher__row", {
+          "scenes-switcher__row--current": isCurrent,
+          "scenes-switcher__row--active": index === active,
+        })}
+        onMouseEnter={() => setActive(index)}
+      >
+        <button
+          type="button"
+          role="option"
+          aria-selected={isCurrent}
+          className={clsx("scenes-switcher__item", { "scenes-switcher__item--current": isCurrent })}
+          onClick={() => choose(index)}
+        >
+          <span className="scenes-switcher__name">{nameOf(entry) ?? UNTITLED_LABEL}</span>
+          {showOwner && entry.owner && !entry.folder && (
+            <QuickTip
+              tip={`Shared with you by ${entry.owner}: opening it switches this tab to it`}
+              className="scenes-switcher__owner scenes-switcher__owner--other"
+            >
+              {entry.owner}
+            </QuickTip>
+          )}
+          {item && !["synced", "local", "local-only", "untitled", "live-drive", "live-server", "live-saving"].includes(item.status) && (
+            <StatusBadge status={item.status} compact />
+          )}
+        </button>
+        {item && (
+          <QuickTip
+            tip={isCurrent ? "Manage this scene: save, rename, share, history" : "Open this scene and manage it: save, rename, share, history"}
+            className={clsx("scenes-switcher__pen-tip", { "scenes-switcher__pen-tip--other": !isCurrent })}
+            label={false}
+          >
+            <button
+              type="button"
+              className="scenes-switcher__pen"
+              aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`}
+              onClick={() => manage(item.name)}
+            >
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M13.5 3.5l3 3L7 16H4v-3z" />
+                <path d="M11.5 5.5l3 3" />
+              </svg>
+            </button>
+          </QuickTip>
+        )}
+        <span className="scenes-switcher__places">
+          {item ? (
+            <ScenePlace item={item} actions />
+          ) : (
+            <ScenePlace
+              item={{ name: entry.name, inDrive: true, localOnly: false, public: false, status: "synced" }}
+              owner={entry.owner}
+            />
+          )}
+        </span>
+      </div>
+      </Fragment>
+    );
+  };
+
   return (
     <div className="scenes-switcher__menu" role="listbox" tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="scenes-switcher__filter">
@@ -677,70 +784,18 @@ const SceneSwitcher = ({
         )}
       </div>
       <div className="scenes-switcher__list">
-        {items.map((entry, index) => {
-          const { item } = entry;
-          const isCurrent = !!item && item.name === current;
-          const heading = grouped ? groupHeading(entry.folder, items[index - 1]?.folder, index) : null;
+        {sections.map((section) => {
+          if (needle && section.entries.length === 0) {
+            return null;
+          }
+          const open = shows(section.key);
+          const first = items.indexOf(section.entries[0]);
           return (
-            <Fragment key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `shared\u0000${entry.fileId}`}>
-            {heading}
-            <div
-              className={clsx("scenes-switcher__row", {
-                "scenes-switcher__row--current": isCurrent,
-                "scenes-switcher__row--active": index === active,
-              })}
-              onMouseEnter={() => setActive(index)}
-            >
-              <button
-                type="button"
-                role="option"
-                aria-selected={isCurrent}
-                className={clsx("scenes-switcher__item", { "scenes-switcher__item--current": isCurrent })}
-                onClick={() => choose(index)}
-              >
-                <span className="scenes-switcher__name">{nameOf(entry) ?? UNTITLED_LABEL}</span>
-                {showOwner && entry.owner && !entry.folder && (
-                  <QuickTip
-                    tip={`Shared with you by ${entry.owner}: opening it switches this tab to it`}
-                    className="scenes-switcher__owner scenes-switcher__owner--other"
-                  >
-                    {entry.owner}
-                  </QuickTip>
-                )}
-                {item && !["synced", "local", "local-only", "untitled", "live-drive", "live-server", "live-saving"].includes(item.status) && (
-                  <StatusBadge status={item.status} compact />
-                )}
-              </button>
-              {item && (
-                <QuickTip
-                  tip={isCurrent ? "Manage this scene: save, rename, share, history" : "Open this scene and manage it: save, rename, share, history"}
-                  className={clsx("scenes-switcher__pen-tip", { "scenes-switcher__pen-tip--other": !isCurrent })}
-                  label={false}
-                >
-                  <button
-                    type="button"
-                    className="scenes-switcher__pen"
-                    aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`}
-                    onClick={() => manage(item.name)}
-                  >
-                    <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M13.5 3.5l3 3L7 16H4v-3z" />
-                      <path d="M11.5 5.5l3 3" />
-                    </svg>
-                  </button>
-                </QuickTip>
+            <Fragment key={section.key}>
+              {grouped && (
+                <GroupHeading folder={section.folder} open={open} total={section.total} onToggle={() => toggleGroup(section.key)} />
               )}
-              <span className="scenes-switcher__places">
-                {item ? (
-                  <ScenePlace item={item} actions />
-                ) : (
-                  <ScenePlace
-                    item={{ name: entry.name, inDrive: true, localOnly: false, public: false, status: "synced" }}
-                    owner={entry.owner}
-                  />
-                )}
-              </span>
-            </div>
+              {open && section.entries.map((entry, offset) => renderRow(entry, first + offset))}
             </Fragment>
           );
         })}
