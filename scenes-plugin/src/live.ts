@@ -632,7 +632,13 @@ const sharedFolderStatus = async () => {
       return {};
     }
     return {
-      sharedFolders: folders.map((folder) => ({ name: folder.name, owner: folder.owner, role: folder.role, scenes: folder.scenes.map((scene) => scene.name) })),
+      sharedFolders: folders.map((folder) => ({
+        name: folder.name,
+        owner: folder.owner,
+        ownerEmail: folder.ownerEmail ?? null,
+        role: folder.role,
+        scenes: folder.scenes.map((scene) => scene.name),
+      })),
       sharedFoldersInfo:
         "Folders others shared with the user (role writer: they may edit). Your tools work on the scene list the user's tab shows: to work in one of these folders, ask the user to open it (scene list → the folder's group); don't switch their tab yourself.",
     };

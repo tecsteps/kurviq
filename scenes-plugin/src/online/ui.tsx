@@ -1006,8 +1006,8 @@ const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareF
   if (folder.kind === "theirs") {
     return (
       <p className="kq-share__folder">
-        You have this scene through the folder <strong>"{folder.name}"</strong>, which {folder.owner} shares with you (you{" "}
-        {ROLE_TEXT[folder.role]}).
+        You have this scene through the Kurviq folder of <strong>{folder.owner}</strong>
+        {folder.ownerEmail ? ` (${folder.ownerEmail})` : ""}, shared with you (you {ROLE_TEXT[folder.role]}).
       </p>
     );
   }

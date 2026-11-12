@@ -36,6 +36,10 @@ export const normalEmail = (email: string) => email.trim().toLowerCase();
 
 const domainOf = (email: string) => normalEmail(email).split("@")[1] ?? "";
 
+/** the folder owner's address, from the folder's permissions (shown to the people it is shared with, as Drive shows it) */
+export const ownerEmailOf = (permissions: DrivePermission[]): string | null =>
+  permissions.find((permission) => permission.role === "owner" && permission.type === "user" && !permission.deleted)?.emailAddress ?? null;
+
 /**
  * The person's role in a folder by its permissions: their own (user)
  * permission or one for their whole domain, the higher one. Groups can't be

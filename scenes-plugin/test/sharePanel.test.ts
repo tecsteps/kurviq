@@ -1,8 +1,10 @@
 // The share panel's folder note and the scene list's folding groups (pure parts).
+import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 
 import { audienceText, folderAudience, roleRank, rowAccess } from "../src/online/folderAccess";
-import { GROUPS_KEY, folderGroup, isOpen, ownGroup, readGroups, toggled } from "../src/sceneGroups";
+import { scenesOfMeta } from "../src/storage";
+import { GROUPS_KEY, folderGroup, isOpen, ownGroup, ownerDomain, readGroups, toggled } from "../src/sceneGroups";
 
 const owner = { type: "user" as const, role: "owner", emailAddress: "owner@a.com" };
 const editor = { type: "user" as const, role: "writer", emailAddress: "Ed@b.com" };
@@ -83,5 +85,43 @@ describe("folding groups of the scene list", () => {
     expect(readGroups("[true]")).toEqual({});
     expect(readGroups('{"own":false,"x":"yes"}')).toEqual({ own: false });
     expect(GROUPS_KEY).toBe("kurviq-scene-groups");
+  });
+});
+
+describe("a shared folder's group name", () => {
+  it("shows the domain of the owner's address", () => {
+    expect(ownerDomain("fabian.wesner@Enstoke.com")).toBe("enstoke.com");
+    expect(ownerDomain("a@b@c.org")).toBe("c.org");
+  });
+
+  it("shows nothing without an address", () => {
+    expect(ownerDomain(null)).toBeNull();
+    expect(ownerDomain(undefined)).toBeNull();
+    expect(ownerDomain("")).toBeNull();
+    expect(ownerDomain("@x.com")).toBeNull();
+    expect(ownerDomain("nobody")).toBeNull();
+  });
+});
+
+describe("the user's own scenes, listed from a shared folder's tab", () => {
+  it("are the named scenes of the stored list, with where they are", () => {
+    const raw = JSON.stringify({
+      scenes: {
+        "\u0000untitled": { baseMd5: null, dirty: true },
+        Roadmap: { baseMd5: "abc", dirty: false },
+        Notes: { baseMd5: null, dirty: true, localOnly: true },
+        Broken: null,
+      },
+    });
+    expect(scenesOfMeta(raw)).toEqual([
+      { name: "Roadmap", localOnly: false, inDrive: true },
+      { name: "Notes", localOnly: true, inDrive: false },
+    ]);
+  });
+
+  it("are none for nothing stored or broken storage", () => {
+    expect(scenesOfMeta(null)).toEqual([]);
+    expect(scenesOfMeta("nope")).toEqual([]);
+    expect(scenesOfMeta('{"scenes":5}')).toEqual([]);
   });
 });

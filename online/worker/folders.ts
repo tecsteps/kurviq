@@ -47,6 +47,7 @@ import {
   listQuery,
   lookupKeys,
   memberKeys,
+  ownerEmailOf,
   parseCreate,
   roleFor,
   writeUrl,
@@ -213,7 +214,7 @@ const enter = async (ctx: Ctx, env: FoldersEnv, row: FolderRow, session: Session
   if (!role) {
     return fail(ctx, 403, "no-access", "This folder is not shared with you (any more)");
   }
-  return { token, role };
+  return { token, role, permissions };
 };
 
 /**
@@ -337,7 +338,14 @@ const discovered = async (ctx: Ctx, env: FoldersEnv, row: FolderRow, session: Se
   if (!scenes) {
     return null;
   }
-  return { folderId: row.folder_id, name: row.folder_name ?? "Kurviq", owner: row.owner_name ?? "Someone", role: way.role, scenes };
+  return {
+    folderId: row.folder_id,
+    name: row.folder_name ?? "Kurviq",
+    owner: row.owner_name ?? "Someone",
+    ownerEmail: ownerEmailOf(way.permissions),
+    role: way.role,
+    scenes,
+  };
 };
 
 /** the folders shared with the signed-in person, with their scenes */

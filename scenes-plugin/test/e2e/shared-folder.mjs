@@ -135,9 +135,9 @@ await sleep(1500);
 const menuText = () => guest.evaluate(() => document.querySelector(".scenes-switcher__menu")?.innerText ?? "");
 const folded = await menuText();
 ok(/my scenes/i.test(folded), "list: own scenes group", folded.slice(0, 200));
-ok(folded.includes("shared by") && !folded.includes(ALPHA) && !folded.includes(BETA), "list: the shared folder's group, folded by default", folded.slice(0, 300));
+ok(/OWN\d+/.test(folded) && folded.includes("example.test") && !folded.includes(ALPHA) && !folded.includes(BETA), "list: the owner's group (name and domain), folded by default", folded.slice(0, 300));
 // unfold it: the scenes show, and it stays unfolded the next time
-await guest.evaluate(() => [...document.querySelectorAll(".scenes-switcher__group")].find((el) => el.textContent.includes("shared by"))?.click());
+await guest.evaluate(() => [...document.querySelectorAll(".scenes-switcher__group")].find((el) => el.textContent.includes("example.test"))?.click());
 await sleep(300);
 const menu = await menuText();
 ok(menu.includes(ALPHA) && menu.includes(BETA), "list: unfolded, the folder's scenes", menu.slice(0, 300));
@@ -169,6 +169,15 @@ ok(opened.space === `d:${folderId}` && opened.current === BETA, "guest: in the f
 ok(opened.list.includes(ALPHA) && opened.list.includes(BETA), "the folder's scenes are the list", opened.list);
 ok(opened.elements.join() === "300", "the scene's content came through the server", opened.elements);
 ok(opened.viewMode === true && !!opened.readOnly, "read-only", opened);
+// the list looks the same inside the folder: "My scenes" first, then the folder under its owner
+await guest.click(".scenes-pill");
+await sleep(1000);
+const inside = await guest.evaluate(() => [...document.querySelectorAll(".scenes-switcher__group")].map((el) => el.innerText.replace(/\s+/g, " ")));
+const insideText = await guest.evaluate(() => document.querySelector(".scenes-switcher__menu")?.innerText ?? "");
+ok(/my scenes/i.test(inside[0] ?? "") && /OWN\d+/.test(inside[1] ?? "") && inside[1].includes("example.test"), "list in the folder: My scenes, then the owner's group", inside);
+ok(insideText.includes(BETA) && !insideText.includes("Back to my scenes") && !insideText.includes("Untitled"), "list in the folder: its scenes, no extra entries", insideText.slice(0, 300));
+await guest.keyboard.press("Escape");
+await sleep(300);
 
 // the share panel: the guest has the scene through the folder (no Google dialog: it can't reach the file with their access)
 const sharePanel = async (page, name) => {
@@ -182,7 +191,7 @@ const sharePanel = async (page, name) => {
   return text.value ?? "";
 };
 const guestPanel = await sharePanel(guest, BETA);
-ok(/You have this scene through the folder/.test(guestPanel) && /shares with you \(you can view\)/.test(guestPanel), "share panel (guest): through the owner's folder", guestPanel.slice(0, 400));
+ok(/You have this scene through the Kurviq folder of Own\d+ \(own\d+@example\.test\), shared with you \(you can view\)/.test(guestPanel), "share panel (guest): through the owner's folder", guestPanel.slice(0, 400));
 ok(!guestPanel.includes("Share in Google Drive") && guestPanel.includes("Copy link"), "share panel (guest): no Google dialog, the link", guestPanel.slice(0, 400));
 // the owner: the folder is shared, so the panel says who has every scene in it
 const ownerPanel = await sharePanel(owner, ALPHA);

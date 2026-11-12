@@ -1513,7 +1513,15 @@ const registerShare = async () => {
 };
 
 export type SharedFolderScene = { name: string; fileId: string; modifiedTime: string | null };
-export type SharedFolder = { folderId: string; name: string; owner: string; role: "writer" | "reader"; scenes: SharedFolderScene[] };
+export type SharedFolder = {
+  folderId: string;
+  name: string;
+  owner: string;
+  /** the owner's address (null: not known) */
+  ownerEmail?: string | null;
+  role: "writer" | "reader";
+  scenes: SharedFolderScene[];
+};
 
 let folderList: { at: number; value: Promise<SharedFolder[]> } | null = null;
 
@@ -1538,7 +1546,7 @@ export const sharedFolders = (): Promise<SharedFolder[]> => {
  */
 export type FolderSharing =
   | { kind: "mine"; folderId: string; name: string; permissions: Permission[] }
-  | { kind: "theirs"; folderId: string; name: string; owner: string; role: "writer" | "reader" };
+  | { kind: "theirs"; folderId: string; name: string; owner: string; ownerEmail: string | null; role: "writer" | "reader" };
 
 export const folderSharingOf = async (fileId: string): Promise<FolderSharing | null> => {
   const known = sharedFolderId ?? folderOfFile(fileId);
@@ -1546,7 +1554,14 @@ export const folderSharingOf = async (fileId: string): Promise<FolderSharing | n
     (folder) => folder.folderId === known || folder.scenes.some((scene) => scene.fileId === fileId),
   );
   if (theirs) {
-    return { kind: "theirs", folderId: theirs.folderId, name: theirs.name, owner: theirs.owner, role: theirs.role };
+    return {
+      kind: "theirs",
+      folderId: theirs.folderId,
+      name: theirs.name,
+      owner: theirs.owner,
+      ownerEmail: theirs.ownerEmail ?? null,
+      role: theirs.role,
+    };
   }
   if (sharedFileId || sharedFolderId) {
     return null;

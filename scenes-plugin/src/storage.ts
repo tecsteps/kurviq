@@ -35,6 +35,32 @@ const snapshotStoreOf = (space: string) => createStore(`excalidraw-scenes-db${sp
 const agentStoreOf = (space: string) => createStore(`excalidraw-scenes-agent${spaceSuffix(space)}`, "data");
 
 export const META_KEY = metaKeyOf(currentSpace);
+
+/** the named scenes of a stored scene list (raw localStorage value), for listing them from another space */
+export type HomeScene = { name: string; localOnly: boolean; inDrive: boolean };
+export const scenesOfMeta = (raw: string | null): HomeScene[] => {
+  try {
+    const scenes = JSON.parse(raw || "{}")?.scenes;
+    if (!scenes || typeof scenes !== "object") {
+      return [];
+    }
+    return Object.entries(scenes as Record<string, Partial<SceneMeta> | null>)
+      .filter(([name, meta]) => name !== UNTITLED && !!meta && typeof meta === "object")
+      .map(([name, meta]) => ({ name, localOnly: !!meta!.localOnly, inDrive: !!meta!.baseMd5 }));
+  } catch {
+    return [];
+  }
+};
+
+/** the user's own scenes (their account's space), seen from a shared folder's tab */
+export const ownSceneList = (): HomeScene[] => {
+  try {
+    const own = localStorage.getItem(OWN_SPACE_KEY);
+    return own === null ? [] : scenesOfMeta(localStorage.getItem(metaKeyOf(own)));
+  } catch {
+    return [];
+  }
+};
 const snapshotStore = snapshotStoreOf(currentSpace);
 
 /** key used for the scene that has not been named / saved yet */

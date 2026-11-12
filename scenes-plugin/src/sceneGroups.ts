@@ -26,3 +26,9 @@ export const readGroups = (raw: string | null): GroupState => {
 export const isOpen = (state: GroupState, key: string) => state[key] ?? !key.startsWith("folder:");
 
 export const toggled = (state: GroupState, key: string): GroupState => ({ ...state, [key]: !isOpen(state, key) });
+
+/** a shared folder's group is named after its owner, with the domain of their address (one person may share from several accounts) */
+export const ownerDomain = (email: string | null | undefined) => {
+  const at = email?.lastIndexOf("@") ?? -1;
+  return email && at > 0 ? email.slice(at + 1).toLowerCase() : null;
+};

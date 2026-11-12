@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ownerEmailOf,
   asRecipient,
   callUrl,
   classifyRead,
@@ -157,5 +158,21 @@ describe("shared folders: which writes pass", () => {
     expect(parseCreate("application/json", "{}")).toBeNull();
     expect(parseCreate("multipart/related; boundary=x", "--x\r\n\r\n{}\r\n--x--")).toBeNull();
     expect(parseCreate("multipart/related; boundary=x", `--x\r\nA: b\r\n\r\n${JSON.stringify({ name: "a.txt" })}\r\n--x\r\nA: b\r\n\r\n{}\r\n--x--`)).toBeNull();
+  });
+});
+
+describe("the folder's owner", () => {
+  it("is the user with the owner role", () => {
+    expect(
+      ownerEmailOf([
+        { type: "user", role: "writer", emailAddress: "ed@b.com" },
+        { type: "user", role: "owner", emailAddress: "Fabian@enstoke.com" },
+      ]),
+    ).toBe("Fabian@enstoke.com");
+  });
+
+  it("is unknown without one (or only a deleted one)", () => {
+    expect(ownerEmailOf([{ type: "user", role: "writer", emailAddress: "ed@b.com" }])).toBeNull();
+    expect(ownerEmailOf([{ type: "user", role: "owner", emailAddress: "x@y.com", deleted: true }])).toBeNull();
   });
 });

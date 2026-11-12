@@ -27,7 +27,9 @@ import { TemplateChangesBar } from "./templateChanges";
 import { installTitleTips } from "./titleTips";
 import { ICON_PATHS } from "./icons";
 import { QuickTip } from "./quickTip";
-import { GROUPS_KEY, folderGroup, isOpen, ownGroup, readGroups, toggled } from "./sceneGroups";
+import { ownSceneList } from "./storage";
+import type { HomeScene } from "./storage";
+import { GROUPS_KEY, folderGroup, isOpen, ownGroup, ownerDomain, readGroups, toggled } from "./sceneGroups";
 import type { GroupState } from "./sceneGroups";
 import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
@@ -58,7 +60,6 @@ import {
   ReadOnlyGuard,
   SceneSharing,
   UpdateBanner,
-  leaveSharedScene,
   openShareDialog,
   startDrive,
 } from "./online/ui";
@@ -522,16 +523,13 @@ const GroupHeading = ({ folder, open, total, onToggle }: { folder?: SharedFolder
       <path d="M8 5l5 5-5 5" />
     </svg>
     <span className="scenes-switcher__group-name">{groupName(folder)}</span>
-    {folder && <span className="scenes-switcher__group-owner">· shared by {folder.owner}</span>}
+    {folder && ownerDomain(folder.ownerEmail) && <span className="scenes-switcher__group-owner">· {ownerDomain(folder.ownerEmail)}</span>}
     {!open && <span className="scenes-switcher__group-count">{total}</span>}
   </button>
 );
 
 const groupName = (folder: SharedFolder | undefined) => {
-  if (folder) {
-    return folder.name;
-  }
-  return sharedFolderId ? "This shared folder" : "My scenes";
+  return folder ? folder.owner : "My scenes";
 };
 
 const loadGroups = () => {
@@ -558,8 +556,12 @@ const SceneSwitcher = ({
   const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
   // scenes others shared with the user (not the one this tab shows)
   const [sharedScenes, setOthers] = useState<SharedWithMe[]>([]);
-  // folders others shared with the user (not the one this tab shows), each a group of its own
-  const [folders, setFolders] = useState<SharedFolder[]>([]);
+  // folders others shared with the user, each a group of its own (the one this tab shows: here)
+  const [allFolders, setFolders] = useState<SharedFolder[]>([]);
+  const folders = allFolders.filter((folder) => folder.folderId !== sharedFolderId);
+  const here = allFolders.find((folder) => folder.folderId === sharedFolderId);
+  // in a shared folder's tab: the user's own scenes (their names), listed first like everywhere else
+  const [home] = useState<HomeScene[]>(() => (sharedFolderId ? ownSceneList() : []));
   // folded / unfolded groups, remembered in this browser
   const [groups, setGroups] = useState<GroupState>(loadGroups);
   useEffect(() => {
@@ -568,10 +570,7 @@ const SceneSwitcher = ({
         (found) => setOthers(found.filter((entry) => entry.fileId !== sharedFileId)),
         () => setOthers([]),
       );
-      sharedFolders().then(
-        (found) => setFolders(found.filter((folder) => folder.folderId !== sharedFolderId)),
-        () => setFolders([]),
-      );
+      sharedFolders().then(setFolders, () => setFolders([]));
     }
   }, [signedIn]);
   // a scene of a shared folder is listed in its folder's group, not again on its own
@@ -582,18 +581,23 @@ const SceneSwitcher = ({
 
   const needle = query.trim().toLowerCase();
   type Entry =
-    | { item: SceneListItem; owner: string | null; folder?: undefined }
-    | { item?: undefined; owner: string; name: string; fileId: string; folder?: SharedFolder };
-  const own: Entry[] = [
-    ...list.filter((item) => matchesFilter(item.name, query, current)).map((item) => ({ item, owner: null })),
-    ...others
-      .filter((shared) => matchesFilter(shared.name, query, null))
-      .map((shared) => ({ owner: shared.owner, name: shared.name, fileId: shared.fileId })),
-  ];
+    | { item: SceneListItem; owner: string | null; folder?: undefined; home?: undefined }
+    | { item?: undefined; owner: string; name: string; fileId: string; folder?: SharedFolder; home?: undefined }
+    | { item?: undefined; owner: null; name: string; fileId?: undefined; folder?: undefined; home: HomeScene };
+  // this tab's scenes (in a shared folder: no stray "Untitled" of its own unless it is open)
+  const tabList = sharedFolderId ? list.filter((item) => item.name !== null || current === null) : list;
+  const tabScenes: Entry[] = tabList.filter((item) => matchesFilter(item.name, query, current)).map((item) => ({ item, owner: null }));
+  const sharedOnes: Entry[] = others
+    .filter((shared) => matchesFilter(shared.name, query, null))
+    .map((shared) => ({ owner: shared.owner, name: shared.name, fileId: shared.fileId }));
+  const homeScenes: Entry[] = home.filter((scene) => matchesFilter(scene.name, query, null)).map((scene) => ({ owner: null, name: scene.name, home: scene }));
+  // "My scenes": this tab's own list, or (in a shared folder) the user's own scenes, and scenes shared one by one
+  const own: Entry[] = sharedFolderId ? [...homeScenes, ...sharedOnes] : [...tabScenes, ...sharedOnes];
   const folderScenes = folders.flatMap((folder) => folder.scenes.map((scene) => ({ folder, scene })));
   // the filter stays when another scene is opened: say what it hides, or the scenes look gone
   const hidden =
-    list.length - list.filter((item) => matchesFilter(item.name, query, current)).length +
+    tabList.length - tabScenes.length +
+    home.length - homeScenes.length +
     others.length - others.filter((shared) => matchesFilter(shared.name, query, null)).length +
     folderScenes.length - folderScenes.filter(({ scene }) => matchesFilter(scene.name, query, null)).length;
   const nameOf = (entry: Entry) => (entry.item ? entry.item.name : entry.name);
@@ -609,10 +613,15 @@ const SceneSwitcher = ({
   };
   // this tab's scenes first, then one group per shared folder; folded groups list nothing (a filter searches them all)
   own.sort(byName);
+  tabScenes.sort(byName);
   const grouped = folders.length > 0 || !!sharedFolderId;
   const shows = (key: string) => !grouped || !!needle || isOpen(groups, key);
-  const sections = [
-    { key: ownGroup(sharedFolderId), folder: undefined, total: list.length + others.length, entries: own },
+  const sections: { key: string; folder?: SharedFolder; total: number; entries: Entry[] }[] = [
+    { key: ownGroup(null), total: (sharedFolderId ? home.length : list.length) + others.length, entries: own },
+    // the shared folder this tab shows: its scenes, under its owner like the other folders (open unless folded)
+    ...(sharedFolderId
+      ? [{ key: ownGroup(sharedFolderId), folder: here ?? { folderId: sharedFolderId, name: "Kurviq", owner: "Shared folder", role: "reader" as const, scenes: [] }, total: tabList.length, entries: tabScenes }]
+      : []),
     ...folders.map((folder) => ({
       key: folderGroup(folder.folderId),
       folder,
@@ -648,7 +657,11 @@ const SceneSwitcher = ({
     onClose();
     if (index < items.length) {
       const entry = items[index];
-      if (entry.folder) {
+      if (entry.home) {
+        // one of the user's own scenes, from a shared folder's tab: back to their own scenes, with it open
+        const { name } = entry;
+        scenesController.leaveForReload().then(() => enterSpace(null, `/${encodeURIComponent(name)}`)).catch(ignore);
+      } else if (entry.folder) {
         // a scene of a shared folder: the tab switches into the folder's space and opens it
         const { folder, name } = entry;
         scenesController.leaveForReload().then(() => enterFolder(folder.folderId, name)).catch(ignore);
@@ -691,11 +704,17 @@ const SceneSwitcher = ({
     }
   };
 
+  const rowKey = (entry: Entry) => {
+    if (entry.item) {
+      return `here\u0000${entry.item.name ?? "\u0000untitled"}`;
+    }
+    return entry.home ? `home\u0000${entry.name}` : `shared\u0000${entry.fileId}`;
+  };
   const renderRow = (entry: Entry, index: number) => {
     const { item } = entry;
     const isCurrent = !!item && item.name === current;
     return (
-      <Fragment key={item ? `here\u0000${item.name ?? "\u0000untitled"}` : `shared\u0000${entry.fileId}`}>
+      <Fragment key={rowKey(entry)}>
       <div
         className={clsx("scenes-switcher__row", {
           "scenes-switcher__row--current": isCurrent,
@@ -747,8 +766,14 @@ const SceneSwitcher = ({
             <ScenePlace item={item} actions />
           ) : (
             <ScenePlace
-              item={{ name: entry.name, inDrive: true, localOnly: false, public: false, status: "synced" }}
-              owner={entry.owner}
+              item={{
+                name: entry.name,
+                inDrive: entry.home?.inDrive ?? true,
+                localOnly: entry.home?.localOnly ?? false,
+                public: false,
+                status: entry.home?.localOnly ? "local-only" : "synced",
+              }}
+              owner={entry.owner ?? undefined}
             />
           )}
         </span>
@@ -851,18 +876,6 @@ const SceneSwitcher = ({
             <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Shared with you…
           </button>
         </QuickTip>
-      )}
-      {sharedFolderId && (
-        <button
-          type="button"
-          className="scenes-switcher__manage"
-          onClick={() => {
-            onClose();
-            leaveSharedScene().catch(ignore);
-          }}
-        >
-          <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Back to my scenes
-        </button>
       )}
       <button type="button" className="scenes-switcher__manage" onClick={onDrive}>
         <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Google Drive…
