@@ -510,23 +510,7 @@ export const DrivePanel = () => {
       </section>
     );
   }
-  if (sharedFolderId) {
-    return (
-      <section className="kq-card">
-        <div className="kq-card__title">A folder shared with you</div>
-        <div className="kq-muted">
-          {lost ??
-            "These scenes are in someone's Kurviq folder, shared with you in Google Drive. If they let you edit it, your changes, new scenes, renames and deletions are saved to their folder, for everyone it is shared with."}
-        </div>
-        <div className="scenes-row">
-          <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => leaveSharedScene()}>
-            Back to my scenes
-          </button>
-        </div>
-        <span className="kq-muted kq-left">as {user.email}</span>
-      </section>
-    );
-  }
+  // a shared folder's tab looks like the user's own (the scene list says whose scenes these are)
   if (sharedFileId) {
     return (
       <section className="kq-card">
@@ -547,6 +531,7 @@ export const DrivePanel = () => {
   }
   return (
     <section className="kq-card kq-card--folder">
+      {sharedFolderId && lost && <div className="kq-notice">{lost}</div>}
       <a className="scenes-folder" href={folderUrl()} target="_blank" rel="noopener noreferrer" title="Open the folder in Google Drive">
         <span className="scenes-folder__logo">{DriveIcon}</span>
         <span className="scenes-folder__text">

@@ -178,6 +178,24 @@ ok(/my scenes/i.test(inside[0] ?? "") && /OWN\d+/.test(inside[1] ?? "") && insid
 ok(insideText.includes(BETA) && !insideText.includes("Back to my scenes") && !insideText.includes("Untitled"), "list in the folder: its scenes, no extra entries", insideText.slice(0, 300));
 await guest.keyboard.press("Escape");
 await sleep(300);
+// a scene link sent by a colleague (kurviq.com/<name>): the guest's own scenes have none of that name,
+// so the tab goes to the shared folder that has it (no new empty scene of that name)
+await guest.evaluate(() => localStorage.removeItem("kurviq-space"));
+await guest.goto(`${BASE}/${encodeURIComponent(ALPHA)}`, { waitUntil: "domcontentloaded" });
+let linked = null;
+for (let i = 0; i < 80; i++) {
+  linked = await guest.evaluate(() => ({ space: localStorage.getItem("kurviq-space"), current: window.__scenes?.getState().current ?? null, path: decodeURIComponent(location.pathname) })).catch(() => null); // NOSONAR S9382: polling in order on purpose
+  if (linked?.space === `d:${folderId}` && linked.current === ALPHA) break;
+  await sleep(250); // NOSONAR S9382: polling in order on purpose
+}
+ok(linked?.space === `d:${folderId}` && linked.current === ALPHA && linked.path === `/${ALPHA}`, "a scene link of a folder scene: opens in the folder", linked);
+await ready(guest);
+// the scenes of the guest's other spaces (all but the folder's)
+const ownAfterLink = await guest.evaluate((folderId) =>
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith("excalidraw-scenes") && !key.includes(folderId))
+    .flatMap((key) => Object.keys(JSON.parse(localStorage.getItem(key) || "{}").scenes ?? {})), folderId);
+ok(!ownAfterLink.includes(ALPHA), "…and no empty scene of that name among the guest's own", ownAfterLink);
 
 // the share panel: the guest has the scene through the folder (no Google dialog: it can't reach the file with their access)
 const sharePanel = async (page, name) => {

@@ -7,7 +7,7 @@
 // storage.ts) opens in the editor, at the same URL.
 
 import { scenesController } from "./controller";
-import { pubNameHolder, sharedFileId } from "./online/drive";
+import { pubNameHolder, sceneElsewhere, sharedFileId } from "./online/drive";
 import { pubNameFromPath } from "./online/pubName";
 import { isPublicScene, publicScene } from "./publicScene";
 import { deck } from "./deck";
@@ -103,8 +103,9 @@ const pathFor = (name: string | null) => {
   return name === null ? "/" : `/${encodeURIComponent(name)}`;
 };
 
+/** a scene link: the tab's scene of that name, else one in a shared folder (sceneElsewhere), else a new one */
 const navigateTo = (name: string) =>
-  scenesController.openOrCreate(name).catch((error) => {
+  scenesController.openOrCreate(name, { elsewhere: sceneElsewhere }).catch((error) => {
     console.error(`[scenes] could not open "${name}" from URL`, error);
   });
 

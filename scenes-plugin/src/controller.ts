@@ -1843,26 +1843,35 @@ class ScenesController {
     });
 
   /** open a scene, or create it (empty, local) if it doesn't exist anywhere */
-  openOrCreate = async (name: string) => {
+  /**
+   * `elsewhere` (a scene link): before a missing scene is created, where else
+   * it may be (a shared folder, see sceneElsewhere); the tab then goes there
+   */
+  openOrCreate = async (name: string, { elsewhere }: { elsewhere?: (name: string) => Promise<(() => void) | null> } = {}) => {
     if (name === this.meta.current) {
       return;
     }
     // its name from the start (the link names it), not "Untitled" while it loads
     this.setState({ opening: name });
+    let go: (() => void) | null = null;
     try {
-      await this.openOrCreateInner(name);
+      go = await this.openOrCreateInner(name, elsewhere);
     } finally {
-      if (this.state.opening === name) {
+      if (this.state.opening === name && !go) {
         this.setState({ opening: null });
       }
     }
+    if (go) {
+      await this.leaveForReload();
+      go();
+    }
   };
 
-  private readonly openOrCreateInner = async (name: string) => {
+  private readonly openOrCreateInner = async (name: string, elsewhere?: (name: string) => Promise<(() => void) | null>) => {
     // online without Drive: there is nowhere else to look, a new scene right away
     if (!this.exists(name) && this.state.sync.notConnected) {
       await this.create(name);
-      return;
+      return null;
     }
     try {
       await this.open(name, { missingIsFine: true });
@@ -1870,8 +1879,13 @@ class ScenesController {
       if (error.status !== 404) {
         throw error;
       }
+      const go = elsewhere ? await elsewhere(name).catch(() => null) : null;
+      if (go) {
+        return go;
+      }
       await this.create(name);
     }
+    return null;
   };
 
   private exists(name: string) {

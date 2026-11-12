@@ -23,7 +23,8 @@ import { createStore, del, get, set } from "idb-keyval";
 
 import { isSceneName } from "../../../scenes-mcp/sceneName.mjs";
 import { accountKey, spaceAccountOf } from "../spaces";
-import { currentSpace, SPACE_KEY } from "../storage";
+import { currentSpace, ownSceneList, SPACE_KEY } from "../storage";
+import { linkTargetOf } from "./linkTarget";
 
 import google from "../../../online/google.json";
 
@@ -1599,6 +1600,27 @@ export const enterSpace = (fileId: string | null, path = "/") => {
     }
   } catch {}
   window.location.href = path;
+};
+
+/**
+ * A scene link whose name the tab's scenes don't have: the scene of that name
+ * in a folder shared with the user (or, from a folder's tab, among their own
+ * scenes). Answers how to go there (the page reloads into that space), or
+ * null: there is none, it is a new scene.
+ */
+export const sceneElsewhere = async (name: string): Promise<(() => void) | null> => {
+  if (sharedFileId || !state.user || !state.drive) {
+    return null;
+  }
+  const folders = await sharedFolders().catch((): SharedFolder[] => []);
+  const own = sharedFolderId ? ownSceneList().map((scene) => scene.name) : [];
+  const target = linkTargetOf(name, folders, own, sharedFolderId);
+  if (!target) {
+    return null;
+  }
+  return target.kind === "own"
+    ? () => enterSpace(null, `/${encodeURIComponent(name)}`)
+    : () => enterFolder(target.folderId, name);
 };
 
 // -----------------------------------------------------------------------------
