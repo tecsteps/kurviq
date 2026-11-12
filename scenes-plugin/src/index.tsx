@@ -703,7 +703,7 @@ const SceneSwitcher = ({
         })}
         onMouseEnter={() => setActive(index)}
       >
-        <button
+        <button // NOSONAR S6819: a row of the filterable scene list (listbox with a pen button beside each entry); a native <option> can't hold that
           type="button"
           role="option"
           aria-selected={isCurrent}

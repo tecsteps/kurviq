@@ -50,7 +50,12 @@ export const rowAccess = (grant: Grant, folder: Grant[]): RowAccess => {
   if (fromFolder.length === 0) {
     return { kind: "direct" };
   }
-  const best = fromFolder.reduce((a, b) => (roleRank(b.role) > roleRank(a.role) ? b : a));
+  let best = fromFolder[0];
+  for (const entry of fromFolder) {
+    if (roleRank(entry.role) > roleRank(best.role)) {
+      best = entry;
+    }
+  }
   if (roleRank(best.role) >= roleRank(grant.role)) {
     return { kind: "folder" };
   }

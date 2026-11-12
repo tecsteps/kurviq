@@ -979,7 +979,7 @@ const GoogleShareRescue = ({ target, onClose }: { target: { id: string; folder: 
   };
   const email = connection.getState().user?.email;
   return createPortal(
-    <div className="kq-rescue" role="status">
+    <output className="kq-rescue">
       <span>Google's dialog shows an error or doesn't react?</span>
       <button type="button" onClick={close}>
         Close it
@@ -994,7 +994,7 @@ const GoogleShareRescue = ({ target, onClose }: { target: { id: string; folder: 
       >
         Share in Drive instead
       </button>
-    </div>,
+    </output>,
     document.body,
   );
 };
@@ -1034,7 +1034,7 @@ const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareF
 
 /** where a person's access comes from, under their address (only when the folder is shared) */
 const accessNote = (access: RowAccess, folder: FolderSharing | null) => {
-  if (!folder || folder.kind !== "mine") {
+  if (folder?.kind !== "mine") {
     return null;
   }
   switch (access.kind) {
@@ -1066,8 +1066,9 @@ const ShareDialog = ({ name }: { name: string }) => {
     }
     setPermissions(await listPermissions(id));
   };
-  const reloadFolder = (id: string) =>
+  const reloadFolder = (id: string) => {
     folderSharingOf(id).then(setFolder, (err) => console.error("[drive] the scene's folder", err));
+  };
 
   useEffect(() => {
     scenesController
