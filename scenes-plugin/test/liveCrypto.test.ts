@@ -119,7 +119,9 @@ describe("scene key encryption", () => {
     for (let i = 0; i < 20; i++) {
       doubled.set(big, i * big.length);
     }
-    expect(fromBase64(toBase64(doubled))).toEqual(doubled);
+    // compared as bytes (a deep equality of 1.3 MB takes seconds on slow machines)
+    const back = fromBase64(toBase64(doubled));
+    expect(Buffer.from(back).equals(Buffer.from(doubled))).toBe(true);
   });
 });
 
