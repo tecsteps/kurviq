@@ -46,6 +46,8 @@ import {
 import type { AuthEnv, Session } from "./auth";
 import { driveCall, driveUrls, getFile, patchFile, problemOf, readLimited } from "./driveApi";
 import type { Claims } from "./scene";
+import type { Role } from "../../scenes-plugin/src/online/liveProtocol";
+import { authorKey } from "../../scenes-mcp/sceneComments.mjs";
 import { folderFileAccess } from "./folders";
 import type { FoldersEnv } from "./folders";
 
@@ -64,7 +66,7 @@ const PROOF = "kq_scene_proof";
 /** while Google is unreachable, proofs are extended at most this long after the last real check */
 const OUTAGE_GRACE_MS = 2 * 3_600_000;
 const WATCH_MS = 24 * 3_600_000;
-const FILE_FIELDS = "id,name,trashed,ownedByMe,headRevisionId,md5Checksum,modifiedTime,capabilities(canEdit),appProperties";
+const FILE_FIELDS = "id,name,trashed,ownedByMe,headRevisionId,md5Checksum,modifiedTime,capabilities(canEdit,canComment),appProperties";
 
 export type Ctx = {
   request: Request;
@@ -202,7 +204,7 @@ const keepWatch = async (ctx: Ctx, fileId: string, token: string, watch: { id: s
  * one written under the scene object's lease, read again just before
  * writing. A copy's key (another file id) counts as none.
  */
-const sceneKey = async (ctx: Ctx, fileId: string, token: string, file: any, role: "edit" | "read", sub: string) => {
+const sceneKey = async (ctx: Ctx, fileId: string, token: string, file: any, role: Role, sub: string) => {
   const parsed = await parseKeyProperty(file.appProperties?.[KEY_PROPERTY], fileId);
   const found = parsed && !parsed.copy ? parsed : null;
   const prep = await toScene(ctx.env, fileId, "/prepare", { found: found?.keyId ?? null, viewer: role !== "edit", trashed: !!file.trashed, sub });
@@ -251,7 +253,18 @@ const finishSceneKey = async (ctx: Ctx, fileId: string, token: string, prep: any
 };
 
 /** what the scene object gets about this person (sealed into ticket / proof) */
-const claimsOf = async (ctx: Ctx, kind: Claims["kind"], fileId: string, session: Session, file: any, role: "edit" | "read", keyId: string | null) => {
+/** Drive's word on a file: edit, comment (Drive's commenters: comments only) or read; a shared folder's role first */
+const roleOf = (access: { role: "edit" | "read" | null }, file: any): Role => {
+  if (access.role) {
+    return access.role;
+  }
+  if (file.capabilities?.canEdit) {
+    return "edit";
+  }
+  return file.capabilities?.canComment ? "comment" : "read";
+};
+
+const claimsOf = async (ctx: Ctx, kind: Claims["kind"], fileId: string, session: Session, file: any, role: Role, keyId: string | null) => {
   const now = Date.now();
   const claims: Claims = {
     kind,
@@ -260,6 +273,7 @@ const claimsOf = async (ctx: Ctx, kind: Claims["kind"], fileId: string, session:
     person: session.user.name ?? session.user.email.split("@")[0],
     role,
     pseudonym: await pseudonymOf(ctx.env, session.sub!, fileId),
+    ck: await authorKey(session.user.email),
     head: { revision: file.headRevisionId ?? null, md5: file.md5Checksum ?? null, at: Date.parse(file.modifiedTime ?? "") || null },
     keyId,
     exp: now + (kind === "ticket" ? TICKET_VALID_MS : PROOF_VALID_MS),
@@ -350,7 +364,7 @@ const ticket = async (ctx: Ctx, fileId: string) => {
   if (!liveEnabled(ctx.env, session.user.email, file.data.appProperties)) {
     return answer(ctx, 200, { enabled: false });
   }
-  const role = access.role ?? (file.data.capabilities?.canEdit ? "edit" : "read");
+  const role = roleOf(access, file.data);
   const key = await sceneKey(ctx, fileId, access.token, file.data, role, session.sub!);
   await keepWatch(ctx, fileId, access.token, key.watch);
   if (!("key" in key) || !key.key) {
@@ -468,7 +482,7 @@ const renew = async (ctx: Ctx, fileId: string) => {
     return checked;
   }
   const { access, file } = checked;
-  const role = access.role ?? (file.data.capabilities?.canEdit ? "edit" : "read");
+  const role = roleOf(access, file.data);
   const proof = await claimsOf(ctx, "proof", fileId, who.session, asSeen(file.data, access), role, old.keyId);
   const forDo: Claims = { ...proof, ...(role === "edit" ? { token: await sealedToken(ctx, fileId, who.session, access.refresh) } : {}) };
   const done = await toScene(ctx.env, fileId, "/renew", {

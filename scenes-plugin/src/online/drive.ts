@@ -1229,7 +1229,7 @@ export type Permission = {
   photoLink?: string;
 };
 
-export type LinkAccess = "restricted" | "reader" | "writer";
+export type LinkAccess = "restricted" | "reader" | "commenter" | "writer";
 
 export const listPermissions = async (fileId: string): Promise<Permission[]> => {
   const res = await drive(
@@ -1244,8 +1244,8 @@ export const listPermissions = async (fileId: string): Promise<Permission[]> => 
 export const linkAccessOf = (permissions: Permission[]): LinkAccess => {
   const permissionAccess = () => {
     if (anyone) {
-      if (anyone.role === "writer") {
-        return "writer";
+      if (anyone.role === "writer" || anyone.role === "commenter") {
+        return anyone.role;
       }
       return "reader";
     }
@@ -1256,7 +1256,7 @@ export const linkAccessOf = (permissions: Permission[]): LinkAccess => {
   return permissionAccess();
 };
 
-export const changeRole = async (fileId: string, permissionId: string, role: "reader" | "writer") => {
+export const changeRole = async (fileId: string, permissionId: string, role: "reader" | "commenter" | "writer") => {
   const res = await drive(`/files/${fileId}/permissions/${permissionId}?supportsAllDrives=true&fields=id`, {
     method: "PATCH",
     body: { role },

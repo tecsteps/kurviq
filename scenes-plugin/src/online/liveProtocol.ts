@@ -2,6 +2,8 @@
 // Object (online/worker/scene.ts). Shared by the app and the Worker, like
 // frames.ts. docs/live-sync/PROTOCOL.md explains the whole picture.
 
+import type { CommentReadable } from "../../../scenes-mcp/sceneComments.mjs";
+
 export const LIVE_PROTOCOL = 1;
 
 /** the file's marker once its scene saves through the scene's Durable Object */
@@ -50,7 +52,8 @@ export const LIMITS = {
   counterWindow: 10_000,
 };
 
-export type Role = "edit" | "read";
+/** edit: everything; comment: comments only (Drive's commenters, see ../../../scenes-mcp/sceneComments.mjs); read: nothing */
+export type Role = "edit" | "comment" | "read";
 
 /** the element version a change was made on (null: a new element) */
 export type Base = { v: number; n: number };
@@ -73,9 +76,9 @@ export type Readable = {
   fontFamily: number | null;
 };
 
-export type EventKind = "el" | "set" | "file" | "font" | "name";
+export type EventKind = "el" | "set" | "file" | "font" | "name" | "cmt";
 
-/** one change: an element, the scene settings, an image, a font or the name */
+/** one change: an element, the scene settings, an image, a font, the name or a comment */
 export type WireEvent = {
   k: EventKind;
   /** element id; "settings"; the image's file id; the font's hash; "name" */
@@ -92,6 +95,8 @@ export type WireEvent = {
   v?: Base;
   /** fonts: the numeric font id the elements use (readable, the DO keeps them free of clashes) */
   fontId?: number;
+  /** comments: what the DO may read of one (it checks commenters' changes on it) */
+  cr?: CommentReadable;
 };
 
 /**
@@ -101,6 +106,7 @@ export type WireEvent = {
  *   file  Excalidraw's BinaryFileData { id, mimeType, dataURL, created, … }  (id = its file id)
  *   font  { family, id, faces, source } as in kurviqFonts                    (id = fontHash(font))
  *   name  { name }                                                            (id NAME_ID)
+ *   cmt   a comment as in kurviqComments (sceneComments.mjs)                  (id = its id)
  * c is "" only in deletions the Durable Object makes itself (r.isDeleted:
  * an outside app removed the element, or a discarded new element): nothing to decrypt.
  */

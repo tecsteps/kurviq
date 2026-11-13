@@ -123,6 +123,18 @@ type Command =
   | { type: "ping" };
 
 /** hidden headless tab started by the scenes server, only renders/converts */
+
+/** an agent's edit that only changes comments (no elements, slides or settings) */
+const commentsOnly = (command: any) =>
+  !!command.comments?.length &&
+  !command.add?.length &&
+  !command.update?.length &&
+  !command.delete?.length &&
+  !command.restyle &&
+  !command.reset &&
+  !command.addTitleBlock &&
+  command.isPresentation === undefined;
+
 export const IS_RENDERER = new URLSearchParams(window.location.search).has(
   "scenes-renderer",
 );
@@ -878,7 +890,10 @@ const runCommand = async (command: Command) => {
     case "flush":
       return scenesController.flush(command.name);
     case "scene-edit": {
-      refuseIfReadOnly(command.name);
+      // comments alone: also where the user may only comment (live sync checks that)
+      if (!commentsOnly(command)) {
+        refuseIfReadOnly(command.name);
+      }
       const run = onceForRequest(
         command.requestId,
         () => queueEdit(() => editSceneOnDrive(command, convertMcpElements)),
@@ -941,7 +956,9 @@ const runCommand = async (command: Command) => {
     case "read":
       return readOpenScene(command);
     case "edit":
-      refuseIfReadOnly(scenesController.getState().current);
+      if (!commentsOnly(command)) {
+        refuseIfReadOnly(scenesController.getState().current);
+      }
       return editOpenScene(command, convertMcpElements);
     case "checkpoint-save":
       await setCheckpoint(command.id, command.data);

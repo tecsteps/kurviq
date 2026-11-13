@@ -27,6 +27,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
+import { cleanCommentReadable, commentReadable, commenterReadableRefusal } from "../../scenes-mcp/sceneComments.mjs";
 import { sendMessage } from "../../scenes-plugin/src/online/frames";
 import {
   AUTO_ACCEPT_AFTER_MS,
@@ -95,6 +96,8 @@ export type Claims = {
   person: string | null;
   role: Role;
   pseudonym: string;
+  /** the key that marks this person's comments as theirs (sceneComments.mjs authorKey) */
+  ck?: string;
   /** Drive's head when checked; `at`: its modifiedTime (ms) */
   head: { revision: string | null; md5: string | null; at?: number | null };
   keyId: string | null;
@@ -118,6 +121,8 @@ type Attachment = {
   pseudonym: string;
   person: string | null;
   role: Role;
+  /** comment key (claims.ck): a commenter may change only their own comments */
+  ck?: string;
   proofExp: number;
   token?: string;
   keyId: string | null;
@@ -145,6 +150,8 @@ type Batch = {
   at: number;
   /** pseudonym of the original author when someone accepted these changes as theirs */
   behalf?: string;
+  /** a commenter's comments: no token of their own, saved by an editor on their behalf */
+  commenter?: boolean;
   command?: string;
   entries: Entry[];
   /** everything the batch touches, before and after (the grouping walk) */
@@ -262,6 +269,8 @@ const cleanReadable = (r: any, id: string): Readable | null => {
 const validBase = (base: unknown): base is Base | null =>
   base === null || (!!base && typeof base === "object" && isInt((base as Base).v) && Number.isSafeInteger((base as Base).n));
 
+const ROLE_RANK: Record<Role, number> = { read: 0, comment: 1, edit: 2 };
+
 /** a cipher's length limit per kind (images are big, the rest small) */
 const maxCipher = (k: EventKind) => {
   if (k === "file") {
@@ -269,6 +278,9 @@ const maxCipher = (k: EventKind) => {
   }
   if (k === "font") {
     return 8 * 1024 * 1024;
+  }
+  if (k === "cmt") {
+    return 64 * 1024;
   }
   return 2 * 1024 * 1024;
 };
@@ -280,7 +292,7 @@ const FONT_ID_MAX = 9000;
 const REF_FIELDS = ["containerId", "frameId", "startId", "endId"] as const;
 
 /** what an entry takes in storage and memory: ciphertext, readable part, row overhead */
-const sizeOf = (entry: Entry) => entry.c.length + (entry.r ? JSON.stringify(entry.r).length : 0) + 96;
+const sizeOf = (entry: Entry) => entry.c.length + (entry.r ? JSON.stringify(entry.r).length : 0) + (entry.cr ? JSON.stringify(entry.cr).length : 0) + 96;
 /** unsaved batches per scene (rows, memory) */
 const MAX_PENDING_BATCHES = 20_000;
 
@@ -609,6 +621,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       touches: batch.touches,
       pseudonym: batch.pseudonym,
       behalf: batch.behalf,
+      commenter: batch.commenter,
       command: batch.command,
       origin: batch.origin,
     });
@@ -672,6 +685,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         at: Number(row.at),
         pseudonym: data.pseudonym,
         behalf: data.behalf,
+        commenter: data.commenter === true || undefined,
         command: data.command,
         origin: data.origin,
         entries: data.entries,
@@ -1098,6 +1112,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       pseudonym: claims.pseudonym,
       person: claims.person,
       role: claims.role,
+      ck: claims.ck,
       proofExp: now + PROOF_VALID_MS,
       token: claims.role === "edit" ? claims.token : undefined,
       keyId: claims.keyId,
@@ -1109,6 +1124,10 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       head: { revision: claims.head?.revision ?? null, md5: claims.head?.md5 ?? null, at: claims.head?.at ?? null },
     } satisfies Attachment);
     this.confirmConnection(claims);
+    if (claims.role === "edit" && this.loaded && this.pending.some((batch) => batch.commenter)) {
+      // commenters' comments waited for an editor: saved now
+      this.schedule("save", now + SAVE_EVERY_MS, true);
+    }
     this.setMeta("watchStop", null);
     this.schedule("watch-stop", null);
     this.schedule("cleanup", null);
@@ -1291,11 +1310,13 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         continue;
       }
       found = true;
-      const role: Role = unconfirmed && att.role === "read" ? "read" : claims.role;
+      // unconfirmed by Google: never more than the connection had
+      const role: Role = unconfirmed && ROLE_RANK[att.role] < ROLE_RANK[claims.role] ? att.role : claims.role;
       const proofExp = unconfirmed && recheckAt > claims.checkedAt ? att.proofExp : claims.exp;
       ws.serializeAttachment({
         ...att,
         role,
+        ck: claims.ck ?? att.ck,
         proofExp,
         token: role === "edit" ? claims.token ?? att.token : undefined,
         keyId: claims.keyId,
@@ -1385,7 +1406,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       if (!token) {
         continue; // their short proof decides
       }
-      const file = await getFile(this.genv, token, this.fileId, "id,capabilities(canEdit)"); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
+      const file = await getFile(this.genv, token, this.fileId, "id,capabilities(canEdit,canComment)"); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
       this.recheckedAccess(sub, file);
     }
   }
@@ -1393,9 +1414,11 @@ export class SceneRoom extends DurableObject<SceneEnv> {
   private recheckedAccess(sub: string, file: DriveAnswer) {
     if (file.status === 200) {
       if (file.data.capabilities?.canEdit === false) {
+        // Drive's commenters keep commenting; everyone else may only read now
+        const role: Role = file.data.capabilities?.canComment ? "comment" : "read";
         for (const { ws, att } of this.sockets()) {
-          if (att.sub === sub && att.role === "edit") {
-            ws.serializeAttachment({ ...att, role: "read", token: undefined });
+          if (att.sub === sub && att.role !== "read" && att.role !== role) {
+            ws.serializeAttachment({ ...att, role, token: undefined });
           }
         }
       }
@@ -1983,7 +2006,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (!event || typeof event !== "object" || typeof event.id !== "string" || !ID_RE.test(event.id) || !validBase(event.base)) {
       return false;
     }
-    if (!["el", "set", "file", "font", "name"].includes(event.k) || typeof event.c !== "string" || event.c.length < 20) {
+    if (!["el", "set", "file", "font", "name", "cmt"].includes(event.k) || typeof event.c !== "string" || event.c.length < 20) {
       return false;
     }
     if (event.c.length > maxCipher(event.k)) {
@@ -2000,6 +2023,8 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         return isInt(event.fontId) && event.fontId >= FONT_ID_MIN && event.fontId < FONT_ID_MAX;
       case "file":
         return true;
+      case "cmt":
+        return cleanCommentReadable(event.cr)?.id === event.id;
     }
     return false;
   }
@@ -2037,7 +2062,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
 
   private admitBatch(input: BatchInput) {
     const { ws, att, counter } = input;
-    if (att.role !== "edit" || this.isRevoked(att.sub)) {
+    // Drive's commenters send comments only (checked event by event in validateBatchEvents)
+    const commenter = att.role === "comment" && Array.isArray(input.msg.events) && input.msg.events.every((event: any) => event?.k === "cmt");
+    if ((att.role !== "edit" && !commenter) || this.isRevoked(att.sub)) {
       return this.refuse(ws, counter, "role");
     }
     const lifecycle = this.lifecycle().state;
@@ -2083,7 +2110,8 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (now - msg.made > REPLAY_HORIZON_MS) {
       return this.refuse(ws, counter, "old", [], "older than 30 days");
     }
-    if (!att.token || sceneTokenExpiry(att.token) <= now) {
+    // a commenter has no token: an editor saves their comments (adoptComments)
+    if (att.role === "edit" && (!att.token || sceneTokenExpiry(att.token) <= now)) {
       return this.refuse(ws, counter, "token");
     }
     if (!this.rateOk(ws, "batch", LIMITS.batchesPerMinute, att.sub)) {
@@ -2108,7 +2136,33 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       }
       seen.add(eventKey(event.k, event.id));
     }
+    if (input.att.role === "comment") {
+      const refusal = this.commenterRefusal(input.att, events);
+      if (refusal) {
+        return this.refuse(ws, counter, "role", [], refusal);
+      }
+    }
     return this.applyBatchBases(input, events);
+  }
+
+  /**
+   * What a commenter may change (sceneComments.mjs): their own new comments,
+   * edits and deletions of their own, resolving any thread. Checked on the
+   * readable parts (the scene key isn't here); every tab and the save check
+   * that the encrypted comment matches its readable part.
+   */
+  private commenterRefusal(att: Attachment, events: WireEvent[]) {
+    if (!att.ck) {
+      return "no comment key";
+    }
+    for (const event of events) {
+      const before = this.state.get(eventKey(event.k, event.id))?.cr ?? null;
+      const refusal = commenterReadableRefusal(before, cleanCommentReadable(event.cr), att.ck);
+      if (refusal) {
+        return refusal;
+      }
+    }
+    return null;
   }
 
   private batchCollisions(events: WireEvent[], tab: string, ownBase: number | null) {
@@ -2226,6 +2280,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (event.k === "font") {
       entry.fontId = fontIds[event.id] ?? event.fontId;
     }
+    if (event.k === "cmt") {
+      entry.cr = cleanCommentReadable(event.cr)!;
+    }
     batchMap.set(key, entry);
     entries.push(entry);
     stamps[key] = { v, n };
@@ -2334,6 +2391,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       live: !!msg.live,
       at: msg.made,
       command: typeof msg.command === "string" ? msg.command.slice(0, 100) : undefined,
+      ...(att.role === "comment" ? { commenter: true } : {}),
       entries,
       touches: [...new Set(entries.flatMap((entry) => touchesOf(entry, this.state.get(keyOf(entry)), after, before)))],
       bytes,
@@ -2357,8 +2415,8 @@ export class SceneRoom extends DurableObject<SceneEnv> {
           this.foldCounters(tab, skip);
         }
         // the author's token is stored in the same transaction as their first unsaved change
-        if (entries.length && !this.q("SELECT 1 FROM tokens WHERE author = ?", att.sub).length) {
-          this.storeToken(att.sub, att.token!);
+        if (entries.length && att.token && !this.q("SELECT 1 FROM tokens WHERE author = ?", att.sub).length) {
+          this.storeToken(att.sub, att.token);
         }
       });
     } catch (error) {
@@ -2717,6 +2775,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     }
     if (event.k === "font") {
       entry.fontId = event.fontId;
+    }
+    if (event.k === "cmt") {
+      entry.cr = cleanCommentReadable(event.cr)!;
     }
     return entry;
   }
@@ -3084,6 +3145,50 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       }
       this.acceptAs(sub, att);
     }
+  }
+
+  /**
+   * Commenters' batches (comments only, no token of their own): an editor
+   * saves them, recorded on the commenter's behalf, like accepted changes. The
+   * editor is one whose token is stored (they have unsaved work), else a
+   * connected one; with neither the comments wait (live for everyone already,
+   * in Drive once an editor comes).
+   */
+  private adoptComments() {
+    const waiting = this.pending.filter((batch) => batch.commenter && !this.q("SELECT 1 FROM tokens WHERE author = ?", batch.author).length);
+    if (!waiting.length) {
+      return;
+    }
+    const writer = this.commentWriter();
+    if (!writer) {
+      return;
+    }
+    this.ctx.storage.transactionSync(() => {
+      if (writer.token && !this.q("SELECT 1 FROM tokens WHERE author = ?", writer.sub).length) {
+        this.storeToken(writer.sub, writer.token);
+      }
+      for (const batch of waiting) {
+        batch.behalf = batch.behalf ?? batch.pseudonym;
+        batch.author = writer.sub;
+        batch.pseudonym = writer.pseudonym;
+        this.storeBatch(batch);
+      }
+    });
+  }
+
+  /** who saves commenters' comments: an editor with a stored token, else a connected editor (not blocked, not revoked) */
+  private commentWriter(): { sub: string; pseudonym: string; token?: string } | null {
+    const now = Date.now();
+    const blocked = this.metaJson<Blocked>("blocked", {});
+    const usable = (sub: string) => !blocked[sub] && !this.isRevoked(sub);
+    const stored = this.q("SELECT author FROM tokens WHERE expires > ? ORDER BY expires DESC", now)
+      .map((row) => String(row.author))
+      .find(usable);
+    if (stored) {
+      return { sub: stored, pseudonym: this.pseudonymOfSub(stored) ?? "kurviq" };
+    }
+    const live = this.sockets().find(({ att }) => att.role === "edit" && !!att.token && sceneTokenExpiry(att.token) > now && usable(att.sub));
+    return live ? { sub: live.att.sub, pseudonym: live.att.pseudonym, token: live.att.token } : null;
   }
 
   /** after 7 days: the next editor whose work depends on them accepts them */
@@ -3906,6 +4011,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       return;
     }
     this.expireLeases();
+    this.adoptComments();
     this.q("DELETE FROM losers");
     if (!(await this.recoverSaves())) {
       return;
@@ -4074,6 +4180,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         const value = await plainOf(key, entry); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
         if (entry.k === "el" && !validElement(value)) {
           throw new Error("invalid element");
+        }
+        if (entry.k === "cmt" && !value) {
+          throw new Error("comment doesn't match its readable part");
         }
         plain.set(k, { k: entry.k, id: entry.id, value });
       } catch {
@@ -4651,6 +4760,9 @@ export class SceneRoom extends DurableObject<SceneEnv> {
         entry.c = await encryptContent(key, change.k, change.id, change.value); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
         if (change.k === "font") {
           entry.fontId = change.value.id;
+        }
+        if (change.k === "cmt") {
+          entry.cr = commentReadable(change.value);
         }
       }
       entries.push(entry);

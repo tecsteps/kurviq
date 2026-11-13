@@ -30,6 +30,8 @@ const imports: Record<string, unknown> = {
   "@excalidraw/element": { hashString: vi.fn() },
   "idb-keyval": { createStore: vi.fn(), get: vi.fn(), set: vi.fn() },
   "../fonts": { addFont: mocks.addFont, customFonts: mocks.fonts, isCustomFontId: (id: number) => id >= 2000, withFonts: vi.fn() },
+  "../comments/store": { commentStore: { fromLive: vi.fn() } },
+  "../../../scenes-mcp/sceneComments.mjs": { commentsOf: (value: unknown) => (Array.isArray(value) ? value : []), withComments: (json: string) => json },
   "../uploads": { getUpload: mocks.getUpload },
   "./drive": { authPost: vi.fn(), connection: { getState: () => ({}) }, driveScenes: {}, liveSocketUrl: vi.fn(), signOutListeners: new Set() },
   "./frames": { createReceiver: vi.fn(), sendMessage: vi.fn() },

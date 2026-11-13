@@ -406,6 +406,30 @@ Excalidraw apps still see the text. Exports (PNG, SVG, PDF) show the
 formatting, and in SVG and PDF text stays text, links included. Agents
 write formatted text as markdown (see the skill).
 
+### Comments
+
+**Comments** (top right) lists a scene's comment threads; **New comment**,
+then a click on an element (or a free spot) places a thread there. Its pin
+shows the people in it and follows the element when it moves. A thread's
+popover has replies (Enter sends, Shift+Enter is a new line, `@` suggests
+the people the scene is shared with), resolve / reopen, a link that opens the
+scene with the thread open (`#comment=<id>`), and per comment Copy link, Edit
+and Remove (your own; editors may remove any). Pins never show in
+presentations or exports; the shared viewer shows them to people signed in.
+
+Comments are stored in the scene file (a top-level `kurviqComments` array, see
+`scenes-mcp/sceneComments.mjs`), so they stay with copies, versions and
+downloads; authors are stored as a name and a key derived from their address,
+never the address. Google Drive decides who may comment: editors, and Drive's
+**commenters** (Share…: "Can comment", also for the link). A commenter can't
+write the file, so their comments go through live sync: the scene's server
+accepts only comment changes from them (their own comments, resolving), checks
+them on a small readable part of each comment (it has no key), and saves them
+with an editor's sign-in, recorded on the commenter's behalf (they reach Drive
+once an editor is connected or has unsaved work; everyone connected sees them
+at once). Agents read threads in `read_scene` and add, reply, resolve with
+`edit_scene` (`comments`).
+
 ### Fonts
 
 Besides Excalidraw's own fonts, any font can be added: **font picker →

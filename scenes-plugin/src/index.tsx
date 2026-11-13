@@ -36,6 +36,7 @@ import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { installWheelZoom } from "./wheelZoom";
+import { CommentsButton, CommentsLayer } from "./comments/ui";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar, setPresentation, usePresentation } from "./slidesUI";
 import {
   connectGoogle,
@@ -496,6 +497,7 @@ const ScenesTopRightUI = ({ isMobile }: { isMobile: boolean }) => {
         </svg>
         Slides
       </button>
+      <CommentsButton />
       {IS_ONLINE && <McpButton />}
     </div>
   );
@@ -1731,6 +1733,7 @@ export const ScenesSidebar = () => {
       <PresentationOverlay />
       <SlideNotesOverlay />
       <TextTipsOverlay />
+      <CommentsLayer />
       <TemplateChangesBar />
       <PublicSceneOverlay />
       <AddFontOverlay />

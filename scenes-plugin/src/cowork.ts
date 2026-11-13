@@ -27,7 +27,11 @@ import {
 import { getFontString } from "@excalidraw/common";
 
 import { registerSceneFonts, withFonts } from "./fonts";
+import { applyCommentOps, authorKey, withComments } from "../../scenes-mcp/sceneComments.mjs";
+import type { CommentOp, SceneComment } from "../../scenes-mcp/sceneComments.mjs";
 import { scenesApi } from "./api";
+import { connection } from "./online/drive";
+import { commentStore } from "./comments/store";
 import { applyMarkdownUpdate } from "./richText/agent";
 import { applyFormat } from "./richText/format";
 import { docFromPlain, isPlainDoc, richDocOf } from "./richText/model";
@@ -107,6 +111,8 @@ export type EditOptions = {
   reset?: Array<string | number | { id: string; changes?: string[] }> | "all";
   /** headline and eyebrow on the template ("Add headline & eyebrow" in the app) */
   addTitleBlock?: boolean;
+  /** comments to add, reply to, resolve, reopen, edit or delete (sceneComments.mjs applyCommentOps) */
+  comments?: CommentOp[];
   /** the agent's id for this edit: sent again (e.g. after a timeout), it is not applied twice */
   requestId?: string;
   onConflict?: "reject" | "overwrite";
@@ -906,6 +912,13 @@ export const editOpenScene = async (
     showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), images.elements as any);
   }
 
+  // comments: where the open scene saves them (live sync, or its own save)
+  const commented = await agentComments(command, commentStore.editorList(), images.elements);
+  for (const comment of commented.changed) {
+    if (!commentStore.change(comment, "editor")) {
+      throw new Error("Comments can't be changed in this scene now (it is read only here)");
+    }
+  }
   await editorYield();
   const after = requireApi().getSceneElements();
   return {
@@ -913,6 +926,7 @@ export const editOpenScene = async (
     ...(await handleBaseline(scene, after, command)),
     ...edit,
     ...images.info,
+    ...commented.info,
     ...(pending ? { pending } : {}),
     elements: after,
   };
@@ -950,19 +964,35 @@ export const editSceneOnDrive = async (
     refuseImagesWithoutFile(data.elements || [], edit.elements, files);
     const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
     const elements = images.elements;
+    const commented = await agentComments(command, data.kurviqComments, elements);
     const json = withSceneName(
-      withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements),
+      withComments(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), commented.comments),
       command.name, // ties the content to this scene
     );
     try {
       const saved = await scenesApi.save(command.name, json, latest.md5, "agent");
-      return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(saved.md5, saved.driveRevision), changed: saved.changed };
+      return { ...edit, ...images.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(saved.md5, saved.driveRevision), changed: saved.changed };
     } catch (error) {
       if ((error as ApiError).status !== 409 || attempt >= 3) {
         throw error;
       }
     }
   }
+};
+
+/**
+ * An agent's comment operations (command.comments) on a scene's comments, as
+ * the signed-in person (marked as agent); without operations the comments
+ * stay as they are. info: the ids of new comments, for the agent.
+ */
+const agentComments = async (command: EditOptions, comments: unknown, elements: readonly any[]) => {
+  if (!command.comments?.length) {
+    return { comments, changed: [] as SceneComment[], info: {} };
+  }
+  const user = connection.getState().user;
+  const author = { name: user?.name || user?.email?.split("@")[0] || "You", key: await authorKey(user?.email || "local") };
+  const result = applyCommentOps(comments, command.comments, author, new Map(elements.map((el) => [el.id, el])));
+  return { comments: result.comments, changed: result.changed, info: { commentsAdded: result.added } };
 };
 
 /**
@@ -996,9 +1026,18 @@ const editLiveScene = async (
     throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
   }
   const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
-  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), command.name);
+  const commented = await agentComments(command, live.commentList(), elements);
+  for (const comment of commented.changed) {
+    if (!live.changeComment(comment)) {
+      throw new Error("Comments can't be changed in this scene now (it is read only here)");
+    }
+  }
+  const json = withSceneName(
+    withComments(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), commented.comments),
+    command.name,
+  );
   const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
-  return { ...edit, ...images.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0, ...(pending ? { pending } : {}) };
+  return { ...edit, ...images.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0 || commented.changed.length > 0, ...(pending ? { pending } : {}) };
 };
 
 // -----------------------------------------------------------------------------
@@ -1067,12 +1106,17 @@ export const editLocalScene = async (
   refuseImagesWithoutFile(data.elements || [], edit.elements, files);
   const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
   const elements = images.elements;
-  const json = withSceneName(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), command.name);
+  const commented = await agentComments(command, data.kurviqComments, elements);
+  const json = withSceneName(
+    withComments(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), commented.comments),
+    command.name,
+  );
   await scenesController.writeLocalOnly(command.name, json);
   await setAgentBaseline(command.name, { at: new Date().toISOString(), action: "edit", elements });
   return {
     ...edit,
     ...images.info,
+    ...commented.info,
     ...sceneSize(json, elements),
     elements,
     files,

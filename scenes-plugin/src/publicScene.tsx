@@ -19,6 +19,8 @@ import { OPENING_KEY, scenesController } from "./controller";
 import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId, sharedSceneVersion } from "./online/drive";
 import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
+import { commentStore } from "./comments/store";
+import { CommentsButton } from "./comments/ui";
 import { getSlides, getTemplate } from "./slides";
 import { deck } from "./deck";
 import { fitView, viewTarget } from "./viewTarget";
@@ -173,6 +175,20 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
   const [name, setName] = useState(linkName);
   const title = bundled ? PUBLIC_SCENES[name].title : name || "A shared scene";
   const [scene, setScene] = useState<Scene | null>(null);
+  // its comments: shown over this canvas for people signed in (a commenter adds theirs through
+  // the live session; Drive decides who may): see ./comments
+  useEffect(() => {
+    commentStore.setViewerActive(true);
+    commentStore.setWriter((comment) => liveSync.viewer()?.changeComment(comment) ?? false, "viewer");
+    return () => commentStore.setViewerActive(false);
+  }, []);
+  useEffect(() => {
+    if (scene && !liveSync.viewerLive(fileId ?? "")) {
+      try {
+        commentStore.load(JSON.parse(scene.json).kurviqComments, "viewer");
+      } catch {}
+    }
+  }, [scene?.json]);
   /** why a shared scene can't be shown (yet) */
   const [missing, setMissing] = useState<Exclude<SharedSceneAnswer, { scene: unknown }> | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -412,6 +428,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
         <strong className="public-scene__title">{title}</strong>
         {scene?.by && <span className="public-scene__meta">by {scene.by}</span>}
         <span className="public-scene__spacer" />
+        {fileId && scene && signedIn && <CommentsButton />}
         {scene?.isPresentation && scene.slides.length > 0 && (
           <button
             type="button"

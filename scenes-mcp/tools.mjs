@@ -26,6 +26,7 @@ import { conflictList, resolveConflicts } from "./editConflicts.mjs";
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "./feedback.mjs";
 import { byIds, commonBounds, deckOrder, diffElements, findSlide, inRegion, summarize, templateChangesOf, toRect } from "./inspect.mjs";
 import { readEditFile, resolveImages } from "./media.mjs";
+import { commentsForAgents } from "./sceneComments.mjs";
 
 /** get_scene returns an overview instead of all elements above this size */
 const SUMMARY_THRESHOLD = 150;
@@ -375,6 +376,23 @@ export const createScenesMcp = ({
     ...(file.kurviqFonts ? { kurviqFonts: file.kurviqFonts } : {}),
   });
 
+  const COMMENT_OPS = z
+    .array(
+      z.object({
+        action: z.enum(["add", "reply", "resolve", "reopen", "edit", "delete"]),
+        text: z.string().optional().describe("add, reply, edit: the comment (plain text; @Name mentions someone)"),
+        element: z.string().optional().describe("add: the element the comment is about (its pin follows it)"),
+        x: z.number().optional().describe("add without element: where the pin goes (scene coordinates)"),
+        y: z.number().optional(),
+        thread: z.string().optional().describe("reply, resolve, reopen: the thread (read_scene comments[].thread)"),
+        id: z.string().optional().describe("edit, delete: the comment (only your own: the user's, written by an agent or by them)"),
+      }),
+    )
+    .optional()
+    .describe(
+      'Comments: people\'s review notes, pinned to elements (read_scene lists them as comments: threads with replies; they are not drawn). [{ "action": "add", "text": "…", "element": "id" }], { "action": "reply", "thread": "…", "text": "Done: moved it left" }, { "action": "resolve", "thread": "…" } (after you did what it asks), "reopen", "edit" / "delete" (only the user\'s own comments). Written in the user\'s name, marked as agent. Not drawn, never on slides or exports.',
+    );
+
   const SCENE_NAME = z
     .string()
     .describe("Scene name: letters, numbers, spaces and _ . ( ) - (max 100 chars). Stored as <name>.excalidraw in the user's Google Drive (folder Kurviq).");
@@ -499,7 +517,7 @@ export const createScenesMcp = ({
   };
 
   /** what an edit reports besides added / updated / deleted */
-  const EDIT_EXTRAS = ["alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "reset", "titleBlock", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile"];
+  const EDIT_EXTRAS = ["commentsAdded", "alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "reset", "titleBlock", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile"];
   const editExtras = (edited) =>
     Object.fromEntries(EDIT_EXTRAS.filter((key) => edited?.[key] !== undefined).map((key) => [key, edited[key]]));
 
@@ -682,6 +700,12 @@ export const createScenesMcp = ({
       return result;
     };
 
+    /** the scene's comment threads (people's review notes): what agents read of them */
+    const sceneComments = (file, elements) => {
+      const threads = commentsForAgents(file.kurviqComments, new Map(elements.map((el) => [el.id, el])));
+      return threads.length ? { comments: threads } : {};
+    };
+
     const readSceneResult = ({ name, current, local, flushed, elements, changes, changesOnly, summary, region, elementIds, textsOffset, slide, relative }) => {
       const result = text({
         scene: name,
@@ -694,11 +718,12 @@ export const createScenesMcp = ({
           ? "No earlier agent edit of this scene found: everything is new to you. From your first edit on, the user's changes are reported."
           : changes.report,
         ...(changesOnly ? {} : sceneView(elements, { summary, region, elementIds, textsOffset, slide, relative }, elements.length > SUMMARY_THRESHOLD)),
+        ...sceneComments(current.file, elements),
       });
       return result;
     };
 
-    const applyOpenEdit = async ({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision, onConflict }) => {
+    const applyOpenEdit = async ({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, revision, onConflict }) => {
       const edited = await appCommand({
         type: "edit",
         onConflict,
@@ -713,13 +738,14 @@ export const createScenesMcp = ({
         ...(reset ? { reset } : {}),
         ...(addTitleBlock ? { addTitleBlock } : {}),
         ...(isPresentation === undefined ? {} : { isPresentation }),
+        ...(comments?.length ? { comments } : {}),
         storeBaseline: "edit",
         revision,
       });
       return edited;
     };
 
-    const detachedEditCommand = ({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, onConflict }) => {
+    const detachedEditCommand = ({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, onConflict }) => {
       const command = {
         type: local ? "local-edit" : "scene-edit",
         ...(local ? { targetScene: name } : {}),
@@ -735,6 +761,7 @@ export const createScenesMcp = ({
         ...(reset ? { reset } : {}),
         ...(addTitleBlock ? { addTitleBlock } : {}),
         ...(isPresentation === undefined ? {} : { isPresentation }),
+        ...(comments?.length ? { comments } : {}),
       };
       return command;
     };
@@ -1187,6 +1214,7 @@ export const createScenesMcp = ({
             ...EDIT_SOURCE,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
             isPresentation: z.boolean().optional().describe("Saved presentation flag. Frames alone do not make a presentation. False keeps all content."),
+            comments: COMMENT_OPS,
             restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
               .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
@@ -1199,7 +1227,7 @@ export const createScenesMcp = ({
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, view = true }) => {
+        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, comments, view = true }) => {
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
           // what did the user do since an agent last looked?
@@ -1219,7 +1247,7 @@ export const createScenesMcp = ({
               : { updates: edit.update, conflicts: [] };
           const { conflicts } = checked;
           const updates = checked.updates;
-          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock) {
+          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock && !comments?.length) {
             return text({
               warning: conflictWarning(changes, conflicts, onConflict, { nothingApplied: true }),
               conflicts,
@@ -1233,7 +1261,7 @@ export const createScenesMcp = ({
             });
           }
 
-          const edited = await applyOpenEdit({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, revision, onConflict });
+          const edited = await applyOpenEdit({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, revision, onConflict });
           const { elements, ...info } = edited;
           delete info.agentBaseline;
 
@@ -1423,6 +1451,7 @@ ${EDIT_HELP}
             onConflict: ON_CONFLICT,
             upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
             isPresentation: z.boolean().optional().describe("Saved presentation flag. Frames alone do not make a presentation. False keeps all content."),
+            comments: COMMENT_OPS,
             restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
             reset: z
               .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
@@ -1440,7 +1469,7 @@ ${EDIT_HELP}
             view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, requestId: givenRequestId, view = true }) => {
+        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, comments, requestId: givenRequestId, view = true }) => {
           const requestId = givenRequestId || `edit-${newCheckpointId()}`;
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
 
@@ -1460,7 +1489,7 @@ ${EDIT_HELP}
               : { updates: edit.update, conflicts: [] };
           const { conflicts } = checked;
           const updates = checked.updates;
-          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock) {
+          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock && !comments?.length) {
             // nothing left to apply: the scene stays as it is
             return text({
               warning: conflictWarning(changes, conflicts, onConflict, { nothingApplied: true }),
@@ -1477,7 +1506,7 @@ ${EDIT_HELP}
           }
 
           // local-only scenes are edited in the user's app (their only copy)
-          const command = detachedEditCommand({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, onConflict });
+          const command = detachedEditCommand({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, onConflict });
           const send = () => (local ? appCommand : agentCommand)(command);
           const edited = await sendDetachedEdit(send, requestId);
           const after = {

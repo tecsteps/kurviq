@@ -1,0 +1,508 @@
+// Comments on the canvas (./ui.tsx): pins, the thread popover, the list at the top right.
+// Outside .excalidraw (portaled to the page): its theme variables are read from the body's editor.
+
+.kq-cm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 4; // above the canvas, below Excalidraw's menus and dialogs
+  pointer-events: none;
+  font-family: "Assistant", system-ui, -apple-system, sans-serif;
+  color: var(--kq-cm-text, #1b1b1f);
+
+  > * {
+    pointer-events: auto;
+  }
+
+  // over the shared viewer (publicScene.tsx: 1000)
+  &--viewer {
+    z-index: 1001;
+  }
+}
+
+:root {
+  --kq-cm-bg: #fff;
+  --kq-cm-text: #1b1b1f;
+  --kq-cm-muted: #6b6b76;
+  --kq-cm-border: rgba(0, 0, 0, 0.1);
+  --kq-cm-hover: rgba(0, 0, 0, 0.05);
+  --kq-cm-primary: #6965db;
+  --kq-cm-shadow: 0 8px 28px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+body:has(.excalidraw.theme--dark) .kq-cm-layer {
+  --kq-cm-bg: #232329;
+  --kq-cm-text: #e3e3e8;
+  --kq-cm-muted: #a1a1ab;
+  --kq-cm-border: rgba(255, 255, 255, 0.12);
+  --kq-cm-hover: rgba(255, 255, 255, 0.07);
+  --kq-cm-primary: #a8a5ff;
+}
+
+.kq-cm-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--kq-cm-bg, #fff);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+// a pin: the thread's people as overlapping avatars, its point at the spot it is about
+.kq-cm-pin {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  padding: 0.18rem 0.3rem 0.18rem 0.2rem;
+  border: 0;
+  border-radius: 1rem 1rem 1rem 0.2rem;
+  background: var(--kq-cm-bg);
+  box-shadow: var(--kq-cm-shadow);
+  transform: translate(0, -100%);
+  cursor: pointer;
+
+  .kq-cm-avatar + .kq-cm-avatar {
+    margin-left: -0.45rem;
+  }
+
+  &:hover,
+  &--open {
+    outline: 2px solid var(--kq-cm-primary);
+  }
+
+  &--resolved {
+    opacity: 0.55;
+  }
+
+  &--draft {
+    width: 1.6rem;
+    height: 1.6rem;
+    padding: 0;
+    background: var(--kq-cm-primary);
+    pointer-events: none;
+  }
+}
+
+.kq-cm-more {
+  margin-left: 0.15rem;
+  color: var(--kq-cm-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.kq-cm-popover {
+  position: fixed;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  width: min(22rem, calc(100vw - 16px));
+  max-height: min(34rem, calc(100vh - 16px));
+  border: 1px solid var(--kq-cm-border);
+  border-radius: 0.8rem;
+  background: var(--kq-cm-bg);
+  box-shadow: var(--kq-cm-shadow);
+  font-size: 0.875rem;
+  overflow: hidden;
+}
+
+.kq-cm-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--kq-cm-border);
+}
+
+.kq-cm-title {
+  padding-left: 0.35rem;
+}
+
+.kq-cm-spacer {
+  flex: 1;
+}
+
+.kq-cm-icon {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.45rem;
+  background: none;
+  color: var(--kq-cm-text);
+  cursor: pointer;
+
+  &:hover:not(:disabled),
+  &--active {
+    background: var(--kq-cm-hover);
+  }
+
+  &--active {
+    color: var(--kq-cm-primary);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+.kq-cm-resolved {
+  margin: 0;
+  padding: 0.45rem 0.9rem;
+  background: var(--kq-cm-hover);
+  color: var(--kq-cm-muted);
+  font-size: 0.8rem;
+}
+
+.kq-cm-list {
+  flex: 1;
+  margin: 0;
+  padding: 0 0.9rem;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.kq-cm-item {
+  padding: 0.7rem 0;
+
+  & + & {
+    border-top: 1px solid var(--kq-cm-border);
+  }
+
+  &--gone {
+    color: var(--kq-cm-muted);
+    font-style: italic;
+  }
+}
+
+.kq-cm-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+
+  .kq-cm-avatar {
+    border: 0;
+  }
+}
+
+.kq-cm-time {
+  color: var(--kq-cm-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.kq-cm-badge {
+  padding: 0 0.4rem;
+  border-radius: 1rem;
+  background: var(--kq-cm-hover);
+  color: var(--kq-cm-muted);
+  font-size: 0.7rem;
+}
+
+.kq-cm-text {
+  margin: 0.35rem 0 0;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kq-cm-mention {
+  color: var(--kq-cm-primary);
+  font-weight: 600;
+}
+
+.kq-cm-menu-wrap {
+  position: relative;
+}
+
+.kq-cm-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  padding: 0.3rem;
+  border: 1px solid var(--kq-cm-border);
+  border-radius: 0.6rem;
+  background: var(--kq-cm-bg);
+  box-shadow: var(--kq-cm-shadow);
+
+  button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.55rem;
+    border: 0;
+    border-radius: 0.4rem;
+    background: none;
+    color: var(--kq-cm-text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--kq-cm-hover);
+    }
+  }
+
+  .kq-cm-danger {
+    color: #e03131;
+  }
+}
+
+.kq-cm-reply {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem 0.75rem;
+  border-top: 1px solid var(--kq-cm-border);
+
+  .kq-cm-avatar {
+    width: 2rem;
+    height: 2rem;
+    margin-bottom: 0.1rem;
+    font-size: 0.85rem;
+  }
+}
+
+.kq-cm-composer {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  gap: 0.4rem;
+
+  textarea {
+    flex: 1;
+    min-height: 2.2rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--kq-cm-border);
+    border-radius: 0.55rem;
+    background: transparent;
+    color: var(--kq-cm-text);
+    font: inherit;
+    resize: none;
+
+    &:focus {
+      outline: none;
+      border-color: var(--kq-cm-primary);
+    }
+  }
+}
+
+.kq-cm-send {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: var(--kq-cm-primary);
+  color: #fff;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+.kq-cm-mentions {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.3rem);
+  margin: 0;
+  padding: 0.3rem;
+  border: 1px solid var(--kq-cm-border);
+  border-radius: 0.55rem;
+  background: var(--kq-cm-bg);
+  box-shadow: var(--kq-cm-shadow);
+  list-style: none;
+
+  button {
+    display: block;
+    width: 100%;
+    padding: 0.35rem 0.55rem;
+    border: 0;
+    border-radius: 0.35rem;
+    background: none;
+    color: var(--kq-cm-text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--kq-cm-hover);
+    }
+  }
+}
+
+.kq-cm-error {
+  margin: 0;
+  padding: 0.4rem 0.9rem;
+  color: #e03131;
+  font-size: 0.8rem;
+}
+
+.kq-cm-note {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  color: var(--kq-cm-muted);
+  font-size: 0.8rem;
+}
+
+// placing a new comment: the whole canvas takes the click
+.kq-cm-placing {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+
+  &__hint {
+    position: fixed;
+    left: 50%;
+    bottom: 4.5rem;
+    padding: 0.45rem 0.9rem;
+    border-radius: 2rem;
+    background: #1f1f24;
+    color: #f4f4f6;
+    font-size: 0.85rem;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+}
+
+// top right: the button and its list
+.kq-cm-top {
+  position: relative;
+}
+
+.excalidraw .kq-cm-button {
+  gap: 0.4rem;
+}
+
+.kq-cm-count {
+  min-width: 1.2rem;
+  padding: 0 0.35rem;
+  border-radius: 1rem;
+  background: var(--color-primary, #6965db);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2rem;
+  text-align: center;
+}
+
+.excalidraw .kq-cm-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 21rem;
+  max-width: calc(100vw - 2rem);
+  max-height: min(30rem, calc(100vh - 6rem));
+  border-radius: var(--border-radius-lg, 0.5rem);
+  background: var(--island-bg-color);
+  box-shadow: var(--shadow-island);
+  color: var(--text-primary-color);
+  font-size: 0.85rem;
+  overflow: hidden;
+}
+
+.excalidraw .kq-cm-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--default-border-color);
+
+  .kq-cm-note {
+    padding: 0;
+  }
+}
+
+.excalidraw .kq-cm-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--color-gray-60, #6b6b76);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.excalidraw .kq-cm-threads {
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.excalidraw .kq-cm-thread {
+  display: flex;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.55rem 0.5rem;
+  border: 0;
+  border-radius: var(--border-radius-md, 0.4rem);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--button-hover-bg, var(--color-surface-high));
+  }
+
+  &--resolved {
+    opacity: 0.6;
+  }
+
+  .kq-cm-avatar {
+    width: 1.8rem;
+    height: 1.8rem;
+    border: 0;
+  }
+}
+
+.excalidraw .kq-cm-thread__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.excalidraw .kq-cm-thread__meta {
+  color: var(--color-gray-60, #6b6b76);
+  font-size: 0.78rem;
+
+  strong {
+    color: var(--text-primary-color);
+  }
+}
+
+.excalidraw .kq-cm-thread__text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.excalidraw .kq-cm-empty {
+  margin: 0;
+  padding: 1rem;
+  color: var(--color-gray-60, #6b6b76);
+  text-align: center;
+}

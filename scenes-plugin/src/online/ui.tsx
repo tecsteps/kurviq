@@ -658,17 +658,19 @@ const useSharing = () =>
     () => sharing,
   );
 
-const ROLE_LABEL: Record<string, string> = { reader: "Can view", commenter: "Can view", writer: "Can edit", owner: "Owner" };
+const ROLE_LABEL: Record<string, string> = { reader: "Can view", commenter: "Can comment", writer: "Can edit", owner: "Owner" };
 
 const LINK_LABEL: Record<LinkAccess, string> = {
   restricted: "Only people added here",
   reader: "Anyone with the link can view",
+  commenter: "Anyone with the link can comment",
   writer: "Anyone with the link can edit",
 };
 
 const LINK_HINT: Record<LinkAccess, string> = {
   restricted: "The link only works for the people above, signed in with Google.",
   reader: "Anyone who has the link can view and present it, no account needed.",
+  commenter: "Anyone who has the link can view it; with a Google account they can also comment.",
   writer: "Anyone who has the link can view it; with a Google account they can also change it.",
 };
 
@@ -939,7 +941,7 @@ const addPeopleTip = (email: string | undefined) =>
   (email ? " as " + email : "") +
   ': click Share at the top right. Google emails them an invitation; in Kurviq they find the scene under "Shared with you…", or with the link.';
 
-const ROLE_TEXT: Record<string, string> = { writer: "can edit", reader: "can view", commenter: "can view" };
+const ROLE_TEXT: Record<string, string> = { writer: "can edit", reader: "can view", commenter: "can comment" };
 
 /** above the people: the scene's folder is shared, so these people have every scene in it */
 const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareFolder?: () => void }) => {
@@ -1121,15 +1123,16 @@ const ShareDialog = ({ name }: { name: string }) => {
                       <span className="kq-muted kq-share__role">{ROLE_LABEL[person.role] ?? person.role}</span>
                     ) : (
                       <select
-                        value={person.role === "writer" ? "writer" : "reader"}
+                        value={person.role === "writer" || person.role === "commenter" ? person.role : "reader"}
                         disabled={busy}
                         onChange={(event) =>
                           event.target.value === "remove"
                             ? run(() => removeAccess(fileId!, person.id))
-                            : run(() => changeRole(fileId!, person.id, event.target.value as "reader" | "writer"))
+                            : run(() => changeRole(fileId!, person.id, event.target.value as "reader" | "commenter" | "writer"))
                         }
                       >
                         <option value="writer">Can edit</option>
+                        <option value="commenter">Can comment</option>
                         <option value="reader">Can view</option>
                         {from.kind === "direct" && <option value="remove">Remove access</option>}
                       </select>

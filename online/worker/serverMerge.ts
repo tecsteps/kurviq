@@ -13,6 +13,8 @@ import { generateKeyBetween } from "fractional-indexing";
 
 import { aadOf, elementOf, eventKey, NAME_ID, SETTINGS_ID } from "../../scenes-plugin/src/online/liveProtocol";
 import type { EventKind, Readable, Receipt, WireEvent } from "../../scenes-plugin/src/online/liveProtocol";
+import { cleanComment, commentsOf, readableMatches } from "../../scenes-mcp/sceneComments.mjs";
+import type { CommentReadable } from "../../scenes-mcp/sceneComments.mjs";
 
 /** one subject's state as the Durable Object keeps it (readable part, ciphertext, stamp, who and when) */
 export type Entry = {
@@ -27,6 +29,8 @@ export type Entry = {
   n: number;
   /** fonts: the numeric font id */
   fontId?: number;
+  /** comments: the readable part (who wrote it, in which thread; hashes of text and pin) */
+  cr?: CommentReadable;
   /** pseudonym of the last author; "outside" for outside changes, null from a seed */
   a: string | null;
   /** the seq that produced it (0: seed) */
@@ -47,6 +51,7 @@ export const wireOf = (entry: Entry, base: WireEvent["base"] = null): WireEvent 
   c: entry.c,
   v: { v: entry.v, n: entry.n },
   ...(entry.fontId !== undefined ? { fontId: entry.fontId } : {}),
+  ...(entry.cr ? { cr: entry.cr } : {}),
 });
 
 export const randomNonce = () => crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;
@@ -131,6 +136,10 @@ export const plainOf = async (scene: SceneKey, entry: Entry): Promise<any> => {
     return withReadableReferences(element, r);
   }
   const value = await decryptContent(scene, entry.k, entry.id, entry.c);
+  if (entry.k === "cmt") {
+    // only as its readable part (what the commenter check saw) describes it
+    return value?.id === entry.id && readableMatches(value, entry.cr) ? cleanComment(value) : null;
+  }
   return entry.k === "font" && entry.fontId !== undefined ? { ...value, id: entry.fontId } : value;
 };
 
@@ -329,6 +338,7 @@ export const buildSceneFile = (plain: Map<string, { k: EventKind; value: any }>,
   const fonts = new Map<number, any>();
   let settings: any = null;
   let name: string | null = null;
+  const comments: unknown[] = [];
   for (const { k, value } of plain.values()) {
     if (k === "el" && !value.isDeleted) {
       elements.push(value);
@@ -338,6 +348,8 @@ export const buildSceneFile = (plain: Map<string, { k: EventKind; value: any }>,
       name = typeof value?.name === "string" ? value.name : null;
     } else if (k === "font" && typeof value?.id === "number") {
       fonts.set(value.id, value);
+    } else if (k === "cmt" && value) {
+      comments.push(value);
     }
   }
   elements.sort(byIndex);
@@ -365,6 +377,10 @@ export const buildSceneFile = (plain: Map<string, { k: EventKind; value: any }>,
   };
   if (usedFonts.size) {
     data.kurviqFonts = [...usedFonts.values()];
+  }
+  const kept = commentsOf(comments);
+  if (kept.length) {
+    data.kurviqComments = kept;
   }
   data.kurviq = { v: 1, ...meta };
   return { json: JSON.stringify(data, null, 2), name };
@@ -414,6 +430,9 @@ export const subjectsOfFile = async (json: string, driveName: string | null, has
       const hash = await hashFont(font); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       out.set(eventKey("font", hash), { k: "font", id: hash, value: font });
     }
+  }
+  for (const comment of commentsOf(data.kurviqComments)) {
+    out.set(eventKey("cmt", comment.id), { k: "cmt", id: comment.id, value: comment });
   }
   if (driveName) {
     out.set(eventKey("name", NAME_ID), { k: "name", id: NAME_ID, value: { name: driveName.replace(/\.excalidraw$/, "") } });

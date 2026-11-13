@@ -34,6 +34,9 @@ import { createStore, get, set } from "idb-keyval";
 
 
 import { addFont, customFonts, isCustomFontId, withFonts } from "../fonts";
+import { commentStore } from "../comments/store";
+import { commentsOf, withComments } from "../../../scenes-mcp/sceneComments.mjs";
+import type { SceneComment } from "../../../scenes-mcp/sceneComments.mjs";
 import { getUpload } from "../uploads";
 
 import { authPost, connection, driveScenes, folderOfFile, liveSocketUrl, otherAccount, recheckConnection, signOutListeners } from "./drive";
@@ -355,6 +358,8 @@ type StoredBase = {
   settings: { value: Settings; stamp: Base | null } | null;
   files: string[];
   fonts: [string, number][];
+  /** comments as the DO confirmed them, with their stamps (a resumed session gets only newer events) */
+  comments?: [string, { stamp: Base | null; el: SceneComment }][];
 };
 
 /** a scene in a folder someone shared: Kurviq's server reaches it with the folder owner's access */
@@ -833,6 +838,11 @@ export class LiveScene {
         this.confirmedFonts = new Map(stored.fonts);
         this.doStamps = new Map(stored.stamps ?? []);
         stored.elements.forEach((el) => this.rememberStamp(el));
+        this.restoreComments(stored.comments ?? []);
+        if (!stored.comments) {
+          // stored before comments were kept: the full state once (it has them), not only newer events
+          this.seq = 0;
+        }
         this.localBase = new Map(this.confirmed);
         this.baseLoaded = true;
       }
@@ -1324,8 +1334,11 @@ export class LiveScene {
         await this.takeFont(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       } else if (event.k === "name") {
         await this.takeName(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      } else if (event.k === "cmt") {
+        await this.takeComment(event, false); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
+    this.publishComments();
     this.confirmed = elements;
     elements.forEach((el) => {
       this.traced("state", el);
@@ -1350,6 +1363,87 @@ export class LiveScene {
       // (a headless session or the viewer would take it from the scene on the canvas)
       await addFont({ ...font, id }, { replace: !this.headless && !this.viewOnly }).catch(() => {});
     }
+  }
+
+  /** the scene's comments as the DO holds them (sceneComments.mjs); a change of ours still queued stays on top */
+  private comments = new Map<string, SceneComment>();
+
+  private async takeComment(event: WireEvent, publish = true) {
+    const comment = (await this.decode(event)) as SceneComment | null;
+    if (!comment) {
+      return; // doesn't match what the server checked: not taken
+    }
+    const key = keyOf("cmt", event.id);
+    this.synced.set(key, { stamp: event.v ?? null, el: comment });
+    // a change of ours still on its way stays on top
+    this.comments.set(comment.id, this.isPending(key) ? (this.viewOf(key) as SceneComment) ?? comment : comment);
+    this.persistBaseSoon();
+    if (publish) {
+      this.publishComments();
+    }
+  }
+
+  /** the comments the DO confirmed (for the stored base) */
+  private confirmedComments() {
+    const out: [string, { stamp: Base | null; el: SceneComment }][] = [];
+    for (const [key, entry] of this.synced) {
+      if (key.startsWith("cmt:") && entry.el) {
+        out.push([key.slice(4), { stamp: entry.stamp, el: entry.el as SceneComment }]);
+      }
+    }
+    return out;
+  }
+
+  /** a resumed session: the stored comments, this tab's queued changes of them on top */
+  private restoreComments(stored: [string, { stamp: Base | null; el: SceneComment }][]) {
+    for (const [id, entry] of stored) {
+      this.synced.set(keyOf("cmt", id), entry);
+      this.comments.set(id, entry.el);
+    }
+    for (const batch of this.batches) {
+      for (const change of batch.changes) {
+        if (change.k === "cmt" && batch.state === "queued") {
+          this.comments.set(change.id, change.value);
+        }
+      }
+    }
+    if (this.comments.size) {
+      this.publishComments();
+    }
+  }
+
+  /** the comments shown are this session's: the editor's open scene, or the shared viewer's (not a headless copy's) */
+  private publishComments() {
+    if (!this.headless) {
+      commentStore.fromLive([...this.comments.values()], this.viewOnly ? "viewer" : "editor");
+    }
+  }
+
+  /** this session takes comments (editors and Drive's commenters, connected or queued) */
+  commentsAllowed() {
+    return this.canComment();
+  }
+
+  /** this person may only comment here (Drive's commenter) */
+  get commentOnly() {
+    return this.role === "comment";
+  }
+
+  /** the scene's comments, as this session has them */
+  commentList() {
+    return [...this.comments.values()];
+  }
+
+  /** the user (or an agent) added or changed a comment: saved live; false if this session can't take it */
+  changeComment(comment: SceneComment) {
+    if (!this.canComment()) {
+      return false;
+    }
+    this.comments.set(comment.id, comment);
+    this.addDraft("cmt", comment.id, comment, {});
+    this.flush().catch((error) => console.error("[live] background operation failed", error));
+    this.publishComments();
+    return true;
   }
 
   private async takeName(event: WireEvent) {
@@ -1509,6 +1603,13 @@ export class LiveScene {
     }
     for (const font of Array.isArray(data.kurviqFonts) ? data.kurviqFonts : []) {
       events.push(await encodeEvent(this.key!, "font", await fontHash(font), font, null, { fontId: font.id })); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+    }
+    // comments get their first stamp here too (a later change names it as its base)
+    for (const comment of commentsOf(data.kurviqComments)) {
+      const stamp: Base = { v: 1, n: Math.floor(Math.random() * 2 ** 31) };
+      events.push({ ...(await encodeEvent(this.key!, "cmt", comment.id, comment, null)), v: stamp }); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      this.synced.set(keyOf("cmt", comment.id), { stamp, el: comment });
+      this.comments.set(comment.id, comment);
     }
     return { events, settingsStamp, used };
   }
@@ -1972,6 +2073,8 @@ export class LiveScene {
         await this.takeFont(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       } else if (event.k === "name") {
         await this.takeName(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      } else if (event.k === "cmt") {
+        await this.takeComment(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     };
     for (const event of batch.events) {
@@ -2040,7 +2143,12 @@ export class LiveScene {
   }
 
   private canEdit() {
-    return !this.viewOnly && this.role !== "read" && this.phase !== "closed" && this.phase !== "disabled" && !this.lifecycle && !this.editsStopped;
+    return this.canComment() && this.role !== "comment" && !this.viewOnly;
+  }
+
+  /** comments: editors and Drive's commenters (whose tab sends comments only), also from the shared viewer */
+  private canComment() {
+    return this.role !== "read" && this.phase !== "closed" && this.phase !== "disabled" && !this.lifecycle && !this.editsStopped;
   }
 
   /** the scene is being handed over ("Keep only here"): nothing local is sent any more, messages still come */
@@ -2346,7 +2454,7 @@ export class LiveScene {
    * one touching the same elements is unanswered (its stamps are its base).
    */
   private pump() {
-    if (this.phase !== "ready" || !this.key || this.role !== "edit" || this.lifecycle) {
+    if (this.phase !== "ready" || !this.key || (this.role !== "edit" && this.role !== "comment") || this.lifecycle) {
       return;
     }
     const busy = new Set<string>();
@@ -2497,7 +2605,7 @@ export class LiveScene {
       } else if (change.k === "set" && !this.olderSettingsStamp(stamp)) {
         this.confirmedSettings = { value: change.value, stamp: stamp ?? null };
         this.synced.set(key, { stamp: stamp ?? null, el: change.value });
-      } else if (change.k === "name") {
+      } else if (change.k === "name" || change.k === "cmt") {
         this.synced.set(key, { stamp: stamp ?? null, el: change.value });
       } else if (change.k === "file") {
         this.confirmedFiles.add(change.id);
@@ -2650,6 +2758,8 @@ export class LiveScene {
         this.synced.set(SETTINGS_KEY, { stamp: event.v ?? null, el: this.confirmedSettings.value });
       } else if (event.k === "name") {
         this.synced.set(NAME_KEY, { stamp: event.v ?? null, el: await this.decode(event) }); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      } else if (event.k === "cmt") {
+        await this.takeComment(event); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
       }
     }
   }
@@ -2900,9 +3010,9 @@ export class LiveScene {
   }
 
   private rebaseSettings(batch: QueuedBatch) {
-    // settings: the user's own settings on top of the current ones; name: the later change wins
+    // settings: the user's own settings on top of the current ones; name and comments: the later change wins
     for (const change of batch.changes) {
-      if (change.k === "set" || change.k === "name") {
+      if (change.k === "set" || change.k === "name" || change.k === "cmt") {
         const now = this.synced.get(keyOf(change.k, change.id));
         change.base = now?.stamp ?? change.base;
         if (change.k === "set" && now?.el) {
@@ -3109,7 +3219,7 @@ export class LiveScene {
         el.status = "error";
       }
     }
-    const json = withFonts(serializeAsJSON(byIndex(elements) as any, settings as any, files as any, "local"), elements);
+    const json = withComments(withFonts(serializeAsJSON(byIndex(elements) as any, settings as any, files as any, "local"), elements), this.commentList());
     // a copy covers exactly what it contains: the same content again needs no new one
     if (this.offlineCopy !== null && this.offlineCopyJson === json) {
       return this.offlineCopy.then(
@@ -3173,6 +3283,7 @@ export class LiveScene {
         files: [...this.confirmedFiles],
         fonts: [...this.confirmedFonts],
         stamps: [...this.doStamps].filter(([id]) => this.confirmed.has(id)),
+        comments: this.confirmedComments(),
       };
       set([this.sub, this.fileId], stored, bases()).catch(() => {});
     }, 1500);
@@ -3194,7 +3305,10 @@ export class LiveScene {
   sceneJson() {
     const elements = this.surface.elements();
     const visible = elements.filter((el) => !el.isDeleted);
-    return withFonts(serializeAsJSON(visible as any, { ...this.surface.settings(), name: this.name } as any, this.surface.files() as any, "local"), visible);
+    return withComments(
+      withFonts(serializeAsJSON(visible as any, { ...this.surface.settings(), name: this.name } as any, this.surface.files() as any, "local"), visible),
+      this.commentList(),
+    );
   }
 
   elements() {
@@ -3459,9 +3573,12 @@ export class LiveScene {
     }
     await this.loadState(answer.state);
     const elements = byIndex([...this.confirmed.values()].filter((el) => !el.isDeleted));
-    const json = withFonts(
-      serializeAsJSON(elements as any, { ...(this.confirmedSettings?.value ?? this.surface.settings()), name: this.name } as any, this.surface.files() as any, "local"),
-      elements,
+    const json = withComments(
+      withFonts(
+        serializeAsJSON(elements as any, { ...(this.confirmedSettings?.value ?? this.surface.settings()), name: this.name } as any, this.surface.files() as any, "local"),
+        elements,
+      ),
+      this.commentList(),
     );
     return { ok: true, json };
   }
@@ -3867,6 +3984,11 @@ class LiveSync {
       scene.detach();
       scene.close();
     }
+  }
+
+  /** the shared viewer's live session (comments from the viewer go there), if any */
+  viewer() {
+    return this.viewerScene;
   }
 
   /** the viewer shows the DO's state live right now (the shared link's polling may rest) */

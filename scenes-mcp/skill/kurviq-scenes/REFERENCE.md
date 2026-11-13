@@ -166,6 +166,28 @@ Write `markdown` instead of `text` (also in labels: `label: { "markdown":
 - Reading shows `markdown` next to the plain `text`; `measure_text` takes
   `markdown` too.
 
+## Comments
+
+People leave comments on a scene: threads pinned to an element (or a spot),
+with replies, not drawn and never on slides or exports. They are stored in
+the scene file, so they stay with copies and versions. Who may comment is
+Google Drive's: editors and Drive's commenters (viewers only read them).
+
+- `read_scene` lists the threads as `comments`: `{ thread, element?, x, y,
+  resolved?, comments: [{ id, by, at, text }] }` (`by` ends in "(agent)" for
+  comments an agent wrote; `elementDeleted` when the element is gone).
+- `edit_scene` (also without element changes) takes `comments`, applied in
+  order and written in the user's name, marked as agent:
+  `{ "action": "add", "text": "…", "element": "id" }` (or `x` / `y`),
+  `{ "action": "reply", "thread": "…", "text": "…" }`,
+  `{ "action": "resolve" | "reopen", "thread": "…" }`,
+  `{ "action": "edit", "id": "…", "text": "…" }`, `{ "action": "delete", "id": "…" }`
+  (edit and delete only the user's own comments). The result's
+  `commentsAdded` names the new ids.
+- Working through review comments: read them, make the change, reply what you
+  did ("Moved the box left"), then resolve the thread. Don't resolve threads
+  you didn't address, and don't delete people's comments.
+
 ## Slides (presentations)
 
 Every frame is a slide; the user presents with the "Slides" button

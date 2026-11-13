@@ -11,6 +11,7 @@
 //
 // Pure WebCrypto: runs in the browser and in node (tests).
 
+import { cleanComment, commentReadable, readableMatches } from "../../../scenes-mcp/sceneComments.mjs";
 import { aadOf, contentOf, elementOf, readableOf } from "./liveProtocol";
 
 import type { Base, EventKind, WireEvent } from "./liveProtocol";
@@ -96,6 +97,9 @@ export const encodeEvent = async (
   if (k === "el") {
     return { k, id, base, r: readableOf(value), c: await encryptJson(scene, k, id, contentOf(value)) };
   }
+  if (k === "cmt") {
+    return { k, id, base, cr: commentReadable(value), c: await encryptJson(scene, k, id, value) };
+  }
   return { k, id, base, c: await encryptJson(scene, k, id, value), ...extra };
 };
 
@@ -124,6 +128,11 @@ export const decodeEvent = async (scene: SceneKey, event: WireEvent, previous?: 
       el.fontFamily = event.r.fontFamily;
     }
     return el;
+  }
+  if (event.k === "cmt") {
+    // a comment counts only as its readable part (checked by the server) describes it
+    const comment = await decryptJson(scene, event.k, event.id, event.c);
+    return comment?.id === event.id && readableMatches(comment, event.cr) ? cleanComment(comment) : null;
   }
   return decryptJson(scene, event.k, event.id, event.c);
 };

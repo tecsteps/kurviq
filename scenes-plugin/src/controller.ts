@@ -23,6 +23,9 @@ import {
 import { hashElementsVersion, hashString } from "@excalidraw/element";
 
 import { mergeFontLists, registerSceneFonts, withFonts } from "./fonts";
+import { commentStore } from "./comments/store";
+import { commentsKey, mergeComments, withComments } from "../../scenes-mcp/sceneComments.mjs";
+import type { SceneComment } from "../../scenes-mcp/sceneComments.mjs";
 import { scenesApi } from "./api";
 import { connection, driveScenes, setLiveWriters, sharedFileId } from "./online/drive";
 import { liveDifference } from "./online/liveMerge";
@@ -190,23 +193,30 @@ const linkedScene = (current: string | null) => {
 const sceneHash = (
   elements: readonly ExcalidrawElement[],
   appState: Pick<AppState, "viewBackgroundColor">,
-) =>
-  hashString(
-    JSON.stringify([
-      appState.viewBackgroundColor,
-      (appState as any).kurviqPresentation,
-      (appState as any).kurviqPresentationAt ?? 0,
-      getNonDeletedElements(elements).map(
-        ({ version, versionNonce, updated, index, ...rest }) => rest,
-      ),
-    ]),
-  );
+  comments: unknown = undefined,
+) => {
+  const parts: unknown[] = [
+    appState.viewBackgroundColor,
+    (appState as any).kurviqPresentation,
+    (appState as any).kurviqPresentationAt ?? 0,
+    getNonDeletedElements(elements).map(
+      ({ version, versionNonce, updated, index, ...rest }) => rest,
+    ),
+  ];
+  // comments count only when there are some (the hashes stored for scenes without stay valid)
+  const commented = commentsKey(comments);
+  if (commented) {
+    parts.push(commented);
+  }
+  return hashString(JSON.stringify(parts));
+};
 
 const hashJson = (json: string) => {
   const data = JSON.parse(json);
   return sceneHash(
     restoreElements(data.elements, null, { repairBindings: true }),
     { viewBackgroundColor: data.appState?.viewBackgroundColor ?? "#ffffff", kurviqPresentation: data.appState?.kurviqPresentation, kurviqPresentationAt: data.appState?.kurviqPresentationAt ?? 0 } as any,
+    data.kurviqComments,
   );
 };
 
@@ -298,6 +308,7 @@ class ScenesController {
 
   constructor() {
     this.state.list = this.buildList();
+    commentStore.setWriter((comment) => this.writeComment(comment));
     if (LIVE_CAPABLE) {
       liveSync.setHost({
         renamed: (fileId, to) => this.liveRenamed(fileId, to),
@@ -512,6 +523,10 @@ class ScenesController {
     }
     if (current === null || shown === current) {
       const api = this.requireApi();
+      // the restored canvas has no comments: they come from the scene's stored copy (else the next
+      // save would write the scene without them)
+      const stored = await getSnapshot(current).catch(() => undefined);
+      commentStore.load(stored?.json ? JSON.parse(stored.json).kurviqComments : undefined);
       const presentation = this.rememberPresentation({
         elements: api.getSceneElementsIncludingDeleted(),
         appState: api.getAppState(),
@@ -645,7 +660,7 @@ class ScenesController {
       return;
     }
     // cheap check first, onChange fires on every pointer move
-    const versionKey = `${hashElementsVersion(elements)}:${appState.viewBackgroundColor}:${(appState as any).kurviqPresentation}:${(appState as any).kurviqPresentationAt ?? 0}`;
+    const versionKey = `${hashElementsVersion(elements)}:${appState.viewBackgroundColor}:${(appState as any).kurviqPresentation}:${(appState as any).kurviqPresentationAt ?? 0}:${commentStore.editorKey()}`;
     if (LIVE_CAPABLE && liveSync.current()?.fileId === this.fileIdOf(this.meta.current)) {
       // live sync diffs the canvas when something changed or a gesture started / ended
       const liveKey = [
@@ -670,7 +685,7 @@ class ScenesController {
     this.lastVersionKey = versionKey;
     this.lastChangeAt = Date.now();
 
-    const hash = sceneHash(elements, appState);
+    const hash = sceneHash(elements, appState, commentStore.editorList());
     if (this.meta.baseline === null) {
       if (this.meta.current === null || !this.meta.scenes[this.meta.current]?.baseMd5) {
         // untitled / never pushed: dirty as soon as there's something on the canvas
@@ -1417,6 +1432,44 @@ class ScenesController {
   // local content
   // ---------------------------------------------------------------------------
 
+  /**
+   * A comment the user added or changed (comments/store.ts) is saved where
+   * the open scene saves: live sync, or this controller's own save (it makes
+   * the scene dirty). A scene that is read only here takes comments only live
+   * (Drive's commenters); false: not here.
+   */
+  private writeComment(comment: SceneComment) {
+    if (!this.api || this.state.busy === "loading") {
+      return false;
+    }
+    const live = this.liveCurrent();
+    if (live) {
+      return live.changeComment(comment);
+    }
+    if (this.state.sync.readOnly && !this.isLocalOnly(this.meta.current)) {
+      return false;
+    }
+    this.recomputeDirty();
+    // the canvas survives a reload by itself (Excalidraw stores it), comments only in the scene's
+    // stored copy: written now, not only when the scene is left
+    this.stashCurrent()
+      .then(() => this.persistMeta())
+      .catch((error) => console.error("[scenes] could not store the comment", error));
+    return true;
+  }
+
+  /** whether the user can comment on the open scene now (live: as editor or commenter; else: when it can be saved) */
+  canComment() {
+    if (!this.api) {
+      return false;
+    }
+    const live = this.liveCurrent();
+    if (live) {
+      return live.commentsAllowed();
+    }
+    return !this.state.sync.readOnly || this.isLocalOnly(this.meta.current);
+  }
+
   private requireApi() {
     if (!this.api) {
       throw new Error("Editor not ready");
@@ -1429,8 +1482,8 @@ class ScenesController {
     const elements = api.getSceneElements();
     const appState = api.getAppState();
     return {
-      json: withFonts(serializeAsJSON(elements, appState, api.getFiles(), "local"), elements),
-      hash: sceneHash(elements, appState),
+      json: withComments(withFonts(serializeAsJSON(elements, appState, api.getFiles(), "local"), elements), commentStore.editorList()),
+      hash: sceneHash(elements, appState, commentStore.editorList()),
       isEmpty: elements.length === 0 && !(appState as any).kurviqPresentation,
     };
   }
@@ -1506,6 +1559,8 @@ class ScenesController {
     this.presentationMigrationBaseline = json && typeof data.appState?.kurviqPresentation !== "boolean" ? hashJson(json) : null;
     // its custom fonts (the canvas redraws once they are loaded)
     registerSceneFonts(data).catch((error) => console.error("[scenes] could not load scene fonts", error));
+    // its comments (before anything compares the canvas with the file)
+    commentStore.load(data.kurviqComments);
     const elements = restoreElements(data.elements, null, { repairBindings: true });
     const restoredAppState = restoreAppState(data.appState, null);
     const files: BinaryFiles = data.files || {};
@@ -1537,7 +1592,7 @@ class ScenesController {
   private async setBaselineFromCanvas() {
     await nextFrame();
     const api = this.requireApi();
-    this.meta.baseline = this.presentationMigrationBaseline ?? sceneHash(api.getSceneElements(), api.getAppState());
+    this.meta.baseline = this.presentationMigrationBaseline ?? sceneHash(api.getSceneElements(), api.getAppState(), commentStore.editorList());
     this.presentationMigrationBaseline = null;
     this.persistMeta();
     this.recomputeDirty();
@@ -2428,6 +2483,7 @@ class ScenesController {
       // only the pictures the merged scene still uses (deleted images leave no data behind)
       files: usedFiles(merged.elements, { ...theirsData.files, ...mine.files }),
       kurviqFonts: mergeFontLists(mine.kurviqFonts, theirsData.kurviqFonts),
+      kurviqComments: mergeComments(mine.kurviqComments, theirsData.kurviqComments),
     });
     if (!(await unchanged())) {
       return null;
