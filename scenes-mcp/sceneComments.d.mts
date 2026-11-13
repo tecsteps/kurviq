@@ -46,6 +46,8 @@ export declare const commentId: () => string;
 export declare const authorKey: (email: string) => Promise<string>;
 export declare const withComments: (json: string, comments: unknown) => string;
 export declare const commenterRefusal: (before: SceneComment | null, after: SceneComment | null, key: string) => string | null;
+/** the `u` of a change to a comment: now, but after the version it changes */
+export declare const changeStamp: (comment: { u?: number } | null | undefined, now?: number) => number;
 
 export type CommentReadable = { id: string; thread: string; key: string; at: number; t: string; p: string; gone?: true };
 export declare const commentReadable: (comment: SceneComment) => CommentReadable;

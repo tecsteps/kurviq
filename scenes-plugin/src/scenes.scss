@@ -645,10 +645,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.4rem;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--color-gray-50);
+    // font and color: with .slides-section__title below
   }
 
   .scenes-current__status {
@@ -758,15 +755,6 @@
     color: var(--color-danger-text, #c92a2a);
     font-size: 0.8rem;
     word-break: break-word; /* NOSONAR S1874: preserves existing wrapping and intrinsic sizing across supported browsers */
-  }
-
-  .scenes-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
   }
 
   // the scene panel's actions: Save, then icons (tooltips name them), Delete at the end

@@ -1,6 +1,5 @@
-// Speaker notes: an icon after each slide's name on the canvas, and a popover
-// (before it, a pen: the slide in the slide list; the template's pen opens the deck's style)
-// to see and edit a slide's notes with formatting (the same editor and
+// Speaker notes: an icon after each slide's name on the canvas (the
+// template's pen opens the deck's style), and a popover to see and edit a slide's notes with formatting (the same editor and
 // toolbar as text on the canvas). Notes are stored as markdown-like text in
 // the slide's `customData.slides.notes` (see richText/model.ts), so plain
 // notes stay valid and agents read / write them as text.
@@ -10,7 +9,9 @@ import { createPortal } from "react-dom";
 import { sceneCoordsToViewportCoords } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 
+import { scenesController } from "./controller";
 import { deck, isDeck } from "./deck";
+import { createStore } from "./externalStore";
 import { presenter, usePresenter } from "./present";
 import { QuickTip } from "./quickTip";
 import { patchSlideData } from "./slides";
@@ -31,27 +32,19 @@ export const notesHtml = (notes: string | undefined, dark = false) => docToHtml(
 // -----------------------------------------------------------------------------
 // which slide's notes are open
 
-let openId: string | null = null;
-const listeners = new Set<() => void>();
-const setOpen = (id: string | null) => {
-  openId = id;
-  listeners.forEach((listener) => listener());
-};
+const openNotes = createStore<string | null>(null);
 export const slideNotes = {
-  open: (id: string) => setOpen(id),
-  close: () => setOpen(null),
-  toggle: (id: string) => setOpen(openId === id ? null : id),
+  open: (id: string) => openNotes.set(id),
+  close: () => openNotes.set(null),
+  toggle: (id: string) => openNotes.set(openNotes.get() === id ? null : id),
 };
-const useOpenId = () =>
-  useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    () => openId,
-  );
+
+/** what the canvas shows where: the camera and the size and place of the canvas */
+const cameraKey = (appState: { scrollX: number; scrollY: number; zoom: { value: number }; width: number; height: number; offsetLeft: number; offsetTop: number }) =>
+  `${appState.scrollX},${appState.scrollY},${appState.zoom.value},${appState.width},${appState.height},${appState.offsetLeft},${appState.offsetTop}`;
+
+/** frames to keep reading the names' places after the camera moved: Excalidraw draws them a frame or two later */
+const SETTLE_FRAMES = 4;
 
 // -----------------------------------------------------------------------------
 // where the slides' names are on screen (Excalidraw draws them as divs)
@@ -69,11 +62,26 @@ const useNameSpots = (enabled: boolean) => {
     }
     let frame = 0;
     let last = "";
+    let camera = "";
+    let settle = SETTLE_FRAMES;
     const loop = () => {
+      frame = requestAnimationFrame(loop);
+      // the names' places only change with the camera, the slides (the effect's dependencies),
+      // view mode and renaming: otherwise nothing is read from the page
+      const appState = deck.getApi()?.getAppState();
+      const now = appState ? `${cameraKey(appState)},${appState.viewModeEnabled},${appState.editingFrame}` : "";
+      if (now === camera) {
+        if (settle <= 0) {
+          return;
+        }
+        settle -= 1;
+      } else {
+        camera = now;
+        settle = SETTLE_FRAMES;
+      }
       const next: Record<string, Spot> = {};
-      const api = deck.getApi();
-      const hidden = !api || api.getAppState().viewModeEnabled;
-      for (const id of hidden ? [] :  [...slides.map((slide) => slide.id), ...(templateId ? [templateId] : [])]) {
+      const hidden = !appState || appState.viewModeEnabled;
+      for (const id of hidden ? [] : [...slides.map((slide) => slide.id), ...(templateId ? [templateId] : [])]) {
         const name = document.querySelector<HTMLElement>(`.excalidraw [id$="-frame-name-${CSS.escape(id)}"]`);
         if (!name || name.querySelector("input")) {
           continue; // off screen, or being renamed
@@ -90,7 +98,6 @@ const useNameSpots = (enabled: boolean) => {
         last = key;
         setSpots(next);
       }
-      frame = requestAnimationFrame(loop);
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
@@ -109,39 +116,34 @@ export const toggleHidden = (id: string, hidden: boolean) => {
 /** a light veil over hidden slides on the canvas: they look grayed out */
 const HiddenVeils = () => {
   const { slides } = useSyncExternalStore(deck.subscribe, deck.getState);
-  const hiddenIds = slides.filter((s) => s.skip).map((s) => s.id).join(",");
   const [rects, setRects] = useState<Record<string, { left: number; top: number; width: number; height: number }>>({});
   useEffect(() => {
-    const ids = hiddenIds ? hiddenIds.split(",") : [];
-    if (!ids.length) {
+    // the slide list changes with every change of a frame: here only the camera is followed
+    const frames = slides.filter((s) => s.skip).map((s) => s.frame);
+    if (!frames.length) {
       setRects({});
       return;
     }
     let frame = 0;
-    let last = "";
+    let camera = "";
     const loop = () => {
-      const api = deck.getApi();
-      const next: Record<string, { left: number; top: number; width: number; height: number }> = {};
-      if (api) {
-        const appState = api.getAppState();
-        const zoom = appState.zoom.value;
-        for (const el of api.getSceneElements()) {
-          if (ids.includes(el.id)) {
-            const at = sceneCoordsToViewportCoords({ sceneX: el.x, sceneY: el.y }, appState);
-            next[el.id] = { left: Math.round(at.x), top: Math.round(at.y), width: Math.round(el.width * zoom), height: Math.round(el.height * zoom) };
-          }
-        }
-      }
-      const key = JSON.stringify(next);
-      if (key !== last) {
-        last = key;
-        setRects(next);
-      }
       frame = requestAnimationFrame(loop);
+      const appState = deck.getApi()?.getAppState();
+      if (!appState || cameraKey(appState) === camera) {
+        return;
+      }
+      camera = cameraKey(appState);
+      const zoom = appState.zoom.value;
+      const next: Record<string, { left: number; top: number; width: number; height: number }> = {};
+      for (const el of frames) {
+        const at = sceneCoordsToViewportCoords({ sceneX: el.x, sceneY: el.y }, appState);
+        next[el.id] = { left: Math.round(at.x), top: Math.round(at.y), width: Math.round(el.width * zoom), height: Math.round(el.height * zoom) };
+      }
+      setRects(next);
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [hiddenIds]);
+  }, [slides]);
   return (
     <>
       {Object.entries(rects).map(([id, rect]) => (
@@ -155,7 +157,6 @@ const HiddenVeils = () => {
   );
 };
 
-/** the slide in the slide list */
 /** eye (shown) / crossed eye (hidden from the presentation) */
 export const EyeIcon = ({ off }: { off: boolean }) => (
   <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -204,7 +205,27 @@ const NotesIcon = ({ filled }: { filled: boolean }) => (
 // -----------------------------------------------------------------------------
 // the editor in the popover: the canvas text editor, on a stand-in element
 
-const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boolean }) => {
+/**
+ * What the popover knows about the slide's notes: the text last saved or
+ * taken over (`saved`), whether something typed is not saved yet (`dirty`),
+ * and `hold`: notes changed elsewhere meanwhile, nothing is saved over them
+ * until the user decides.
+ */
+export type NotesSync = { saved: string; dirty: boolean; hold: boolean };
+
+/**
+ * Notes that came in (live sync, an agent, the slide list) while the popover
+ * is open: "take" them when nothing typed is unsaved (the editor shows them),
+ * "conflict" when there is, "same" when they are what the editor has.
+ */
+export const incomingNotes = (sync: NotesSync, notes: string): "same" | "take" | "conflict" => {
+  if (notes === sync.saved) {
+    return "same";
+  }
+  return sync.dirty ? "conflict" : "take";
+};
+
+const NotesEditable = ({ id, notes, dark, sync, saveNow }: { id: string; notes: string; dark: boolean; sync: NotesSync; saveNow: { current: () => void } }) => {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const doc = notesDoc(notes);
@@ -242,27 +263,33 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
     root.dataset.placeholder = "Speaker notes for this slide (presenter view)…";
     host.current!.appendChild(root);
 
-    let saved = notes;
+    let timer = 0;
     const save = (enablePresentation = true) => {
+      clearTimeout(timer);
+      if (sync.hold) {
+        return; // changed elsewhere meanwhile: the user decides first
+      }
+      sync.dirty = false;
       const text = root.value as string;
       element.originalText = text;
       const next = text.trim() ? markdownOf(richDocOf(element, text) ?? docFromPlain(text)) : "";
-      if (next !== saved) {
-        saved = next;
+      if (next !== sync.saved) {
+        sync.saved = next;
         const api = deck.getApi();
         if (api) {
           patchSlideData(api, new Map([[id, { notes: next || undefined }]]), { enablePresentation });
         }
       }
     };
-    let timer = 0;
+    saveNow.current = save;
+    const markEmpty = () => root.classList.toggle("slides-notes-pop__editor--empty", !(root.value as string));
     const onInput = () => {
-      root.classList.toggle("slides-notes-pop__editor--empty", !(root.value as string));
+      markEmpty();
+      sync.dirty = true;
       clearTimeout(timer);
       timer = window.setTimeout(save, 600);
     };
-    onInput();
-    clearTimeout(timer);
+    markEmpty();
     root.addEventListener("input", onInput);
     root.focus();
     // the caret at the end
@@ -274,14 +301,74 @@ const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boo
     selection?.addRange(range);
     return () => {
       clearTimeout(timer);
-      save(false);
+      if (sync.dirty) {
+        save(false);
+      }
       root.removeEventListener("input", onInput);
       root.remove();
     };
-    // the editor is made once per slide; later changes to the notes come from it
+    // made once per slide and per notes taken over (see NotesEditor); typing changes the notes from here
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   return <div ref={host} className="slides-notes-pop__host" />;
+};
+
+/**
+ * The notes editor. Notes changed elsewhere while it is open (live sync, an
+ * agent) are shown when nothing typed is unsaved; otherwise the user picks
+ * which version stays instead of the next keystroke saving over them.
+ */
+const NotesEditor = ({ id, notes, dark }: { id: string; notes: string; dark: boolean }) => {
+  const sync = useRef<NotesSync>({ saved: notes, dirty: false, hold: false }).current;
+  const saveNow = useRef<() => void>(() => undefined);
+  // the notes the editor shows: a new generation rebuilds it with them
+  const [shown, setShown] = useState({ notes, generation: 0 });
+  const [theirs, setTheirs] = useState<string | null>(null);
+  const take = (next: string) => {
+    sync.saved = next;
+    sync.dirty = false;
+    sync.hold = false;
+    setTheirs(null);
+    setShown((before) => ({ notes: next, generation: before.generation + 1 }));
+  };
+  useEffect(() => {
+    const action = incomingNotes(sync, notes);
+    if (action === "take") {
+      take(notes);
+    } else if (action === "same" && sync.hold) {
+      sync.hold = false; // the other change was undone meanwhile
+      setTheirs(null);
+    } else if (action === "conflict") {
+      sync.hold = true;
+      setTheirs(notes);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notes]);
+  return (
+    <>
+      <NotesEditable key={shown.generation} id={id} notes={shown.notes} dark={dark} sync={sync} saveNow={saveNow} />
+      {theirs !== null && (
+        <div className="slides-notes-pop__conflict">
+          <span>These notes were changed elsewhere while you typed.</span>
+          <button type="button" onClick={() => take(theirs)}>
+            Show theirs
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              // saved over theirs (compared with them, so even "mine = before" is saved)
+              sync.saved = theirs;
+              sync.hold = false;
+              setTheirs(null);
+              saveNow.current();
+            }}
+          >
+            Keep mine
+          </button>
+        </div>
+      )}
+    </>
+  );
 };
 
 // -----------------------------------------------------------------------------
@@ -290,7 +377,7 @@ export const SlideNotesOverlay = () => {
   const state = useSyncExternalStore(deck.subscribe, deck.getState);
   const { slides, templateId } = state;
   const presenting = usePresenter().active;
-  const id = useOpenId();
+  const id = openNotes.use();
   const api = deck.getApi();
   const appState = api?.getAppState();
   // (view mode, e.g. read-only while Drive is checked, is looked at in the loop: it ends without a re-render here)
@@ -335,6 +422,12 @@ export const SlideNotesOverlay = () => {
       slideNotes.close();
     }
   }, [presenting]);
+
+  // another scene: its slides may have the same ids (a cloned deck), the notes of this one must not go there
+  const scene = useSyncExternalStore(scenesController.subscribe, () => scenesController.getState().current);
+  useEffect(() => {
+    slideNotes.close();
+  }, [scene]);
 
   if (!enabled || !container) {
     return null;

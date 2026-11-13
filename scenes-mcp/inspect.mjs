@@ -1,11 +1,12 @@
 // Cheap, text-only views of (possibly huge) scenes: bounds, overview, region /
 // element filters, so agents can find their way before rendering pixels.
 
+import { withBoundText } from "./boundText.mjs";
 import { changedFields } from "./elementContent.mjs";
 import { CHANGE_NAMES, changedByHand, deckOrder, isSlideFrame, slideData } from "./slideRules.mjs";
 
 /** axis-aligned bounds of an element (rotation ignored) */
-export const elementBounds = (el) => {
+const elementBounds = (el) => {
   if (Array.isArray(el.points) && el.points.length) {
     const xs = el.points.map((p) => el.x + p[0]);
     const ys = el.points.map((p) => el.y + p[1]);
@@ -38,20 +39,6 @@ export const toRect = (bounds) =>
   };
 
 const overlaps = (a, b) => a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
-
-/** containers bring their labels, labels bring their containers */
-export const withBoundText = (picked, all) => {
-  const ids = new Set(picked.map((el) => el.id));
-  for (const el of all) {
-    if (el.containerId && ids.has(el.containerId)) {
-      ids.add(el.id);
-    }
-    if (ids.has(el.id) && el.containerId) {
-      ids.add(el.containerId);
-    }
-  }
-  return all.filter((el) => ids.has(el.id));
-};
 
 export const inRegion = (elements, { x, y, width, height }) => {
   const region = [x, y, x + width, y + height];

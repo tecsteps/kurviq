@@ -594,6 +594,7 @@ const validateSceneContent = (name: string, json: string) => {
   if (typeof owner === "string" && owner !== name) {
     throw httpError(422, `Refused: this content belongs to scene "${owner}", not "${name}". Nothing was written.`);
   }
+  return data;
 };
 
 const encodeBytes = (json: string) => new TextEncoder().encode(json);
@@ -841,6 +842,28 @@ const requireWritable = () => {
 
 const isAgent = (source?: string) => typeof source === "string" && source.startsWith("agent");
 
+/**
+ * An agent's scene (a whole drawing from save_scene, or an edit) carries the
+ * custom fonts its elements use, as the app's own saves do: people opening
+ * the file see them before the owner's app saves it again. Fonts this tab
+ * doesn't know stay as the agent sent them.
+ */
+const withAgentFonts = async (json: string, data: any, source?: string) => {
+  const elements = Array.isArray(data?.elements) ? data.elements : [];
+  if (!isAgent(source) || !elements.length) {
+    return json;
+  }
+  const { mergeFontLists, withFonts } = await import("../fonts");
+  // withFonts appends the used fonts to a serialized scene: here to a minimal one, to read them
+  const used = JSON.parse(withFonts('{"elements":[]}', elements)).kurviqFonts;
+  const given = Array.isArray(data.kurviqFonts) ? data.kurviqFonts : [];
+  const fonts = mergeFontLists(given, used);
+  if (!fonts || fonts.length === given.length) {
+    return json;
+  }
+  return JSON.stringify({ ...data, kurviqFonts: fonts }, null, 2);
+};
+
 const download = async (fileId: string, revision?: string) => {
   const res = await drive(
     revision ? `/files/${fileId}/revisions/${revision}?alt=media` : `/files/${fileId}?alt=media&supportsAllDrives=true`,
@@ -1001,9 +1024,9 @@ export const driveScenes = {
    * Save a scene. baseMd5: undefined = overwrite, "none" = must be new,
    * <md5> = must be exactly that version in Drive (else 409: merge first).
    */
-  save: async (name: string, json: string, baseMd5?: string, source?: string) => {
+  save: async (name: string, given: string, baseMd5?: string, source?: string) => {
     checkName(name);
-    validateSceneContent(name, json);
+    const json = await withAgentFonts(given, validateSceneContent(name, given), source);
     requireWritable();
     const checksum = md5(encodeBytes(json));
     const file = await locate(name);

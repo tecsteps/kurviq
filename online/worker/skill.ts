@@ -91,47 +91,68 @@ This upload URL is the one HTTP call you make yourself; everything else goes
 through the tools.
 `;
 
-const section = (text: string, heading: string) => {
+/**
+ * The local texts are cut to what applies online by exact passages. When a
+ * passage is reworded in SKILL.md / REFERENCE.md, these fail loudly (the unit
+ * test agentDocs.test.ts runs them before every deploy) instead of telling
+ * online agents about local files again.
+ */
+const changed = (file: string, what: string) =>
+  new Error(`[kurviq] ${file} changed: ${what} not found. Update online/worker/skill.ts.`);
+
+/** text with one passage replaced; the passage must be there */
+const replaceOnce = (file: string, text: string, from: string | RegExp, to: string) => {
+  const found = typeof from === "string" ? text.includes(from) : from.test(text);
+  if (!found) {
+    throw changed(file, String(from).slice(0, 60));
+  }
+  return typeof from === "string" ? text.replaceAll(from, to) : text.replace(from, to);
+};
+
+const section = (file: string, text: string, heading: string) => {
   const start = text.indexOf(heading);
   if (start < 0) {
-    return null;
+    throw changed(file, heading);
   }
   const end = text.indexOf("\n## ", start + heading.length);
   return [start, end < 0 ? text.length : end + 1] as const;
 };
 
-/** what differs online in both texts: no local files, no PDF export, Kurviq's server instead of the local one */
-const online = (text: string) =>
-  text
-    // " (localhost:3101)" with the whitespace before it (no regex: Sonar S8786)
-    .split("(localhost:3101)").map((part, index, parts) => (index < parts.length - 1 ? part.trimEnd() : part)).join("")
-    .replaceAll("the scenes server's HTTP API", "Kurviq's or Google's HTTP API (except the upload address from `read_me`)")
-    .replace(/absolute file path,\s+/g, "")
-    .replace(/ Local file paths must lie inside[\s\S]*?at most 5 MB\./, "")
-    .replace(/ \(also in REFERENCE\.md next to this\s+file\)/, "")
-    .replace(
-      /- \*\*Big edits:\*\* write[\s\S]*?instead of pasting it into the call\./,
-      '- **Big edits:** upload them as JSON and pass `payloadId` (see "Images from your machine").',
-    )
-    .replace(
-      /- PDF: `export_pdf\(name\)`[\s\S]*?selectable text\./,
-      "- PDF: the user exports the deck in Kurviq (Slides sidebar → PDF).",
-    );
+/** what differs online in the instructions: Kurviq's server instead of the local one */
+const onlineSkill = (text: string) => {
+  // " (localhost:3101)" with the whitespace before it (no regex: Sonar S8786)
+  const parts = text.split("(localhost:3101)");
+  if (parts.length < 2) {
+    throw changed("SKILL.md", "(localhost:3101)");
+  }
+  const withoutPort = parts.map((part, index) => (index < parts.length - 1 ? part.trimEnd() : part)).join("");
+  return [
+    ["the scenes server's HTTP API", "Kurviq's or Google's HTTP API (except the upload address from `read_me`)"] as const,
+    [/ \(also in REFERENCE\.md next to this\s+file\)/, ""] as const,
+  ].reduce((next, [from, to]) => replaceOnce("SKILL.md", next, from, to), withoutPort);
+};
+
+/** what differs online in the reference: no local files, no PDF export */
+const onlineReference = (text: string) =>
+  [
+    [/absolute file path,\s+/g, ""] as const,
+    [/ Local file paths must lie inside[\s\S]*?at most 5 MB\./, ""] as const,
+    [/- \*\*Big edits:\*\* write[\s\S]*?instead of pasting it into the call\./, '- **Big edits:** upload them as JSON and pass `payloadId` (see "Images from your machine").'] as const,
+    [/- PDF: `export_pdf\(name\)`[\s\S]*?selectable text\./, "- PDF: the user exports the deck in Kurviq (Slides sidebar → PDF)."] as const,
+  ].reduce((next, [from, to]) => replaceOnce("REFERENCE.md", next, from, to), text);
 
 /** the server's instructions: how to work with the user's scenes */
 export const kurviqSkill = (app: string) => {
   let text = String(localSkill).replace(/^---[\s\S]*?---\s*/, "");
-  const intro = text.indexOf("## Golden rules");
+  const [intro] = section("SKILL.md", text, "## Golden rules");
   text = INTRO(app) + text.slice(intro);
   for (const heading of ["## Live mode", "## Troubleshooting"]) {
-    const range = section(text, heading);
-    if (range) {
-      text = text.slice(0, range[0]) + text.slice(range[1]);
-    }
+    const range = section("SKILL.md", text, heading);
+    text = text.slice(0, range[0]) + text.slice(range[1]);
   }
-  return `${online(text).trimEnd()}\n\n${TROUBLESHOOTING(app)}`;
+  return `${onlineSkill(text).trimEnd()}\n\n${TROUBLESHOOTING(app)}`;
 };
 
 /** what read_me returns: the element reference, with the upload address for images and big edits */
 export const kurviqReference = (uploadUrl = "<the upload address>") =>
-  `${online(String(localReference)).trimEnd()}\n\n${UPLOADS(uploadUrl)}`;
+  `${onlineReference(String(localReference)).trimEnd()}\n\n${UPLOADS(uploadUrl)}`;

@@ -1,47 +1,71 @@
-// Sets the Worker's secrets on Cloudflare once: GOOGLE_CLIENT_SECRET and
-// GOOGLE_API_KEY (from KURVIQ_GOOGLE_CLIENT_SECRET / KURVIQ_GOOGLE_API_KEY in
-// ../.env) and a new random COOKIE_KEY. Name the ones to set, e.g.
-// `npm run secrets -- GOOGLE_CLIENT_SECRET GOOGLE_API_KEY`: a new COOKIE_KEY
-// signs every browser out of Google (they sign in again with one click),
-// so only make one on purpose.
+// Sets the Worker's secrets on Cloudflare. Name the ones to set:
 //
-// Live sync (docs/live-sync) adds two random keys, set once each:
-//   TOKEN_KEY      encrypts the refresh tokens a scene keeps until its changes
-//                  are in Drive (a new one only makes those pending tokens
-//                  useless: their authors' changes wait for their next visit)
-//   PSEUDONYM_KEY  derives the per-scene author pseudonyms written into Drive
-//                  files (a new one changes every pseudonym: never rotate it)
+//   npm run secrets -- GOOGLE_CLIENT_SECRET GOOGLE_API_KEY
+//
+// Without names it prints this help and sets nothing. Values:
+//   GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY   from KURVIQ_GOOGLE_CLIENT_SECRET /
+//                  KURVIQ_GOOGLE_API_KEY in ../.env
+//   COOKIE_KEY     a new random key. It seals far more than cookies: every
+//                  browser's Google session (all are signed out: one click to
+//                  sign in again), the local installs' sessions, every agent's
+//                  OAuth registration and tokens (agents must be added again)
+//                  and upload addresses; it also keys the rate-limit hashes
+//                  (their history starts over). To rotate without signing
+//                  everybody out at once, set the old value as
+//                  COOKIE_KEY_PREVIOUS first (wrangler secret put
+//                  COOKIE_KEY_PREVIOUS): what it sealed stays valid until it
+//                  expires.
+//   TOKEN_KEY      live sync: encrypts the refresh tokens a scene keeps until
+//                  its changes are in Drive (a new one only makes those
+//                  pending tokens useless: their authors' changes wait for
+//                  their next visit)
+//   PSEUDONYM_KEY  live sync: derives the per-scene author pseudonyms written
+//                  into Drive files (a new one changes every pseudonym: never
+//                  rotate it; refused unless --force)
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadEnv } from "../scripts/env.mjs";
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const env = {};
-for (const file of [".env", ".env.local"]) {
-  const full = path.join(HERE, "..", file);
-  if (existsSync(full)) {
-    for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: trusted local environment files are read only by developer tooling
-      if (match) {
-        env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
-      }
-    }
-  }
-}
-const only = process.argv.slice(2);
+const env = loadEnv();
+const args = process.argv.slice(2);
+const force = args.includes("--force");
+const names = args.filter((arg) => arg !== "--force");
+
+const random = () => randomBytes(32).toString("base64");
 const secrets = {
-  GOOGLE_CLIENT_SECRET: env.KURVIQ_GOOGLE_CLIENT_SECRET,
-  GOOGLE_API_KEY: env.KURVIQ_GOOGLE_API_KEY,
-  COOKIE_KEY: randomBytes(32).toString("base64"),
-  TOKEN_KEY: randomBytes(32).toString("base64"),
-  PSEUDONYM_KEY: randomBytes(32).toString("base64"),
+  GOOGLE_CLIENT_SECRET: () => env.KURVIQ_GOOGLE_CLIENT_SECRET,
+  GOOGLE_API_KEY: () => env.KURVIQ_GOOGLE_API_KEY,
+  COOKIE_KEY: random,
+  TOKEN_KEY: random,
+  PSEUDONYM_KEY: random,
 };
-for (const [name, value] of Object.entries(secrets)) {
-  if (only.length && !only.includes(name)) {
-    continue;
-  }
+
+const usage = () =>
+  console.log(
+    "Sets the Worker's secrets on Cloudflare:\n  npm run secrets -- <NAME> [<NAME> …] [--force]\n" +
+      `Names: ${Object.keys(secrets).join(", ")}\n` +
+      "(the top of online/secrets.mjs says what each one does; a new COOKIE_KEY signs every browser and every agent out)",
+  );
+
+if (!names.length) {
+  usage();
+  process.exit(0);
+}
+const unknown = names.filter((name) => !(name in secrets));
+if (unknown.length) {
+  console.error(`[secrets] unknown: ${unknown.join(", ")}. Known: ${Object.keys(secrets).join(", ")}`);
+  process.exit(1);
+}
+if (names.includes("PSEUDONYM_KEY") && !force) {
+  console.error("[secrets] PSEUDONYM_KEY changes every author pseudonym in Drive files: add --force if you really mean it");
+  process.exit(1);
+}
+for (const name of names) {
+  const value = secrets[name]();
   if (!value) {
     console.error(`[secrets] ${name}: no value (set KURVIQ_${name} in .env)`);
     process.exit(1);

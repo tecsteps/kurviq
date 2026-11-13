@@ -7,9 +7,9 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import clsx from "clsx";
 
-import { scenesController } from "./controller";
-import { deck, isDeck } from "./deck";
-import { optimizeImages, pickSlides, printInBrowser, printToPdf, slidesHtml } from "./pdfExport";
+import { deck, deckName, isDeck } from "./deck";
+import { createStore } from "./externalStore";
+import { NoPdfPrinter, optimizeImages, pickSlides, printInBrowser, printToPdf, slidesHtml } from "./pdfExport";
 import { IS_ONLINE } from "./api";
 import { QuickTip } from "./quickTip";
 import { presenter } from "./present";
@@ -87,7 +87,7 @@ const setTransition = (transition: Transition) => {
 
 /** slides back to the template: its elements as in the template (slides.ts) */
 const resetSlides = (ids: string[]) => {
-  const next = resetToTemplate(api().getSceneElementsIncludingDeleted(), new Set(ids), scenesController.getState().current ?? "Untitled");
+  const next = resetToTemplate(api().getSceneElementsIncludingDeleted(), new Set(ids), deckName());
   if (next) {
     api().updateScene({ elements: next, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
   }
@@ -95,13 +95,32 @@ const resetSlides = (ids: string[]) => {
 
 type PdfChoice = "all" | "current" | "pick";
 
+/**
+ * The PDF from the local scenes server (headless Chrome). Null where it
+ * can't print (kurviq.com, no server running, an older one, no Chrome): the
+ * browser's print dialog does it then. Its other errors reach the panel.
+ */
+const printWithServer = async (html: string) => {
+  if (IS_ONLINE) {
+    return null;
+  }
+  try {
+    return await printToPdf(html);
+  } catch (error) {
+    if (error instanceof NoPdfPrinter) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 const exportPdf = async (
   spec: string,
   { includeSkipped, compress }: { includeSkipped: boolean; compress: boolean },
   setBusy: (busy: string | null) => void,
 ) => {
   const elements = api().getSceneElementsIncludingDeleted();
-  const name = scenesController.getState().current ?? "Untitled";
+  const name = deckName();
   const frames = pickSlides(elements, spec, { includeSkipped });
   setBusy(`Preparing ${frames.length} slide${frames.length === 1 ? "" : "s"}…`);
   const files = compress ? await optimizeImages(elements, api().getFiles(), frames) : api().getFiles();
@@ -117,13 +136,9 @@ const exportPdf = async (
       suffix = ` - slides ${spec.replace(/\s+/g, "")}`;
     }
   }
-  let blob: Blob;
-  try {
-    setBusy("Printing PDF…");
-    blob = await printToPdf(html);
-  } catch (error) {
-    // scenes server without PDF support (or no Chrome): the browser prints it
-    console.warn("PDF via scenes server failed, using the print dialog", error);
+  setBusy("Printing PDF…");
+  const blob = await printWithServer(html);
+  if (!blob) {
     setBusy(null);
     printInBrowser(html, `${name}${suffix}`);
     return;
@@ -151,7 +166,8 @@ const PdfPanel = () => {
   if (choice === "all") {
     spec = "all";
   } else if (choice === "current") {
-    spec = String((current?.index ?? 0) + 1);
+    // no slide selected any more: nothing to export (not slide 1)
+    spec = current ? String(current.index + 1) : "";
   }
   return (
     <section className="slides-details slides-pdf">
@@ -188,7 +204,7 @@ const PdfPanel = () => {
         <button
           type="button"
           className="slides-btn slides-btn--primary"
-          disabled={!!busy || (choice === "pick" && !pick.trim())}
+          disabled={!!busy || !spec.trim()}
           onClick={() => {
             setError(null);
             exportPdf(spec, { includeSkipped, compress }, setBusy)
@@ -813,23 +829,7 @@ const SlidesEmpty = () => (
 type SlidesTab = "slides" | "clicks" | "style" | "pdf";
 
 /** the sidebar's tab: kept outside the sidebar, which unmounts when closed; set by the template watcher too */
-const slidesTab = (() => {
-  let tab: SlidesTab = "slides";
-  const listeners = new Set<() => void>();
-  return {
-    get: () => tab,
-    set: (next: SlidesTab) => {
-      tab = next;
-      listeners.forEach((listener) => listener());
-    },
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  };
-})();
+const slidesTab = createStore<SlidesTab>("slides");
 
 // editing the template (something on it selected): the Style tab opens;
 // back on a slide, the slide list returns (if it was opened this way)
@@ -880,7 +880,7 @@ const icon = (children: ReactNode) => (
   </svg>
 );
 
-const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode; online?: boolean }> = [
+const TABS: Array<{ tab: SlidesTab; label: string; icon: ReactNode }> = [
   {
     tab: "slides",
     label: "Slides",
@@ -941,10 +941,8 @@ export const SlidesSidebar = () => {
   };
   const state = useDeck();
   const { slides, activeId } = state;
-  const tab = useSyncExternalStore(slidesTab.subscribe, slidesTab.get);
+  const shown = slidesTab.use();
   const active = slides.some((s) => s.id === activeId) ? activeId : null;
-  const tabs = TABS.filter((entry) => !entry.online || IS_ONLINE);
-  const shown = tabs.some((entry) => entry.tab === tab) ? tab : "slides";
   return (
     <Sidebar name={SLIDES_SIDEBAR_NAME} className="slides-sidebar" docked={docked} onDock={dock}>
       <Sidebar.Header>
@@ -956,7 +954,7 @@ export const SlidesSidebar = () => {
         ) : (
           <>
             <div className="slides-tabs" role="tablist">
-              {tabs.map((entry) => (
+              {TABS.map((entry) => (
                 <button
                   key={entry.tab}
                   type="button"

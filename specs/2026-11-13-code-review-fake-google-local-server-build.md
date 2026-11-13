@@ -19,6 +19,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Suggested fix**: `import { execFile, spawn } from "node:child_process";`. Add a small test (or a startup self-check)
   for `/api/pdf`, since nothing covers this file.
 - **Also in the Astra review**: F32 (reproduced there with the extracted `printPdf`).
+- **Status**: fixed 2026-11-13 (printPdf in scenes-server/pdf.mjs imports execFile; tested with a stand-in Chrome: localPdf.test.ts)
 
 ### B20. Fault injection never matches a query string, so the "slow reads" variant of new-scene.mjs tests nothing
 - **Area**: Fake Google, local server, build config
@@ -32,6 +33,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   delayed: "a slow Drive (uploads … and file reads take 2.5 s)" is not what runs. The request log makes it look as if it
   should work, because it logs `fullPath + query` under `path` (`:1589-1590`).
 - **Suggested fix**: match faults against `pathname + search` (the same string that is logged), and document it; or
+- **Status**: fixed 2026-11-13 (faults match path + query; DELETE /admin/faults lists faults that never fired)
   change the test to a path fault plus `method: "GET"`. Consider answering `POST /admin/faults` with a hint when a
   fault was never used at `DELETE /admin/faults`.
 
@@ -46,6 +48,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   tracked: `stopRenderer` kills only the second on exit, and when either exits its handler sets `renderer = null`
   although the other still runs, so a third Chrome can be started later. Both renderer tabs register as clients.
 - **Suggested fix**: keep the start as one shared promise (`renderer = { ready: startRenderer() }` assigned
+- **Status**: fixed 2026-11-13 (renderer start stored before any await; exit handler clears only its own entry)
   synchronously before any await), and let the exit handler clear `renderer` only if it is still that process.
 
 ### B75. `KURVIQ_FAKE_GOOGLE` means two different things in the app build and the Worker; nothing stops a fake app build from being deployed
@@ -62,6 +65,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Suggested fix**: compare with `=== "1"` in `vite.config.mts`, and let `online`'s `deploy` script refuse when
   `dist/app` was built for the fake (e.g. grep the bundle for `/fake-google/drive`, or write a marker file).
 - **Also in the Astra review**: F48.
+- **Status**: fixed 2026-11-13 (=== "1" in vite.config.mts; the app build writes online/dist/app-build.json, online/check-deploy.mjs refuses a fake build in `npm run deploy`)
 
 ### B76. The scenes server trusts every request without an `Origin` header, which includes cross-site no-cors GETs
 - **Area**: Fake Google, local server, build config
@@ -78,6 +82,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   `corsOrigin` answers `Access-Control-Allow-Origin: null` for disallowed origins; `null` is the origin of sandboxed
   iframes, so that value should never be sent (today it only exposes the 403 body).
 - **Suggested fix**: also refuse when `Sec-Fetch-Site` is present and is `cross-site` (browsers always send it, local
+- **Status**: fixed 2026-11-13 (no-Origin requests with Sec-Fetch-Site cross-site/same-site refused; no Access-Control-Allow-Origin: null)
   tools never do); omit the `Access-Control-Allow-Origin` header instead of sending `null`.
 
 ### B77. `/api/pdf` prints any HTML that starts with the expected prefix; top-level navigation is not blocked
@@ -92,6 +97,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   could have a local file printed and returned as PDF. Callers must be the app's origin or a local process, so this
   needs script injection in the app (or scene content reaching the export HTML unescaped) to matter: defence in depth.
 - **Suggested fix**: reject HTML containing `http-equiv` other than the one CSP meta (or build the document in the
+- **Status**: fixed 2026-11-13 (pdfHtmlProblem: exactly the two <meta> tags of the prefix)
   server from the pages / styles the app sends), and add `--disable-features=…`/`--allow-file-access-from-files`-free
   flags only after checking; simplest is a check that `<meta` occurs exactly twice (charset, CSP).
 
@@ -106,6 +112,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   changed, and no watch notification is sent. Real Drive applies an update atomically, so a test of an error path can
   see state that production never has.
 - **Suggested fix**: validate first (maps, parents), then write everything; or wrap the writes in
+- **Status**: fixed 2026-11-13 (files.update checks everything first (updatePlan), then writes)
   `ctx.storage.transactionSync`.
 
 ### B79. The PWA manifest announces a share target nobody handles
@@ -121,6 +128,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Suggested fix**: remove `share_target` from the manifest, or handle the POST in the service worker and hand the
   file to the app.
 - **Also in the Astra review**: F47.
+- **Status**: fixed 2026-11-13 (share_target removed)
 
 ## Code smells
 
@@ -131,6 +139,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `.github/workflows/deploy-kurviq.yml:43-66`
 - **Description**: Every push to main builds and deploys; nothing runs the 31 unit test files, the typecheck or the e2e scripts first. The check after the deploy only fetches the home page and the first line of `llms.txt`. CLAUDE.md asks for these checks before a push, but only as a manual step, so a failing sync or auth test does not stop a release.
 - **Suggested fix**: Add a job before the deploy that runs the unit tests and the typecheck (compared with the known 17 upstream errors); keep the browser e2e scripts in a separate job if they take too long.
+- **Status**: fixed 2026-11-13 (deploy workflow runs npm run typecheck:ci (scripts/typecheck.mjs: fails on errors outside excalidraw/ or more than 17 upstream) and npm test before building)
 
 ### S18. The fake Google (2535 lines, a Durable Object class and its binding) is part of the production Worker
 - **Area**: Fake Google, local server, build config
@@ -143,6 +152,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   flag. Every future route added before line 442 of `index.ts`, or a gate that checks only `FAKE_GOOGLE`
   (e.g. `scene.ts:1547` checks the flag and a non-empty `DEV_ORIGIN`, not `devGate`), weakens it.
 - **Suggested fix**: build it out of the production bundle: an esbuild `define` (e.g. `__KURVIQ_DEV__`) set by
+- **Status**: fixed 2026-11-13 (__KURVIQ_DEV__ define: `build-worker.mjs --production` (npm run deploy) leaves the fake out, a stub FakeGoogle class keeps the binding; dev hooks in scene.ts / sceneRoutes.ts go with that code)
   `build-worker.mjs` only for the fake build, with `handleFakeGoogle` and the dev hooks behind it so they are dropped
   as dead code; keep a stub `FakeGoogle` class (or a `deleted_classes` migration) for the existing migration.
 
@@ -157,6 +167,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   same browser can call `/fake-google/admin/*` (reset, read all files and revisions with `?content=1`, write, share)
   and `oauth/approve`. Only test data, but developers do paste real scenes into test accounts.
 - **Suggested fix**: drop the CORS headers (or allow only `DEV_ORIGIN`).
+- **Status**: fixed 2026-11-13 (CORS only for DEV_ORIGIN)
 
 ### S20. `anonymousOnly()` does the opposite of its name
 - **Area**: Fake Google, local server, build config
@@ -166,6 +177,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Description**: The helper fails with 401 "Login Required" when the caller is anonymous (API key) and returns the
   signed-in user. Every call site reads as "this route is for anonymous callers only", which is the reverse.
 - **Suggested fix**: rename to `requireUser` (and resolve it once in `driveResourceCall` instead of threading a
+- **Status**: fixed 2026-11-13 (requireUser(caller), no closure threaded through)
   closure through five functions).
 
 ### S21. Text-padding patch: three replacements are not checked, unlike every other patch
@@ -179,6 +191,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   rewrites those expressions: the build stays green and custom text padding stops applying to the wrap width while
   the position patches still apply (text overflows its shape). The file's stated rule is "fails loudly".
 - **Suggested fix**: express these as counted steps of `patch()` too (or assert that the result differs from the input).
+- **Status**: fixed 2026-11-13 (counted steps of patchSource, helper prepended as a function declaration)
 
 ### S22. The scenes server reads request bodies without any size limit
 - **Area**: Fake Google, local server, build config
@@ -190,6 +203,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   takes the server down with it, and the online counterpart has explicit caps (10 MB images, 1 MB payloads in
   `online/worker/index.ts:104`, `:193`).
 - **Suggested fix**: a generous cap (e.g. 64 MB) with a 413 answer and `req.destroy()`.
+- **Status**: fixed 2026-11-13 (64 MB cap, 413, connection closed)
 
 ## Dead code
 
@@ -208,6 +222,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   app is not open…" / "did not answer in time" next to "Kurviq is not open…" (`:516`) for the same condition.
 - **Suggested fix**: delete (1), (2) and the unused `extra`; use `httpError` everywhere; unify the wording.
 - **Also in the Astra review**: F36.
+- **Status**: fixed 2026-11-13
 
 ### D11. Unused parameters and no-op constructs in the fake
 - **Area**: Fake Google, local server, build config
@@ -219,6 +234,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   `fullText contains` branch is identical to `name contains`; `DRIVE_FULL` is accepted although Kurviq never asks for
   the full Drive scope (project decision: stay on `drive.file`); `Caller.clientId` is set and never read.
 - **Suggested fix**: remove them.
+- **Status**: fixed 2026-11-13
 
 ## Duplications
 
@@ -234,6 +250,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   the MCP server must agree on values such as `SCENES_SERVER_URL` and `SCENES_APP_URL`.
 - **Suggested fix**: one `scripts/env.mjs` (`loadEnv(root)`) imported by all six.
 - **Also in the Astra review**: F50.
+- **Status**: partly 2026-11-13: scripts/env.mjs used by the scenes server, vite.config.mts, with-env.mjs, dev-vars.mjs, secrets.mjs; scenes-mcp/server.mjs still has its copy (needs lead: not my files)
 
 ### U16. The source-patching helper exists three times in the Vite config, with different strictness
 - **Area**: Fake Google, local server, build config
@@ -246,6 +263,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   patched and the build passes.
 - **Suggested fix**: one module-level `patchSource(code, name, steps, importLine?)` with the count check, used by all.
 - **Also in the Astra review**: F50.
+- **Status**: fixed 2026-11-13 (one patchSource with the count check)
 
 ### U17. `kurviqBuild()` is defined in both builds and must give the same answer
 - **Area**: Fake Google, local server, build config
@@ -255,6 +273,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Description**: The app and the Worker compare this value to tell an outdated tab. The two copies already differ
   (`cwd: HERE` only in the Vite config). A change to one (length, source) silently breaks the comparison.
 - **Suggested fix**: move it next to `thirdPartyNotices` in `online/licenses.mjs` (already imported by both) or a
+- **Status**: fixed 2026-11-13 (online/build-info.mjs)
   small shared module.
 
 ### U18. The fake's admin calls re-implement its Drive calls
@@ -267,6 +286,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   `version + 1` and `notify` calls. A behaviour fixed in the Drive path (e.g. what a notification carries) has to be
   fixed in the admin path too, or "a change from outside Kurviq" behaves differently from a change through the API.
 - **Suggested fix**: let the admin calls run the Drive implementation as that user (an internal `Caller` with app
+- **Status**: fixed 2026-11-13 (admin write/share/unshare/trash use the Drive path's checks and writes: updatePlan, mergedMap, setTrashed, permissionsChanged)
   access bypassed), keeping only the "no app access needed" difference.
 
 ## Over-engineering
@@ -292,6 +312,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   "not supported by the fake" 400, as `uploadType` already does at `:1850`), and drop the unused OAuth and admin
   routes; keep `log` if it is used for debugging by hand, and say so in the header.
 - **Update 2026-11-13 (specs)**: Grows: the fake's revisions, keepForever pins and watch channels were used by the scene object; cut them too.
+- **Status**: partly 2026-11-13: query language cut to what Kurviq sends (online/worker/fakeGoogleQuery.ts, refused otherwise), orderBy to createdTime/modifiedTime/name; dropped prompt=none, /userinfo, Basic auth, about.get, add/removeParents, ownership transfer, PUT uploads, admin users/files/ungrant/purge-revisions/expire-tokens/inbox, fault filters. Kept: the field whitelist (it checks what the app sends), cancel (the page's Cancel button), log (debugging by hand). Revisions, keepForever and watch channels still serve scene.ts: cut them when it goes (lead)
 
 ### O7. Fidelity gaps of the fake worth knowing when a test passes
 - **Area**: Fake Google, local server, build config
@@ -307,4 +328,5 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   instead of a new one. None of these makes a current test wrong that I could show; they are the places where green
   tests say least.
 - **Suggested fix**: bump `modified` on metadata changes; optionally a fault kind "list lags by N ms" for the folder
+- **Status**: fixed 2026-11-13 (rename moves modifiedTime; the other gaps listed under "Not like Google" in the header)
   lookup. Otherwise list these in the header comment under a "not like Google" heading.

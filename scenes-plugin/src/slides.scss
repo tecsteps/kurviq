@@ -325,11 +325,6 @@
     }
   }
 
-  .slides-notes {
-    resize: vertical;
-    line-height: 1.4;
-  }
-
   .slides-check {
     display: flex;
     align-items: center;
@@ -737,13 +732,6 @@ body.slides-presenting {
       display: none;
     }
   }
-
-  &__count {
-    min-width: 4rem;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-    color: var(--color-gray-50);
-  }
 }
 
 // -----------------------------------------------------------------------------
@@ -928,6 +916,34 @@ body.slides-presenting {
   &__hint {
     color: var(--color-gray-50, #868e96);
     font-size: 0.72rem;
+  }
+
+  // notes changed elsewhere while the user typed (notes.tsx): which version stays
+  &__conflict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: var(--border-radius-md, 8px);
+    background: var(--color-warning, #fff3bf);
+    color: var(--color-gray-90, #1e1e1e);
+    font-size: 0.75rem;
+
+    span {
+      flex: 1 1 100%;
+    }
+
+    button {
+      height: 1.75rem;
+      padding: 0 0.6rem;
+      border: 1px solid var(--default-border-color);
+      border-radius: var(--border-radius-md, 8px);
+      background: var(--island-bg-color);
+      color: var(--text-primary-color);
+      font: inherit;
+      cursor: pointer;
+    }
   }
 }
 

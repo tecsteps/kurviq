@@ -6,6 +6,7 @@
 // author's fault), or Google not reachable (5xx, timeouts: retry). Only
 // refusals ever end someone's access or block an author.
 
+import { readText } from "./bytes";
 import { googleUrls } from "./google";
 import type { GoogleEnv } from "./google";
 
@@ -20,39 +21,38 @@ const ANSWER_BYTES = 4 * 1024 * 1024;
 /** a scene file downloaded from Drive (an outside file bigger than this is not imported): LIMITS.sceneBytes + room */
 export const DOWNLOAD_BYTES = 34 * 1024 * 1024;
 
-/** a body read up to `max` bytes (stopped as soon as it is bigger: nothing over the limit is buffered); null: too big */
-export const readLimited = async (body: ReadableStream<Uint8Array> | null, max: number): Promise<string | null> => {
-  if (!body) {
-    return "";
-  }
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    size += value.length;
-    if (size > max) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const all = new Uint8Array(size);
-  let at = 0;
-  for (const chunk of chunks) {
-    all.set(chunk, at);
-    at += chunk.length;
-  }
-  return new TextDecoder().decode(all);
+/** a body read up to `max` bytes as text; null: too big (the shared reader, ./bytes.ts) */
+export { readText as readLimited } from "./bytes";
+
+/** a Drive file id (also the ids of scenes, short links and shared folders) */
+export const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
+
+/** a scene file: its MIME type and name extension in Drive */
+export const SCENE_MIME = "application/vnd.excalidraw+json";
+export const SCENE_EXTENSION = ".excalidraw";
+
+/**
+ * A multipart/related body (Drive's multipart upload): the metadata as JSON,
+ * then the content. Returns the body and its Content-Type.
+ */
+export const multipartBody = (metadata: unknown, content: Uint8Array, contentType = SCENE_MIME) => {
+  const boundary = `kurviq${crypto.randomUUID().replaceAll("-", "")}`;
+  const head = new TextEncoder().encode(
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`,
+  );
+  const tail = new TextEncoder().encode(`\r\n--${boundary}--`);
+  const body = new Uint8Array(head.length + content.length + tail.length);
+  body.set(head);
+  body.set(content, head.length);
+  body.set(tail, head.length + content.length);
+  return { body, contentType: `multipart/related; boundary=${boundary}` };
 };
 
 export const driveUrls = (env: GoogleEnv) => googleUrls(env, env.DEV_ORIGIN);
 
 /** dev cost measurement only (scene.ts sets it on its env when the dev gate is on): each call's kind and wait */
-export type DriveObserver = (kind: string, ms: number) => void;
+type DriveObserver = (kind: string, ms: number) => void;
 const observerOf = (env: GoogleEnv) => (env as { observeDrive?: DriveObserver }).observeDrive;
 
 /** a call's kind for the cost counters: method + the path's shape (ids left out) */
@@ -95,7 +95,7 @@ const driveFetch = async (
       body,
       signal: AbortSignal.timeout(init.timeoutMs ?? TIMEOUT_MS),
     });
-    const text = await readLimited(res.body, init.maxBytes ?? ANSWER_BYTES);
+    const text = await readText(res.body, init.maxBytes ?? ANSWER_BYTES);
     if (text === null) {
       // bigger than allowed: not read (status 413, so callers can tell it from a refusal)
       return { status: 413, data: null, text: "" };
@@ -139,7 +139,7 @@ export const problemOf = (answer: DriveAnswer): DriveProblem => {
 export const isTransient = (problem: DriveProblem) =>
   problem === "unreachable" || problem === "rate-limited" || problem === "drive-full";
 
-export const FILE_FIELDS = "id,name,trashed,headRevisionId,md5Checksum,capabilities(canEdit),appProperties";
+const FILE_FIELDS = "id,name,trashed,headRevisionId,md5Checksum,capabilities(canEdit),appProperties";
 
 export const getFile = (env: GoogleEnv, token: string, fileId: string, fields = FILE_FIELDS) =>
   driveCall(`${driveUrls(env).api}/files/${fileId}?fields=${encodeURIComponent(fields)}&supportsAllDrives=true`, token, { observe: observerOf(env) });
@@ -158,7 +158,7 @@ export const downloadFile = (env: GoogleEnv, token: string, fileId: string, revi
 
 export type Revision = { id: string; md5Checksum?: string; keepForever?: boolean; modifiedTime?: string };
 
-/** all revisions, oldest first; null: Drive did not answer (or refused) */
+/** all revisions, oldest first; Drive's answer instead when it did not answer or refused */
 export const listRevisions = async (env: GoogleEnv, token: string, fileId: string): Promise<Revision[] | DriveAnswer> => {
   const all: Revision[] = [];
   let pageToken = "";
@@ -181,19 +181,10 @@ export const listRevisions = async (env: GoogleEnv, token: string, fileId: strin
 
 /** a new version of the file: content and metadata (appProperties, name) in one multipart PATCH */
 export const uploadVersion = (env: GoogleEnv, token: string, fileId: string, metadata: unknown, content: Uint8Array) => {
-  const boundary = `kurviq${crypto.randomUUID().replaceAll("-", "")}`;
-  const head = new TextEncoder().encode(
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-      `--${boundary}\r\nContent-Type: application/vnd.excalidraw+json\r\n\r\n`,
-  );
-  const tail = new TextEncoder().encode(`\r\n--${boundary}--`);
-  const body = new Uint8Array(head.length + content.length + tail.length);
-  body.set(head);
-  body.set(content, head.length);
-  body.set(tail, head.length + content.length);
+  const { body, contentType } = multipartBody(metadata, content);
   return driveCall(
     `${driveUrls(env).upload}/files/${fileId}?uploadType=multipart&fields=id,name,headRevisionId,md5Checksum&supportsAllDrives=true`,
     token,
-    { method: "PATCH", body, contentType: `multipart/related; boundary=${boundary}`, timeoutMs: 90_000, observe: observerOf(env) },
+    { method: "PATCH", body, contentType, timeoutMs: 90_000, observe: observerOf(env) },
   );
 };

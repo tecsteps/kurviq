@@ -33,14 +33,14 @@ import {
   devGate,
   watchSecret,
   freshSession,
-  isLocalOrigin,
+  isLocalInstall,
   localSession,
   pseudonymOf,
   revokeAtGoogle,
   seal,
   sealLocalSession,
   sealSceneToken,
-  sessionCookieHeader,
+  sessionCookie,
   unseal,
 } from "./auth";
 import type { AuthEnv, Session } from "./auth";
@@ -143,7 +143,7 @@ export const signedIn = async (ctx: Ctx): Promise<{ session: Session; sealedLoca
     if (ctx.local) {
       sealedLocal = await sealLocalSession(ctx.env, fresh.session);
     } else {
-      ctx.cookies.push(await sessionCookieHeader(ctx.request, ctx.env, fresh.session));
+      ctx.cookies.push(await sessionCookie(ctx.request, ctx.env, fresh.session));
     }
   }
   const epoch = await accountEpoch(ctx.env, fresh.session.sub, ctx.touch);
@@ -399,7 +399,7 @@ const connect = async (ctx: Ctx, fileId: string) => {
     return new Response("Expected a WebSocket", { status: 426 });
   }
   // browsers always send Origin with a WebSocket: this site or the local install
-  if (!sameSite(ctx) && !isLocalOrigin(ctx.origin)) {
+  if (!sameSite(ctx) && !isLocalInstall(ctx.origin)) {
     return new Response("Forbidden", { status: 403 });
   }
   const claims = await unseal<Claims>(ctx.env, ctx.url.searchParams.get("ticket") ?? undefined, TICKET);
@@ -685,7 +685,7 @@ export const handleSceneRoutes = async (request: Request, env: SceneRoutesEnv): 
   }
   const origin = request.headers.get("Origin");
   const ctx: Ctx = { request, env, url, origin, local: false, body: {}, cookies: [] };
-  ctx.local = isLocalOrigin(origin) && !sameSite(ctx);
+  ctx.local = isLocalInstall(origin) && !sameSite(ctx);
   if (request.method === "OPTIONS" && ctx.local) {
     return new Response(null, {
       status: 204,

@@ -1,7 +1,7 @@
 // Formatted text for agents: `markdown` instead of `text` on a text element,
 // on a shape's `label`, or in an update (see REFERENCE.md, "Formatted text").
 
-import { docFromMarkdown, isPlainDoc, markdownOf, plainOf, richDocOf } from "./model";
+import { docFromMarkdown, isPlainDoc, plainOf } from "./model";
 
 const withRich = (customData: Record<string, any> | null | undefined, doc: ReturnType<typeof docFromMarkdown> | null) => {
   const { rich: _old, ...rest } = customData || {};
@@ -9,7 +9,7 @@ const withRich = (customData: Record<string, any> | null | undefined, doc: Retur
 };
 
 /** text + customData for markdown-like text */
-export const fromMarkdown = (markdown: string, customData?: Record<string, any> | null) => {
+const fromMarkdown = (markdown: string, customData?: Record<string, any> | null) => {
   const doc = docFromMarkdown(markdown);
   return { text: plainOf(doc), customData: withRich(customData, doc) };
 };
@@ -50,10 +50,4 @@ export const applyMarkdownUpdate = (el: any, patch: Record<string, any>) => {
     return { ...patch, customData: { ...patch.customData, rich: null } };
   }
   return patch;
-};
-
-/** the markdown-like text of a formatted text element (null: plain text) */
-export const markdownOfElement = (el: any) => {
-  const doc = el?.type === "text" ? richDocOf(el) : null;
-  return doc ? markdownOf(doc) : null;
 };

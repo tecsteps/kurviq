@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyCommentOps,
   authorKey,
+  changeStamp,
   cleanComment,
   commentReadable,
   commenterReadableRefusal,
@@ -17,6 +18,7 @@ import {
   threadsOf,
   withComments,
 } from "../../scenes-mcp/sceneComments.mjs";
+import { withTopLevelField } from "../../scenes-mcp/sceneJson.mjs";
 
 const ann = { name: "Ann", key: "aaaaaaaaaaaaaaaa" };
 const bob = { name: "Bob", key: "bbbbbbbbbbbbbbbb" };
@@ -153,6 +155,35 @@ describe("what a commenter may change", () => {
     expect(commenterRefusal(thread, { ...thread, done: { name: "Bob", at: 300 }, u: 300 }, bob.key)).toBeNull();
     expect(commenterRefusal(thread, { ...thread, pin: { x: 0, y: 0 }, u: 300 }, bob.key)).toMatch(/pin/);
     expect(commenterRefusal(thread, { ...thread, by: bob, u: 300 }, bob.key)).toMatch(/author/);
+  });
+  it("not the name, agent mark or edit time on someone else's comment; their own, yes", () => {
+    const thread = cleanComment(root("thread01"))!;
+    expect(commenterRefusal(thread, { ...thread, by: { ...ann, name: "Mallory" }, u: 300 }, bob.key)).toMatch(/author/);
+    expect(commenterRefusal(thread, { ...thread, by: { ...ann, agent: true as const }, u: 300 }, bob.key)).toMatch(/author/);
+    expect(commenterRefusal(thread, { ...thread, edited: 250, u: 300 }, bob.key)).toMatch(/author/);
+    expect(commenterRefusal(mine, { ...mine, by: { ...mine.by, name: "Robert" }, edited: 250, u: 300 }, bob.key)).toBeNull();
+  });
+});
+
+describe("change stamps", () => {
+  it("are now, but always after the version they change (a clock behind does not lose the change)", () => {
+    expect(changeStamp({ u: 100 }, 500)).toBe(500);
+    expect(changeStamp({ u: 900 }, 500)).toBe(901);
+    expect(changeStamp(null, 500)).toBe(500);
+    const resolvedAhead = cleanComment(root("thread01", { done: { name: "Ann", at: 900 }, u: 900 }))!;
+    const reopenedBehind = { ...resolvedAhead, done: undefined, u: changeStamp(resolvedAhead, 600) };
+    expect(mergeComments([resolvedAhead], [reopenedBehind])![0].done).toBeUndefined();
+  });
+});
+
+describe("a top-level field added to a scene's JSON", () => {
+  it("goes after the last field, also into an empty object; anything else stays as it is", () => {
+    const scene = JSON.stringify({ type: "excalidraw", elements: [] }, null, 2);
+    expect(JSON.parse(withTopLevelField(scene, "kurviqFonts", [1]))).toEqual({ type: "excalidraw", elements: [], kurviqFonts: [1] });
+    expect(JSON.parse(withTopLevelField("{}", "a", { b: 1 }))).toEqual({ a: { b: 1 } });
+    expect(JSON.parse(withTopLevelField("{\n}\n", "a", 1))).toEqual({ a: 1 });
+    expect(withTopLevelField("[1]", "a", 1)).toBe("[1]");
+    expect(JSON.parse(withComments("{}", [root("thread01")])).kurviqComments).toHaveLength(1);
   });
 });
 

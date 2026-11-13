@@ -15,16 +15,19 @@ const MIME_BY_EXT = {
   ".svg": "image/svg+xml",
 };
 
+/** `target` is `base` or lies inside it (also when `base` is the file system's root) */
+export const insideRoot = (base, target) => {
+  const relative = path.relative(base, target);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+};
+
 // Local inputs stay inside the directory the MCP server was launched in.
 const LOCAL_ROOT = process.cwd();
 const readLocalFile = async (file, encoding) => {
   const base = await realpath(LOCAL_ROOT);
   const target = path.resolve(base, file);
-  if (target !== base && !target.startsWith(base + path.sep)) {
-    throw new Error(`file "${file}": must be inside ${LOCAL_ROOT}`);
-  }
-  const resolved = path.resolve(base, await realpath(target));
-  if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+  const resolved = insideRoot(base, target) ? path.resolve(base, await realpath(target)) : null;
+  if (!resolved || !insideRoot(base, resolved)) {
     throw new Error(`file "${file}": must be inside ${LOCAL_ROOT}`);
   }
   return readFile(resolved, encoding);
@@ -42,14 +45,96 @@ const ICON_SETS = {
 const MAX_REMOTE = 20;
 const FETCH_TIMEOUT_MS = 15_000;
 
+const MAX_REDIRECTS = 5;
+
+/** an IPv4 address of this machine or a private / link-local / shared network */
+const privateIPv4 = (ip) => {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [a, b] = parts;
+  return (
+    a === 0 || a === 10 || a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+};
+
+/** IPv4 inside IPv6 (::ffff:127.0.0.1, which URLs write as ::ffff:7f00:1) */
+const mappedIPv4 = (ip) => {
+  const dotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+  if (dotted) {
+    return dotted[1];
+  }
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip);
+  if (!hex) {
+    return null;
+  }
+  const [high, low] = [Number.parseInt(hex[1], 16), Number.parseInt(hex[2], 16)];
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+};
+
+/** an address (IPv4 or IPv6) of this machine or of a private / link-local network */
+export const privateAddress = (address) => {
+  const ip = String(address).replace(/^\[|\]$/g, "").toLowerCase();
+  if (!ip.includes(":")) {
+    return privateIPv4(ip);
+  }
+  const mapped = mappedIPv4(ip);
+  if (mapped) {
+    return privateIPv4(mapped);
+  }
+  return ip === "::1" || ip === "::" || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip);
+};
+
+const localName = (host) => host === "localhost" || host.endsWith(".localhost");
+
+/** where the MCP server runs on the user's machine: names that resolve to a private address too */
+const resolvesPrivate = async (host) => {
+  if (/^[\d.]+$/.test(host) || host.includes(":")) {
+    return false;
+  }
+  // (Kurviq online has no private network behind it; there the lookup may be missing)
+  const dns = await import("node:dns/promises").catch(() => null);
+  const found = (await dns?.lookup(host, { all: true }).catch(() => [])) ?? [];
+  return found.some(({ address }) => privateAddress(address));
+};
+
+/** images come from the web only: never from this machine or a private network (also after a redirect) */
+const checkTarget = async (target, url) => {
+  if (!/^https?:$/.test(target.protocol)) {
+    throw new Error(`${url}: only http(s) addresses`);
+  }
+  const host = target.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (localName(host) || privateAddress(host) || (await resolvesPrivate(host))) {
+    throw new Error(`${url}: addresses on this machine or a private network are not allowed`);
+  }
+};
+
+/** fetch, following redirects one by one so every hop is checked */
+const fetchChecked = async (url, signal) => {
+  let target = new URL(url);
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    await checkTarget(target, url); // NOSONAR S9382: each redirect hop is checked before it is fetched, in order
+    const res = await fetch(target, { redirect: "manual", signal }); // NOSONAR S9382: the next hop depends on this answer
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (!location) {
+      return res;
+    }
+    await res.body?.cancel().catch(() => null); // NOSONAR S9382: the redirect's body is dropped before the next hop
+    target = new URL(location, target);
+  }
+  throw new Error(`${url}: too many redirects`);
+};
+
 /** download with a deadline and a byte limit (stops reading at the limit) */
 const fetchBytes = async (url) => {
-  const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const res = await fetchChecked(url, AbortSignal.timeout(FETCH_TIMEOUT_MS));
   if (!res.ok) {
     throw new Error(`${url}: HTTP ${res.status}`);
-  }
-  if (!/^https?:$/.test(new URL(res.url || url).protocol)) {
-    throw new Error(`${url}: redirected to a non-web address`);
   }
   if (Number(res.headers.get("content-length")) > MAX_BYTES) {
     throw new Error(`${url}: larger than ${MAX_BYTES / 1024 / 1024} MB`);
@@ -64,28 +149,79 @@ const fetchBytes = async (url) => {
     }
     size += value.byteLength;
     if (size > MAX_BYTES) {
-      await reader.cancel().catch(() => {}); // NOSONAR S9382: cancel this stream before reporting its size limit
+      await reader.cancel().catch(() => null); // NOSONAR S9382: cancel this stream before reporting its size limit
       throw new Error(`${url}: larger than ${MAX_BYTES / 1024 / 1024} MB`);
     }
     chunks.push(value);
   }
-  return { bytes: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))), mimeType: res.headers.get("content-type")?.split(";")[0] || null };
+  return { bytes: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))), mimeType: res.headers.get("content-type")?.split(";")[0].trim().toLowerCase() || null };
+};
+
+/** the image type, from the file's first bytes (null: not an image this app takes) */
+const sniffImageType = (bytes) => {
+  const starts = (...values) => values.every((value, i) => bytes[i] === value);
+  if (starts(0x89, 0x50, 0x4e, 0x47)) return "image/png";
+  if (starts(0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (starts(0x47, 0x49, 0x46, 0x38)) return "image/gif";
+  if (starts(0x52, 0x49, 0x46, 0x46) && bytes.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  // SVG: after an optional <?xml …?>, <!DOCTYPE …> and comments (icon sets start with a license comment)
+  const head = bytes
+    .subarray(0, 4096)
+    .toString("utf8")
+    .toLowerCase()
+    .replace(/^(\s|<\?xml[^>]*\?>|<!doctype[^>]*>|<!--[\s\S]*?-->)*/, ""); // NOSONAR S8786: bounded to the first 4096 bytes
+  return head.startsWith("<svg") ? "image/svg+xml" : null;
+};
+
+const GENERIC_TYPES = new Set([null, "application/octet-stream", "binary/octet-stream"]);
+
+/**
+ * What a downloaded file is: the server's Content-Type (the URL's extension
+ * only when the server names no type), and the file's first bytes must agree
+ * that it is an image.
+ */
+const remoteImageType = (bytes, served, url) => {
+  const declared = GENERIC_TYPES.has(served) ? MIME_BY_EXT[path.extname(new URL(url).pathname).toLowerCase()] : served;
+  if (!declared?.startsWith("image/")) {
+    throw new Error(`${url}: not an image (${served || "unknown type"})`);
+  }
+  const sniffed = sniffImageType(bytes);
+  if (!sniffed) {
+    throw new Error(`${url}: not an image (the content is no png/jpg/gif/webp/svg)`);
+  }
+  return sniffed;
 };
 
 const svgSize = (bytes) => {
   const svg = bytes.toString("utf8");
   const tag = svg.match(/<svg\b[^>]*>/i)?.[0] || "";
   const num = (attr) => {
-    const value = tag.match(new RegExp(String.raw`\b${attr}="([\d.]+)(px)?"`))?.[1];
+    const value = tag.match(new RegExp(String.raw`\b${attr}=["']([\d.]+)(px)?["']`))?.[1];
     return value ? Number.parseFloat(value) : null;
   };
   const viewBox = tag
-    .match(/viewBox="([^"]+)"/)?.[1]
+    .match(/viewBox=["']([^"']+)["']/)?.[1]
     ?.split(/[\s,]+/)
     .map(Number);
   const width = num("width") ?? viewBox?.[2];
   const height = num("height") ?? viewBox?.[3];
   return width && height ? { width, height } : null;
+};
+
+/** WebP: extended (VP8X), lossy (VP8) or lossless (VP8L) */
+const webpSize = (bytes) => {
+  const chunk = bytes.subarray(12, 16).toString();
+  if (chunk === "VP8X") {
+    return { width: 1 + bytes.readUIntLE(24, 3), height: 1 + bytes.readUIntLE(27, 3) };
+  }
+  if (chunk === "VP8 " && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+    return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff };
+  }
+  if (chunk === "VP8L" && bytes[20] === 0x2f) {
+    const bits = bytes.readUInt32LE(21);
+    return { width: 1 + (bits & 0x3fff), height: 1 + ((bits >>> 14) & 0x3fff) };
+  }
+  return null;
 };
 
 /** intrinsic size of PNG / GIF / JPEG / WebP / SVG, or null */
@@ -100,8 +236,8 @@ const imageSize = (bytes, mimeType) => {
     if (bytes.subarray(0, 3).toString() === "GIF") {
       return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
     }
-    if (bytes.subarray(8, 12).toString() === "WEBP" && bytes.subarray(12, 16).toString() === "VP8X") {
-      return { width: 1 + bytes.readUIntLE(24, 3), height: 1 + bytes.readUIntLE(27, 3) };
+    if (bytes.subarray(8, 12).toString() === "WEBP") {
+      return webpSize(bytes);
     }
     if (bytes[0] === 0xff && bytes[1] === 0xd8) {
       let offset = 2;
@@ -127,7 +263,7 @@ const sizedSvg = (svg) => {
   if (!tag || /\swidth=/.test(tag)) {
     return svg;
   }
-  const viewBox = tag.match(/viewBox="([^"]+)"/)?.[1]?.split(/[\s,]+/).map(Number);
+  const viewBox = tag.match(/viewBox=["']([^"']+)["']/)?.[1]?.split(/[\s,]+/).map(Number);
   if (viewBox?.length !== 4) {
     return svg;
   }
@@ -204,8 +340,7 @@ const loadSource = async (el) => {
   }
   if (/^https?:\/\//.test(src)) {
     const { bytes, mimeType } = await fetchBytes(src);
-    const ext = path.extname(new URL(src).pathname).toLowerCase();
-    return { bytes, mimeType: MIME_BY_EXT[ext] || mimeType, what: src };
+    return { bytes, mimeType: remoteImageType(bytes, mimeType, src), what: src };
   }
   if (!path.isAbsolute(src)) {
     throw new Error(`src "${src}": use an absolute file path, an http(s) URL or a data URL`);
@@ -215,6 +350,35 @@ const loadSource = async (el) => {
     throw new Error(`src "${src}": only ${Object.keys(MIME_BY_EXT).join(" ")} files`);
   }
   return { bytes: await readLocalFile(src), mimeType: MIME_BY_EXT[ext], what: src };
+};
+
+/**
+ * The element's size: as given, else with the aspect ratio of the image. When
+ * the file's size can't be read, the ratio is unknown: both sides must be
+ * given, or it gets a square default.
+ */
+const imageBox = (el, natural, source) => {
+  const given = { width: el.width ?? null, height: el.height ?? null };
+  if (given.width !== null && given.height !== null) {
+    return given;
+  }
+  const known = natural && natural.width > 0 && natural.height > 0;
+  if (!known && (given.width !== null || given.height !== null)) {
+    throw new Error(`${source.what}: its size can't be read from the file, so width or height alone can't keep its aspect ratio: give both`);
+  }
+  if (!known) {
+    const side = source.icon ? 48 : 200;
+    return { width: side, height: side };
+  }
+  const ratio = natural.height / natural.width;
+  if (given.width !== null) {
+    return { width: given.width, height: given.width * ratio };
+  }
+  if (given.height !== null) {
+    return { width: given.height / ratio, height: given.height };
+  }
+  const width = source.icon ? 48 : Math.min(400, natural.width);
+  return { width, height: width * ratio };
 };
 
 const imageElement = (el, source, files) => {
@@ -234,11 +398,7 @@ const imageElement = (el, source, files) => {
     dataURL: `data:${source.mimeType};base64,${source.bytes.toString("base64")}`,
     created: Date.now(),
   };
-  // size: as given, else keep the aspect ratio of the image
-  const natural = imageSize(source.bytes, source.mimeType) || { width: 1, height: 1 };
-  const fallback = source.icon ? 48 : Math.min(400, natural.width || 200);
-  const width = el.width ?? (el.height ? (el.height * natural.width) / natural.height : fallback);
-  const height = el.height ?? (width * natural.height) / natural.width;
+  const { width, height } = imageBox(el, imageSize(source.bytes, source.mimeType), source);
   const rest = { ...el };
   delete rest.src;
   delete rest.svg;

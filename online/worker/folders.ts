@@ -31,7 +31,7 @@
 // The sign-in (cookie, or the local install's sealed session) and the sign-out
 // everywhere guard are the live sync routes' (./sceneRoutes.ts).
 
-import { accessFromRefresh, accountEpochOf, isLocalOrigin, sealSceneToken, unsealSceneToken } from "./auth";
+import { accessFromRefresh, accountEpochOf, isLocalInstall, sealSceneToken, unsealSceneToken } from "./auth";
 import type { Session } from "./auth";
 import { DOWNLOAD_BYTES, driveCall, driveUrls, getFile, problemOf, readLimited } from "./driveApi";
 import { keyedHash } from "./feedback";
@@ -516,7 +516,7 @@ export const handleFolderRoutes = async (request: Request, env: FoldersEnv): Pro
   }
   const origin = request.headers.get("Origin");
   const ctx: Ctx = { request, env, url, origin, local: false, body: {}, cookies: [] };
-  ctx.local = isLocalOrigin(origin) && !sameSite(ctx);
+  ctx.local = isLocalInstall(origin) && !sameSite(ctx);
   if (request.method === "OPTIONS" && ctx.local) {
     return new Response(null, {
       status: 204,

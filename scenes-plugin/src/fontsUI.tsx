@@ -6,27 +6,15 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 
 import { IS_ONLINE } from "./api";
+import { createStore } from "./externalStore";
 import { addFont, customFonts, fontFromFile, fontFromGoogle } from "./fonts";
 
 // the dialog's look (shared with the online UI; also needed in the local install)
 import "./online/online.scss";
 
-let open = false;
-const listeners = new Set<() => void>();
-const setOpen = (value: boolean) => {
-  open = value;
-  listeners.forEach((listener) => listener());
-};
-const useOpen = () =>
-  useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    () => open,
-  );
+const openStore = createStore(false);
+const setOpen = openStore.set;
+const useOpen = openStore.use;
 
 /** at the bottom of Excalidraw's font picker */
 export const AddFontButton = () => (

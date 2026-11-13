@@ -19,6 +19,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { registerTools } from "../excalidraw-mcp/dist/server.js";
 
+import { insideRoot } from "./media.mjs";
 import { createScenesMcp } from "./tools.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -58,11 +59,11 @@ const server = createScenesMcp({
   skill: readFileSync(path.join(HERE, "skill", "kurviq-scenes", "SKILL.md"), "utf8"),
   reference: readFileSync(path.join(HERE, "skill", "kurviq-scenes", "REFERENCE.md"), "utf8"),
   registerUpstream: (mcp, store) => registerTools(mcp, path.join(WORKSPACE, "excalidraw-mcp", "dist"), store),
-  livePreview: process.env.SCENES_LIVE_PREVIEW !== "false",
+  livePreview: env.SCENES_LIVE_PREVIEW !== "false",
   savePdf: async (name, pdf, file) => {
     const base = await realpath(LOCAL_ROOT);
     const target = path.resolve(base, file || `${name}.pdf`);
-    if (target !== base && !target.startsWith(base + path.sep)) {
+    if (!insideRoot(base, target)) {
       throw new Error(`file "${target}": must be inside ${LOCAL_ROOT}`);
     }
     let resolved;
@@ -72,7 +73,7 @@ const server = createScenesMcp({
       if (error.code !== "ENOENT") throw error;
       resolved = path.resolve(base, await realpath(path.dirname(target)), path.basename(target));
     }
-    if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+    if (!insideRoot(base, resolved)) {
       throw new Error(`file "${target}": must be inside ${LOCAL_ROOT}`);
     }
     // Do not follow a dangling or newly swapped final symlink when creating the file.

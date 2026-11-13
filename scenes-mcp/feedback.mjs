@@ -23,12 +23,14 @@ const hiddenRanges = HIDDEN_RANGES.map(([a, b]) => String.raw`\u{${hex(a)}}-\u{$
 const HIDDEN = new RegExp(`[${hiddenRanges}]`, "gu");
 
 // code and markup: HTML / XML tags, code fences and backticks, template and
-// script syntax, data / javascript URLs (stored with bound parameters: SQL needs no filter)
+// script syntax, data / javascript URLs, not the plain words ("lost data: …").
+// Stored with bound parameters: SQL needs no filter.
 const CODE = [
   /<\s*\/?\s*[a-z!?][^>]*>/i, // NOSONAR S8786: title and text are bounded to 120 and 2000 characters before this check
   /`/,
   /\$\{|\{\{|\}\}|<\?|\?>|<%|%>/,
-  /\b(?:javascript|vbscript|data)\s*:/i,
+  /\b(?:javascript|vbscript):\S/i,
+  /\bdata:[a-z]+\/[a-z0-9.+-]+/i,
   /\bon[a-z]+\s*=\s*["']/i,
 ];
 

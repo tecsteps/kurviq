@@ -1,5 +1,7 @@
 # Deploys Kurviq (https://kurviq.com) from this repository: every push to
-# main builds the online app and the Worker and deploys them to Cloudflare.
+# main is typechecked and unit-tested, then the online app and the Worker are
+# built and deployed to Cloudflare. A failing check stops the release.
+# (The browser e2e scripts, scenes-plugin/test/e2e, are run by hand.)
 # Repository secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID. The
 # Worker's own secrets (GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY, COOKIE_KEY,
 # TOKEN_KEY, PSEUDONYM_KEY) live on Cloudflare and are kept by deploys (see
@@ -42,6 +44,13 @@ jobs:
 
       - name: Set up upstream (clone at pinned commits, install, build)
         run: npm run setup
+
+      # the known upstream errors are allowed, any in Kurviq's code are not (scripts/typecheck.mjs)
+      - name: Typecheck
+        run: npm run typecheck:ci
+
+      - name: Unit tests
+        run: npm test
 
       - name: Install Worker tooling
         run: npm ci # NOSONAR S6505: esbuild and workerd postinstall scripts bootstrap and validate their platform binaries

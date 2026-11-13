@@ -17,7 +17,7 @@ export type UploadedFile = {
 
 const store = createStore("kurviq-agent-uploads", "files");
 /** uploads kept (the oldest go first; once in a scene, the scene has its own copy) */
-const MAX_UPLOADS = 100;
+export const MAX_UPLOADS = 100;
 const MIME_RE = /^image\/(png|jpeg|gif|webp|svg\+xml)$/;
 /** the uploads' ids and times: pruning never loads the pictures themselves */
 const UPLOAD_INDEX = "upload-index";

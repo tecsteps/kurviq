@@ -20,6 +20,9 @@ import { ExcalidrawFontFace } from "@excalidraw/excalidraw/fonts/ExcalidrawFontF
 import { createStore, entries, get, set } from "idb-keyval";
 
 import { FAMILY_RE, MAX_FONT_BYTES, googleFaces, toDataUrl } from "../../scenes-mcp/googleFonts.mjs";
+import { withTopLevelField } from "../../scenes-mcp/sceneJson.mjs";
+
+import { createStore as createExternalStore } from "./externalStore";
 
 export type FontFaceData = {
   /** data URL of the font file (woff2 / woff / ttf / otf) */
@@ -61,20 +64,15 @@ export const isCustomFontId = (id: unknown): id is number =>
 // -----------------------------------------------------------------------------
 
 const registered = new Map<number, CustomFont>();
-const listeners = new Set<() => void>();
-let version = 0;
+/** counts registrations: the font picker follows it */
+const version = createExternalStore(0);
 
 export const customFonts = {
   list: () => [...registered.values()].sort((a, b) => a.family.localeCompare(b.family)),
   get: (id: number) => registered.get(id),
   byName: (family: string) => [...registered.values()].find((font) => font.family.toLowerCase() === family.trim().toLowerCase()),
-  subscribe: (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  },
-  version: () => version,
+  subscribe: version.subscribe,
+  version: version.get,
 };
 
 /** a font's data is checked before anything uses it: it comes from scenes, files and the web */
@@ -112,6 +110,21 @@ const measureMetrics = (family: string) => {
 
 const loading = new Map<number, Promise<void>>();
 
+/**
+ * What registering `font` does when `existing` has its number: "keep" the
+ * registered one (the same font), or "replace" it: another font with the
+ * same number (two names can hash to it) or, with `replace` (live sync),
+ * other data. The font being registered wins: its scene's texts are
+ * measured and drawn with it.
+ */
+export const registration = (existing: CustomFont | undefined, font: CustomFont, replace: boolean): "new" | "keep" | "replace" => {
+  if (!existing) {
+    return "new";
+  }
+  const other = existing.family.toLowerCase() !== font.family.toLowerCase();
+  return other || (replace && JSON.stringify(existing.faces) !== JSON.stringify(font.faces)) ? "replace" : "keep";
+};
+
 /** make a font usable in this page (once) */
 export const registerFont = (input: CustomFont, { replace = false }: { replace?: boolean } = {}): Promise<void> => {
   if (!validFont(input)) {
@@ -121,11 +134,12 @@ export const registerFont = (input: CustomFont, { replace = false }: { replace?:
   // so it never takes the name of the font that has its original number
   const font = input.id === fontIdFor(input.family) ? input : fontWithId({ ...input, id: fontIdFor(input.family) }, input.id);
   const existing = registered.get(font.id);
-  if (existing && !(replace && JSON.stringify(existing.faces) !== JSON.stringify(font.faces))) {
+  const action = registration(existing, font, replace);
+  if (action === "keep") {
     return loading.get(font.id) ?? Promise.resolve();
   }
   if (existing) {
-    // another font had this number in this browser: the scene's own wins (its text is measured with it)
+    // another font had this number in this browser (or other data of it): the new one wins
     delete (FONT_FAMILY as Record<string, number>)[existing.family];
     registered.delete(font.id);
     loading.delete(font.id);
@@ -147,8 +161,7 @@ export const registerFont = (input: CustomFont, { replace = false }: { replace?:
         (face) => new ExcalidrawFontFace(font.family, face.data, face.range ? { unicodeRange: face.range } : undefined),
       ),
     });
-    version++;
-    listeners.forEach((listener) => listener());
+    version.set(version.get() + 1);
   })();
   loading.set(font.id, done);
   done.catch(() => {
@@ -226,11 +239,10 @@ const usedIds = (elements: readonly any[]) => {
  */
 export const withFonts = (json: string, elements: readonly any[]) => {
   const fonts = [...usedIds(elements)].map((id) => registered.get(id)).filter((font): font is CustomFont => !!font);
-  if (!fonts.length || !json.endsWith("}")) {
+  if (!fonts.length) {
     return json;
   }
-  const field = JSON.stringify(fonts.map(({ family, id, faces, source }) => ({ family, id, faces, source })));
-  return `${json.slice(0, json.lastIndexOf("}")).trimEnd()},\n  "kurviqFonts": ${field}\n}`;
+  return withTopLevelField(json, "kurviqFonts", fonts.map(({ family, id, faces, source }) => ({ family, id, faces, source })));
 };
 
 /** two versions of a scene: the fonts of both (by number) */

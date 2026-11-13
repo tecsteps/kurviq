@@ -299,77 +299,183 @@ export const setParagraphs =(doc: RichDoc, from: number, to: number, change: (pa
 // ---------------------------------------------------------------------------
 // markdown-ish text <-> doc, for agents (see the MCP's `richText`)
 
-const MD_MARKS: Array<[RegExp, MarkKey]> = [
-  [/^\*\*([\s\S]+?)\*\*/, "b"],
-  [/^__([\s\S]+?)__/, "u"],
-  [/^~~([\s\S]+?)~~/, "s"],
-  [/^\*([^*\s][\s\S]*?)\*/, "i"],
+// The inline part is a small recursive parser rather than a list of regexes,
+// so it reads back exactly what markdownOf writes: marks nested in any order
+// (`***both***`), escaped characters inside a mark, links whose address has
+// parentheses. Text that is not well-formed stays as typed.
+
+/** the marks written as a pair of delimiters, longest first (`**` before `*`) */
+const DELIMITERS: Array<[string, MarkKey]> = [
+  ["**", "b"],
+  ["__", "u"],
+  ["~~", "s"],
+  ["*", "i"],
 ];
 
+/** what a backslash escapes: ASCII punctuation, the bullet and whitespace (markdownOf escapes a leading space inside italics) */
+const ESCAPABLE = /^[!-/:-@[-`{-~•\s]$/;
+
 /** one setting inside {…}: color=, highlight=, size= or tip="…" (quotes and backslashes escaped with \\, a line break as \\n) */
-const STYLE_SETTING = String.raw`(?:color|highlight|size)=[^\s}"]+|tip="(?:[^"\\]|\\.)*"`;
-const STYLED = new RegExp(String.raw`^\{((?:\s*(?:${STYLE_SETTING}))+)\s*\}([\s\S]*?)\{\/\}`);
+const STYLE_SETTING = String.raw`(?:color|highlight)="[^"]*"|(?:color|highlight|size)=[^\s}"]+|tip="(?:[^"\\]|\\.)*"`;
+const STYLE_OPEN = new RegExp(String.raw`\{((?:\s*(?:${STYLE_SETTING}))+)\s*\}`, "y");
+
+/** the sizes of headings: `#`, `##`, `###` (and pasted H1, H2, H3) */
+export const HEADING_SIZES = [1.6, 1.3, 1.1];
+
+/** deeper nesting than any written form needs is read as plain text (keeps the recursion bounded) */
+const MAX_NESTING = 16;
 
 const unescapeTip = (tip: string) => tip.replaceAll(/\\(.)/g, (_, char: string) => (char === "n" ? "\n" : char));
 
 const styledMarks = (style: string, marks: Marks) => {
   const next: Marks = { ...marks };
-  for (const [, key, value, tip] of style.matchAll(/(color|highlight|size)=([^\s}"]+)|tip="((?:[^"\\]|\\.)*)"/g)) {
+  for (const [, key, quoted, value, tip] of style.matchAll(/(color|highlight|size)=(?:"([^"]*)"|([^\s}"]+))|tip="((?:[^"\\]|\\.)*)"/g)) {
+    const setting = quoted ?? value;
     if (tip !== undefined) {
       next.n = unescapeTip(tip);
     } else if (key === "color") {
-      next.c = value;
+      next.c = setting;
     } else if (key === "highlight") {
-      next.h = value;
-    } else if (Number(value) > 0) {
-      next.z = Number(value);
+      next.h = setting;
+    } else if (Number(setting) > 0) {
+      next.z = Number(setting);
     }
   }
   return next;
 };
 
-const parseInline = (text: string, marks: Marks, runs: Run[]) => {
-  let plain = "";
-  const flush = () => {
-    if (plain) {
-      runs.push({ ...marks, t: plain });
-      plain = "";
+type Span = { runs: Run[]; end: number };
+
+class InlineParser {
+  /** spans known to have no closer: `${start} ${closer}` (the answer does not depend on the marks) */
+  private readonly unclosed = new Set<string>();
+
+  constructor(private readonly text: string) {}
+
+  /**
+   * The runs from `start` up to `closer` (to the end of the text for ""),
+   * and where the closer ends; null when the closer never comes or the span
+   * is empty.
+   */
+  span(start: number, closer: string, marks: Marks, depth: number): Span | null {
+    const key = `${start} ${closer}`;
+    if (this.unclosed.has(key)) {
+      return null;
     }
-  };
-  let rest = text;
-  while (rest) {
-    if (rest.startsWith("\\") && rest.length > 1 && /[*_~[\]{}\\]/.test(rest[1])) {
-      plain += rest[1];
-      rest = rest.slice(2);
-      continue;
+    const { text } = this;
+    const runs: Run[] = [];
+    let plain = "";
+    const flush = () => {
+      if (plain) {
+        runs.push({ ...marks, t: plain });
+        plain = "";
+      }
+    };
+    let at = start;
+    while (at < text.length) {
+      if (text[at] === "\\" && ESCAPABLE.test(text[at + 1] ?? "")) {
+        plain += text[at + 1];
+        at += 2;
+        continue;
+      }
+      if (closer && text.startsWith(closer, at)) {
+        flush();
+        return at > start ? { runs, end: at + closer.length } : this.fail(key);
+      }
+      const nested = depth < MAX_NESTING ? this.nested(at, marks, depth + 1) : null;
+      if (nested) {
+        flush();
+        runs.push(...nested.runs);
+        at = nested.end;
+        continue;
+      }
+      plain += text[at];
+      at++;
     }
-    const link = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(rest);
-    if (link) {
-      flush();
-      parseInline(link[1], { ...marks, a: link[2] }, runs);
-      rest = rest.slice(link[0].length);
-      continue;
+    if (closer) {
+      return this.fail(key);
     }
-    // {color=#e03131 highlight=#ffec99 size=0.8 tip="a note"}text{/}
-    const styled = STYLED.exec(rest);
-    if (styled) {
-      flush();
-      const next = styledMarks(styled[1], marks);
-      parseInline(styled[2], next, runs);
-      rest = rest.slice(styled[0].length);
-      continue;
-    }
-    const mark = MD_MARKS.map(([re, key]) => [re.exec(rest), key] as const).find(([m]) => m);
-    if (mark) {
-      flush();
-      parseInline(mark[0]![1], { ...marks, [mark[1]]: true }, runs);
-      rest = rest.slice(mark[0]![0].length);
-      continue;
-    }
-    plain += rest[0];
-    rest = rest.slice(1);
+    flush();
+    return { runs, end: at };
   }
-  flush();
+
+  private fail(key: string): null {
+    this.unclosed.add(key);
+    return null;
+  }
+
+  /** a link, a {…}…{/} style or a delimited mark starting at `at` */
+  private nested(at: number, marks: Marks, depth: number): Span | null {
+    const char = this.text[at];
+    if (char === "[") {
+      return this.link(at, marks, depth);
+    }
+    if (char === "{") {
+      return this.styled(at, marks, depth);
+    }
+    for (const [delimiter, key] of DELIMITERS) {
+      if (this.text.startsWith(delimiter, at) && this.opens(delimiter, at)) {
+        const span = this.span(at + delimiter.length, delimiter, { ...marks, [key]: true }, depth);
+        if (span) {
+          return span;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** a single `*` followed by a space is a multiplication sign or a stray star, not italics */
+  private opens(delimiter: string, at: number) {
+    return delimiter !== "*" || !/^\s?$/.test(this.text[at + 1] ?? "");
+  }
+
+  // {color=#e03131 highlight=#ffec99 size=0.8 tip="a note"}text{/}
+  private styled(at: number, marks: Marks, depth: number): Span | null {
+    STYLE_OPEN.lastIndex = at;
+    const open = STYLE_OPEN.exec(this.text);
+    return open ? this.span(at + open[0].length, "{/}", styledMarks(open[1], marks), depth) : null;
+  }
+
+  // [text](https://…): the text is read again with the link once its address is known
+  private link(at: number, marks: Marks, depth: number): Span | null {
+    const label = this.span(at + 1, "]", marks, depth);
+    if (!label || this.text[label.end] !== "(") {
+      return null;
+    }
+    const target = this.linkTarget(label.end + 1);
+    if (!target) {
+      return null;
+    }
+    const runs = this.span(at + 1, "]", { ...marks, a: target.url }, depth)!.runs;
+    return { runs, end: target.end };
+  }
+
+  /** a link's address up to its closing `)`: balanced parentheses belong to it, `\(` `\)` `\\` are escapes, no whitespace */
+  private linkTarget(start: number): { url: string; end: number } | null {
+    const { text } = this;
+    let url = "";
+    let open = 0;
+    let at = start;
+    while (at < text.length && !/\s/.test(text[at])) {
+      const char = text[at];
+      if (char === "\\" && "()\\".includes(text[at + 1] || "?")) {
+        url += text[at + 1];
+        at += 2;
+        continue;
+      }
+      if (char === ")" && !open) {
+        return url ? { url, end: at + 1 } : null;
+      }
+      open += Number(char === "(") - Number(char === ")");
+      url += char;
+      at++;
+    }
+    return null;
+  }
+}
+
+const parseInline = (text: string, marks: Marks, runs: Run[]) => {
+  runs.push(...new InlineParser(text).span(0, "", marks, 0)!.runs);
 };
 
 /**
@@ -390,7 +496,7 @@ export const docFromMarkdown = (markdown: string): RichDoc => {
     const ordered = /^\d+[.)] /.exec(rest);
     if (heading) {
       base.b = true;
-      base.z = [1.6, 1.3, 1.1][heading[1].length - 1];
+      base.z = HEADING_SIZES[heading[1].length - 1];
       rest = rest.slice(heading[0].length);
     } else if (todo) {
       para.k = "todo";

@@ -1,7 +1,8 @@
 // When has an element changed? Its content, not its `version`: the app and
 // agents re-save elements with new version stamps (and add / omit empty
 // fields, reorder keys) without changing them, which must not count as a
-// change. The one rule for the app's merge and the MCP's userChanges.
+// change. The one rule for the app's merge, the MCP's userChanges and the
+// conflict check of agent edits (editConflicts.mjs).
 
 const VOLATILE = new Set(["version", "versionNonce", "updated", "seed", "index"]);
 
@@ -30,6 +31,12 @@ const normalize = (value) => {
     return out;
   }
   return value;
+};
+
+/** one value (an element, or one of its properties) in comparable form: empty (null, missing, []) is null */
+export const comparable = (value) => {
+  const out = normalize(value);
+  return out === undefined || out === null || (Array.isArray(out) && !out.length) ? null : out;
 };
 
 const sameStamp = (a, b) => a.version === b.version && a.versionNonce === b.versionNonce;

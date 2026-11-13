@@ -20,7 +20,7 @@ import {
 import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from "@excalidraw/element";
 
 import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
-import { scenesController } from "./controller";
+import { IDLE_PUSH_MS, scenesController } from "./controller";
 import { liveSync } from "./online/liveSync";
 import {
   connection,
@@ -122,8 +122,6 @@ type Command =
   /** the health check (app_status): through the same queues as edits and pictures */
   | { type: "ping" };
 
-/** hidden headless tab started by the scenes server, only renders/converts */
-
 /** an agent's edit that only changes comments (no elements, slides or settings) */
 const commentsOnly = (command: any) =>
   !!command.comments?.length &&
@@ -135,17 +133,14 @@ const commentsOnly = (command: any) =>
   !command.addTitleBlock &&
   command.isPresentation === undefined;
 
+/** hidden headless tab started by the scenes server, only renders/converts */
 export const IS_RENDERER = new URLSearchParams(window.location.search).has(
   "scenes-renderer",
 );
 
 const PSEUDO_TYPES = new Set(["cameraUpdate", "delete", "restoreCheckpoint"]);
 
-/**
- * Same conversion the excalidraw-mcp widget applies to `create_view`
- * elements (labels -> bound text, hand-drawn font), so scenes look exactly
- * like what the agent drew.
- */
+/** the size texts will have in this tab (with the real fonts), plain or formatted (markdown), wrapped at maxWidth */
 const measureTexts = async (
   input: Array<{ text?: string; markdown?: string; fontSize?: number; fontFamily?: number; lineHeight?: number; maxWidth?: number }>,
 ) => {
@@ -193,6 +188,9 @@ const measureTexts = async (
   });
 };
 
+/** whether scene JSON names a font (a string fontFamily), pretty-printed or compact */
+const namesFonts = (json: string) => /"fontFamily":\s*"/.test(json);
+
 /** the font names (not numbers) an agent used in an element: its own, its label's, a deck theme's */
 const fontNamesOf = (el: any): string[] =>
   [el?.fontFamily, el?.label?.fontFamily, el?.customData?.slides?.theme?.fontFamily].filter(
@@ -213,7 +211,7 @@ const ensureFonts = async (command: any) => {
     ...(Array.isArray(command.items) ? command.items : []),
   ];
   for (const json of [command.json, command.request?.method === "PUT" ? command.request.body : null]) {
-    if (typeof json === "string" && json.includes('"fontFamily": "') ) {
+    if (typeof json === "string" && namesFonts(json)) {
       try {
         elements.push(...(JSON.parse(json).elements || []));
       } catch {}
@@ -235,7 +233,7 @@ const ensureFonts = async (command: any) => {
 
 /** a scene file (JSON) from an agent: font names become numbers */
 const sceneJsonWithFontIds = (json: string) => {
-  if (!json.includes('"fontFamily": "') && !json.includes('"fontFamily":"')) {
+  if (!namesFonts(json)) {
     return json;
   }
   try {
@@ -384,6 +382,11 @@ const restoreConvertedText = (result: any[], rawById: Map<string, any>, byId: Ma
   }
 };
 
+/**
+ * Same conversion the excalidraw-mcp widget applies to `create_view`
+ * elements (labels -> bound text, hand-drawn font), so scenes look exactly
+ * like what the agent drew.
+ */
 const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) => {
   const input = raw.map(withFontIds);
   // in a deck, new text without its own font / size / color takes the template's body text style (like the app's defaults)
@@ -513,7 +516,7 @@ const fitLabel = (el: any) => {
 // live preview: watch an agent draw (every create_view call is mirrored here)
 // -----------------------------------------------------------------------------
 
-export const LIVE_SCENE = "agent-live";
+const LIVE_SCENE = "agent-live";
 let liveToken = 0;
 
 const showLive = async (elements: any[]) => {
@@ -604,6 +607,8 @@ const status = () => {
     // the health of this tab: what it is working on (an edit or picture running for minutes is stuck)
     busy: [...busy.values()].map(({ what, since }) => `${what} for ${Math.round((Date.now() - since) / 1000)} s`),
     editsRunning: editsRunning(),
+    // a task of this tab that runs longer is given up, so it can't block the ones after it
+    queueWatchdog: `${QUEUE_WATCHDOG_MS / 1000} s`,
     // the open live scene's send queue: what is not on Kurviq's server yet, and why
     ...(scenesController.liveCurrent() ? { liveQueue: scenesController.liveCurrent()!.queueReport() } : {}),
     // queues closed tabs (or a reload) left, sent from this tab under their own tab ids
@@ -620,7 +625,7 @@ const status = () => {
         return `${name}: ${status}${syncInfo}${rename}`;
       }),
     autoSyncInfo:
-      "The app pushes local changes of a scene to Drive by itself (about 10 s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push. " +
+      `The app pushes local changes of a scene to Drive by itself (about ${IDLE_PUSH_MS / 1000} s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push. ` +
       "Scenes with a live-… status save live through Kurviq's server (live-browser: the latest change is still in the user's browser; live-server: on the server; live-drive: in Drive): everyone who has them open sees changes within a second, and your edits reach them the same way.",
   };
 };
@@ -959,7 +964,12 @@ const runCommand = async (command: Command) => {
       if (!commentsOnly(command)) {
         refuseIfReadOnly(scenesController.getState().current);
       }
-      return editOpenScene(command, convertMcpElements);
+      // like the other edits: one at a time, and a request sent again is not applied twice
+      return onceForRequest(
+        command.requestId,
+        () => queueEdit(() => editOpenScene(command, convertMcpElements)),
+        async () => [...(scenesController.getApi()?.getSceneElements() ?? [])],
+      );
     case "checkpoint-save":
       await setCheckpoint(command.id, command.data);
       return { ok: true };

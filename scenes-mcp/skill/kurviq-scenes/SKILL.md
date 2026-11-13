@@ -15,8 +15,8 @@ the app while you work** and edits by hand in between.
 open in the user's browser (any scene). Your reads and edits run in that tab
 with the real Excalidraw, so you always see the user's latest work, pushed or
 not. The tab merges your edits into what the user is doing and saves them to
-Drive right away with the user's sign-in. Without sign-in (`app_status`
-shows `drive: false`) all scenes are local-only: they exist only in that
+Drive right away with the user's sign-in. Without sign-in (`app_status` →
+`drive`: "not connected") all scenes are local-only: they exist only in that
 browser, and you read and edit them there the same way.
 
 **The MCP tools are all you need.** Do everything in Kurviq (read, draw,

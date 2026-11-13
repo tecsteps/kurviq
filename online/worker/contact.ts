@@ -11,15 +11,12 @@
 // hash of the IP address, blanked after a day. Messages are deleted a year after receipt
 // (./retention.ts).
 
-import { keyedHash } from "./feedback";
+import { base64FromBytes, readBytes } from "./bytes";
+import { database } from "./database";
+import type { D1 } from "./database";
+import { keyedHash, senderKey } from "./feedback";
 import type { StatsEnv } from "./stats";
 import { countStat, pageStats } from "./stats";
-
-type D1 = {
-  prepare: (sql: string) => {
-    bind: (...values: unknown[]) => { first: <T>() => Promise<T | null>; run: () => Promise<unknown> };
-  };
-};
 
 /** Cloudflare's send_email binding (Email Routing) */
 type SendEmail = { send: (message: unknown) => Promise<void> };
@@ -40,57 +37,13 @@ const PER_DAY = 20;
 /** all senders together per day: bounds storage and email even from many addresses */
 const ALL_PER_DAY = 200;
 
-/** the rate-limit key of an address: IPv6 by its /64 (one connection usually has a whole /64) */
 /** the largest form body read (the fields are capped far below) */
 const MAX_BODY = 30_000;
 
-/** the request body, read up to max bytes (null if it is longer), whatever Content-Length says */
-const readBounded = async (request: Request, max: number): Promise<Uint8Array | null> => {
-  if (!request.body) {
-    return new Uint8Array();
-  }
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch (() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const body = new Uint8Array(size);
-  let at = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, at);
-    at += chunk.byteLength;
-  }
-  return body;
-};
-
-const senderKey = (ip: string) => (ip.includes(":") ? ip.split(":").slice(0, 4).join(":") + "::/64" : ip);
 const MAX_NAME = 100;
 const MAX_EMAIL = 200;
 const MAX_MESSAGE = 5000;
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
-
-export const CONTACT_SCHEMA = `CREATE TABLE IF NOT EXISTS contact_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  created_at TEXT NOT NULL,
-  name TEXT,
-  email TEXT NOT NULL,
-  message TEXT NOT NULL,
-  sender TEXT NOT NULL,
-  emailed INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'new'
-)`;
-
-let schemaReady = false;
 
 /** the sender, as a keyed hash of the IP address: messages can be counted per sender, nobody can be identified */
 const senderHash = (env: ContactEnv, ip: string) => keyedHash(env.COOKIE_KEY, `contact:${ip}`);
@@ -103,14 +56,7 @@ const clean = (value: unknown, max: number, multiline = false) =>
     .trim()
     .slice(0, max + 1);
 
-const b64 = (text: string) => {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); // NOSONAR S7758: base64 encodes bytes, not Unicode code points
-  }
-  return btoa(binary);
-};
+const b64 = (text: string) => base64FromBytes(new TextEncoder().encode(text));
 
 /** the message as a MIME email to the operator (reply goes to the sender's address) */
 const mime = (env: ContactEnv, id: number, input: { name: string; email: string; message: string }, at: string) => {
@@ -226,7 +172,7 @@ const readContactForm = async (request: Request, env: ContactEnv, url: URL): Pro
   if (Number(request.headers.get("Content-Length") || 0) > MAX_BODY) {
     return new Response("Too long", { status: 413 });
   }
-  const body = await readBounded(request, MAX_BODY);
+  const body = await readBytes(request.body, MAX_BODY);
   if (!body) {
     return new Response("Too long", { status: 413 });
   }
@@ -268,13 +214,9 @@ export const handleContact = async (request: Request, env: ContactEnv, ctx: Exec
   if (problem) {
     return page(request, env, { kind: "error", text: problem, values: { ...values, name: values.name.slice(0, MAX_NAME), message: values.message.slice(0, MAX_MESSAGE) } }, 400);
   }
-  if (!env.FEEDBACK) {
+  const db = await database(env.FEEDBACK);
+  if (!db) {
     return page(request, env, { kind: "error", text: "The contact form is not available right now, please write an email. / Bitte schreib eine E-Mail.", values }, 503);
-  }
-  const db = env.FEEDBACK;
-  if (!schemaReady) {
-    await db.prepare(CONTACT_SCHEMA).bind().run();
-    schemaReady = true;
   }
   const sender = await senderHash(env, senderKey(request.headers.get("CF-Connecting-IP") ?? "unknown"));
   const now = Date.now();

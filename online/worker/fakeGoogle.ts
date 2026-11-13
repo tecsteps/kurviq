@@ -11,33 +11,36 @@
 // All state is in one Durable Object (FAKE_GOOGLE_STORE, idFromName("fake"),
 // SQLite), so it survives reloads of `wrangler dev` (keep --persist-to).
 //
+// It implements what Kurviq (the app, the Worker, the tests) actually sends,
+// and answers anything else with a clear 400 "not supported by the fake"
+// rather than with behaviour nobody compared with Google.
+//
 // OAuth (/fake-google/oauth/…)
 //   GET  authorize   Google's sign-in page: pick alice/bob/carol@example.test or
 //                    type any email; "Allow Drive access" can be unticked (the
-//                    token then lacks drive.file). Honours prompt (none,
-//                    consent, select_account), login_hint, access_type=offline,
+//                    token then lacks drive.file). Honours prompt (consent,
+//                    select_account), login_hint, access_type=offline,
 //                    include_granted_scopes. A refresh token is handed out on
 //                    first consent or with prompt=consent (one per user+client).
 //   GET  approve     what the page submits; scripts can call it directly:
 //                    approve?<authorize params>&email=alice@example.test[&drive=0][&cancel=1]
 //   POST token       grant_type=authorization_code | refresh_token (client_secret
-//                    must be "fake-secret"). Access tokens last 1 h. id_token is
+//                    "fake-secret" in the form). Access tokens last 1 h. id_token is
 //                    an unsigned JWT (alg none) with sub (stable per email),
 //                    email, email_verified, name, picture.
 //   POST revoke      token=<access or refresh token>: the whole grant of that
 //                    user+client ends (later grants: invalid_grant, API: 401)
-//   GET  userinfo    the signed-in user (Bearer)
 //
 // Drive (/fake-google/drive/v3/…, uploads /fake-google/upload/drive/v3/…)
-//   files.list (q: name/mimeType/modifiedTime/createdTime =,!=,<,>, name contains,
-//     'x' in parents|owners|writers|readers, trashed, starred, sharedWithMe,
-//     appProperties|properties has { key='k' and value='v' }, visibility,
-//     and/or/not/parentheses; orderBy, pageSize, pageToken), files.get
-//     (fields, alt=media), files.create (metadata, uploadType=media|multipart),
-//     files.update PATCH (metadata, appProperties merge with null deleting,
-//     addParents/removeParents, trashed, uploadType=media|multipart),
-//     files.delete, files.watch, channels.stop, revisions list/get (alt=media)/
-//     update/delete, permissions list/get/create/update/delete, about.get.
+//   files.list (q: terms joined by "and": '<id>' in parents, trashed = / !=,
+//     name = / !=, mimeType = / !=, sharedWithMe, appProperties has { key='k'
+//     and value='v' }; orderBy createdTime / name / modifiedTime [desc],
+//     pageSize, pageToken), files.get (fields, alt=media), files.create
+//     (metadata, uploadType=media|multipart), files.update PATCH (metadata,
+//     appProperties merge with null deleting, trashed, uploadType=media|
+//     multipart; checked first, then applied as a whole, like Drive),
+//     files.delete, files.watch, channels.stop, revisions list/get
+//     (alt=media)/update/delete, permissions list/get/create/update/delete.
 //   drive.file: a user sees a file only if the app may open it for them (they
 //     created it through the API, or it was granted: /admin/grant is the
 //     Picker / "Open with") AND they have a role on it (own permission, or
@@ -57,15 +60,23 @@
 //     X-Goog-Channel-ID, -Channel-Token, -Channel-Expiration, -Resource-ID,
 //     -Resource-URI, -Resource-State (sync, update, trash, untrash, remove),
 //     -Changed (content, properties, permissions, parents), -Message-Number.
+//   (Revisions, keepForever and watch channels serve live sync's scene object;
+//   they go when it goes.)
+//
+// Not like Google (where a green test says least):
+//   - Everything is consistent at once: a new file is in files.list in the same
+//     instant, while Drive's listing lags (so "find the Kurviq folder, else
+//     create it" never meets its duplicate-folder case here).
+//   - modifiedTime moves with content and renames; whether Drive also moves it
+//     for appProperties or trash changes is not verified (here it does not).
+//   - A new consent hands back the user's existing refresh token; Google issues
+//     a new one (the old ones stay valid up to a limit).
 //
 // Admin (/fake-google/admin/…, JSON; GET with query, POST with a JSON body)
 //   GET  /admin                     this list
 //   POST /admin/reset               everything forgotten (test users stay)
-//   GET  /admin/users               users (+ POST {email,name} to add one)
-//   GET  /admin/files[?email=]      all files (or those a user has a role on)
 //   GET  /admin/file?fileId=        one file: metadata, permissions, app access, revisions, channels
 //   POST /admin/grant {email,fileId}     the Picker: the app may open the file for that user
-//   POST /admin/ungrant {email,fileId}
 //   POST /admin/write {email,fileId?,content,name?,mimeType?,appProperties?,parents?}
 //                                   a change "from outside Kurviq" (Drive's web UI): new
 //                                   revision, watch notifications; without fileId a new
@@ -73,22 +84,26 @@
 //   POST /admin/share {fileId,email|anyone:true,role}   (reader|commenter|writer)
 //   POST /admin/unshare {fileId,email|anyone:true}
 //   POST /admin/trash|untrash|delete {fileId}
-//   GET  /admin/revisions?fileId=
-//   POST /admin/purge-revisions {fileId,keep?}   Google dropping old not-kept revisions (keep newest N, default 1)
-//   POST /admin/expire-tokens {email?}  access tokens expire now (the Worker must refresh)
+//   GET  /admin/revisions?fileId=[&content=1]
 //   POST /admin/revoke {email}          the user removed Kurviq at myaccount.google.com
-//   POST /admin/faults {count?,status?,reason?,delayMs?,email?,path?,method?,target?}
-//        the next `count` (default 1) matching calls: wait delayMs, then answer
-//        `status` (503, 429, 500, 403+reason userRateLimitExceeded, …) or, without a
-//        status, go on normally. target: drive (default) | oauth | all; path: a
-//        substring of the path after /fake-google (e.g. "/upload/", a file id).
-//   GET  /admin/faults, DELETE /admin/faults (clear)
-//   GET  /admin/log?kind=request|notification|mail&limit=   recent Drive calls, watch deliveries, share mails
+//   POST /admin/faults {count?,status?,delayMs?,path?}
+//        the next `count` (default 1) matching Drive calls: wait delayMs, then answer
+//        `status` (503, 429, 500, 403, …) or, without a status, go on normally.
+//        path: a substring of the path after /fake-google plus its query
+//        (e.g. "/upload/", a file id, "alt=media").
+//   GET  /admin/faults, DELETE /admin/faults (clear; the answer lists faults never used)
+//   GET  /admin/log?kind=request|notification|mail&limit=   recent Drive calls,
+//        watch deliveries, share mails (for debugging by hand)
 //   GET  /admin/channels
-//   POST /admin/inbox/<name>        a test webhook address: records the request
-//   GET  /admin/inbox/<name>        what it received (DELETE: clear)
+//
+// Served only by a development build of the Worker (build-worker.mjs without
+// --production): the production bundle has a stub instead (see index.ts).
 
 import { DurableObject } from "cloudflare:workers";
+
+import { parseQuery } from "./fakeGoogleQuery";
+import type { Predicate } from "./fakeGoogleQuery";
+import { isDevOrigin } from "./origins";
 
 type FakeEnv = {
   FAKE_GOOGLE?: string;
@@ -102,7 +117,6 @@ const API_KEY = "fake-api-key";
 const CLIENT_SECRET = "fake-secret";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const DRIVE_FILE = "https://www.googleapis.com/auth/drive.file";
-const DRIVE_FULL = "https://www.googleapis.com/auth/drive";
 const ACCESS_SECONDS = 3600;
 const CHANNEL_MAX_MS = 24 * 3600 * 1000;
 const CHANNEL_DEFAULT_MS = 3600 * 1000;
@@ -115,22 +129,13 @@ const TEST_USERS: [string, string][] = [
   ["carol@example.test", "Carol Example"],
 ];
 
-const isLocalOrigin = (origin: string | undefined) => {
-  try {
-    const host = new URL(origin || "").hostname;
-    return host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost") || host.endsWith(".test");
-  } catch {
-    return false;
-  }
-};
-
-/** /fake-google/*: only with FAKE_GOOGLE=1 and a local DEV_ORIGIN (wrangler dev), else null */
+/** /fake-google/*: only with FAKE_GOOGLE=1 and a development DEV_ORIGIN (wrangler dev), else null */
 export const handleFakeGoogle = (request: Request, env: FakeEnv): Promise<Response> | null => {
   const { pathname } = new URL(request.url);
   if (pathname !== PREFIX && !pathname.startsWith(`${PREFIX}/`)) {
     return null;
   }
-  if (env.FAKE_GOOGLE !== "1" || !env.FAKE_GOOGLE_STORE || !isLocalOrigin(env.DEV_ORIGIN)) {
+  if (env.FAKE_GOOGLE !== "1" || !env.FAKE_GOOGLE_STORE || !isDevOrigin(env.DEV_ORIGIN)) {
     return null;
   }
   const store = env.FAKE_GOOGLE_STORE;
@@ -162,7 +167,18 @@ type FileRow = {
   size: number;
 };
 
-type Caller = { kind: "user"; email: string; scope: string[]; clientId: string } | { kind: "anonymous" };
+type Caller = { kind: "user"; email: string; scope: string[] } | { kind: "anonymous" };
+type User = Extract<Caller, { kind: "user" }>;
+/** what a permissions call works with */
+type PermissionCall = { file: FileRow; canShare: boolean; caller: User; origin: string; fields: FieldTree; one: (id: string) => Row | null };
+
+/** the signed-in user of a Drive call; an API key alone (anonymous) gets 401 "Login Required" */
+const requireUser = (caller: Caller): User => {
+  if (caller.kind === "anonymous") {
+    fail(googleError(401, "Login Required.", "required", { location: "Authorization", locationType: "header", status: "UNAUTHENTICATED" }));
+  }
+  return caller as User;
+};
 
 const ROLE_RANK: Record<string, number> = { reader: 1, commenter: 2, writer: 3, fileOrganizer: 3, organizer: 3, owner: 4 };
 
@@ -431,7 +447,7 @@ const PERMISSION_KEYS = new Set(
   "kind,id,type,emailAddress,domain,role,view,allowFileDiscovery,displayName,photoLink,expirationTime,teamDrivePermissionDetails,permissionDetails,deleted,pendingOwner,inheritedPermissionsDisabled".split(","),
 );
 
-const checkKeys = (tree: FieldTree | true | undefined, keys: Set<string>, _what: string) => {
+const checkKeys = (tree: FieldTree | true | undefined, keys: Set<string>) => {
   if (!tree || tree === true) {
     return;
   }
@@ -440,7 +456,6 @@ const checkKeys = (tree: FieldTree | true | undefined, keys: Set<string>, _what:
       fail(invalid(`Invalid field selection ${key}`, "fields"));
     }
   }
-
 };
 
 const select = (value: any, tree: FieldTree | true | undefined): any => {
@@ -471,263 +486,6 @@ const fieldsOf = (url: URL, fallback: string) => {
 };
 
 // -----------------------------------------------------------------------------
-// Drive's query language (files.list q)
-// -----------------------------------------------------------------------------
-
-type Token = { type: "string" | "word" | "op" | "punct"; value: string };
-
-const tokenize = (text: string): Token[] => {
-  const tokens: Token[] = [];
-  let at = 0;
-  const readString = (char: string) => {
-    let value = "";
-    at++;
-    while (at < text.length && text[at] !== char) {
-      if (text[at] === "\\" && at + 1 < text.length) {
-        at++;
-      }
-      value += text[at++];
-    }
-    if (text[at] !== char) {
-      throw new Error("unterminated string");
-    }
-    at++;
-    tokens.push({ type: "string", value });
-  };
-
-  const readWord = (char: string) => {
-    const start = at;
-    while (at < text.length && /[A-Za-z0-9_.:-]/.test(text[at])) at++;
-    if (start === at) {
-      throw new Error(`unexpected ${char}`);
-    }
-    tokens.push({ type: "word", value: text.slice(start, at) });
-  };
-
-  while (at < text.length) {
-    const char = text[at];
-    if (/\s/.test(char)) {
-      at++;
-    } else if (char === "'" || char === '"') {
-      readString(char);
-    } else if ("(){}".includes(char)) {
-      tokens.push({ type: "punct", value: char });
-      at++;
-    } else if ("=!<>".includes(char)) {
-      const two = text.slice(at, at + 2);
-      const op = ["!=", "<=", ">="].includes(two) ? two : char;
-      tokens.push({ type: "op", value: op });
-      at += op.length;
-    } else {
-      readWord(char);
-    }
-  }
-  return tokens;
-};
-
-type QueryContext = {
-  email: string | null;
-  perms: (fileId: string) => Row[];
-};
-type Predicate = (file: FileRow, ctx: QueryContext) => boolean;
-
-const compare = (left: string | number | boolean, op: string, right: string | number | boolean) => {
-  switch (op) {
-    case "=":
-      return left === right;
-    case "!=":
-      return left !== right;
-    case "<":
-      return left < right;
-    case "<=":
-      return left <= right;
-    case ">":
-      return left > right;
-    case ">=":
-      return left >= right;
-  }
-  return false;
-};
-
-const parseQuery = (text: string): Predicate => {
-  const tokens = tokenize(text);
-  let at = 0;
-  const peek = () => tokens[at];
-  const word = (value: string) => peek()?.type === "word" && peek().value.toLowerCase() === value;
-  const expect = (type: Token["type"], value?: string) => {
-    const token = tokens[at++];
-    if (token?.type !== type || (value !== undefined && token.value !== value)) {
-      throw new Error(`expected ${value ?? type}`);
-    }
-    return token.value;
-  };
-  const literal = (): string | boolean => {
-    const token = tokens[at++];
-    if (token?.type === "string") return token.value;
-    if (token?.type === "word" && (token.value === "true" || token.value === "false")) return token.value === "true";
-    throw new Error("expected a value");
-  };
-  const orExpr = (): Predicate => {
-    let left = andExpr();
-    while (word("or")) {
-      at++;
-      const a = left;
-      const b = andExpr();
-      left = (file, ctx) => a(file, ctx) || b(file, ctx);
-    }
-    return left;
-  };
-  const andExpr = (): Predicate => {
-    let left = notExpr();
-    while (word("and")) {
-      at++;
-      const a = left;
-      const b = notExpr();
-      left = (file, ctx) => a(file, ctx) && b(file, ctx);
-    }
-    return left;
-  };
-  const notExpr = (): Predicate => {
-    if (word("not")) {
-      at++;
-      const inner = notExpr();
-      return (file, ctx) => !inner(file, ctx);
-    }
-    if (peek()?.type === "punct" && peek().value === "(") {
-      at++;
-      const inner = orExpr();
-      expect("punct", ")");
-      return inner;
-    }
-    return term();
-  };
-  const collectionTerm = (token: Token): Predicate => {
-    at++;
-    const value = token.value;
-    if (!word("in")) {
-      throw new Error("expected in");
-    }
-    at++;
-    const collection = expect("word");
-    switch (collection) {
-      case "parents":
-        return (file, ctx) => {
-          const parents: string[] = JSON.parse(file.parents);
-          return parents.includes(value) || (value === "root" && !!ctx.email && parents.includes(rootOf(ctx.email)));
-        };
-      case "owners":
-        return (file) => file.owner === value;
-      case "writers":
-        return (file, ctx) => ctx.perms(file.id).some((perm) => perm.email === value && ROLE_RANK[perm.role] >= 3);
-      case "readers":
-        return (file, ctx) => ctx.perms(file.id).some((perm) => perm.email === value);
-    }
-    throw new Error(`unknown collection ${collection}`);
-  };
-
-  const textTerm = (field: string): Predicate => {
-    if (word("contains")) {
-      at++;
-      const value = String(literal()).toLowerCase();
-      if (field === "fullText") {
-        return (file) => file.name.toLowerCase().includes(value);
-      }
-      if (field !== "name") {
-        throw new Error(`contains is not supported for ${field}`);
-      }
-      return (file) => file.name.toLowerCase().includes(value);
-    }
-    const op = expect("op");
-    const value = String(literal());
-    if (field === "visibility") {
-      return (file, ctx) => {
-        const anyone = ctx.perms(file.id).find((perm) => perm.type === "anyone");
-        let visibility = "limited";
-        if (anyone) {
-          visibility = anyone.discover ? "anyoneCanFind" : "anyoneWithLink";
-        }
-        return compare(visibility, op, value);
-      };
-    }
-    let column = "created";
-    if (field === "name") column = "name";
-    else if (field === "mimeType") column = "mime";
-    else if (field === "modifiedTime") column = "modified";
-    if ((field === "modifiedTime" || field === "createdTime") && Number.isNaN(Date.parse(value))) {
-      throw new Error(`invalid date ${value}`);
-    }
-    return (file) =>
-      field === "modifiedTime" || field === "createdTime"
-        ? compare(Date.parse((file as any)[column]), op, Date.parse(value))
-        : compare(String((file as any)[column]), op, value);
-  };
-
-  const propertyTerm = (field: string): Predicate => {
-    if (!word("has")) {
-      throw new Error("expected has");
-    }
-    at++;
-    expect("punct", "{");
-    if (expect("word") !== "key") throw new Error("expected key");
-    expect("op", "=");
-    const key = String(literal());
-    if (!word("and")) throw new Error("expected and");
-    at++;
-    if (expect("word") !== "value") throw new Error("expected value");
-    expect("op", "=");
-    const value = String(literal());
-    expect("punct", "}");
-    const column = field === "appProperties" ? "app_props" : "props";
-    return (file) => JSON.parse((file as any)[column] || "{}")[key] === value;
-  };
-
-  const term = (): Predicate => {
-    const token = peek();
-    if (!token) {
-      throw new Error("unexpected end");
-    }
-    if (token.type === "string") {
-      return collectionTerm(token);
-    }
-    const field = expect("word");
-    switch (field) {
-      case "sharedWithMe":
-        return (file, ctx) => !!ctx.email && file.owner !== ctx.email;
-      case "starred":
-        if (peek()?.type === "op") {
-          const op = expect("op");
-          const value = literal();
-          return () => compare(false, op, value);
-        }
-        return () => false;
-      case "trashed": {
-        const op = expect("op");
-        const value = literal();
-        return (file) => compare(!!file.trashed, op, value);
-      }
-      case "name":
-      case "mimeType":
-      case "modifiedTime":
-      case "createdTime":
-      case "fullText":
-      case "visibility": {
-        return textTerm(field);
-      }
-      case "appProperties":
-      case "properties": {
-        return propertyTerm(field);
-      }
-    }
-    throw new Error(`unknown field ${field}`);
-  };
-  const predicate = orExpr();
-  if (at !== tokens.length) {
-    throw new Error("unexpected trailing input");
-  }
-  return predicate;
-};
-
-// -----------------------------------------------------------------------------
 // the Durable Object
 // -----------------------------------------------------------------------------
 
@@ -745,7 +503,7 @@ CREATE TABLE IF NOT EXISTS perms (file_id TEXT, id TEXT, type TEXT, role TEXT, e
 CREATE TABLE IF NOT EXISTS app_access (email TEXT, file_id TEXT, PRIMARY KEY (email, file_id));
 CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, resource_id TEXT, file_id TEXT, token TEXT, address TEXT, expiration INTEGER, email TEXT, msg INTEGER);
 CREATE TABLE IF NOT EXISTS faults (id INTEGER PRIMARY KEY AUTOINCREMENT, remaining INTEGER, status INTEGER, reason TEXT, delay_ms INTEGER,
-  email TEXT, path TEXT, method TEXT, target TEXT);
+  email TEXT, path TEXT, method TEXT, target TEXT, used INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, kind TEXT, data TEXT);
 `;
 const TABLES = ["users", "grants", "codes", "tokens", "files", "revisions", "blobs", "perms", "app_access", "channels", "faults", "log"];
@@ -845,14 +603,20 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const cors: Record<string, string> = {
-      "Access-Control-Allow-Origin": request.headers.get("Origin") || "*",
-      "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Goog-Upload-Protocol, X-Goog-Upload-Command",
-      "Access-Control-Expose-Headers": "Content-Type, Content-Length, Location",
-      "Access-Control-Max-Age": "3600",
-      Vary: "Origin",
-    };
+    // the app calls the fake from its own origin and the tests are Node scripts: no
+    // other website open in the developer's browser may use it (CORS for DEV_ORIGIN only)
+    const devOrigin = (this.env.DEV_ORIGIN ?? "").replace(/\/$/, "");
+    const cors: Record<string, string> =
+      devOrigin && request.headers.get("Origin") === devOrigin
+        ? {
+            "Access-Control-Allow-Origin": devOrigin,
+            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Expose-Headers": "Content-Type, Content-Length, Location",
+            "Access-Control-Max-Age": "3600",
+            Vary: "Origin",
+          }
+        : { Vary: "Origin" };
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
     }
@@ -884,10 +648,6 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
       return this.avatar(decodeURIComponent(avatar[1]));
     }
     if (path.startsWith("/oauth/")) {
-      const fault = await this.fault("oauth", request, path, null);
-      if (fault) {
-        return fault;
-      }
       return this.oauth(request, url, path.slice("/oauth".length));
     }
     if (path.startsWith("/admin/")) {
@@ -904,13 +664,12 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     const text = [
       "Fake Google for Kurviq (online/worker/fakeGoogle.ts; the header comment documents it all)",
       "",
-      "OAuth:  GET /fake-google/oauth/authorize, GET approve, POST token, POST revoke, GET userinfo",
+      "OAuth:  GET /fake-google/oauth/authorize, GET approve, POST token, POST revoke",
       "Drive:  /fake-google/drive/v3/…, /fake-google/upload/drive/v3/…",
-      "Admin:  POST reset | GET users | GET files[?email] | GET file?fileId | POST grant, ungrant {email,fileId}",
+      "Admin:  POST reset | GET file?fileId | POST grant {email,fileId}",
       "        POST write {email,fileId?,content,name?} | POST share, unshare {fileId,email|anyone,role}",
-      "        POST trash, untrash, delete {fileId} | GET revisions?fileId | POST purge-revisions {fileId,keep}",
-      "        POST expire-tokens {email?} | POST revoke {email} | POST/GET/DELETE faults | GET log?kind | GET channels",
-      "        POST/GET/DELETE inbox/<name> (a test webhook address)",
+      "        POST trash, untrash, delete {fileId} | GET revisions?fileId",
+      "        POST revoke {email} | POST/GET/DELETE faults | GET log?kind | GET channels",
       "",
       `Users: ${this.all<{ email: string }>("SELECT email FROM users ORDER BY email").map((row) => row.email).join(", ")}`,
       `API key: ${API_KEY}   client secret: ${CLIENT_SECRET}`,
@@ -932,24 +691,19 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
   // faults
   // ---------------------------------------------------------------------------
 
-  private async fault(target: "drive" | "oauth", request: Request, path: string, email: string | null): Promise<Response | null> {
-    const faults = this.all<Row>("SELECT * FROM faults ORDER BY id");
-    const match = faults.find(
-      (fault) =>
-        (fault.target === "all" || (fault.target || "drive") === target) &&
-        (!fault.email || fault.email === email) &&
-        (!fault.path || path.includes(fault.path)) &&
-        (!fault.method || String(fault.method).toUpperCase() === request.method),
-    );
+  /** an injected fault for this Drive call (matched against the path after /fake-google plus the query), or null */
+  private async fault(request: Request, path: string, email: string | null): Promise<Response | null> {
+    const target = `${path}${new URL(request.url).search}`;
+    const match = this.all<Row>("SELECT * FROM faults ORDER BY id").find((fault) => !fault.path || target.includes(fault.path));
     if (!match) {
       return null;
     }
     if (match.remaining <= 1) {
       this.run("DELETE FROM faults WHERE id = ?", match.id);
     } else {
-      this.run("UPDATE faults SET remaining = remaining - 1 WHERE id = ?", match.id);
+      this.run("UPDATE faults SET remaining = remaining - 1, used = 1 WHERE id = ?", match.id);
     }
-    this.log("fault", { id: match.id, method: request.method, path, email, status: match.status, delayMs: match.delay_ms });
+    this.log("fault", { id: match.id, method: request.method, path: target, email, status: match.status, delayMs: match.delay_ms });
     if (match.delay_ms > 0) {
       await new Promise((resolve) => setTimeout(resolve, match.delay_ms));
     }
@@ -957,19 +711,16 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
       return null;
     }
     const status = Number(match.status);
-    if (target === "oauth") {
-      return json(status, { error: match.reason || (status >= 500 ? "internal_failure" : "invalid_request"), error_description: "fault injected by the fake Google" });
-    }
     if (status === 429) {
-      return googleError(429, "Rate Limit Exceeded", match.reason || "rateLimitExceeded", { domain: "usageLimits" }, { "Retry-After": "1" });
+      return googleError(429, "Rate Limit Exceeded", "rateLimitExceeded", { domain: "usageLimits" }, { "Retry-After": "1" });
     }
     if (status === 401) {
-      return googleError(401, "Request had invalid authentication credentials.", match.reason || "authError", { location: "Authorization", locationType: "header", status: "UNAUTHENTICATED" });
+      return googleError(401, "Request had invalid authentication credentials.", "authError", { location: "Authorization", locationType: "header", status: "UNAUTHENTICATED" });
     }
     if (status >= 500) {
-      return googleError(status, status === 500 ? "Internal Error" : "The service is currently unavailable.", match.reason || "backendError");
+      return googleError(status, status === 500 ? "Internal Error" : "The service is currently unavailable.", "backendError");
     }
-    return googleError(status, `Fault injected by the fake Google (${status})`, match.reason || (status === 403 ? "userRateLimitExceeded" : "invalid"), { domain: status === 403 ? "usageLimits" : "global" });
+    return googleError(status, `Fault injected by the fake Google (${status})`, status === 403 ? "userRateLimitExceeded" : "invalid", { domain: status === 403 ? "usageLimits" : "global" });
   }
 
   // ---------------------------------------------------------------------------
@@ -996,7 +747,7 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     return new Response(null, { status: 302, headers: { Location: target.toString(), "Cache-Control": "no-store" } });
   }
 
-  /** a code for the user (the page or prompt=none approved) */
+  /** a code for the user (the page approved) */
   private issueCode(params: URLSearchParams, email: string, drive: boolean) {
     const clientId = params.get("client_id") || "";
     const redirectUri = params.get("redirect_uri") || "";
@@ -1024,16 +775,6 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     return this.redirectWith(redirectUri, back);
   }
 
-  private authorizeSilently(params: URLSearchParams, redirectUri: string, hint: string, hinted: Row | null) {
-    if (!hint) {
-      return this.redirectWith(redirectUri, { error: "interaction_required", ...(params.has("state") ? { state: params.get("state")! } : {}) });
-    }
-    if (!hinted) {
-      return this.redirectWith(redirectUri, { error: "consent_required", ...(params.has("state") ? { state: params.get("state")! } : {}) });
-    }
-    return this.issueCode(params, this.user(hint), hinted.scope.includes(DRIVE_FILE));
-  }
-
   private oauthAuthorize(url: URL) {
     const params = url.searchParams;
     const redirectUri = params.get("redirect_uri") || "";
@@ -1049,12 +790,10 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
       return this.redirectWith(redirectUri, { error: "unsupported_response_type", ...(params.has("state") ? { state: params.get("state")! } : {}) });
     }
     const prompt = (params.get("prompt") || "").split(" ").filter(Boolean);
-    const hint = (params.get("login_hint") || "").trim().toLowerCase();
-    const hinted = hint ? this.one<Row>("SELECT * FROM grants WHERE email = ? AND client_id = ?", hint, params.get("client_id")) : null;
     if (prompt.includes("none")) {
-      return this.authorizeSilently(params, redirectUri, hint, hinted);
+      return new Response("prompt=none is not supported by the fake Google", { status: 400 });
     }
-    return this.authorizePage(params, hint, prompt);
+    return this.authorizePage(params, (params.get("login_hint") || "").trim().toLowerCase(), prompt);
   }
 
   private oauthApprove(url: URL) {
@@ -1103,14 +842,6 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     }
     if (path === "/revoke" && (request.method === "POST" || request.method === "GET")) {
       return this.oauthRevoke(request, url);
-    }
-    if (path === "/userinfo") {
-      const caller = this.caller(request, url);
-      if (caller?.kind !== "user") {
-        return json(401, { error: "invalid_request", error_description: "Invalid Credentials" });
-      }
-      const info = this.userInfo(caller.email, this.origin(request));
-      return json(200, { sub: info.sub, email: info.email, email_verified: true, name: info.name, picture: info.picture });
     }
     return json(404, { error: "not_found" });
   }
@@ -1248,14 +979,8 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
 
   private async token(request: Request) {
     const form = new URLSearchParams(await request.text());
-    let clientId = form.get("client_id") || "";
-    let clientSecret = form.get("client_secret") || "";
-    const basic = /^Basic (.+)$/.exec(request.headers.get("Authorization") ?? "");
-    if (basic) {
-      const [id, secret] = atob(basic[1]).split(":");
-      clientId ||= decodeURIComponent(id);
-      clientSecret ||= decodeURIComponent(secret || "");
-    }
+    const clientId = form.get("client_id") || "";
+    const clientSecret = form.get("client_secret") || "";
     if (!clientId) {
       return json(400, { error: "invalid_request", error_description: "Missing required parameter: client_id" });
     }
@@ -1281,7 +1006,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       if (!row || row.expires < Date.now()) {
         return null;
       }
-      return { kind: "user", email: row.email, scope: String(row.scope).split(" "), clientId: row.client_id };
+      return { kind: "user", email: row.email, scope: String(row.scope).split(" ") };
     }
     const key = url.searchParams.get("key");
     if (key) {
@@ -1517,7 +1242,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
   private dropChannelsWithoutAccess(fileId: string) {
     const file = this.file(fileId);
     for (const channel of this.all<Row>("SELECT * FROM channels WHERE file_id = ?", fileId)) {
-      const caller: Caller = { kind: "user", email: channel.email, scope: [], clientId: "" };
+      const caller: Caller = { kind: "user", email: channel.email, scope: [] };
       if (!file || !this.roleOf(file, caller, false)) {
         this.run("UPDATE channels SET msg = msg + 1 WHERE id = ?", channel.id);
         this.deliver({ ...channel, msg: channel.msg + 1 }, "remove", []);
@@ -1572,7 +1297,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
   private async drive(request: Request, url: URL, path: string, upload: boolean, fullPath: string): Promise<Response> {
     const who = this.caller(request, url);
     const email = who && typeof who === "object" && who.kind === "user" ? who.email : null;
-    const fault = await this.fault("drive", request, fullPath, email);
+    const fault = await this.fault(request, fullPath, email);
     let response: Response;
     if (fault) {
       response = fault;
@@ -1591,8 +1316,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return response;
   }
 
-  private async watchFile(request: Request, fileId: string, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
-    const user = anonymousOnly();
+  private async watchFile(request: Request, fileId: string, user: User) {
     const { file } = this.access(fileId, user);
     const body = await parseJson(request);
     if (!body.id || typeof body.id !== "string") {
@@ -1648,19 +1372,19 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       return new Response(this.blob(file.md5!), { headers: { "Content-Type": file.mime, "Cache-Control": "no-store" } });
     }
     const fields = fieldsOf(url, "kind,id,name,mimeType");
-    checkKeys(fields, FILE_KEYS, "file");
+    checkKeys(fields, FILE_KEYS);
     return json(200, select(this.resource(file, role, caller, origin), fields));
   }
 
-  private fileCall(request: Request, url: URL, { method, upload, fileId, caller, origin, anonymousOnly }: { method: string; upload: boolean; fileId: string; caller: Caller; origin: string; anonymousOnly: () => Extract<Caller, { kind: "user" }> }) {
+  private fileCall(request: Request, url: URL, { method, upload, fileId, caller, origin }: { method: string; upload: boolean; fileId: string; caller: Caller; origin: string }) {
     if (method === "GET" && !upload) {
       return this.getFile(url, fileId, caller, origin);
     }
-    if (method === "PATCH" || (upload && method === "PUT")) {
-      return this.updateFile(request, url, anonymousOnly(), fileId, upload, origin);
+    if (method === "PATCH") {
+      return this.updateFile(request, url, requireUser(caller), fileId, upload, origin);
     }
     if (method === "DELETE" && !upload) {
-      const user = anonymousOnly();
+      const user = requireUser(caller);
       const { file, role } = this.access(fileId, user);
       if (ROLE_RANK[role] < 4) {
         return noFilePermission();
@@ -1671,8 +1395,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
   }
 
-  private async stopChannel(request: Request, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
-    anonymousOnly();
+  private async stopChannel(request: Request) {
     const body = await parseJson(request);
     const channel = this.one<Row>("SELECT * FROM channels WHERE id = ? AND resource_id = ?", String(body.id ?? ""), String(body.resourceId ?? ""));
     if (!channel) {
@@ -1682,7 +1405,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return new Response(null, { status: 204 });
   }
 
-  private driveFileCall(request: Request, url: URL, path: string, upload: boolean, caller: Caller, origin: string, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
+  private driveFileCall(request: Request, url: URL, path: string, upload: boolean, caller: Caller, origin: string) {
     const method = request.method;
     const fileMatch = /^\/files\/([^/]+)(\/.*)?$/.exec(path);
     if (!fileMatch) {
@@ -1692,39 +1415,36 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const rest = fileMatch[2] || "";
 
     if (!rest) {
-      const response = this.fileCall(request, url, { method, upload, fileId, caller, origin, anonymousOnly });
+      const response = this.fileCall(request, url, { method, upload, fileId, caller, origin });
       if (response) return response;
     }
     if (rest === "/watch" && method === "POST") {
-      return this.watchFile(request, fileId, anonymousOnly);
+      return this.watchFile(request, fileId, requireUser(caller));
     }
     const revisionMatch = /^\/revisions(?:\/([^/]+))?$/.exec(rest);
     if (revisionMatch) {
-      return this.revisions(request, url, anonymousOnly(), fileId, revisionMatch[1] ? decodeURIComponent(revisionMatch[1]) : null, origin);
+      return this.revisions(request, url, requireUser(caller), fileId, revisionMatch[1] ? decodeURIComponent(revisionMatch[1]) : null, origin);
     }
     const permissionMatch = /^\/permissions(?:\/([^/]+))?$/.exec(rest);
     if (permissionMatch) {
-      return this.permissions(request, url, anonymousOnly(), fileId, permissionMatch[1] ? decodeURIComponent(permissionMatch[1]) : null, origin);
+      return this.permissions(request, url, requireUser(caller), fileId, permissionMatch[1] ? decodeURIComponent(permissionMatch[1]) : null, origin);
     }
     return googleError(404, `Not Found: ${method} ${path}`, "notFound");
   }
 
-  private driveResourceCall(request: Request, url: URL, path: string, upload: boolean, caller: Caller, origin: string, anonymousOnly: () => Extract<Caller, { kind: "user" }>) {
+  private driveResourceCall(request: Request, url: URL, path: string, upload: boolean, caller: Caller, origin: string) {
     const method = request.method;
-    if (path === "/about" && method === "GET") {
-      const user = anonymousOnly();
-      return json(200, select({ kind: "drive#about", user: this.driveUser(user.email, user.email, origin) }, fieldsOf(url, "kind,user")));
-    }
     if (path === "/channels/stop" && method === "POST") {
-      return this.stopChannel(request, anonymousOnly);
+      requireUser(caller);
+      return this.stopChannel(request);
     }
     if (path === "/files" && method === "GET" && !upload) {
-      return this.listFiles(url, anonymousOnly(), origin);
+      return this.listFiles(url, requireUser(caller), origin);
     }
     if (path === "/files" && method === "POST") {
-      return this.createFile(request, url, anonymousOnly(), upload, origin);
+      return this.createFile(request, url, requireUser(caller), upload, origin);
     }
-    return this.driveFileCall(request, url, path, upload, caller, origin, anonymousOnly);
+    return this.driveFileCall(request, url, path, upload, caller, origin);
   }
 
   private async driveCall(request: Request, url: URL, path: string, upload: boolean, who: ReturnType<FakeGoogle["caller"]>): Promise<Response> {
@@ -1750,20 +1470,13 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const caller = who;
     const origin = this.origin(request);
-    if (caller.kind === "user" && !caller.scope.includes(DRIVE_FILE) && !caller.scope.includes(DRIVE_FULL)) {
+    if (caller.kind === "user" && !caller.scope.includes(DRIVE_FILE)) {
       return googleError(403, "Request had insufficient authentication scopes.", "insufficientPermissions", { status: "PERMISSION_DENIED" });
     }
-    const anonymousOnly = () => {
-      if (caller.kind === "anonymous") {
-        fail(googleError(401, "Login Required.", "required", { location: "Authorization", locationType: "header", status: "UNAUTHENTICATED" }));
-      }
-      return caller as Extract<Caller, { kind: "user" }>;
-    };
-
-    return this.driveResourceCall(request, url, path, upload, caller, origin, anonymousOnly);
+    return this.driveResourceCall(request, url, path, upload, caller, origin);
   }
 
-  private listFiles(url: URL, caller: Extract<Caller, { kind: "user" }>, origin: string) {
+  private listFiles(url: URL, caller: User, origin: string) {
     let predicate: Predicate = () => true;
     const q = url.searchParams.get("q");
     if (q) {
@@ -1778,23 +1491,26 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const fields = fieldsOf(url, "kind,incompleteSearch,nextPageToken,files(kind,id,name,mimeType)");
     const filesTree = fields.get("files");
-    checkKeys(filesTree, FILE_KEYS, "file");
-    const ctx: QueryContext = { email: caller.email, perms: (id) => this.perms(id) };
+    checkKeys(filesTree, FILE_KEYS);
+
     const visible = this.all<FileRow>(
       "SELECT f.* FROM files f JOIN app_access a ON a.file_id = f.id AND a.email = ? ORDER BY f.created, f.id",
       caller.email,
     )
       .map((file) => ({ file, role: this.roleOf(file, caller, false) }))
-      .filter((entry): entry is { file: FileRow; role: string } => !!entry.role && predicate(entry.file, ctx));
+      .filter((entry): entry is { file: FileRow; role: string } => !!entry.role && predicate(entry.file, { email: caller.email, root: rootOf(caller.email) }));
     const orderBy = (url.searchParams.get("orderBy") || "").split(",").map((part) => part.trim()).filter(Boolean);
+    const ORDER_KEYS: Record<string, (file: FileRow) => string> = {
+      name: (file) => file.name.toLowerCase(),
+      createdTime: (file) => file.created,
+      modifiedTime: (file) => file.modified,
+    };
+    const unknown = orderBy.find((part) => !ORDER_KEYS[part.split(/\s+/)[0]]);
+    if (unknown) {
+      return invalid(`orderBy ${unknown} is not supported by the fake Google (createdTime, modifiedTime, name)`, "orderBy");
+    }
     if (orderBy.length) {
-      const keyOf = (file: FileRow, key: string) => {
-        if (key === "name" || key === "name_natural") return file.name.toLowerCase();
-        if (key === "createdTime") return file.created;
-        if (key === "modifiedTime" || key === "modifiedByMeTime" || key === "recency" || key === "viewedByMeTime") return file.modified;
-        if (key === "folder") return file.mime === FOLDER_MIME ? "0" : "1";
-        return "";
-      };
+      const keyOf = (file: FileRow, key: string) => ORDER_KEYS[key](file);
       visible.sort((a, b) => {
         for (const part of orderBy) {
           const [key, direction] = part.split(/\s+/);
@@ -1850,7 +1566,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return fail(invalid(`uploadType=${type} is not supported by the fake Google (media, multipart)`, "uploadType"));
   }
 
-  private checkParents(parents: string[], caller: Extract<Caller, { kind: "user" }>) {
+  private checkParents(parents: string[], caller: User) {
     return parents.map((parent) => {
       if (parent === "root" || parent === rootOf(caller.email)) {
         return rootOf(caller.email);
@@ -1887,9 +1603,9 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return out;
   }
 
-  private async createFile(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, upload: boolean, origin: string) {
+  private async createFile(request: Request, url: URL, caller: User, upload: boolean, origin: string) {
     const fields = fieldsOf(url, "kind,id,name,mimeType");
-    checkKeys(fields, FILE_KEYS, "file");
+    checkKeys(fields, FILE_KEYS);
     const { metadata, content, contentType } = await this.uploadBody(request, url, upload);
     const mime = String(metadata.mimeType || contentType || "application/octet-stream");
     if (mime === FOLDER_MIME && content?.length) {
@@ -1937,9 +1653,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
   }
 
   private deleteFile(id: string) {
-    for (const table of ["files"]) {
-      this.run(`DELETE FROM ${table} WHERE id = ?`, id);
-    }
+    this.run("DELETE FROM files WHERE id = ?", id);
     for (const table of ["revisions", "perms", "app_access", "channels"]) {
       this.run(`DELETE FROM ${table} WHERE file_id = ?`, id);
     }
@@ -1948,6 +1662,9 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
 
   private fileUpdatePermission(file: FileRow, role: string, metadata: Row, content: Uint8Array | null, url: URL) {
     const rank = ROLE_RANK[role];
+    if (url.searchParams.has("addParents") || url.searchParams.has("removeParents")) {
+      return invalid("addParents / removeParents are not supported by the fake Google", "addParents");
+    }
     let trashState: "trash" | "untrash" | null = null;
     if (metadata.trashed !== undefined && !!metadata.trashed !== !!file.trashed) {
       // in My Drive only the owner moves a file to (or out of) the bin
@@ -1956,93 +1673,100 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       }
       trashState = metadata.trashed ? "trash" : "untrash";
     }
-    const editsOther =
-      content !== null ||
-      ["name", "mimeType", "description", "appProperties", "properties"].some((key) => metadata[key] !== undefined) ||
-      url.searchParams.has("addParents") ||
-      url.searchParams.has("removeParents");
+    const editsOther = content !== null || ["name", "mimeType", "description", "appProperties", "properties"].some((key) => metadata[key] !== undefined);
     if (editsOther && (rank < 3 || (file.trashed && !trashState))) {
       return noFilePermission();
     }
     return trashState;
   }
 
-  private updateFileMaps(file: FileRow, metadata: Row, changed: Set<string>) {
-    for (const [key, column] of [
-      ["appProperties", "app_props"],
-      ["properties", "props"],
-    ] as const) {
-      if (metadata[key] !== undefined) {
-        const merged = { ...JSON.parse((file as any)[column] || "{}") };
-        for (const [name, value] of Object.entries(this.stringMap(metadata[key], key))) {
-          if (value === null) delete merged[name];
-          else merged[name] = value;
-        }
-        if (Object.keys(merged).length > 30) {
-          return googleError(403, `A file can have at most 30 ${key}.`, "propertyLimitExceeded");
-        }
-        this.run(`UPDATE files SET ${column} = ? WHERE id = ?`, JSON.stringify(merged), file.id);
-        changed.add("properties");
-      }
+  /**
+   * A file's appProperties / properties with `changes` merged in (null
+   * deletes a key), checked like Drive: at most 124 bytes per key and value,
+   * at most 30 keys. Fails (HttpError) before anything is written.
+   */
+  private mergedMap(file: FileRow, key: "appProperties" | "properties", changes: unknown) {
+    const column = key === "appProperties" ? "app_props" : "props";
+    const merged: Record<string, string> = { ...JSON.parse(file[column] || "{}") };
+    for (const [name, value] of Object.entries(this.stringMap(changes, key))) {
+      if (value === null) delete merged[name];
+      else merged[name] = value;
     }
-    return null;
+    if (Object.keys(merged).length > 30) {
+      fail(googleError(403, `A file can have at most 30 ${key}.`, "propertyLimitExceeded"));
+    }
+    return { column, value: JSON.stringify(merged) };
   }
 
-  private updateFileProperties(file: FileRow, metadata: Row, url: URL, caller: Extract<Caller, { kind: "user" }>, changed: Set<string>) {
+  /** a file in or out of the bin: new version, watch notification (the API and the admin calls) */
+  private setTrashed(file: FileRow, trash: boolean) {
+    this.run("UPDATE files SET trashed = ?, version = version + 1 WHERE id = ?", trash ? 1 : 0, file.id);
+    this.notify(file.id, trash ? "trash" : "untrash");
+  }
+
+  /** a changed permission: new version, watch notification, channels that lost access end (the API and the admin calls) */
+  private permissionsChanged(fileId: string) {
+    this.run("UPDATE files SET version = version + 1 WHERE id = ?", fileId);
+    this.notify(fileId, "update", ["permissions"]);
+    this.dropChannelsWithoutAccess(fileId);
+  }
+
+  /**
+   * What a files.update changes, checked as a whole before anything is
+   * written (Drive applies an update atomically: a refused one changes nothing).
+   */
+  private updatePlan(file: FileRow, metadata: Row, content: Uint8Array | null) {
+    if (content !== null && file.mime === FOLDER_MIME) {
+      fail(invalid("A folder can't have content."));
+    }
+    const sets: Array<[string, unknown]> = [];
+    const changed = new Set<string>();
     if (metadata.name !== undefined && String(metadata.name) !== file.name) {
-      this.run("UPDATE files SET name = ? WHERE id = ?", String(metadata.name), file.id);
+      // Drive moves modifiedTime on a rename
+      sets.push(["name", String(metadata.name)], ["modified", now()]);
       changed.add("properties");
     }
     if (metadata.description !== undefined) {
-      this.run("UPDATE files SET description = ? WHERE id = ?", metadata.description === null ? null : String(metadata.description), file.id);
+      sets.push(["description", metadata.description === null ? null : String(metadata.description)]);
       changed.add("properties");
     }
-    const mapError = this.updateFileMaps(file, metadata, changed);
-    if (mapError) return mapError;
-    const add = (url.searchParams.get("addParents") || "").split(",").filter(Boolean);
-    const remove = (url.searchParams.get("removeParents") || "").split(",").filter(Boolean);
-    if (add.length || remove.length) {
-      const parents = new Set<string>(JSON.parse(file.parents));
-      this.checkParents(add, caller).forEach((parent) => parents.add(parent));
-      remove.forEach((parent) => parents.delete(parent === "root" ? rootOf(caller.email) : parent));
-      this.run("UPDATE files SET parents = ? WHERE id = ?", JSON.stringify([...parents]), file.id);
-      changed.add("parents");
+    for (const key of ["appProperties", "properties"] as const) {
+      if (metadata[key] !== undefined) {
+        const { column, value } = this.mergedMap(file, key, metadata[key]);
+        sets.push([column, value]);
+        changed.add("properties");
+      }
     }
     let mime = file.mime;
     if (metadata.mimeType !== undefined && String(metadata.mimeType) !== file.mime) {
       mime = String(metadata.mimeType);
-      this.run("UPDATE files SET mime = ? WHERE id = ?", mime, file.id);
+      sets.push(["mime", mime]);
       changed.add("properties");
     }
-    return mime;
+    return { sets, changed, mime };
   }
 
-  private async updateFile(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, fileId: string, upload: boolean, origin: string) {
+  private async updateFile(request: Request, url: URL, caller: User, fileId: string, upload: boolean, origin: string) {
     const fields = fieldsOf(url, "kind,id,name,mimeType");
-    checkKeys(fields, FILE_KEYS, "file");
+    checkKeys(fields, FILE_KEYS);
     const { file, role } = this.access(fileId, caller);
     const { metadata, content, contentType } = await this.uploadBody(request, url, upload);
-    const changed = new Set<string>();
     const permission = this.fileUpdatePermission(file, role, metadata, content, url);
     if (permission instanceof Response) return permission;
     const trashState = permission;
+    const { sets, changed, mime } = this.updatePlan(file, metadata, content);
+    // everything checked: now it is written
     if (trashState) {
-      this.run("UPDATE files SET trashed = ?, version = version + 1 WHERE id = ?", trashState === "trash" ? 1 : 0, file.id);
+      this.setTrashed(file, trashState === "trash");
     }
-    const properties = this.updateFileProperties(file, metadata, url, caller, changed);
-    if (properties instanceof Response) return properties;
-    const mime = properties;
+    for (const [column, value] of sets) {
+      this.run(`UPDATE files SET ${column} = ? WHERE id = ?`, value, file.id);
+    }
     if (content !== null) {
-      if (file.mime === FOLDER_MIME) {
-        return invalid("A folder can't have content.");
-      }
       await this.writeContent(this.file(file.id)!, content, metadata.mimeType ? mime : contentType || mime, caller.email);
       changed.add("content");
     } else if (changed.size) {
       this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-    }
-    if (trashState) {
-      this.notify(file.id, trashState);
     }
     if (changed.size) {
       this.notify(file.id, "update", [...changed]);
@@ -2066,12 +1790,12 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     };
   }
 
-  private listRevisions(url: URL, method: string, file: FileRow, caller: Extract<Caller, { kind: "user" }>, origin: string) {
+  private listRevisions(url: URL, method: string, file: FileRow, caller: User, origin: string) {
     if (method !== "GET") {
       return googleError(404, "Not Found", "notFound");
     }
     const fields = fieldsOf(url, "kind,nextPageToken,revisions(kind,id,mimeType,modifiedTime)");
-    checkKeys(fields.get("revisions"), REVISION_KEYS, "revision");
+    checkKeys(fields.get("revisions"), REVISION_KEYS);
     const all = this.all<Row>("SELECT * FROM revisions WHERE file_id = ? ORDER BY seq", file.id);
     const pageSize = Math.min(Math.max(Number(url.searchParams.get("pageSize") || 200) || 200, 1), 1000);
     const offset = url.searchParams.get("pageToken") ? Number(atob(url.searchParams.get("pageToken")!).replace(/^o:/, "")) || 0 : 0;
@@ -2085,7 +1809,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return json(200, select(body, fields));
   }
 
-  private async patchRevision(request: Request, url: URL, revision: Row, file: FileRow, caller: Extract<Caller, { kind: "user" }>, origin: string) {
+  private async patchRevision(request: Request, url: URL, revision: Row, file: FileRow, caller: User, origin: string) {
     const body = await parseJson(request);
     const fields = fieldsOf(url, "kind,id,mimeType,modifiedTime");
     if (body.keepForever !== undefined) {
@@ -2102,7 +1826,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return json(200, select(this.revisionResource(saved, file, caller.email, origin), fields));
   }
 
-  private async revisions(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, fileId: string, revisionId: string | null, origin: string) {
+  private async revisions(request: Request, url: URL, caller: User, fileId: string, revisionId: string | null, origin: string) {
     const { file, role } = this.access(fileId, caller);
     if (file.mime === FOLDER_MIME) {
       return googleError(403, "The file does not support revisions.", "revisionsNotSupported");
@@ -2124,7 +1848,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         return new Response(this.blob(revision.md5), { headers: { "Content-Type": revision.mime, "Cache-Control": "no-store" } });
       }
       const fields = fieldsOf(url, "kind,id,mimeType,modifiedTime");
-      checkKeys(fields, REVISION_KEYS, "revision");
+      checkKeys(fields, REVISION_KEYS);
       return json(200, select(this.revisionResource(revision, file, caller.email, origin), fields));
     }
     if (method === "PATCH") {
@@ -2141,30 +1865,23 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return googleError(404, "Not Found", "notFound");
   }
 
-  private permissionRequestError(newRole: string, type: string, url: URL, role: string) {
-    if (!["reader", "commenter", "writer", "owner"].includes(newRole)) {
+  private permissionRequestError(newRole: string) {
+    if (newRole === "owner") {
+      return invalid("Ownership transfer is not supported by the fake Google", "role");
+    }
+    if (!["reader", "commenter", "writer"].includes(newRole)) {
       return googleError(400, `Invalid permission role: ${newRole}`, "invalidSharingRequest", { location: "role" });
-    }
-    if (newRole === "owner" && (type !== "user" || url.searchParams.get("transferOwnership") !== "true")) {
-      return googleError(403, "The transferOwnership parameter must be enabled when the permission role is 'owner'.", "forbidden");
-    }
-    if (newRole === "owner" && ROLE_RANK[role] < 4) {
-      return noFilePermission();
     }
     return null;
   }
 
-  private insertUserPermission(body: Row, newRole: string, file: FileRow, url: URL, caller: Extract<Caller, { kind: "user" }>) {
+  private insertUserPermission(body: Row, newRole: string, file: FileRow, url: URL, caller: User) {
     const email = String(body.emailAddress || "").trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
       return googleError(400, "A valid email address is required for user permissions.", "invalidSharingRequest", { location: "permission.emailAddress" });
     }
     this.user(email);
     const id = permIdOf(email);
-    if (newRole === "owner") {
-      this.run("UPDATE perms SET role = 'writer' WHERE file_id = ? AND role = 'owner'", file.id);
-      this.run("UPDATE files SET owner = ? WHERE id = ?", email, file.id);
-    }
     this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, id, newRole, email);
     if (url.searchParams.get("sendNotificationEmail") !== "false") {
       this.log("mail", { to: email, from: caller.email, fileId: file.id, name: file.name, role: newRole, message: url.searchParams.get("emailMessage") || "" });
@@ -2172,14 +1889,14 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return id;
   }
 
-  private async createPermission(request: Request, url: URL, { file, role, canShare, caller, origin, fields, one }: { file: FileRow; role: string; canShare: boolean; caller: Extract<Caller, { kind: "user" }>; origin: string; fields: FieldTree; one: (id: string) => Row | null }) {
+  private async createPermission(request: Request, url: URL, { file, canShare, caller, origin, fields, one }: PermissionCall) {
     if (!canShare) {
       return noFilePermission();
     }
     const body = await parseJson(request);
     const type = String(body.type || "");
     const newRole = String(body.role || "");
-    const error = this.permissionRequestError(newRole, type, url, role);
+    const error = this.permissionRequestError(newRole);
     if (error) return error;
     let id: string;
     if (type === "anyone") {
@@ -2193,50 +1910,40 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     } else {
       return googleError(400, `The fake Google supports permission types user and anyone, not '${type}'.`, "invalidSharingRequest", { location: "type" });
     }
-    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-    this.notify(file.id, "update", ["permissions"]);
+    this.permissionsChanged(file.id);
     return json(200, select(this.permission(one(id)!, origin), fields));
   }
 
-  private async patchPermission(request: Request, url: URL, { file, role, canShare, caller, origin, fields, one }: { file: FileRow; role: string; canShare: boolean; caller: Extract<Caller, { kind: "user" }>; origin: string; fields: FieldTree; one: (id: string) => Row | null }, perm: Row) {
+  private async patchPermission(request: Request, { file, canShare, origin, fields, one }: PermissionCall, perm: Row) {
     if (!canShare) {
       return noFilePermission();
     }
     const body = await parseJson(request);
     const newRole = String(body.role || perm.role);
-    if (!["reader", "commenter", "writer", "owner"].includes(newRole)) {
-      return googleError(400, `Invalid permission role: ${newRole}`, "invalidSharingRequest", { location: "role" });
+    if (perm.role === "owner") {
+      return googleError(403, "The owner of a file can't be changed (ownership transfer is not supported by the fake Google).", "cannotModifyOwner");
     }
-    if (perm.role === "owner" && newRole !== "owner") {
-      return googleError(403, "The owner of a file can't be downgraded; transfer the ownership first.", "cannotModifyOwner");
-    }
-    if (newRole === "owner" && perm.role !== "owner") {
-      if (url.searchParams.get("transferOwnership") !== "true" || ROLE_RANK[role] < 4 || perm.type !== "user") {
-        return googleError(403, "The transferOwnership parameter must be enabled when the permission role is 'owner'.", "forbidden");
-      }
-      this.run("UPDATE perms SET role = 'writer' WHERE file_id = ? AND role = 'owner'", file.id);
-      this.run("UPDATE files SET owner = ? WHERE id = ?", perm.email, file.id);
-    }
+    const error = this.permissionRequestError(newRole);
+    if (error) return error;
     this.run("UPDATE perms SET role = ? WHERE file_id = ? AND id = ?", newRole, file.id, perm.id);
-    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-    this.notify(file.id, "update", ["permissions"]);
+    this.permissionsChanged(file.id);
     return json(200, select(this.permission(one(perm.id)!, origin), fields));
   }
 
-  private async permissions(request: Request, url: URL, caller: Extract<Caller, { kind: "user" }>, fileId: string, permissionId: string | null, origin: string) {
+  private async permissions(request: Request, url: URL, caller: User, fileId: string, permissionId: string | null, origin: string) {
     const { file, role } = this.access(fileId, caller);
     const method = request.method;
     const canShare = this.capabilities(file, role, caller).canShare;
     const one = (id: string) => this.one<Row>("SELECT * FROM perms WHERE file_id = ? AND id = ?", file.id, id);
     if (!permissionId && method === "GET") {
       const fields = fieldsOf(url, "kind,nextPageToken,permissions(kind,id,type,role)");
-      checkKeys(fields.get("permissions"), PERMISSION_KEYS, "permission");
+      checkKeys(fields.get("permissions"), PERMISSION_KEYS);
       return json(200, select({ kind: "drive#permissionList", permissions: this.perms(file.id).map((perm) => this.permission(perm, origin)) }, fields));
     }
     const fields = fieldsOf(url, "kind,id,type,role");
-    checkKeys(fields, PERMISSION_KEYS, "permission");
+    checkKeys(fields, PERMISSION_KEYS);
     if (!permissionId && method === "POST") {
-      return this.createPermission(request, url, { file, role, canShare, caller, origin, fields, one });
+      return this.createPermission(request, url, { file, canShare, caller, origin, fields, one });
     }
     const perm = permissionId ? one(permissionId) : null;
     if (!perm) {
@@ -2247,7 +1954,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const self = perm.type === "user" && perm.email === caller.email;
     if (method === "PATCH") {
-      return this.patchPermission(request, url, { file, role, canShare, caller, origin, fields, one }, perm);
+      return this.patchPermission(request, { file, canShare, caller, origin, fields, one }, perm);
     }
     if (method === "DELETE") {
       if (!canShare && !self) {
@@ -2257,9 +1964,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         return googleError(403, "The owner's permission can't be removed.", "cannotRemoveOwner");
       }
       this.run("DELETE FROM perms WHERE file_id = ? AND id = ?", file.id, perm.id);
-      this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-      this.notify(file.id, "update", ["permissions"]);
-      this.dropChannelsWithoutAccess(file.id);
+      this.permissionsChanged(file.id);
       return new Response(null, { status: 204 });
     }
     return googleError(404, "Not Found", "notFound");
@@ -2303,21 +2008,13 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       if (Math.max(ROLE_RANK[own?.role] ?? 0, ROLE_RANK[anyone?.role] ?? 0) < 3) {
         return json(403, { error: `${email} can't edit this file` });
       }
-      const changed = new Set<string>(["content"]);
-      if (body.name !== undefined && String(body.name) !== file.name) {
-        this.run("UPDATE files SET name = ? WHERE id = ?", String(body.name), file.id);
-        changed.add("properties");
-      }
-      if (body.appProperties) {
-        const merged = { ...JSON.parse(file.app_props || "{}") };
-        Object.entries(body.appProperties as Row).forEach(([key, value]) => {
-          if (value === null) delete merged[key];
-          else merged[key] = String(value);
-        });
-        this.run("UPDATE files SET app_props = ? WHERE id = ?", JSON.stringify(merged), file.id);
-        changed.add("properties");
+      // the same checks and writes as a files.update through the API, without the app-access rule
+      const { sets, changed } = this.updatePlan(file, { name: body.name, appProperties: body.appProperties ?? undefined }, bytes);
+      for (const [column, value] of sets) {
+        this.run(`UPDATE files SET ${column} = ? WHERE id = ?`, value, file.id);
       }
       await this.writeContent(this.file(file.id)!, bytes, String(body.mimeType || file.mime), email);
+      changed.add("content");
       this.notify(file.id, "update", [...changed]);
     } else {
       const parents = Array.isArray(body.parents) && body.parents.length ? body.parents.map(String) : [rootOf(email)];
@@ -2326,7 +2023,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         name: String(body.name || "Untitled.excalidraw"),
         mime: String(body.mimeType || "application/vnd.excalidraw+json"),
         parents,
-        appProps: body.appProperties ?? {},
+        appProps: JSON.parse(this.mergedMap({ app_props: "{}" } as FileRow, "appProperties", body.appProperties).value),
       });
       await this.writeContent(file, bytes, file.mime, email);
     }
@@ -2349,8 +2046,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       }
       this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, permIdOf(email), role, email);
     }
-    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-    this.notify(file.id, "update", ["permissions"]);
+    this.permissionsChanged(file.id);
     return json(200, this.adminFile(file, origin));
   }
 
@@ -2361,17 +2057,14 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     } else {
       this.run("DELETE FROM perms WHERE file_id = ? AND email = ? AND role != 'owner'", file.id, need("email").toLowerCase());
     }
-    this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
-    this.notify(file.id, "update", ["permissions"]);
-    this.dropChannelsWithoutAccess(file.id);
+    this.permissionsChanged(file.id);
     return json(200, this.adminFile(file, origin));
   }
 
-  private adminGrant(origin: string, path: string, need: (key: string) => string, fileOf: () => FileRow) {
+  private adminGrant(origin: string, need: (key: string) => string, fileOf: () => FileRow) {
     const file = fileOf();
     const email = this.user(need("email"));
-    if (path === "/grant") this.run("INSERT OR IGNORE INTO app_access (email, file_id) VALUES (?, ?)", email, file.id);
-    else this.run("DELETE FROM app_access WHERE email = ? AND file_id = ?", email, file.id);
+    this.run("INSERT OR IGNORE INTO app_access (email, file_id) VALUES (?, ?)", email, file.id);
     return json(200, { ok: true, appAccess: this.adminFile(file, origin).appAccess });
   }
 
@@ -2379,45 +2072,18 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const file = fileOf();
     const trash = path === "/trash";
     if (!!file.trashed !== trash) {
-      this.run("UPDATE files SET trashed = ?, version = version + 1 WHERE id = ?", trash ? 1 : 0, file.id);
-      this.notify(file.id, trash ? "trash" : "untrash");
+      this.setTrashed(file, trash);
     }
     return json(200, this.adminFile(this.file(file.id)!, origin));
   }
 
-  private adminPurgeRevisions(body: Row, fileOf: () => FileRow) {
-    const file = fileOf();
-    const keep = Math.max(1, Number(body.keep ?? 1));
-    const unkept = this.all<{ id: string }>("SELECT id FROM revisions WHERE file_id = ? AND keep = 0 AND id != ? ORDER BY seq DESC", file.id, file.head ?? "");
-    const drop = unkept.slice(Math.max(0, keep - 1));
-    drop.forEach((row) => this.run("DELETE FROM revisions WHERE file_id = ? AND id = ?", file.id, row.id));
-    this.gcBlobs();
-    return json(200, { purged: drop.map((row) => row.id) });
-  }
-
-  private adminFaults(body: Row, path: string) {
+  private adminFaults(body: Row) {
     const count = Math.max(1, Number(body.count ?? 1));
     let status: number | null = 503;
     if (body.status) status = Number(body.status);
     else if (body.delayMs) status = null;
-    this.run(
-      "INSERT INTO faults (remaining, status, reason, delay_ms, email, path, method, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      count,
-      status,
-      body.reason ?? null,
-      Number(body.delayMs ?? 0),
-      body.email ? String(body.email).toLowerCase() : null,
-      body.path ?? null,
-      body.method ? String(body.method).toUpperCase() : null,
-      body.target ?? "drive",
-    );
+    this.run("INSERT INTO faults (remaining, status, delay_ms, path) VALUES (?, ?, ?, ?)", count, status, Number(body.delayMs ?? 0), body.path ?? null);
     return json(200, { faults: this.all<Row>("SELECT * FROM faults ORDER BY id") });
-  }
-
-  private adminExpireTokens(body: Row) {
-    if (body.email) this.run("UPDATE tokens SET expires = ? WHERE email = ?", Date.now() - 1, String(body.email).toLowerCase());
-    else this.run("UPDATE tokens SET expires = ?", Date.now() - 1);
-    return json(200, { ok: true });
   }
 
   private adminLog(body: Row) {
@@ -2433,6 +2099,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const origin = this.origin(request);
     const method = request.method;
     const body: Row = method === "POST" ? await parseJson(request) : Object.fromEntries(url.searchParams);
+
     const need = (key: string) => {
       if (body[key] === undefined || body[key] === "") {
         fail(json(400, { error: `missing ${key}` }));
@@ -2443,20 +2110,6 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       const file = this.file(need("fileId"));
       return file ?? fail(json(404, { error: `no file ${body.fileId}` }));
     };
-    const inbox = /^\/inbox\/([A-Za-z0-9_.-]+)$/.exec(path);
-    if (inbox) {
-      const kind = `inbox:${inbox[1]}`;
-      if (method === "DELETE") {
-        this.run("DELETE FROM log WHERE kind = ?", kind);
-        return json(200, { ok: true });
-      }
-      if (method === "GET") {
-        return json(200, { received: this.all<Row>("SELECT at, data FROM log WHERE kind = ? ORDER BY id", kind).map((row) => ({ at: row.at, ...JSON.parse(row.data) })) });
-      }
-      const headers = Object.fromEntries([...request.headers].filter(([key]) => key.toLowerCase().startsWith("x-goog-")));
-      this.log(kind, { method, headers, body: JSON.stringify(body) === "{}" ? "" : body });
-      return new Response(null, { status: 200 });
-    }
     switch (`${method} ${path}`) {
       case "POST /reset": {
         for (const table of TABLES) {
@@ -2464,23 +2117,6 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         }
         this.seed();
         return json(200, { ok: true });
-      }
-      case "GET /users":
-        return json(200, {
-          users: this.all<{ email: string }>("SELECT email FROM users ORDER BY email").map((row) => ({
-            ...this.userInfo(row.email, origin),
-            signedIn: this.all<Row>("SELECT client_id, scope, refresh IS NOT NULL AS hasRefresh FROM grants WHERE email = ?", row.email),
-          })),
-        });
-      case "POST /users": {
-        const email = this.user(need("email"), body.name ? String(body.name) : undefined);
-        return json(200, this.userInfo(email, origin));
-      }
-      case "GET /files": {
-        const files = body.email
-          ? this.all<FileRow>("SELECT DISTINCT f.* FROM files f JOIN perms p ON p.file_id = f.id WHERE p.email = ? ORDER BY f.created", String(body.email).toLowerCase())
-          : this.all<FileRow>("SELECT * FROM files ORDER BY created");
-        return json(200, { files: files.map((file) => this.adminFile(file, origin)) });
       }
       case "GET /file": {
         const file = fileOf();
@@ -2490,8 +2126,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
           channels: this.all<Row>("SELECT * FROM channels WHERE file_id = ?", file.id),
         });
       }
-      case "POST /grant":
-      case "POST /ungrant": return this.adminGrant(origin, path, need, fileOf);
+      case "POST /grant": return this.adminGrant(origin, need, fileOf);
       case "POST /write": return this.adminWrite(body, origin, need, fileOf);
       case "POST /share": return this.adminShare(body, origin, need, fileOf);
       case "POST /unshare": return this.adminUnshare(body, origin, need, fileOf);
@@ -2514,18 +2149,19 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
           })),
         });
       }
-      case "POST /purge-revisions": return this.adminPurgeRevisions(body, fileOf);
-      case "POST /expire-tokens": return this.adminExpireTokens(body);
       case "POST /revoke": {
         this.revokeGrant(need("email").toLowerCase());
         return json(200, { ok: true });
       }
-      case "POST /faults": return this.adminFaults(body, path);
+      case "POST /faults": return this.adminFaults(body);
       case "GET /faults":
         return json(200, { faults: this.all<Row>("SELECT * FROM faults ORDER BY id") });
-      case "DELETE /faults":
+      case "DELETE /faults": {
+        // faults a test set up that never fired usually mean it didn't test what it meant to
+        const unused = this.all<Row>("SELECT id, path, remaining FROM faults WHERE used = 0 ORDER BY id");
         this.run("DELETE FROM faults");
-        return json(200, { ok: true });
+        return json(200, { ok: true, ...(unused.length ? { unused, hint: "these faults never matched a call" } : {}) });
+      }
       case "GET /log": return this.adminLog(body);
       case "GET /channels":
         return json(200, { channels: this.all<Row>("SELECT * FROM channels ORDER BY expiration") });

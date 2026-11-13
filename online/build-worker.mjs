@@ -4,24 +4,20 @@
 //
 // Dependencies (MCP SDK, zod) come from the excalidraw-mcp checkout, like for
 // the local MCP server (scenes-mcp/node_modules links there).
+//
+// `node build-worker.mjs --production` (npm run deploy) leaves the fake Google
+// and its admin API out of the bundle; without it (wrangler dev, the e2e
+// tests) they are in, and still answer only with FAKE_GOOGLE=1 and a local
+// DEV_ORIGIN.
 import { build } from "esbuild";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { kurviqBuild } from "./build-info.mjs";
 import { thirdPartyNotices } from "./licenses.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-
-/** the commit a build is made from (Actions: GITHUB_SHA), the same as the app's (scenes-plugin/vite.config.mts) */
-const kurviqBuild = () => {
-  try {
-    return (process.env.GITHUB_SHA || execSync("git rev-parse HEAD", { encoding: "utf8" })).trim().slice(0, 12); // NOSONAR S4036: local build tool runs a constant git command in the developer or CI environment
-  } catch {
-    return "";
-  }
-};
 
 const result = await build({
   entryPoints: [path.join(HERE, "worker/index.ts")],
@@ -44,6 +40,8 @@ const result = await build({
     "import.meta.dirname": JSON.stringify("/bundle"),
     // the commit this build is made from: agent commands carry it, an older tab notices
     __KURVIQ_BUILD__: JSON.stringify(kurviqBuild()),
+    // the fake Google (worker/fakeGoogle.ts) and dev hooks: not in production bundles
+    __KURVIQ_DEV__: JSON.stringify(!process.argv.includes("--production")),
   },
   loader: { ".md": "text", ".txt": "text", ".html": "text" },
   minify: process.env.KURVIQ_DEBUG !== "1",

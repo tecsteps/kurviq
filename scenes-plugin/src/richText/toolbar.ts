@@ -6,10 +6,10 @@ import { FONT_FAMILY } from "@excalidraw/common";
 import type { RichEditorApi } from "./editor";
 import { parseFontSize } from "../fontSize";
 import { MAX_TIP, safeLink, safeTip } from "./model";
+import { SIZE_STEPS, isMac } from "./platform";
 
 import type { ParaKind } from "./model";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? "⌘" : "Ctrl+";
 const SHIFT = isMac ? "⇧" : "Shift+";
 
@@ -37,7 +37,7 @@ const ICONS = {
 const TEXT_COLORS = ["#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00", "#9c36b5", "#0c8599", "#868e96", "#ffffff"];
 const HIGHLIGHTS = ["#ffec99", "#ffc9c9", "#b2f2bb", "#a5d8ff", "#d0bfff", "#ffd8a8", "#e9ecef"];
 const LINE_HEIGHTS: Array<[string, number]> = [["Single", 1], ["1.15", 1.15], ["1.25 (default)", 1.25], ["1.5", 1.5], ["Double", 2]];
-const SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96];
+const SIZES = SIZE_STEPS.filter((size) => size >= 10);
 
 /** Excalidraw's fonts as its font picker lists them, then the fonts added in Kurviq (registered in FONT_FAMILY, see ../fonts.ts) */
 const BUILT_IN_FONTS = ["Excalifont", "Nunito", "Lilita One", "Comic Shanns", "Virgil", "Helvetica", "Cascadia"];

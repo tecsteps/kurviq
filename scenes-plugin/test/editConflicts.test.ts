@@ -114,6 +114,24 @@ describe("findConflicts", () => {
     expect(findConflicts({ base: [box, label], current: [box, now], updates: [{ id: "box", format: { match: "world", italic: true } }] })[0].properties).toEqual(["label.text"]);
   });
 
+  it("a property that already has the value the update sets does not clash (a retry, or the same change)", () => {
+    const now = changed(t, { x: 40, strokeColor: "#1565c0", text: "New words", originalText: "New words", customData: { slides: { skip: true } } });
+    const retry = { id: "t", x: 40, strokeColor: "#1565c0", text: "New words", customData: { slides: { skip: true } } };
+    expect(findConflicts({ base: [t], current: [now], updates: [retry] })).toEqual([]);
+    // slide-relative x / y count from the element's slide
+    const frame = el("f", { type: "frame", x: 1000, y: 0 });
+    const onSlide = el("s", { frameId: "f", x: 1010, y: 20 });
+    const moved = changed(onSlide, { x: 1040 });
+    expect(findConflicts({ base: [frame, onSlide], current: [frame, moved], updates: [{ id: "s", slide: "f", x: 40 }] })).toEqual([]);
+    expect(findConflicts({ base: [frame, onSlide], current: [frame, moved], updates: [{ id: "s", slide: "f", x: 50 }] })[0].properties).toEqual(["position"]);
+  });
+
+  it("empty lists and missing fields are the same (as for userChanges)", () => {
+    const line = el("l", { type: "line", groupIds: [] });
+    const now = changed(line, { groupIds: undefined, strokeColor: "#e03131" });
+    expect(findConflicts({ base: [line], current: [now], updates: [{ id: "l", groupIds: ["g"] }] })).toEqual([]);
+  });
+
   it("elements new since the agent's version, or unchanged ones, never clash", () => {
     const fresh = el("n");
     expect(findConflicts({ base: [t], current: [t, fresh], updates: [{ id: "n", x: 3 }, { id: "t", x: 3, text: "y" }] })).toEqual([]);
@@ -138,5 +156,14 @@ describe("resolveConflicts", () => {
     const result = resolveConflicts({ base: [a, b], current, updates, onConflict: "overwrite" });
     expect(result.updates).toEqual(updates);
     expect(result.conflicts[0].resolution).toBe("overwritten");
+  });
+
+  it("upsert: an add replacing an element the user changed is a conflict; others pass", () => {
+    const adds = [el("a", { x: 9 }), el("b", { x: 9 }), el("c")];
+    const result = resolveConflicts({ base: [a, b], current, updates: [], adds, upsert: true });
+    expect(result.adds).toEqual([adds[1], adds[2]]);
+    expect(result.conflicts).toEqual([expect.objectContaining({ id: "a", properties: ["replaced"], resolution: "rejected" })]);
+    expect(resolveConflicts({ base: [a, b], current, updates: [], adds }).adds).toEqual(adds);
+    expect(resolveConflicts({ base: [a, b], current, updates: [], adds, upsert: true, onConflict: "overwrite" }).adds).toEqual(adds);
   });
 });

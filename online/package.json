@@ -6,7 +6,7 @@
   "scripts": {
     "build:worker": "node build-worker.mjs",
     "dev": "node dev-vars.mjs && node build-worker.mjs && wrangler dev",
-    "deploy": "node build-worker.mjs && node with-env.mjs npx wrangler deploy",
+    "deploy": "node check-deploy.mjs && node build-worker.mjs --production && node with-env.mjs npx wrangler deploy",
     "secrets": "node secrets.mjs"
   },
   "devDependencies": {

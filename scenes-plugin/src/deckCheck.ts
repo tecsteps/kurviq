@@ -13,7 +13,8 @@ import {
 import { Fonts } from "@excalidraw/excalidraw";
 
 import { withTemplate } from "./cowork";
-import { elementStep, getSlides, getTemplate, getTransition, slideData, slideTitle } from "./slides";
+import { loadImage as decodeImage } from "./pdfExport";
+import { PLACEHOLDER_RE, SLIDE_HEIGHT, SLIDE_WIDTH, elementStep, getSlides, getTemplate, getTransition, slideData, slideTitle } from "./slides";
 
 import { LINK_COLOR } from "./richText/layout";
 import { richDocOf } from "./richText/model";
@@ -86,13 +87,7 @@ const loadImage = (fileId: string, dataURL: string) => {
   if (!images.has(fileId)) {
     images.set(
       fileId,
-      new Promise((resolve) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => resolve(null);
-        setTimeout(() => resolve(null), 10_000);
-        image.src = dataURL;
-      }),
+      decodeImage(dataURL).catch(() => null),
     );
     while (images.size > 60) {
       images.delete(images.keys().next().value!);
@@ -377,7 +372,7 @@ export const checkDeck = async (
       if (cover) {
         add("hidden", `text ${preview(el.text)} (${el.id}) is covered by ${cover.type} ${cover.id} drawn on top of it`, el.id);
       }
-      if (!slideData(el).copyOf && /\{(page|total|title|deck|date)\}/.test(el.text)) {
+      if (!slideData(el).copyOf && PLACEHOLDER_RE.test(el.text)) {
         add("placeholder", `text ${preview(el.text)} uses a placeholder: those are only filled in template elements`, el.id);
       }
     };
@@ -433,8 +428,8 @@ export const checkDeck = async (
       if (!data.notes?.trim()) {
         add("notes", "no speaker notes");
       }
-      if (slide.width !== 1920 || slide.height !== 1080) {
-        add("size", `slide is ${round(slide.width)}×${round(slide.height)}, not 1920×1080 (16:9)`);
+      if (slide.width !== SLIDE_WIDTH || slide.height !== SLIDE_HEIGHT) {
+        add("size", `slide is ${round(slide.width)}×${round(slide.height)}, not ${SLIDE_WIDTH}×${SLIDE_HEIGHT} (16:9)`);
       }
       for (const other of frames) {
         if (other.id !== slide.id && area(intersection(frameBox, boxOf(other))) > 0) {

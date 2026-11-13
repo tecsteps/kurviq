@@ -1,11 +1,11 @@
 // One tooltip look everywhere in Kurviq's own UI: a `title` on any of our
-// controls (panels, the presenter's controls, the text toolbar …) shows as
+// controls (panels, the presentation's controls, the text toolbar …) shows as
 // the same dark tooltip as QuickTip (.kurviq-tip in scenes.scss), right away,
 // instead of the browser's own grey one a second later. Excalidraw's own
 // controls keep theirs.
 
-/** our UI: class names with our prefixes */
-const OURS = ["scenes-", "slides-", "kq-", "rt-", "public-scene", "pv"]
+/** our UI: class names with our prefixes (in this document: the presenter window keeps the browser's tooltips) */
+const OURS = ["scenes-", "slides-", "kq-", "rt-", "public-scene"]
   .map((prefix) => `[class^="${prefix}"], [class*=" ${prefix}"]`)
   .join(", ");
 
@@ -30,14 +30,14 @@ const show = (el: HTMLElement) => {
   const x = rect.left + rect.width / 2;
   // kept on screen; the arrow still points at the control
   const left = Math.min(Math.max(x, 140), window.innerWidth - 140);
-  tip = el.ownerDocument.createElement("div");
+  tip = document.createElement("div");
   tip.className = `kurviq-tip${above ? " kurviq-tip--above" : ""}`;
   tip.setAttribute("role", "tooltip");
   tip.textContent = text;
   tip.style.left = `${left}px`;
   tip.style.top = `${above ? rect.top - 8 : rect.bottom + 8}px`;
   tip.style.setProperty("--tip-arrow", `calc(50% + ${x - left}px)`);
-  el.ownerDocument.body.appendChild(tip);
+  document.body.appendChild(tip);
 };
 
 let installed = false;

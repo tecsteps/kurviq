@@ -1,30 +1,15 @@
 // Runs a command (wrangler) with CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
 // from the project's .env / .env.local, without putting them on the command line.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const cloudflareSetting = (line) => {
-  const match = /^\s*(CLOUDFLARE_\w+)\s*=/.exec(line);
-  if (!match) return null;
-  const value = line.slice(match[0].length).trim();
-  // Values are single-line, with whitespace allowed around them.
-  if (/[\r\n\u2028\u2029]/.test(value)) return null;
-  return { name: match[1], value };
-};
+import { readEnvFiles } from "../scripts/env.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
+// only the Cloudflare settings, and the files win over the shell here (the
+// token in .env is the one meant for this project)
 const env = { ...process.env };
-for (const file of [".env", ".env.local"]) {
-  const full = path.join(HERE, "..", file);
-  if (existsSync(full)) {
-    for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const setting = cloudflareSetting(line);
-      if (setting?.value) {
-        env[setting.name] = setting.value.replace(/^(['"])(.*)\1$/, "$2");
-      }
-    }
+for (const [name, value] of Object.entries(readEnvFiles())) {
+  if (name.startsWith("CLOUDFLARE_") && value) {
+    env[name] = value;
   }
 }
 const [command, ...args] = process.argv.slice(2);

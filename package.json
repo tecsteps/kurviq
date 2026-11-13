@@ -9,6 +9,8 @@
     "start:server": "node scenes-server/server.mjs",
     "start:app": "cd excalidraw/excalidraw-app && ../node_modules/.bin/vite --config ../../scenes-plugin/vite.config.mts",
     "typecheck": "excalidraw/node_modules/.bin/tsc -p scenes-plugin/tsconfig.json",
+    "typecheck:ci": "node scripts/typecheck.mjs",
+    "test": "excalidraw/node_modules/.bin/vitest run --config scenes-plugin/test/vitest.config.mts",
     "setup:domain": "herd proxy draw http://localhost:3001",
     "build:online": "cd excalidraw/excalidraw-app && SCENES_TARGET=online ../node_modules/.bin/vite build --config ../../scenes-plugin/vite.config.mts",
     "dev:online": "npm run build:online && cd online && npm run dev",

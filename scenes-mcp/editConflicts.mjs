@@ -1,49 +1,18 @@
 // Field-level conflicts of an agent's edit: which `update` entries set a
-// property the user changed since the agent's version (basedOn). Element-level
+// property the user changed since the agent's version (basedOn), and which
+// `upsert` adds would replace an element the user changed. Element-level
 // merging protects the user's other elements; this protects the same property
 // of the same element (e.g. the user re-worded a text the agent recolors by
 // resending its markdown). Pure: used by edit_scene / edit_open_scene before
 // the edit is sent.
 
-import { changedFields } from "./elementContent.mjs";
+import { isPlainObject } from "./agentEdits.mjs";
+import { changedFields, comparable, sameContent } from "./elementContent.mjs";
 import { paraText, richDocOf } from "./richDoc.mjs";
 import { markdownOfElement } from "./richText.mjs";
 
-const isPlainObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
-
-/** comparable form: null and missing are the same, numbers rounded, keys sorted */
-const canon = (value) => {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  if (typeof value === "number") {
-    return Math.round(value * 100) / 100;
-  }
-  if (Array.isArray(value)) {
-    return value.map(canon);
-  }
-  if (isPlainObject(value)) {
-    const out = {};
-    for (const key of Object.keys(value).sort((a, b) => {
-      if (a < b) {
-        return -1;
-      }
-      if (a > b) {
-        return 1;
-      }
-      return 0;
-    })) {
-      const field = canon(value[key]);
-      if (field !== null) {
-        out[key] = field;
-      }
-    }
-    return out;
-  }
-  return value;
-};
-
-const differs = (a, b) => JSON.stringify(canon(a)) !== JSON.stringify(canon(b));
+// compared as the merge and userChanges compare (null, missing and empty lists are the same)
+const differs = (a, b) => JSON.stringify(comparable(a)) !== JSON.stringify(comparable(b));
 
 const MAX_VALUE = 2000;
 /** a value for the report (long texts cut) */
@@ -62,7 +31,7 @@ const textNow = (el) => {
 };
 
 /** the paragraphs' text without list markers (what `format.match` is searched in) */
-export const formatText = (el) => {
+const formatText = (el) => {
   const doc = el?.type === "text" ? richDocOf(el, plainText(el)) : null;
   return doc ? doc.p.map(paraText).join("\n") : plainText(el);
 };
@@ -99,93 +68,115 @@ const SPECIAL = new Set([
   "height",
 ]);
 
+const same = (a, b) => !differs(a, b);
+
+/** every key of `props` in `keys` that is set already has the value `value(key)` */
+const setsAlready = (props, keys, value) => keys.every((key) => props[key] === undefined || same(props[key], value(key)));
+
+/** the text an update sets is already the element's (e.g. a retry of an edit that landed) */
+const textSettled = (props, current) =>
+  setsAlready(props, ["text", "originalText"], () => plainText(current)) &&
+  (props.markdown === undefined || same(props.markdown, markdownOfElement(current) ?? plainText(current))) &&
+  (props.customData?.rich === undefined || same(props.customData.rich, current.customData?.rich));
+
+const pick = (props, keys) => Object.fromEntries(keys.filter((key) => props[key] !== undefined).map((key) => [key, props[key]]));
+
+const textClash = (base, current, props) => {
+  const textSet = props.text !== undefined || props.markdown !== undefined || props.originalText !== undefined || props.customData?.rich !== undefined;
+  if (!textSet || !textChanged(base, current) || textSettled(props, current)) {
+    return [];
+  }
+  const yours = pick(props, ["markdown", "text", "originalText"]);
+  for (const key of Object.keys(yours)) {
+    yours[key] = shown(yours[key]);
+  }
+  return [{ property: "text", yours, theirs: textNow(current) }];
+};
+
+/** x / y as the update means them: slide-relative when it names a slide */
+const positionNow = (current, props, frames) => {
+  const frame = props.slide === undefined ? null : frames.get(current.frameId);
+  return { x: current.x - (frame?.x ?? 0), y: current.y - (frame?.y ?? 0) };
+};
+
+/** x / y (also slide-relative): a move */
+const positionClash = (base, current, props, frames) => {
+  if (props.x === undefined && props.y === undefined) {
+    return [];
+  }
+  if (same(base.x, current.x) && same(base.y, current.y)) {
+    return [];
+  }
+  const now = positionNow(current, props, frames);
+  if (setsAlready(props, ["x", "y"], (key) => now[key])) {
+    return [];
+  }
+  return [{ property: "position", yours: pick(props, ["x", "y", "slide"]), theirs: { x: current.x, y: current.y, ...(current.frameId ? { frameId: current.frameId } : {}) } }];
+};
+
+/** onto another slide */
+const slideClash = (base, current, props) => {
+  if ((props.slide === undefined && props.frameId === undefined) || same(base.frameId, current.frameId)) {
+    return [];
+  }
+  const wanted = props.slide === undefined ? props.frameId : props.slide;
+  if (wanted === current.frameId) {
+    return [];
+  }
+  return [{ property: "slide", yours: props.slide === undefined ? { frameId: props.frameId } : { slide: props.slide }, theirs: { frameId: current.frameId ?? null } }];
+};
+
+/** size; a text that measures itself only changed size because its words did */
+const sizeClash = (base, current, props) => {
+  if (props.width === undefined && props.height === undefined) {
+    return [];
+  }
+  const autoSized = current.type === "text" && current.autoResize !== false && textChanged(base, current);
+  const resized = differs(base.width, current.width) || differs(base.height, current.height);
+  if (autoSized || !resized || setsAlready(props, ["width", "height"], (key) => current[key])) {
+    return [];
+  }
+  return [{ property: "size", yours: pick(props, ["width", "height"]), theirs: { width: current.width, height: current.height } }];
+};
+
+/** one key of customData: an object compared key by key, anything else as a whole */
+const customDataKeyClashes = (key, value, was, now) => {
+  if (isPlainObject(value) && (isPlainObject(was) || isPlainObject(now))) {
+    return Object.entries(value)
+      .filter(([inner, innerValue]) => differs(was?.[inner], now?.[inner]) && differs(innerValue, now?.[inner]))
+      .map(([inner, innerValue]) => ({ property: `customData.${key}.${inner}`, yours: innerValue, theirs: now?.[inner] ?? null }));
+  }
+  return differs(was, now) && differs(value, now) ? [{ property: `customData.${key}`, yours: value, theirs: now ?? null }] : [];
+};
+
+/** customData merges: compared key by key (one level down, like the merge) */
+const customDataClashes = (base, current, props) => {
+  if (!isPlainObject(props.customData)) {
+    return [];
+  }
+  return Object.entries(props.customData)
+    .filter(([key]) => key !== "rich")
+    .flatMap(([key, value]) => customDataKeyClashes(key, value, base.customData?.[key], current.customData?.[key]));
+};
+
+/** everything else by name (strokeColor, backgroundColor, fontSize, fontFamily, points, …) */
+const namedClashes = (base, current, props) =>
+  Object.entries(props)
+    .filter(([key, value]) => !SPECIAL.has(key) && differs(base[key], current[key]) && differs(value, current[key]))
+    .map(([key, value]) => ({ property: key, yours: value, theirs: current[key] ?? null }));
+
 /**
  * The properties of `props` (an update, or a shape's label spec) that clash
- * with what the user changed on this element (base → current).
+ * with what the user changed on this element (base → current). A property
+ * the element already has the value of does not clash (the user made the
+ * same change, or this is a retry of an edit that already landed).
  */
-const clashesOn = (base, current, props, { label = false } = {}) => {
-  const clashes = [];
-  const add = (property, yours, theirs) => clashes.push({ property, yours, theirs });
-  const checkText = () => {
-    const textSet =
-      props.text !== undefined || props.markdown !== undefined || props.originalText !== undefined || props.customData?.rich !== undefined;
-    if (textSet && textChanged(base, current)) {
-      const yours = {};
-      for (const key of ["markdown", "text", "originalText"]) {
-        if (props[key] !== undefined) {
-          yours[key] = shown(props[key]);
-        }
-      }
-      add("text", yours, textNow(current));
-    }
-  };
-  checkText();
-  if (!label) {
-    const checkPosition = () => {
-      // x / y (also slide-relative): a move
-      if ((props.x !== undefined || props.y !== undefined) && (differs(base.x, current.x) || differs(base.y, current.y))) {
-        const yours = {};
-        for (const key of ["x", "y", "slide"]) {
-          if (props[key] !== undefined) {
-            yours[key] = props[key];
-          }
-        }
-        add("position", yours, { x: current.x, y: current.y, ...(current.frameId ? { frameId: current.frameId } : {}) });
-      }
-    };
-    checkPosition();
-    const checkSlide = () => {
-      // onto another slide
-      if ((props.slide !== undefined || props.frameId !== undefined) && differs(base.frameId, current.frameId)) {
-        add("slide", props.slide !== undefined ? { slide: props.slide } : { frameId: props.frameId }, { frameId: current.frameId ?? null });
-      }
-    };
-    checkSlide();
-    const checkSize = () => {
-      // size; a text that measures itself only changed size because its words did
-      const autoSized = current.type === "text" && current.autoResize !== false && textChanged(base, current);
-      if ((props.width !== undefined || props.height !== undefined) && !autoSized && (differs(base.width, current.width) || differs(base.height, current.height))) {
-        const yours = {};
-        for (const key of ["width", "height"]) {
-          if (props[key] !== undefined) {
-            yours[key] = props[key];
-          }
-        }
-        add("size", yours, { width: current.width, height: current.height });
-      }
-    };
-    checkSize();
-  }
-  const checkCustomData = (key, value) => {
-    const was = base.customData?.[key];
-    const now = current.customData?.[key];
-    if (isPlainObject(value) && (isPlainObject(was) || isPlainObject(now))) {
-      for (const [inner, innerValue] of Object.entries(value)) {
-        if (differs(was?.[inner], now?.[inner])) {
-          add(`customData.${key}.${inner}`, innerValue, now?.[inner] ?? null);
-        }
-      }
-    } else if (differs(was, now)) {
-      add(`customData.${key}`, value, now ?? null);
-    }
-  };
-  // customData merges: compared key by key (one level down, like the merge)
-  if (isPlainObject(props.customData)) {
-    for (const [key, value] of Object.entries(props.customData)) {
-      if (key === "rich") {
-        continue;
-      }
-      checkCustomData(key, value);
-    }
-  }
-  // everything else by name (strokeColor, backgroundColor, fontSize, fontFamily, points, …)
-  for (const [key, value] of Object.entries(props)) {
-    if (!SPECIAL.has(key) && differs(base[key], current[key])) {
-      add(key, value, current[key] ?? null);
-    }
-  }
-  return clashes;
-};
+const clashesOn = (base, current, props, { label = false, frames = new Map() } = {}) => [
+  ...textClash(base, current, props),
+  ...(label ? [] : [...positionClash(base, current, props, frames), ...slideClash(base, current, props), ...sizeClash(base, current, props)]),
+  ...customDataClashes(base, current, props),
+  ...namedClashes(base, current, props),
+];
 
 const formatSpecs = (format) => {
   if (Array.isArray(format)) {
@@ -224,7 +215,7 @@ export const findConflicts = ({ base, current, updates }) => {
       conflicts.push({ index, id, properties: ["deleted"], yours: props, theirs: null, reason: "the user deleted this element" });
       return;
     }
-    const clashes = clashesOn(was, is, props);
+    const clashes = clashesOn(was, is, props, { frames: now });
 
     // a shape's label (`label: { text | markdown, fontSize, … }`) is its bound text element
     let labelSpec = null;
@@ -287,18 +278,50 @@ export const findConflicts = ({ base, current, updates }) => {
 };
 
 /**
- * Splits an edit's updates by the conflicts: what is sent, and the conflicts
- * as reported (with their resolution).
+ * Adds with `upsert` that replace an element the user changed since the
+ * agent's version: the whole element would be overwritten, so each one is a
+ * conflict ({ index, id, properties: ["replaced"], … }; `index` = position in `adds`).
  */
-export const resolveConflicts = ({ base, current, updates, onConflict = "reject" }) => {
+const upsertConflicts = ({ base, current, adds }) => {
+  const before = new Map(base.map((el) => [el.id, el]));
+  const now = new Map(current.map((el) => [el.id, el]));
+  const conflicts = [];
+  (adds || []).forEach((add, index) => {
+    const was = before.get(add?.id);
+    const is = now.get(add?.id);
+    if (was && is && !sameContent(was, is)) {
+      conflicts.push({
+        index,
+        id: add.id,
+        properties: ["replaced"],
+        yours: { replaced: add },
+        theirs: { replaced: is },
+        userChanged: changedFields(was, is),
+        reason: "upsert replaces the whole element, which the user changed",
+      });
+    }
+  });
+  return conflicts;
+};
+
+const resolution = (onConflict) => (onConflict === "overwrite" ? "overwritten" : "rejected");
+
+/**
+ * Splits an edit's updates (and, with `upsert`, its adds that replace
+ * existing elements) by the conflicts: what is sent, and the conflicts as
+ * reported (with their resolution).
+ */
+export const resolveConflicts = ({ base, current, updates, adds, upsert = false, onConflict = "reject" }) => {
   const found = findConflicts({ base, current, updates });
-  const rejected = new Set(onConflict === "overwrite" ? [] : found.map((c) => c.index));
+  const replaced = upsert ? upsertConflicts({ base, current, adds }) : [];
+  const keep = (list, conflicts) => {
+    const rejected = new Set(onConflict === "overwrite" ? [] : conflicts.map((c) => c.index));
+    return (list || []).filter((_, index) => !rejected.has(index));
+  };
   return {
-    updates: (updates || []).filter((_, index) => !rejected.has(index)),
-    conflicts: found.map(({ index: _index, ...conflict }) => ({
-      ...conflict,
-      resolution: onConflict === "overwrite" ? "overwritten" : "rejected",
-    })),
+    updates: keep(updates, found),
+    adds: keep(adds, replaced),
+    conflicts: [...found, ...replaced].map(({ index: _index, ...conflict }) => ({ ...conflict, resolution: resolution(onConflict) })),
   };
 };
 

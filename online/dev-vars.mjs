@@ -6,19 +6,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readEnvFiles } from "../scripts/env.mjs";
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const env = {};
-for (const file of [".env", ".env.local"]) {
-  const full = path.join(HERE, "..", file);
-  if (existsSync(full)) {
-    for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: trusted local development configuration lines, not remote input
-      if (match) {
-        env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
-      }
-    }
-  }
-}
+const env = readEnvFiles();
 const target = path.join(HERE, ".dev.vars");
 const old = existsSync(target) ? readFileSync(target, "utf8") : "";
 const cookieKey = old.match(/^COOKIE_KEY=(.+)$/m)?.[1] || randomBytes(32).toString("base64");

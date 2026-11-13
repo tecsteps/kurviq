@@ -10,8 +10,10 @@ import { createPortal } from "react-dom";
 import clsx from "clsx";
 
 import { PRESENTING_KEY, deck } from "./deck";
+import { createStore } from "./externalStore";
 import { notesHtml } from "./notes";
-import { elementStep, getSlides, getTransition, slideData } from "./slides";
+import paragraphCss from "./richText/paragraphs.scss?inline";
+import { elementStep, getSlides, getTransition, slideData, slideSteps } from "./slides";
 
 import type { Frame } from "./slides";
 import type { AppState } from "@excalidraw/excalidraw/types";
@@ -53,7 +55,6 @@ class Presenter {
     presenterOpen: false,
     moving: false,
   };
-  private readonly listeners = new Set<() => void>();
   private saved: Partial<AppState> | null = null;
   private wasFullscreen = false;
   private moveTimer = 0;
@@ -64,16 +65,12 @@ class Presenter {
   private shift: Map<string, { x: number; y: number }> | null = null;
   presenterWindow: Window | null = null;
 
-  readonly subscribe = (listener: () => void) => {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  };
+  private readonly store = createStore(this.state);
+  readonly subscribe = this.store.subscribe;
   getState = () => this.state;
   private set(patch: Partial<PresentState>) {
     this.state = { ...this.state, ...patch };
-    this.listeners.forEach((listener) => listener());
+    this.store.set(this.state);
   }
 
   private api() {
@@ -90,16 +87,16 @@ class Presenter {
   }
 
   stepsOf(frame: Frame) {
-    let max = 0;
-    for (const el of this.api().getSceneElements()) {
-      if (el.frameId === frame.id) {
-        max = Math.max(max, slideData(el).step ?? 0);
-      }
-    }
-    return max;
+    return slideSteps(this.api().getSceneElements()).get(frame.id) ?? 0;
   }
 
+  /** the timers start() sets: cleared by stop(), so nothing of a presentation acts after it */
+  private startTimers: number[] = [];
+
   start = (fromSlideId?: string) => {
+    if (this.state.active) {
+      return; // already presenting: `saved` keeps the editor's state from before
+    }
     const api = this.api();
     const slides = this.shown();
     if (!deck.getState().isPresentation || !slides.length) {
@@ -145,8 +142,10 @@ class Presenter {
     window.addEventListener("resize", this.onResize);
     document.addEventListener("fullscreenchange", this.onFullscreen);
     // the viewport resizes with fullscreen: show the slide once that settled
-    setTimeout(() => this.show({ animate: false }), 150);
-    setTimeout(() => this.setLaser(this.state.laser), 200);
+    this.startTimers = [
+      window.setTimeout(() => this.show({ animate: false }), 150),
+      window.setTimeout(() => this.setLaser(this.state.laser), 200),
+    ];
   };
 
   stop = () => {
@@ -159,6 +158,9 @@ class Presenter {
     document.removeEventListener("fullscreenchange", this.onFullscreen);
     cancelAnimationFrame(this.revealFrame);
     clearTimeout(this.moveTimer);
+    clearTimeout(this.resizeTimer);
+    this.startTimers.forEach((timer) => clearTimeout(timer));
+    this.startTimers = [];
     this.shift = null;
     this.onSlide = null;
     api.setElementRenderOverrides(null);
@@ -401,7 +403,8 @@ class Presenter {
   }
 
   onKey = (event: KeyboardEvent) => {
-    if (!this.state.active) {
+    // ⌘P, ⌘L, Ctrl+1 … are the browser's (print, address bar, tabs), not the presentation's
+    if (!this.state.active || event.metaKey || event.ctrlKey || event.altKey) {
       return;
     }
     const key = event.key;
@@ -457,12 +460,17 @@ const useSlideRect = (active: boolean, index: number) => {
     if (!active) {
       return;
     }
+    // nothing is edited while presenting: the slide is looked up once, and each frame only
+    // checks whether the camera moved (the glide between slides animates it)
+    const frame = presenter.shown()[index];
     let frameId = 0;
+    let camera = "";
     const loop = () => {
       const api = deck.getApi();
-      const frame = presenter.shown()[index];
-      if (api && frame) {
-        const appState = api.getAppState();
+      const appState = api?.getAppState();
+      const now = appState ? `${appState.scrollX},${appState.scrollY},${appState.zoom.value},${appState.width},${appState.height},${appState.offsetLeft},${appState.offsetTop}` : "";
+      if (appState && frame && now !== camera) {
+        camera = now;
         const a = sceneCoordsToViewportCoords({ sceneX: frame.x, sceneY: frame.y }, appState);
         const b = sceneCoordsToViewportCoords({ sceneX: frame.x + frame.width, sceneY: frame.y + frame.height }, appState);
         setRect((prev) =>
@@ -673,12 +681,10 @@ const PRESENTER_CSS = `
   .pv__notes { flex: 1; overflow: auto; font-size: 20px; line-height: 1.45; white-space: pre-wrap; }
   .pv__notes em { color: #9a9ab0; font-size: 15px; }
   .pv__notes.rt-editor { white-space: normal; }
-  .rt-p { position: relative; white-space: pre-wrap; }
-  .rt-p[data-m]::before { content: attr(data-m); position: absolute; left: 0; width: calc(var(--rt-indent) - 0.35em); text-align: right; white-space: pre; }
-  .rt-p[data-k="todo"]::before { content: ""; left: calc(var(--rt-indent) - 1.07em); width: 0.72em; height: 0.72em; top: calc(0.5lh - 0.36em); box-sizing: border-box; border: max(1px, 0.07em) solid currentColor; border-radius: 0.13em; }
-  .rt-p[data-k="todo"][data-x]::after { content: ""; position: absolute; left: calc(var(--rt-indent) - 0.82em); top: calc(0.5lh - 0.26em); width: 0.2em; height: 0.38em; box-sizing: border-box; border: solid currentColor; border-width: 0 0.09em 0.09em 0; transform: rotate(45deg); }
+  .rt-p { white-space: pre-wrap; }
+  ${paragraphCss}
   .pv__buttons { display: flex; gap: 8px; }
   .pv__buttons button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #3a3a46; background: #222229; color: inherit; font: inherit; cursor: pointer; }
   .pv__buttons button:hover { background: #2d2d36; }
 `;
-(window as any).__presenter = presenter;
+

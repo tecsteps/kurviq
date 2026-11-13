@@ -1,4 +1,4 @@
-// What a scene name may be (stored as scenes/<name>.excalidraw): letters,
+// What a scene name may be (stored as <name>.excalidraw in Google Drive): letters,
 // numbers, spaces and _ . ( ) -, up to 100 characters, no "..". The one rule
 // for the app, the local server, the Worker and the MCP tools.
 

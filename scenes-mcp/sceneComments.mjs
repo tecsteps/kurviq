@@ -14,6 +14,8 @@
 // never the address itself: the file can be read by everyone it is shared
 // with, and with "anyone with the link" by anyone.
 
+import { withTopLevelField } from "./sceneJson.mjs";
+
 export const MAX_COMMENTS = 2000;
 export const MAX_TEXT = 5000;
 export const MAX_NAME = 100;
@@ -243,11 +245,7 @@ export const sha256Fallback = sha256;
 /** a scene's JSON (as written by Excalidraw: ends with "}") plus its comments; no comments: unchanged */
 export const withComments = (json, comments) => {
   const list = commentsOf(comments);
-  if (!list.length || !json.trimEnd().endsWith("}")) {
-    return json;
-  }
-  const trimmed = json.trimEnd();
-  return `${trimmed.slice(0, trimmed.lastIndexOf("}")).trimEnd()},\n  "kurviqComments": ${JSON.stringify(list)}\n}`;
+  return list.length ? withTopLevelField(json, "kurviqComments", list) : json;
 };
 
 /**
@@ -271,12 +269,24 @@ export const commenterRefusal = (before, after, key) => {
   if (JSON.stringify(before.pin ?? null) !== JSON.stringify(after.pin ?? null) && before.by.key !== key) {
     return "only the author moves a pin";
   }
-  const ownChange = before.text !== after.text || !!before.gone !== !!after.gone;
+  const ownChange =
+    before.text !== after.text ||
+    !!before.gone !== !!after.gone ||
+    before.by.name !== after.by.name ||
+    !!before.by.agent !== !!after.by.agent ||
+    (before.edited ?? null) !== (after.edited ?? null);
   if (ownChange && before.by.key !== key) {
-    return "only the author edits or deletes a comment";
+    return "only the author edits or deletes a comment (its text, name, agent mark and edit time)";
   }
   return null;
 };
+
+/**
+ * The `u` of a change to a comment: now, but always after the version it
+ * changes (merges keep the larger `u`; a device whose clock is behind would
+ * otherwise lose its change to the one it changed).
+ */
+export const changeStamp = (comment, now = Date.now()) => Math.max(now, (Number(comment?.u) || 0) + 1);
 
 // -----------------------------------------------------------------------------
 // live sync: a comment travels encrypted like every change; a small readable

@@ -2,6 +2,9 @@
 // The paragraphs' own layout (sizes, list indents) is inline, the same
 // for the editor and for measuring (layout.ts).
 
+// list markers and checkboxes: shared with the presenter window (present.tsx)
+@use "paragraphs";
+
 .excalidraw .excalidraw-textEditorContainer > .rt-editor {
   pointer-events: auto;
 }
@@ -9,50 +12,6 @@
 .rt-editor {
   outline: none;
   cursor: text;
-
-  .rt-p {
-    position: relative;
-
-    &[data-m]::before {
-      content: attr(data-m);
-      position: absolute;
-      left: 0;
-      width: calc(var(--rt-indent) - 0.35em);
-      text-align: right;
-      font-weight: normal;
-      font-style: normal;
-      text-decoration: none;
-      white-space: pre;
-      pointer-events: none;
-    }
-
-    &[data-k="todo"]::before {
-      content: "";
-      left: calc(var(--rt-indent) - 0.35em - 0.72em);
-      width: 0.72em;
-      height: 0.72em;
-      top: calc(0.5lh - 0.36em);
-      box-sizing: border-box;
-      border: max(1px, 0.07em) solid currentColor;
-      border-radius: 0.13em;
-      cursor: pointer;
-      pointer-events: auto;
-    }
-
-    &[data-k="todo"][data-x]::after {
-      content: "";
-      position: absolute;
-      left: calc(var(--rt-indent) - 0.35em - 0.72em + 0.25em);
-      top: calc(0.5lh - 0.36em + 0.1em);
-      width: 0.2em;
-      height: 0.38em;
-      box-sizing: border-box;
-      border: solid currentColor;
-      border-width: 0 0.09em 0.09em 0;
-      transform: rotate(45deg);
-      pointer-events: none;
-    }
-  }
 
   [data-a] {
     cursor: pointer;

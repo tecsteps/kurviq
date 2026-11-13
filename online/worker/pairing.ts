@@ -5,8 +5,10 @@
 // commands) or by the most suitable tab (/api/scenes…: the tab reads and
 // saves in Google Drive with the user's sign-in).
 //
-// Stores nothing: the tabs' WebSockets (with their last state as attachment)
-// are all there is, and they survive hibernation.
+// Stores no data: the tabs' WebSockets (with their last state as attachment)
+// are all there is, and they survive hibernation. The only thing written is
+// the id of each agent sign-in code that was redeemed, until the code expires
+// (a minute), so that no code is redeemed twice (./oauth.ts).
 
 import { DurableObject } from "cloudflare:workers";
 
@@ -19,13 +21,6 @@ type TabState = {
   focusedAt?: number;
   drive?: boolean;
 };
-
-/**
- * How the agent got here (set by the Worker, X-Kurviq-Via): "oauth" = signed
- * in (the user allowed it in Kurviq), "link" = the old link with the key in
- * the URL, which is refused (the agent is told to sign in)
- */
-type Via = "oauth" | "link";
 
 /** the commit this Worker is built from (online/build-worker.mjs) */
 declare const __KURVIQ_BUILD__: string;
@@ -56,9 +51,6 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
 
 const httpError = (status: number, message: string) => Object.assign(new Error(message), { status });
 
-const legacyRefused = (app: string) =>
-  `This agent uses the old Kurviq link (the key in the URL), which doesn't work any more. Connect with ${app}/mcp instead: the agent signs in once and the user allows it in Kurviq (e.g. claude mcp add --transport http kurviq ${app}/mcp). Ask the user to do this.`;
-
 export class Pairing extends DurableObject {
   private readonly pending = new Map<string, Pending>();
   private readonly receivers = new WeakMap<WebSocket, (raw: string) => any>();
@@ -82,17 +74,12 @@ export class Pairing extends DurableObject {
     });
   }
 
-  /** the tabs that answer an agent that came this way */
-  private tabs(via: Via) {
-    return via === "oauth" ? this.allTabs() : [];
-  }
-
   /** the tab agents talk to: the visible, most recently focused one (or the one showing `scene`) */
-  private activeTab(via: Via, scene?: string | null) {
+  private activeTab(scene?: string | null) {
     const rank = (tab: Attachment) => [tab.state.visible ? 1 : 0, tab.state.focusedAt || 0, tab.connectedAt];
     const pick = (onlyScene?: string | null) => {
       let best: (Attachment & { ws: WebSocket }) | null = null;
-      for (const tab of this.tabs(via)) {
+      for (const tab of this.allTabs()) {
         if (onlyScene !== undefined && (tab.state.current ?? null) !== onlyScene) {
           continue;
         }
@@ -111,12 +98,9 @@ export class Pairing extends DurableObject {
   }
 
   private notOpen() {
-    if (this.allTabs().length) {
-      return httpError(403, legacyRefused(this.appUrl));
-    }
     return httpError(
       409,
-      `Kurviq is not open in the user's browser. The agent works through the user's open Kurviq tab: ask the user to open ${this.appUrl} (in the browser this agent link was made in) and keep the tab open.`,
+      `Kurviq is not open in the user's browser. The agent works through the user's open Kurviq tab: ask the user to open ${this.appUrl} (in the browser where they allowed this agent) and keep the tab open.`,
     );
   }
 
@@ -135,17 +119,31 @@ export class Pairing extends DurableObject {
         );
       }, wait);
       this.pending.set(id, { resolve, reject, timer, tab: (ws.deserializeAttachment() as Attachment).tab });
-      // with this build: a tab running an older version says so instead of half-working
-      sendMessage(ws, { type: "command", id, command, build: __KURVIQ_BUILD__ });
+      try {
+        // with this build: a tab running an older version says so instead of half-working
+        sendMessage(ws, { type: "command", id, command, build: __KURVIQ_BUILD__ });
+      } catch {
+        // the socket is closing already: no answer will come
+        this.settle(id, httpError(409, "The Kurviq tab was closed before it got the command. Try again (another open tab takes it)."));
+      }
     });
   }
 
-  private appState(via: Via) {
-    const tab = this.activeTab(via);
+  /** ends a waiting command with an error (its timer too) */
+  private settle(id: string, error: Error) {
+    const entry = this.pending.get(id);
+    if (entry) {
+      this.pending.delete(id);
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+  }
+
+  private appState() {
+    const tab = this.activeTab();
     return {
       connected: !!tab,
-      ...(!tab && this.allTabs().length ? { refused: legacyRefused(this.appUrl) } : {}),
-      tabs: this.tabs(via).length,
+      tabs: this.allTabs().length,
       activeTab: tab?.tab ?? null,
       ...(tab ? tab.state : { current: null, dirty: false }),
     };
@@ -182,10 +180,10 @@ export class Pairing extends DurableObject {
     }
   }
 
-  private async flushTabs(body: string, via: Via) {
+  private async flushTabs(body: string) {
     const { name } = JSON.parse(body || "{}");
-    const showing = this.tabs(via).filter((tab) => tab.state.current === name);
-    const targets = showing.length ? showing : [this.activeTab(via)].filter((tab) => !!tab);
+    const showing = this.allTabs().filter((tab) => tab.state.current === name);
+    const targets = showing.length ? showing : [this.activeTab()].filter((tab) => !!tab);
     const results = [];
     for (const tab of targets) {
       try {
@@ -198,39 +196,59 @@ export class Pairing extends DurableObject {
   }
 
   private async api(request: Request, url: URL): Promise<Response> {
-    const via: Via = request.headers.get("X-Kurviq-Via") === "oauth" ? "oauth" : "link";
     const bodyless = ["GET", "HEAD"].includes(request.method);
     const body = bodyless ? "" : await request.text();
+    if (url.pathname === "/oauth/code" && request.method === "POST") {
+      return this.redeemCode(body);
+    }
     if (url.pathname === "/api/app/state") {
-      return json(200, this.appState(via));
+      return json(200, this.appState());
     }
     if (url.pathname === "/api/app/command" && request.method === "POST") {
       const command = JSON.parse(body || "{}");
       // no headless Excalidraw here: the agent's own work runs in the user's tab too
       delete command.agentSide;
-      const tab = this.activeTab(via, command.targetScene);
+      const tab = this.activeTab(command.targetScene);
       if (!tab) {
         throw this.notOpen();
       }
       return json(200, { ok: true, result: await this.send(tab.ws, command) });
     }
     if (url.pathname === "/api/app/flush" && request.method === "POST") {
-      return this.flushTabs(body, via);
-    }
-    if (url.pathname === "/api/pdf") {
-      return json(501, {
-        error:
-          "PDF export is not available through the Kurviq MCP. The user can export the deck as PDF in Kurviq: Slides sidebar → PDF.",
-      });
+      return this.flushTabs(body);
     }
     if (url.pathname.startsWith("/api/scenes")) {
-      return this.sceneApi(request, url, body, via);
+      return this.sceneApi(request, url, body);
     }
     return json(404, { error: "Not found" });
   }
 
-  private async sceneApi(request: Request, url: URL, body: string, via: Via): Promise<Response> {
-    const tab = this.activeTab(via);
+  /**
+   * An agent sign-in code is redeemed (POST { id, exp }): 200 the first time,
+   * 409 after that. The id is kept until the code expires; then it is no use
+   * anyway (./oauth.ts checks the expiry first).
+   */
+  private async redeemCode(body: string) {
+    const { id, exp } = JSON.parse(body || "{}") as { id?: unknown; exp?: unknown };
+    if (typeof id !== "string" || !/^[\w-]{16,64}$/.test(id) || typeof exp !== "number") {
+      return json(400, { error: "id, exp" });
+    }
+    const now = Date.now();
+    // expired ids go first (a handful at most: codes live a minute)
+    const used = await this.ctx.storage.list<number>({ prefix: "code:" });
+    const expired = [...used].filter(([, until]) => until <= now).map(([key]) => key);
+    if (expired.length) {
+      await this.ctx.storage.delete(expired);
+    }
+    if (used.has(`code:${id}`) && !expired.includes(`code:${id}`)) {
+      return json(409, { error: "already redeemed" });
+    }
+    await this.ctx.storage.put(`code:${id}`, exp);
+    return json(200, { ok: true });
+  }
+
+  private async sceneApi(request: Request, url: URL, body: string): Promise<Response> {
+    const tab = this.activeTab();
     if (!tab) {
       throw this.notOpen();
     }
@@ -295,17 +313,24 @@ export class Pairing extends DurableObject {
       if (entry?.tab !== (ws.deserializeAttachment() as Attachment).tab) {
         return;
       }
-      this.pending.delete(String(message.id));
-      clearTimeout(entry.timer);
       if (message.ok) {
+        this.pending.delete(String(message.id));
+        clearTimeout(entry.timer);
         entry.resolve(message.result);
       } else {
-        entry.reject(httpError(422, message.error || "Command failed in the Kurviq tab"));
+        this.settle(String(message.id), httpError(422, message.error || "Command failed in the Kurviq tab"));
       }
     }
   }
 
   async webSocketClose(ws: WebSocket, code: number) { // NOSONAR S7503: preserves the Durable Object handler promise and rejection contract
+    // the commands that tab was working on get no answer: the agent hears it now, not after the timeout
+    const tab = (ws.deserializeAttachment() as Attachment | null)?.tab;
+    for (const [id, entry] of [...this.pending]) {
+      if (entry.tab === tab) {
+        this.settle(id, httpError(409, "The Kurviq tab was closed (or reloaded) while it worked on this. Check the scene with read_scene and try again."));
+      }
+    }
     try {
       ws.close(code === 1005 || code === 1006 ? 1000 : code, "closed");
     } catch {}

@@ -8,8 +8,9 @@
 //   /mcp             remote MCP for agents (scenes-mcp/tools.mjs), answered
 //                    through the pairing's open Kurviq tab; agents sign in
 //                    (OAuth, ./oauth.ts) and the user allows them in Kurviq
-//   /mcp/<key>       the old link with the key in the URL: refused, the
+//   /mcp/<key>       the old link with the key in the URL: refused (410), the
 //                    agent is told to sign in
+//   /mcp/upload/<token>  images and big edits of a signed-in agent (curl)
 //   /oauth/*, /.well-known/oauth-*  the sign-in (./oauth.ts)
 //   /llms.txt        how agents use Kurviq
 //   /api/public/…    scenes shared "anyone with the link" on Drive, cached (./shared.ts)
@@ -23,6 +24,7 @@
 //                    /assets/* and /fonts/* don't reach the Worker at all
 //                    (wrangler.jsonc run_worker_first)
 
+import { DurableObject } from "cloudflare:workers";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
 import { registerTools } from "../../excalidraw-mcp/dist/server.js";
@@ -32,9 +34,11 @@ import { createScenesMcp } from "../../scenes-mcp/tools.mjs";
 
 import llmsTxt from "../llms.txt";
 import { devGate, handleAuth } from "./auth";
-import { handleFakeGoogle } from "./fakeGoogle";
+import { FakeGoogle as FakeGoogleStore, handleFakeGoogle } from "./fakeGoogle";
 import { handleFonts } from "./fonts";
-import { bearerPairing, handleOAuth, pairingName, unauthorized, uploadPairing, uploadToken } from "./oauth";
+import { base64FromBytes, readBytes } from "./bytes";
+import { FILE_ID_RE } from "./driveApi";
+import { AGENT_KEY_RE, bearerPairing, handleOAuth, pairingName, unauthorized, uploadPairing, uploadToken } from "./oauth";
 import { handleSceneRoutes } from "./sceneRoutes";
 import { handleFolderRoutes } from "./folders";
 import type { FoldersEnv } from "./folders";
@@ -55,8 +59,20 @@ import type { SharedEnv } from "./shared";
 export { Pairing } from "./pairing";
 export { SceneRoom } from "./scene";
 export { AccountGuard } from "./account";
-export { FakeGoogle } from "./fakeGoogle";
 export { Stats } from "./stats";
+
+/**
+ * A development build (online/build-worker.mjs without --production): the
+ * fake Google and its admin API are in the bundle. The production bundle
+ * leaves them out as dead code, so they can't be switched on by configuration.
+ */
+declare const __KURVIQ_DEV__: boolean;
+
+/**
+ * The fake Google's Durable Object; in production a stub that is never used
+ * (the binding FAKE_GOOGLE_STORE and its migration need the class to exist)
+ */
+export const FakeGoogle = __KURVIQ_DEV__ ? FakeGoogleStore : class extends DurableObject {};
 
 type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & FoldersEnv & StatsEnv & ContactEnv & PubEnv & {
   ASSETS: Fetcher;
@@ -65,27 +81,27 @@ type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & FoldersEnv & Sta
   CANONICAL_HOST?: string;
 };
 
-const KEY_RE = /^[A-Za-z0-9_-]{32}$/;
-
 /**
  * Who an agent request is for: the pairing (the Durable Object, named by the
- * hash of the browser's agent key, so the key itself is never stored), how
- * the agent came (signed in, or the old link with the key in the URL) and
- * where it uploads images and big edits
+ * hash of the browser's agent key, so the key itself is never stored) of a
+ * signed-in agent
  */
-type Access = { pairing: string; via: "oauth" | "link"; uploadUrl: string };
+type Access = { pairing: string };
 
 const pairingStub = (env: Env, access: Access) => env.PAIRING.get(env.PAIRING.idFromName(access.pairing));
 
-/** a request to the pairing: says how the agent came (the tabs decide whether they answer) */
-const toPairing = (access: Access, path: string, init: RequestInit = {}, app?: string) => {
+/** a request to the pairing (with the app's address, which the pairing uses in its messages) */
+const toPairing = (path: string, init: RequestInit = {}, app?: string) => {
   const headers = new Headers(init.headers);
-  headers.set("X-Kurviq-Via", access.via);
   if (app) {
     headers.set("X-Kurviq-App", app);
   }
   return new Request(`https://pairing${path}`, { ...init, headers });
 };
+
+/** what an agent with the old link (the key in the URL, before agents signed in) is told */
+const legacyRefused = (app: string) =>
+  `This agent uses the old Kurviq link (the key in the URL), which doesn't work any more. Connect with ${app}/mcp instead: the agent signs in once and the user allows it in Kurviq (e.g. claude mcp add --transport http kurviq ${app}/mcp). Ask the user to do this.`;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -120,7 +136,7 @@ const imageType = (bytes: Uint8Array): string | null => {
 };
 
 /**
- * POST /mcp/<key>/upload with an image file as the body (curl --data-binary
+ * POST /mcp/upload/<token> with an image file as the body (curl --data-binary
  * @file.png): the image goes straight to the user's Kurviq tab (nothing is
  * stored here), which answers with its fileId. The agent then adds
  * { "type": "image", "fileId": "…" } to a scene. The image's bytes never
@@ -141,11 +157,13 @@ const handleUpload = async (request: Request, env: Env, access: Access | null) =
   if (Number(request.headers.get("Content-Length") || 0) > MAX_UPLOAD_BYTES) {
     return answer(413, { error: `At most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB per image (use JPEG or WebP for photos)` });
   }
-  const bytes = new Uint8Array(await request.arrayBuffer());
-  if (!bytes.length || bytes.length > MAX_UPLOAD_BYTES) {
-    return answer(bytes.length ? 413 : 400, {
-      error: bytes.length ? `At most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB per image` : "Empty body: send the image file as the request body (curl --data-binary @image.png)",
-    });
+  // read only up to the limit, whatever Content-Length said (a chunked body has none)
+  const bytes = await readBytes(request.body, MAX_UPLOAD_BYTES);
+  if (!bytes) {
+    return answer(413, { error: `At most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB per image` });
+  }
+  if (!bytes.length) {
+    return answer(400, { error: "Empty body: send the image file as the request body (curl --data-binary @image.png)" });
   }
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes)); // NOSONAR S4790: Excalidraw content identifier only, not authentication or integrity verification
   const id = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -157,18 +175,13 @@ const handleUpload = async (request: Request, env: Env, access: Access | null) =
   if (!mimeType) {
     return answer(415, { error: "Not an image (PNG, JPEG, GIF, WebP or SVG) and not an edit (JSON)" });
   }
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); // NOSONAR S7758: base64 needs one binary character per byte
-  }
   const res = await pairingStub(env, access).fetch(
     toPairing(
-      access,
       "/api/app/command",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "upload", file: { id, mimeType, dataURL: `data:${mimeType};base64,${btoa(binary)}` } }),
+        body: JSON.stringify({ type: "upload", file: { id, mimeType, dataURL: `data:${mimeType};base64,${base64FromBytes(bytes)}` } }),
       },
       new URL(request.url).origin,
     ),
@@ -176,7 +189,7 @@ const handleUpload = async (request: Request, env: Env, access: Access | null) =
   const body = (await res.json().catch(() => ({}))) as { result?: { fileId: string; width: number; height: number }; error?: string };
   if (!res.ok || !body.result) {
     return answer(res.status >= 400 ? res.status : 502, {
-      error: body.error || "The Kurviq tab did not take the image. Is Kurviq open in the browser this agent link was made in?",
+      error: body.error || "The Kurviq tab did not take the image. Is Kurviq open in the browser where the user allowed this agent?",
     });
   }
   const { fileId, width, height } = body.result;
@@ -193,7 +206,7 @@ const handleUpload = async (request: Request, env: Env, access: Access | null) =
 const MAX_PAYLOAD_BYTES = 1_000_000;
 
 /**
- * POST /mcp/<key>/upload with a JSON body ({ "add": [...], "update": [...],
+ * POST /mcp/upload/<token> with a JSON body ({ "add": [...], "update": [...],
  * "delete": [...] } or an array of elements to add): kept by the user's tab
  * until edit_scene / save_scene names it as payloadId.
  */
@@ -210,7 +223,6 @@ const uploadPayload = async (
   }
   const res = await pairingStub(env, access).fetch(
     toPairing(
-      access,
       "/api/app/command",
       {
         method: "POST",
@@ -223,7 +235,7 @@ const uploadPayload = async (
   const body = (await res.json().catch(() => ({}))) as { result?: Record<string, unknown>; error?: string };
   if (!res.ok || !body.result) {
     return answer(res.status >= 400 ? res.status : 502, {
-      error: body.error || "The Kurviq tab did not take the edit. Is Kurviq open in the browser this agent link was made in?",
+      error: body.error || "The Kurviq tab did not take the edit. Is Kurviq open in the browser where the user allowed this agent?",
     });
   }
   return answer(200, {
@@ -250,35 +262,29 @@ const toolCalls = async (request: Request): Promise<Array<{ id: unknown; name: s
   }
 };
 
+/** tool calls answered with an error text each, without running them (JSON-RPC results, isError) */
+const toolErrors = (calls: Array<{ id: unknown }>, text: string, status = 200) => {
+  const answers = calls.map((call) => ({ jsonrpc: "2.0", id: call.id, result: { content: [{ type: "text", text }], isError: true } }));
+  return withCors(new Response(JSON.stringify(answers.length === 1 ? answers[0] : answers), { status, headers: { "Content-Type": "application/json" } }));
+};
+
 const handleMcp = async (request: Request, env: Env, access: Access, ctx: ExecutionContext) => {
-  const app = new URL(request.url).origin;
+  const url = new URL(request.url);
+  const app = url.origin;
   const stub = pairingStub(env, access);
-  const unreachable =
-    access.via === "oauth"
-      ? `Kurviq could not reach the user's browser: no Kurviq tab is open in the browser where the user allowed this agent, or the user signed out all agents since (then sign in again: in Claude Code /mcp → kurviq → Re-authenticate). Ask the user to open ${app} there.`
-      : `Kurviq could not reach the user's browser. Ask the user to open ${app} (in the browser this agent link was made in).`;
+  const unreachable = `Kurviq could not reach the user's browser: no Kurviq tab is open in the browser where the user allowed this agent, or the user signed out all agents since (then sign in again: in Claude Code /mcp → kurviq → Re-authenticate). Ask the user to open ${app} there.`;
   // no tab behind this link: nothing runs (and nothing is fetched on its behalf)
   const allCalls = await toolCalls(request);
   mcpStats(env, ctx, allCalls.map((call) => call.name));
   const calls = allCalls.filter((call) => !WITHOUT_TAB.has(call.name));
   if (calls.length) {
-    const state = (await (await stub.fetch(toPairing(access, "/api/app/state", {}, app))).json()) as {
-      connected?: boolean;
-      refused?: string;
-    };
+    const state = (await (await stub.fetch(toPairing("/api/app/state", {}, app))).json()) as { connected?: boolean };
     if (!state.connected) {
-      const answers = calls.map((call) => ({
-        jsonrpc: "2.0",
-        id: call.id,
-        result: { content: [{ type: "text", text: state.refused || unreachable }], isError: true },
-      }));
-      return withCors(
-        new Response(JSON.stringify(answers.length === 1 ? answers[0] : answers), {
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
+      return toolErrors(calls, unreachable);
     }
   }
+  // the upload address (a sealed token) only where it is shown: read_me's reference
+  const uploadUrl = allCalls.some((call) => call.name === "read_me") ? `${app}/mcp/upload/${await uploadToken(env, access.pairing)}` : undefined;
   const server = createScenesMcp({
     name: "Kurviq",
     mode: "detached",
@@ -288,11 +294,11 @@ const handleMcp = async (request: Request, env: Env, access: Access, ctx: Execut
     leanReads: true,
     // no access to the agent's files here: images and big edits are uploaded
     localFiles: false,
-    uploadUrl: access.uploadUrl,
+    uploadUrl,
     skill: kurviqSkill(app),
-    reference: kurviqReference(access.uploadUrl),
+    reference: kurviqReference(uploadUrl),
     unreachable,
-    serverFetch: (pathname: string, init: RequestInit = {}) => stub.fetch(toPairing(access, pathname, init, app)),
+    serverFetch: (pathname: string, init: RequestInit = {}) => stub.fetch(toPairing(pathname, init, app)),
     registerUpstream: (mcp: unknown, store: unknown) => registerTools(mcp as any, "/bundle", store as any),
     // bug reports / change requests from the agent (counted per agent pairing)
     sendFeedback: async (report: unknown) => {
@@ -302,6 +308,7 @@ const handleMcp = async (request: Request, env: Env, access: Access, ctx: Execut
       }
       return saved;
     },
+    // export_pdf is not offered online (localFiles: false); should it ever be called, it says why
     savePdf: () => Promise.reject(new Error("PDF export is not available through the Kurviq MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).")),
   });
   // stateless: a new server per request, nothing kept between requests
@@ -329,10 +336,9 @@ const handleMcpRoute = async (request: Request, env: Env, ctx: ExecutionContext,
     if (!pairing || pairing === "invalid") {
       return unauthorized(url.origin, pairing === "invalid");
     }
-    const uploadUrl = `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}`;
-    return handleMcp(request, env, { pairing, via: "oauth", uploadUrl }, ctx);
+    return handleMcp(request, env, { pairing }, ctx);
   }
-  if (!KEY_RE.test(mcp[1])) {
+  if (!AGENT_KEY_RE.test(mcp[1])) {
     return withCors(
       new Response(
         JSON.stringify({
@@ -342,14 +348,16 @@ const handleMcpRoute = async (request: Request, env: Env, ctx: ExecutionContext,
       ),
     );
   }
-  const key = mcp[1];
-  // its own upload token (like a signed-in agent's), not the link: the link key is full access
-  const pairing = await pairingName(key);
-  return handleMcp(request, env, { pairing, via: "link", uploadUrl: `${url.origin}/mcp/upload/${await uploadToken(env, pairing)}` }, ctx);
+  // the old link: nothing runs; tool calls get the explanation as their result, anything else 410
+  const calls = await toolCalls(request);
+  if (calls.length) {
+    return toolErrors(calls, legacyRefused(url.origin));
+  }
+  return withCors(new Response(JSON.stringify({ error: legacyRefused(url.origin) }), { status: 410, headers: { "Content-Type": "application/json" } }));
 };
 
 const handleLiveRoute = async (request: Request, env: Env, url: URL, key: string) => {
-  if (!KEY_RE.test(key)) {
+  if (!AGENT_KEY_RE.test(key)) {
     return new Response("Unknown agent link", { status: 404 });
   }
   // only Kurviq's own pages (browsers always send Origin with a WebSocket)
@@ -360,17 +368,9 @@ const handleLiveRoute = async (request: Request, env: Env, url: URL, key: string
   return stub.fetch(new Request(`https://pairing/live${url.search}`, request));
 };
 
-const handleSignedUpload = async (request: Request, env: Env, url: URL, token: string) => {
+const handleSignedUpload = async (request: Request, env: Env, token: string) => {
   const pairing = await uploadPairing(env, token);
-  return handleUpload(request, env, pairing ? { pairing, via: "oauth", uploadUrl: url.toString() } : null);
-};
-
-const handleLegacyUpload = async (request: Request, env: Env, url: URL, key: string) => {
-  return handleUpload(
-    request,
-    env,
-    KEY_RE.test(key) ? { pairing: await pairingName(key), via: "link", uploadUrl: `${url.origin}/mcp/${key}/upload` } : null,
-  );
+  return handleUpload(request, env, pairing ? { pairing } : null);
 };
 
 const driveOpenRedirect = (url: URL) => {
@@ -378,7 +378,7 @@ const driveOpenRedirect = (url: URL) => {
   try {
     id = String(JSON.parse(url.searchParams.get("state") || "{}").ids?.[0] ?? "");
   } catch {}
-  return Response.redirect(new URL(/^[\w-]{10,200}$/.test(id) ? `/s/${id}` : "/", url).toString(), 302);
+  return Response.redirect(new URL(FILE_ID_RE.test(id) ? `/s/${id}` : "/", url).toString(), 302);
 };
 
 const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContext, url: URL) => {
@@ -442,8 +442,8 @@ export default {
     if (env.FAKE_GOOGLE === "1" && !devGate(env, request)) {
       return new Response("Development configuration: only served on localhost", { status: 503 });
     }
-    // dev only (FAKE_GOOGLE=1, local DEV_ORIGIN): the fake Google of ./fakeGoogle.ts
-    const fakeGoogle = handleFakeGoogle(request, env as Env & { FAKE_GOOGLE_STORE?: DurableObjectNamespace });
+    // dev builds only (FAKE_GOOGLE=1, local DEV_ORIGIN): the fake Google of ./fakeGoogle.ts
+    const fakeGoogle = __KURVIQ_DEV__ ? handleFakeGoogle(request, env as Env & { FAKE_GOOGLE_STORE?: DurableObjectNamespace }) : null;
     if (fakeGoogle) { // NOSONAR S6544: preserve the existing Promise short-circuit; awaiting its nullable result changes routing
       return fakeGoogle;
     }
@@ -486,12 +486,14 @@ export default {
     // uploads of a signed-in agent: /mcp/upload/<token> (curl can't sign in; the token names the pairing, for a week)
     const signedUpload = /^\/mcp\/upload\/([^/]+)\/?$/.exec(url.pathname);
     if (signedUpload) {
-      return handleSignedUpload(request, env, url, signedUpload[1]);
+      return handleSignedUpload(request, env, signedUpload[1]);
     }
-    // the old link: /mcp/<key>/upload
-    const upload = /^\/mcp\/([^/]+)\/upload\/?$/.exec(url.pathname);
-    if (upload) {
-      return handleLegacyUpload(request, env, url, upload[1]);
+    // the old link: /mcp/<key>/upload (refused without reading the body)
+    if (/^\/mcp\/[^/]+\/upload\/?$/.test(url.pathname)) {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: CORS });
+      }
+      return withCors(new Response(JSON.stringify({ error: legacyRefused(url.origin) }), { status: 410, headers: { "Content-Type": "application/json" } }));
     }
 
     const mcp = /^\/mcp(?:\/([^/]*))?\/?$/.exec(url.pathname);

@@ -1,7 +1,7 @@
 // Reading formatted text back from HTML: the editor's own DOM (after the
 // browser typed into it), and HTML pasted from elsewhere (web pages, docs).
 
-import { MAX_DEPTH, normalizeDoc, safeLink } from "./model";
+import { HEADING_SIZES as SIZES, MARK_KEYS, MAX_DEPTH, normalizeDoc, safeLink } from "./model";
 
 import type { Marks, Para, ParaKind, RichDoc } from "./model";
 
@@ -10,7 +10,7 @@ const BLOCKS = new Set([
   "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HR", "LI", "MAIN", "NAV", "P", "PRE", "SECTION", "TD", "TH", "TR",
 ]);
 const SKIP = new Set(["SCRIPT", "STYLE", "TEMPLATE", "HEAD", "TITLE", "META", "LINK", "NOSCRIPT", "SVG", "IMG", "INPUT"]);
-const HEADING_SIZES: Record<string, number> = { H1: 1.6, H2: 1.3, H3: 1.1 };
+const HEADING_SIZES: Record<string, number> = { H1: SIZES[0], H2: SIZES[1], H3: SIZES[2] };
 
 type Block = { k?: ParaKind; d?: number; x?: true };
 
@@ -44,7 +44,10 @@ const applyDataMarks = (data: DOMStringMap, next: Marks) => {
 const marksFrom = (el: HTMLElement, marks: Marks, external: boolean): Marks => {
   const tag = el.tagName;
   const data = el.dataset || {};
-  const hasData = ["b", "i", "u", "s", "c", "h", "a", "z", "n"].some((key) => key in data);
+  // the editor's own spans carry their marks as data-b, data-i …; pasted HTML from a web page may use
+  // the same short names for something else, so only the editor's own HTML is read that way (its
+  // copies travel as application/x-excalidraw-rich-text anyway)
+  const hasData = !external && MARK_KEYS.some((key) => key in data);
   // a span of the editor's own without formatting: plain text (whatever an
   // outer span the browser wrapped around it says)
   const next: Marks = !external && tag === "SPAN" && !hasData && el.parentElement?.classList.contains("rt-p") ? {} : { ...marks };

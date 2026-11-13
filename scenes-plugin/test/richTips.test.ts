@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { applyFormat } from "../src/richText/format";
 import { docFromMarkdown, markdownOf, normalizeDoc, safeTip } from "../src/richText/model";
 import { placeTip, tipInFragments } from "../src/richText/tipHit";
-import { convertInNode } from "../../scenes-mcp/convert.mjs";
 
 describe("tooltips in the stored form", () => {
   it("keeps plain text notes, trims them, drops empty, too long and control characters", () => {
@@ -42,16 +41,6 @@ describe("tooltips in markdown", () => {
     expect(set).toBe('a {tip="The note"}special term{/}');
     expect(markdownOf(applyFormat(docFromMarkdown(set), { match: "special term", tip: null }, "t"))).toBe("a special term");
     expect(() => applyFormat(docFromMarkdown("a term"), { match: "term", tip: "  " }, "t")).toThrow(/tip/);
-  });
-});
-
-describe("markdown without a browser (the fallback conversion)", () => {
-  const plain = (markdown: string) => convertInNode([{ type: "text", id: "t", x: 0, y: 0, markdown }])[0].text;
-
-  it("keeps the words of styled and tooltip parts, and literal braces", () => {
-    expect(plain(String.raw`A {tip="a \"quoted\" } note"}special term{/} and {color=red size=0.8}red{/}`)).toBe("A special term and red");
-    expect(plain(String.raw`\{literal\} {not a style} [x](https://a.b)`)).toBe("{literal} {not a style} x");
-    expect(plain("# Head\n- {size=0.8}small{/}\n1. one")).toBe("Head\n• small\n1. one");
   });
 });
 

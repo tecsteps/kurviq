@@ -14,21 +14,32 @@
 // its return address is allowed, and instead of a cookie (which it couldn't
 // read) it gets the session sealed in the URL fragment. It keeps that blob
 // and sends it to /auth/token and /auth/logout (CORS, local origins only).
+// A *.test address is not loopback (whoever answers DNS on the network can
+// serve it), so before a session goes there kurviq.com asks the user once
+// per sign-in, on a page of its own (POST /auth/login).
 //
 // Google's refresh tokens don't expire while they are used (the consent
 // screen must be "In production"; in "Testing" they last 7 days) and don't
 // rotate, so tabs refreshing at the same moment don't hurt each other.
 
 import google from "../google.json";
+import { bytesFromBase64, readText } from "./bytes";
 import { googleUrls } from "./google";
 import type { GoogleEnv } from "./google";
+import { isDevOrigin, isLocalInstall } from "./origins";
 
 export type AuthEnv = GoogleEnv & {
   /** default: online/google.json */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET: string;
-  /** base64 of 32 random bytes: encrypts the cookies */
+  /**
+   * base64 of 32 random bytes: encrypts the session cookies, the local
+   * install's sessions, agents' OAuth registrations and tokens, upload
+   * addresses, and keys the rate-limit hashes (see online/secrets.mjs)
+   */
   COOKIE_KEY: string;
+  /** the COOKIE_KEY before a rotation: what it sealed is still accepted (sessions, agents' tokens) until it expires */
+  COOKIE_KEY_PREVIOUS?: string;
   /** wrangler dev only (.dev.vars): this server's real address; wrangler dev gives the Worker the first route's (kurviq.com) */
   DEV_ORIGIN?: string;
   /**
@@ -50,7 +61,7 @@ export type AuthEnv = GoogleEnv & {
  * request from this machine, never on kurviq.com, whatever the env says
  */
 export const devGate = (env: { FAKE_GOOGLE?: string; DEV_ORIGIN?: string }, request?: Request) => {
-  if (env.FAKE_GOOGLE !== "1" || !isLocalOrigin(env.DEV_ORIGIN ?? null)) {
+  if (env.FAKE_GOOGLE !== "1" || !isDevOrigin(env.DEV_ORIGIN)) {
     return false;
   }
   if (!request) {
@@ -81,7 +92,7 @@ const SESSION_DAYS = 400;
 /** the local install's sealed session: valid this long after its last renewal (each refresh renews it) */
 const LOCAL_SESSION_DAYS = 90;
 
-export const SCOPES = [
+const SCOPES = [
   "openid",
   "email",
   "profile",
@@ -123,43 +134,51 @@ const fromB64url = (text: string) => {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
 };
 
-let cachedKey: { raw: string; key: CryptoKey } | null = null;
+/** AES keys by their base64 text (COOKIE_KEY and COOKIE_KEY_PREVIOUS) */
+const aesKeys = new Map<string, Promise<CryptoKey>>();
 
-const cookieKey = async (env: AuthEnv) => {
-  if (cachedKey?.raw !== env.COOKIE_KEY) {
-    const raw = Uint8Array.from(atob(env.COOKIE_KEY), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
+const aesKey = (raw64: string) => {
+  let key = aesKeys.get(raw64);
+  if (!key) {
+    const raw = bytesFromBase64(raw64);
     if (raw.length !== 32) {
       throw new Error("COOKIE_KEY must be base64 of 32 bytes");
     }
-    cachedKey = { raw: env.COOKIE_KEY, key: await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]) };
+    key = crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+    aesKeys.set(raw64, key);
   }
-  return cachedKey.key;
+  return key;
 };
 
 export const seal = async (env: AuthEnv, value: unknown, purpose: string) => {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = new TextEncoder().encode(JSON.stringify(value));
   const sealed = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(purpose) }, await cookieKey(env), data),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(purpose) }, await aesKey(env.COOKIE_KEY), data),
   );
   return `${b64url(iv)}.${b64url(sealed)}`;
 };
 
-export const unseal = async <T>(env: AuthEnv, text: string | undefined, purpose: string): Promise<T | null> => {
-  if (!text) {
-    return null;
-  }
+const unsealWith = async <T>(raw64: string, text: string, purpose: string): Promise<T | null> => {
   try {
     const [iv, sealed] = text.split(".").map(fromB64url);
-    const data = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(purpose) },
-      await cookieKey(env),
-      sealed,
-    );
+    const data = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(purpose) }, await aesKey(raw64), sealed);
     return JSON.parse(new TextDecoder().decode(data)) as T;
   } catch {
     return null;
   }
+};
+
+/** the value sealed with COOKIE_KEY (or, after a rotation, COOKIE_KEY_PREVIOUS); null: not ours, or tampered with */
+export const unseal = async <T>(env: AuthEnv, text: string | undefined, purpose: string): Promise<T | null> => {
+  if (!text) {
+    return null;
+  }
+  const current = await unsealWith<T>(env.COOKIE_KEY, text, purpose);
+  if (current !== null || !env.COOKIE_KEY_PREVIOUS) {
+    return current;
+  }
+  return unsealWith<T>(env.COOKIE_KEY_PREVIOUS, text, purpose);
 };
 
 const readCookie = (request: Request, name: string) => {
@@ -198,6 +217,8 @@ const exchange = async (env: AuthEnv, params: Record<string, string>): Promise<T
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: clientId(env), client_secret: env.GOOGLE_CLIENT_SECRET, ...params }),
+      // like the revocation: a hanging Google is "unreachable", not a request that never ends
+      signal: AbortSignal.timeout(15_000),
     });
   } catch {
     return { error: "http_0" };
@@ -241,24 +262,37 @@ const subOf = (idToken: string | undefined): string | undefined => {
 
 const grantsDrive = (scope: string | undefined) => (scope ?? "").split(" ").includes(DRIVE_SCOPE);
 
-const sessionCookie = async (request: Request, env: AuthEnv, session: Session) =>
+/** Set-Cookie of a (renewed) session, for Kurviq's own pages */
+export const sessionCookie = async (request: Request, env: AuthEnv, session: Session) =>
   cookie(request, SESSION_COOKIE, await seal(env, session, SESSION_COOKIE), SESSION_DAYS * 24 * 3600);
+
+/**
+ * A 1-hour access token from a refresh token, with the scope and ID token
+ * Google sent along. "unreachable": Google's 5xx or a timeout; "expired": the
+ * grant is gone (revoked, or the password changed).
+ */
+export const accessFromRefresh = async (env: AuthEnv, refreshToken: string) => {
+  const answer = await exchange(env, { grant_type: "refresh_token", refresh_token: refreshToken });
+  if (!answer.access_token) {
+    return answer.error?.startsWith("http_") ? ("unreachable" as const) : ("expired" as const);
+  }
+  return { token: answer.access_token, expiresAt: Date.now() + (answer.expires_in ?? 3600) * 1000, scope: answer.scope, idToken: answer.id_token };
+};
 
 /** a session with a fresh access token, or why there is none */
 const refresh = async (env: AuthEnv, session: Session): Promise<Session | "expired" | "unreachable"> => {
-  const answer = await exchange(env, { grant_type: "refresh_token", refresh_token: session.r });
-  if (!answer.access_token) {
-    return answer.error?.startsWith("http_") ? "unreachable" : "expired";
+  const access = await accessFromRefresh(env, session.r);
+  if (typeof access === "string") {
+    return access;
   }
   // a refresh brings an ID token when the grant has openid: the sub of
   // sessions made before live sync comes from there (else a new sign-in)
-  const sub = subOf(answer.id_token);
   return {
     ...session,
-    a: answer.access_token,
-    ae: Date.now() + (answer.expires_in ?? 3600) * 1000,
-    drive: answer.scope ? grantsDrive(answer.scope) : session.drive,
-    sub: session.sub ?? sub,
+    a: access.token,
+    ae: access.expiresAt,
+    drive: access.scope ? grantsDrive(access.scope) : session.drive,
+    sub: session.sub ?? subOf(access.idToken),
   };
 };
 
@@ -282,7 +316,7 @@ const tokenKey = async (raw64: string | undefined) => {
   }
   let entry = tokenKeys.get(raw64);
   if (!entry) {
-    const raw = Uint8Array.from(atob(raw64), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
+    const raw = bytesFromBase64(raw64);
     if (raw.length !== 32) {
       throw new Error("TOKEN_KEY must be base64 of 32 bytes");
     }
@@ -343,15 +377,6 @@ export const unsealSceneToken = async (env: AuthEnv, sealed: string, fileId: str
   return null;
 };
 
-/** a 1-hour access token from a refresh token (the scene DO saving as its author) */
-export const accessFromRefresh = async (env: AuthEnv, refreshToken: string) => {
-  const answer = await exchange(env, { grant_type: "refresh_token", refresh_token: refreshToken });
-  if (!answer.access_token) {
-    return answer.error?.startsWith("http_") ? ("unreachable" as const) : ("expired" as const);
-  }
-  return { token: answer.access_token, expiresAt: Date.now() + (answer.expires_in ?? 3600) * 1000 };
-};
-
 /** Kurviq's grant at Google ends (sign out everywhere) */
 export const revokeAtGoogle = async (env: AuthEnv, refreshToken: string) => {
   try {
@@ -372,7 +397,7 @@ export const revokeAtGoogle = async (env: AuthEnv, refreshToken: string) => {
  * server key, so the Worker checks a notification before any scene object is woken
  */
 export const watchSecret = async (env: AuthEnv, fileId: string, channelId: string) => {
-  const raw = Uint8Array.from(atob(env.COOKIE_KEY), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
+  const raw = bytesFromBase64(env.COOKIE_KEY);
   const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-watch:${fileId}|${channelId}`)));
   return b64url(mac).slice(0, 32);
@@ -387,7 +412,7 @@ export const pseudonymOf = async (env: AuthEnv, sub: string, fileId: string) => 
   if (!env.PSEUDONYM_KEY) {
     throw new Error("PSEUDONYM_KEY is not set");
   }
-  const secret = Uint8Array.from(atob(env.PSEUDONYM_KEY), (char) => char.charCodeAt(0)); // NOSONAR S7758: base64 decoding reads binary bytes, not Unicode code points
+  const secret = bytesFromBase64(env.PSEUDONYM_KEY);
   const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-pseudonym:${sub}:${fileId}`)));
   return `p${b64url(mac).slice(0, 11)}`;
@@ -397,24 +422,7 @@ export const pseudonymOf = async (env: AuthEnv, sub: string, fileId: string) => 
 // routes
 // -----------------------------------------------------------------------------
 
-/** the local install: localhost, 127.0.0.1, *.localhost and *.test (Herd), any port */
-export const isLocalOrigin = (origin: string | null) => {
-  if (!origin) {
-    return false;
-  }
-  try {
-    const url = new URL(origin);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      (url.hostname === "localhost" ||
-        url.hostname === "127.0.0.1" ||
-        url.hostname.endsWith(".localhost") ||
-        url.hostname.endsWith(".test"))
-    );
-  } catch {
-    return false;
-  }
-};
+export { isDevOrigin, isLocalInstall } from "./origins";
 
 /**
  * Where to go back to: a path on this site, or a page of the local install
@@ -430,7 +438,7 @@ const safeReturn = (value: string | null, origin: string): { back: string; local
     if (value.startsWith("/") && target.origin === origin) {
       return { back: `${target.pathname}${target.search}`, local: false };
     }
-    if (isLocalOrigin(target.origin) && target.origin !== origin) {
+    if (isLocalInstall(target.origin) && target.origin !== origin) {
       return { back: `${target.origin}${target.pathname}${target.search}`, local: true };
     }
   } catch {}
@@ -456,10 +464,11 @@ const json = (status: number, body: unknown, cookies: string[] = [], corsOrigin?
   return new Response(JSON.stringify(body), { status, headers });
 };
 
-/** `redirect`: Google's redirect URI of this flow, sent again with the code */
 /**
- * `pageState`: the local install's own value (?state= on /auth/login), handed
- * back in the fragment so that page knows the sign-in is the one it started
+ * A sign-in under way (sealed in the state cookie). `redirect`: Google's
+ * redirect URI of this flow, sent again with the code. `pageState`: the local
+ * install's own value (?state= on /auth/login), handed back in the fragment so
+ * that page knows the sign-in is the one it started.
  */
 type Flow = { state: string; back: string; local: boolean; consent: boolean; redirect: string; pageState?: string };
 
@@ -475,7 +484,7 @@ const startFlow = async (
 ) => {
   const url = new URL(request.url);
   // wrangler dev: its real (local) address; never a configured non-local one
-  const callback = redirectUri ?? `${isLocalOrigin(env.DEV_ORIGIN ?? null) ? env.DEV_ORIGIN : url.origin}/auth/callback`;
+  const callback = redirectUri ?? `${isDevOrigin(env.DEV_ORIGIN) ? env.DEV_ORIGIN : url.origin}/auth/callback`;
   const state = b64url(crypto.getRandomValues(new Uint8Array(18)));
   const sealed = await seal(env, { state, back, local, consent, redirect: callback, pageState } satisfies Flow, STATE_COOKIE);
   const target = new URL(googleUrls(env, url.origin).authorize);
@@ -517,12 +526,12 @@ const finish = async (request: Request, env: AuthEnv, flow: Flow, status: string
  * The session a request carries: Kurviq's own pages send the cookie, the
  * local install sends its sealed session in the body ({ session }).
  */
-const sessionOf = async (request: Request, env: AuthEnv, local: boolean) => {
+export const requestSession = async (request: Request, env: AuthEnv, local: boolean) => {
   if (!local) {
     return cookieSession(request, env);
   }
   // a sealed session is a few KB: anything bigger is not read
-  const text = await readBody(request, 32 * 1024);
+  const text = (await readText(request.body, 32 * 1024)) ?? "";
   let body: any = {};
   try {
     body = text ? JSON.parse(text) : {};
@@ -530,34 +539,18 @@ const sessionOf = async (request: Request, env: AuthEnv, local: boolean) => {
   return localSession(env, body?.session, request.headers.get("Origin"));
 };
 
-/** a request body up to `max` bytes, read as a stream (stops beyond it); "" when bigger */
-const readBody = async (request: Request, max: number) => {
-  if (!request.body) {
-    return "";
-  }
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    size += value.length;
-    if (size > max) {
-      await reader.cancel().catch(() => {});
-      return "";
-    }
-    chunks.push(value);
-  }
-  const all = new Uint8Array(size);
-  let at = 0;
-  for (const chunk of chunks) {
-    all.set(chunk, at);
-    at += chunk.length;
-  }
-  return new TextDecoder().decode(all);
-};
+/** the CORS preflight of a POST route the local install calls (its origin is approved, Content-Type allowed) */
+export const localPreflight = (origin: string) =>
+  new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Methods": "POST",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+      Vary: "Origin",
+    },
+  });
 
 export const cookieSession = (request: Request, env: AuthEnv) => unseal<Session>(env, readCookie(request, SESSION_COOKIE), SESSION_COOKIE);
 
@@ -607,9 +600,6 @@ export const revokedEverywhere = async (env: AuthEnv, session: Session): Promise
   }
   return !!epoch && (session.iat ?? 0) < epoch;
 };
-
-/** Set-Cookie of a renewed session (Kurviq's own pages) */
-export const sessionCookieHeader = (request: Request, env: AuthEnv, session: Session) => sessionCookie(request, env, session);
 
 export const clearSessionCookie = (request: Request) => cookie(request, SESSION_COOKIE, "", 0);
 
@@ -669,7 +659,7 @@ const authToken = async (request: Request, env: AuthEnv, url: URL, origin: strin
     return json(403, { error: "Forbidden" });
   }
   const cors = local ? origin! : undefined;
-  const session = await sessionOf(request, env, local);
+  const session = await requestSession(request, env, local);
   if (!session) {
     return json(200, { connected: false }, [], cors);
   }
@@ -698,19 +688,84 @@ const authToken = async (request: Request, env: AuthEnv, url: URL, origin: strin
   return json(200, tokenAnswer(next), [await sessionCookie(request, env, next)]);
 };
 
-const authLogin = async (request: Request, env: AuthEnv, url: URL) => {
-  const { back, local: toLocal } = safeReturn(url.searchParams.get("return"), url.origin);
-  const pageState = url.searchParams.get("state");
+const escapeHtml = (text: string) =>
+  text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+
+/** the parameters /auth/login takes (in the query, or in the confirmation's form) */
+const LOGIN_PARAMS = ["return", "state", "consent", "hint"];
+
+/**
+ * "Sign in the Kurviq at http://x.test?": asked before a session goes to a
+ * local address that is not loopback. The button posts the same parameters
+ * back to /auth/login (a form of this page: a link alone can't skip it).
+ */
+const confirmLocalPage = (target: string, params: URLSearchParams) => {
+  const fields = LOGIN_PARAMS.filter((name) => params.has(name))
+    .map((name) => `<input type="hidden" name="${name}" value="${escapeHtml(params.get(name) ?? "")}">`)
+    .join("");
+  const address = escapeHtml(target);
+  return new Response(
+    `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+<title>Sign in your local Kurviq</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 440px; }
+  code { word-break: break-all; }
+  button { font: inherit; font-weight: 600; border-radius: 10px; padding: 10px 18px; cursor: pointer; border: 0; background: #6965db; color: #fff; }
+  a { color: inherit; }
+</style></head>
+<body><main>
+<h1>Sign in your local Kurviq?</h1>
+<p>The Kurviq at <code>${address}</code> asks to use your Google sign-in. It gets access to your Kurviq files in Google Drive.</p>
+<p>Only continue if you started this sign-in from your own Kurviq at this address.</p>
+<form method="post" action="/auth/login">${fields}<button type="submit">Sign in ${address}</button></form>
+<p><a href="/">Cancel</a></p>
+</main></body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+      },
+    },
+  );
+};
+
+/** the parameters of a POST /auth/login (the confirmation's form), from Kurviq's own page only; null: refused */
+const confirmedParams = async (request: Request, url: URL) => {
+  const origin = request.headers.get("Origin");
+  const sameOrigin = origin ? origin === url.origin : request.headers.get("Sec-Fetch-Site") === "same-origin";
+  if (!sameOrigin) {
+    return null;
+  }
+  return new URLSearchParams((await readText(request.body, 8 * 1024)) ?? "");
+};
+
+/**
+ * GET /auth/login (from a link) or POST /auth/login (the confirmation page's
+ * button, `confirmed`). The local install's session is handed to a loopback
+ * address at once, to any other local address (*.test) only after the click.
+ */
+const authLogin = async (request: Request, env: AuthEnv, url: URL, params: URLSearchParams, confirmed: boolean) => {
+  const { back, local: toLocal } = safeReturn(params.get("return"), url.origin);
+  const pageState = params.get("state");
   if (toLocal && pageState !== null && !PAGE_STATE_RE.test(pageState)) {
     return json(400, { error: "state: 16 to 128 characters of A-Z a-z 0-9 _ -" });
+  }
+  if (toLocal && !confirmed && !isDevOrigin(new URL(back).origin)) {
+    return confirmLocalPage(new URL(back).origin, params);
   }
   return startFlow(
     request,
     env,
     back,
     toLocal,
-    url.searchParams.has("consent"),
-    { hint: url.searchParams.get("hint") ?? undefined, pageState: toLocal ? pageState ?? undefined : undefined },
+    params.has("consent"),
+    { hint: params.get("hint") ?? undefined, pageState: toLocal ? pageState ?? undefined : undefined },
   );
 };
 
@@ -737,26 +792,22 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
     return null;
   }
   const origin = request.headers.get("Origin");
-  const local = isLocalOrigin(origin) && origin !== url.origin;
+  const local = isLocalInstall(origin) && origin !== url.origin;
 
   if (request.method === "OPTIONS" && local && (url.pathname === "/auth/token" || url.pathname === "/auth/logout")) {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": origin!,
-        "Access-Control-Allow-Methods": "POST",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Max-Age": "86400",
-        Vary: "Origin",
-      },
-    });
+    return localPreflight(origin!);
   }
   if (!clientId(env) || !env.GOOGLE_CLIENT_SECRET || !env.COOKIE_KEY) {
     return authUnavailable(url, local, origin);
   }
 
   if (url.pathname === "/auth/login" && request.method === "GET") {
-    return authLogin(request, env, url);
+    return authLogin(request, env, url, url.searchParams, false);
+  }
+
+  if (url.pathname === "/auth/login" && request.method === "POST") {
+    const params = await confirmedParams(request, url);
+    return params ? authLogin(request, env, url, params, true) : json(403, { error: "Forbidden" });
   }
 
   if (url.pathname === "/auth/callback" && request.method === "GET") {

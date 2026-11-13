@@ -15,24 +15,34 @@
 //
 // Stateless like the rest: client ids, codes and tokens are sealed (AES-GCM
 // with the Worker's key, see auth.ts), so they can't be read or forged, and
-// expire by the time inside them. They carry the pairing (the hash of the
+// expire by the time inside them. One exception: a code is redeemed once
+// only, so its id is noted (by the pairing's Durable Object) until it expires. They carry the pairing (the hash of the
 // browser's agent key), never the key: "Sign out all agents" in Kurviq gives the
 // browser a new key and with it a new pairing, so every token made before
 // reaches nobody.
 
 import { b64url, seal, unseal } from "./auth";
+import { readText } from "./bytes";
 
 import type { AuthEnv } from "./auth";
+
+/** the agent pairings (./pairing.ts): they note which codes were redeemed */
+export type OAuthEnv = AuthEnv & { PAIRING?: DurableObjectNamespace };
 
 const CODE_SECONDS = 60;
 const ACCESS_SECONDS = 60 * 60;
 const REFRESH_SECONDS = 90 * 24 * 60 * 60;
 const UPLOAD_SECONDS = 7 * 24 * 60 * 60;
 
-const KEY_RE = /^[A-Za-z0-9_-]{32}$/;
+/** a browser's agent key (made by the approval page or the app) */
+export const AGENT_KEY_RE = /^[A-Za-z0-9_-]{32}$/;
+
+/** registration and token requests are small forms or JSON documents */
+const MAX_BODY = 16 * 1024;
 
 type Client = { r: string[]; n: string };
-type Code = { p: string; c: string; r: string; cc: string; e: number };
+/** n: the code's own id, redeemed once */
+type Code = { p: string; c: string; r: string; cc: string; e: number; n: string };
 type Grant = { p: string; c: string; e: number };
 type Upload = { p: string; e: number };
 
@@ -62,24 +72,31 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
 const oauthError = (status: number, error: string, description: string) =>
   json(status, { error, error_description: description });
 
-/** loopback (any port, as native apps use) or https; nothing else may receive codes */
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+
+/** loopback (any port, as native apps use) or https, without credentials or fragment; nothing else may receive codes */
 const allowedRedirect = (uri: string) => {
   try {
     const url = new URL(uri);
-    if (url.hash) {
+    if (url.hash || url.username || url.password) {
       return false;
     }
     if (url.protocol === "https:") {
       return true;
     }
-    return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    return url.protocol === "http:" && LOOPBACK.includes(url.hostname);
   } catch {
     return false;
   }
 };
 
-/** a registered redirect URI matches, the port of a loopback one may differ (RFC 8252) */
-const redirectMatches = (registered: string[], uri: string) =>
+/**
+ * A registered redirect URI matches: the same address, or a loopback one on
+ * another port (RFC 8252). The presented address must itself be allowed: the
+ * same scheme (http), no credentials, no fragment.
+ */
+export const redirectMatches = (registered: string[], uri: string) =>
+  allowedRedirect(uri) &&
   registered.some((known) => {
     if (known === uri) {
       return true;
@@ -87,14 +104,20 @@ const redirectMatches = (registered: string[], uri: string) =>
     try {
       const a = new URL(known);
       const b = new URL(uri);
-      const loopback = ["localhost", "127.0.0.1", "[::1]"];
-      return a.protocol === "http:" && loopback.includes(a.hostname) && a.hostname === b.hostname && a.pathname === b.pathname && a.search === b.search;
+      return (
+        a.protocol === "http:" &&
+        b.protocol === "http:" &&
+        LOOPBACK.includes(a.hostname) &&
+        a.hostname === b.hostname &&
+        a.pathname === b.pathname &&
+        a.search === b.search
+      );
     } catch {
       return false;
     }
   });
 
-export const protectedResourceMetadata = (origin: string) => ({
+const protectedResourceMetadata = (origin: string) => ({
   resource: `${origin}/mcp`,
   authorization_servers: [origin],
   bearer_methods_supported: ["header"],
@@ -309,13 +332,18 @@ const authorizePage = async (url: URL, env: AuthEnv) => {
   );
 };
 
+/** a form or JSON body (at most MAX_BODY bytes; a bigger one reads as empty) as strings */
 const readBody = async (request: Request): Promise<Record<string, string>> => {
+  const text = (await readText(request.body, MAX_BODY)) ?? "";
   const type = request.headers.get("Content-Type") || "";
   if (type.includes("application/json")) {
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    let body: Record<string, unknown> = {};
+    try {
+      body = JSON.parse(text) ?? {};
+    } catch {}
     return Object.fromEntries(Object.entries(body).map(([key, value]) => [key, String(value ?? "")])); // NOSONAR S6551: JSON values deliberately use the same String coercion as form values
   }
-  return Object.fromEntries(new URLSearchParams(await request.text()));
+  return Object.fromEntries(new URLSearchParams(text));
 };
 
 const issueTokens = async (env: AuthEnv, pairing: string, client: string) => ({
@@ -330,7 +358,10 @@ const pkceMatches = async (verifier: string, challenge: string) =>
   /^[A-Za-z0-9._~-]{43,128}$/.test(verifier) && b64url(await sha256(verifier)) === challenge;
 
 const registerClient = async (request: Request, env: AuthEnv) => {
-  const body = (await request.json().catch(() => null)) as { redirect_uris?: unknown; client_name?: unknown } | null;
+  let body: { redirect_uris?: unknown; client_name?: unknown } | null = null;
+  try {
+    body = JSON.parse((await readText(request.body, MAX_BODY)) ?? "");
+  } catch {}
   const uris = Array.isArray(body?.redirect_uris) ? body!.redirect_uris.map(String) : [];
   if (!uris.length || uris.length > 10 || !uris.every(allowedRedirect)) {
     return oauthError(400, "invalid_redirect_uri", "redirect_uris: one or more https or loopback (http://localhost) addresses");
@@ -360,7 +391,7 @@ const approveClient = async (request: Request, env: AuthEnv, url: URL) => {
   if (!client || !redirectMatches(client.r, body.redirect_uri || "")) {
     return oauthError(400, "invalid_client", "Unknown agent or return address");
   }
-  if (!KEY_RE.test(body.key || "") || !body.code_challenge) {
+  if (!AGENT_KEY_RE.test(body.key || "") || !body.code_challenge) {
     return oauthError(400, "invalid_request", "Missing agent access or PKCE challenge");
   }
   const code = await seal(
@@ -371,6 +402,7 @@ const approveClient = async (request: Request, env: AuthEnv, url: URL) => {
       r: body.redirect_uri,
       cc: body.code_challenge,
       e: now() + CODE_SECONDS,
+      n: b64url(crypto.getRandomValues(new Uint8Array(18))),
     } satisfies Code,
     "oauth-code",
   );
@@ -382,7 +414,28 @@ const approveClient = async (request: Request, env: AuthEnv, url: URL) => {
   return json(200, { redirect: target.toString() });
 };
 
-const exchangeCode = async (env: AuthEnv, body: Record<string, string>) => {
+/**
+ * The code is redeemed now, for good: true the first time, false after (the
+ * pairing's Durable Object notes its id until it expires); null: that could
+ * not be checked (no tokens then: refusing is safe, the client signs in again)
+ */
+const redeem = async (env: OAuthEnv, code: Code): Promise<boolean | null> => {
+  if (!env.PAIRING || !code.n) {
+    return null;
+  }
+  try {
+    const res = await env.PAIRING.get(env.PAIRING.idFromName(code.p)).fetch("https://pairing/oauth/code", {
+      method: "POST",
+      body: JSON.stringify({ id: code.n, exp: code.e * 1000 }),
+    });
+    if (res.status === 200 || res.status === 409) {
+      return res.status === 200;
+    }
+  } catch {}
+  return null;
+};
+
+const exchangeCode = async (env: OAuthEnv, body: Record<string, string>) => {
   const code = await unseal<Code>(env, body.code, "oauth-code");
   if (!code || code.e <= now()) {
     return oauthError(400, "invalid_grant", "The code expired or is not valid: sign in again");
@@ -392,6 +445,14 @@ const exchangeCode = async (env: AuthEnv, body: Record<string, string>) => {
   }
   if (!(await pkceMatches(body.code_verifier || "", code.cc))) {
     return oauthError(400, "invalid_grant", "PKCE verification failed");
+  }
+  // checked last: a code a client got wrong (verifier, address) is not used up
+  const first = await redeem(env, code);
+  if (first === null) {
+    return oauthError(503, "temporarily_unavailable", "The sign-in could not be completed right now: try again");
+  }
+  if (!first) {
+    return oauthError(400, "invalid_grant", "The code was used already: sign in again");
   }
   return json(200, await issueTokens(env, code.p, code.c));
 };
@@ -407,7 +468,7 @@ const exchangeRefresh = async (env: AuthEnv, body: Record<string, string>) => {
   return json(200, await issueTokens(env, grant.p, grant.c));
 };
 
-const exchangeToken = async (request: Request, env: AuthEnv) => {
+const exchangeToken = async (request: Request, env: OAuthEnv) => {
   const body = await readBody(request);
   if (body.grant_type === "authorization_code") {
     return exchangeCode(env, body);
@@ -419,7 +480,7 @@ const exchangeToken = async (request: Request, env: AuthEnv) => {
 };
 
 /** the OAuth routes; null for any other request */
-export const handleOAuth = async (request: Request, env: AuthEnv): Promise<Response | null> => {
+export const handleOAuth = async (request: Request, env: OAuthEnv): Promise<Response | null> => {
   const url = new URL(request.url);
   const path = url.pathname;
   const isOAuth =

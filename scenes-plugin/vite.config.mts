@@ -5,7 +5,6 @@
 // its env dir relative to cwd), e.g.:
 //   cd excalidraw/excalidraw-app && npx vite --config ../../scenes-plugin/vite.config.mts
 
-import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -15,29 +14,41 @@ import { VitePWA } from "vite-plugin-pwa";
 
 import upstreamConfig from "../excalidraw/excalidraw-app/vite.config.mts";
 
+import { APP_BUILD_INFO, kurviqBuild } from "../online/build-info.mjs";
 import { thirdPartyNotices } from "../online/licenses.mjs";
+import { loadEnv } from "../scripts/env.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = path.resolve(HERE, "..");
 const EXCALIDRAW_ROOT = path.resolve(WORKSPACE, "excalidraw");
 const PLUGIN_ENTRY = path.resolve(HERE, "src/index.tsx");
 const ONLINE_DIR = path.resolve(WORKSPACE, "online");
+/** a build against the fake Google of `wrangler dev` (npm run build:online:fake); the Worker's switch is the same "1" (online/dev-vars.mjs) */
+const FAKE_GOOGLE = process.env.KURVIQ_FAKE_GOOGLE === "1";
 
-const readEnv = () => {
-  const env: Record<string, string> = {};
-  for (const file of [".env", ".env.local"]) {
-    const full = path.join(WORKSPACE, file);
-    if (!existsSync(full)) {
-      continue;
+const readEnv = () => loadEnv(WORKSPACE) as Record<string, string>;
+
+type PatchStep = [string | RegExp, string, number?];
+
+/**
+ * Replaces anchors in an upstream source file. Each step says how often its
+ * anchor occurs (default: once) and every occurrence is replaced; any other
+ * count fails the build, so a change upstream is noticed instead of leaving
+ * the code silently unpatched. `head` goes before the patched code (imports).
+ */
+const patchSource = (code: string, label: string, steps: PatchStep[], head = "") => {
+  let next = code;
+  for (const [from, to, count = 1] of steps) {
+    const pattern = typeof from === "string" ? null : new RegExp(from.source, from.flags.includes("g") ? from.flags : `${from.flags}g`);
+    const found = pattern ? Array.from(next.matchAll(pattern)).length : next.split(from as string).length - 1;
+    if (found !== count) {
+      throw new Error(
+        `[excalidraw-scenes] ${label} changed upstream (expected ${count}× ${String(from).slice(0, 80)}, found ${found}). Update scenes-plugin/vite.config.mts.`,
+      );
     }
-    for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: build-time matching of trusted local configuration or upstream source
-      if (match) {
-        env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
-      }
-    }
+    next = pattern ? next.replace(pattern, to) : next.split(from as string).join(to);
   }
-  return { ...env, ...process.env } as Record<string, string>;
+  return { code: head + next, map: null };
 };
 
 /**
@@ -145,45 +156,26 @@ const textPadding = () => ({
   enforce: "pre" as const,
   transform(code: string, id: string) {
     const file = id.replaceAll("\\", "/").split("?")[0];
-    const patch = (name: string, steps: Array<[string | RegExp, string, number?]>) => {
-      let next = code;
-      for (const [from, to, count = 1] of steps) {
-        const found =
-          typeof from === "string" ? next.split(from).length - 1 : Array.from(next.matchAll(new RegExp(from.source, "g"))).length;
-        if (found !== count) {
-          throw new Error(
-            `[excalidraw-scenes] text padding: ${name} changed upstream (expected ${count}× ${String(from).slice(0, 60)}, found ${found}). Update scenes-plugin/vite.config.mts.`,
-          );
-        }
-        next = typeof from === "string" ? next.split(from).join(to) : next.replace(new RegExp(from.source, "g"), to);
-      }
-      return { code: next, map: null };
-    };
+    const patch = (name: string, steps: PatchStep[]) => patchSource(code, `text padding: ${name}`, steps);
     const resize = /computeContainerDimensionForBoundText\(\s*([\w.]+),\s*container\.type,\s*\)/;
     if (file.endsWith("/packages/element/src/textElement.ts")) {
-      const firstExport = code.indexOf("\nexport const ");
-      code =
-        code.slice(0, firstExport) +
-        "\nconst __textPadding = (container: any): number =>\n  typeof container?.customData?.textPadding === \"number\" ? container.customData.textPadding : BOUND_TEXT_PADDING;\n" +
-        code.slice(firstExport);
-      // the max text width / height of a shape, and its text position
-      const maxWidth = code.slice(code.indexOf("export const getBoundTextMaxWidth"), code.indexOf("export const getBoundTextMaxHeight"));
-      const maxHeightStart = code.indexOf("export const getBoundTextMaxHeight");
-      const maxHeightEnd = code.indexOf("\n};", maxHeightStart);
-      const maxHeight = code.slice(maxHeightStart, maxHeightEnd);
-      if (!maxWidth || !maxHeight) {
-        throw new Error("[excalidraw-scenes] text padding: getBoundTextMaxWidth/Height not found upstream");
-      }
-      code = code
-        .replace(maxWidth, maxWidth.replaceAll("BOUND_TEXT_PADDING * 2", "__textPadding(container) * 2").replace(": BOUND_TEXT_PADDING) *", ": __textPadding(container)) *"))
-        .replace(maxHeight, maxHeight.replaceAll("BOUND_TEXT_PADDING * 2", "__textPadding(container) * 2"));
       return patch("textElement.ts", [
+        // the shape's padding (a function declaration: hoisted, so it may come before the imports)
+        [
+          /^/,
+          "function __textPadding(container: any): number {\n  return typeof container?.customData?.textPadding === \"number\" ? container.customData.textPadding : BOUND_TEXT_PADDING;\n}\n",
+        ],
+        // the text position
         ["    : BOUND_TEXT_PADDING;\n  let offsetX = padding;", "    : __textPadding(container);\n  let offsetX = padding;"],
+        // auto-grow
         [
           "  containerType: ExtractSetType<typeof VALID_CONTAINER_TYPES>,\n) => {\n  dimension = Math.ceil(dimension);\n  const padding = BOUND_TEXT_PADDING * 2;",
           "  containerType: ExtractSetType<typeof VALID_CONTAINER_TYPES>,\n  container?: any,\n) => {\n  dimension = Math.ceil(dimension);\n  const padding = __textPadding(container) * 2;",
         ],
         [resize, "computeContainerDimensionForBoundText($1, container.type, container)", 3],
+        // the max text width (2×) and height (3×) of a shape: the only uses left, both with `container` in scope
+        ["BOUND_TEXT_PADDING * 2", "__textPadding(container) * 2", 5],
+        ["      : BOUND_TEXT_PADDING) *\n", "      : __textPadding(container)) *\n"],
       ]);
     }
     if (file.endsWith("/packages/excalidraw/wysiwyg/textWysiwyg.tsx")) {
@@ -223,21 +215,13 @@ const richText = () => ({
   enforce: "pre" as const,
   transform(code: string, id: string) {
     const file = id.replaceAll("\\", "/").split("?")[0];
-    const patch = (name: string, entry: string, imports: string[], steps: Array<[string | RegExp, string, number?]>) => {
-      let next = code;
-      for (const [from, to, count = 1] of steps) {
-        const found =
-          typeof from === "string" ? next.split(from).length - 1 : Array.from(next.matchAll(new RegExp(from.source, "g"))).length;
-        if (found !== count) {
-          throw new Error(
-            `[excalidraw-scenes] rich text: ${name} changed upstream (expected ${count}× ${String(from).slice(0, 80)}, found ${found}). Update scenes-plugin/vite.config.mts.`,
-          );
-        }
-        next = typeof from === "string" ? next.split(from).join(to) : next.replace(new RegExp(from.source, "g"), to);
-      }
-      const head = imports.length ? `import { ${imports.join(", ")} } from ${JSON.stringify(entry)};\n` : "";
-      return { code: head + next, map: null };
-    };
+    const patch = (name: string, entry: string, imports: string[], steps: PatchStep[]) =>
+      patchSource(
+        code,
+        `rich text: ${name}`,
+        steps,
+        imports.length ? `import { ${imports.join(", ")} } from ${JSON.stringify(entry)};\n` : "",
+      );
     const MEASURE = ["richMeasure as __richMeasure", "richWrap as __richWrap"];
 
     if (file.endsWith("/packages/element/src/renderElement.ts")) {
@@ -558,17 +542,7 @@ const kurviqOnline = () => ({
   enforce: "pre" as const,
   transform(code: string, id: string) {
     const file = id.replaceAll("\\", "/").split("?")[0];
-    const patch = (name: string, steps: Array<[string | RegExp, string]>) => {
-      let next = code;
-      for (const [from, to] of steps) {
-        const found = typeof from === "string" ? next.includes(from) : from.test(next);
-        if (!found) {
-          throw new Error(`[excalidraw-scenes] kurviq: ${name} changed upstream (${String(from).slice(0, 60)}): update scenes-plugin/vite.config.mts`);
-        }
-        next = next.replace(from, to);
-      }
-      return { code: next, map: null };
-    };
+    const patch = (name: string, steps: PatchStep[]) => patchSource(code, `kurviq: ${name}`, steps);
     if (file.endsWith("/excalidraw-app/App.tsx")) {
       return patch("App.tsx", [
         // live collaboration and shareable links run on excalidraw.com's servers
@@ -683,6 +657,8 @@ const kurviqOnline = () => ({
     if (!existsSync(out)) {
       return;
     }
+    // what this app was built for: online/check-deploy.mjs refuses to publish a fake-Google build
+    writeFileSync(APP_BUILD_INFO, `${JSON.stringify({ fakeGoogle: FAKE_GOOGLE, build: kurviqBuild() })}\n`);
     const brand = (file: string) => readFileSync(path.join(ONLINE_DIR, "brand", file));
     for (const [target, source] of Object.entries(KURVIQ_FILES)) {
       writeFileSync(
@@ -773,15 +749,6 @@ const securityHeaders = (html: string) => {
   ! Content-Security-Policy
   Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data:
 `;
-};
-
-/** the commit a build is made from (Actions: GITHUB_SHA) */
-const kurviqBuild = () => {
-  try {
-    return (process.env.GITHUB_SHA || execSync("git rev-parse HEAD", { cwd: HERE, encoding: "utf8" })).trim().slice(0, 12); // NOSONAR S4036: local developer tooling invokes a fixed command in the developer-controlled environment
-  } catch {
-    return "";
-  }
 };
 
 /** upstream's PWA setup, with Kurviq's name and the Worker's routes left to the network */
@@ -875,13 +842,8 @@ const kurviqPwa = () =>
       display: "standalone",
       theme_color: "#121212",
       background_color: "#ffffff",
+      // opening .excalidraw files with the installed app (no share_target: nothing would receive the shared file)
       file_handlers: [{ action: "/", accept: { "application/vnd.excalidraw+json": [".excalidraw"] } }],
-      share_target: {
-        action: "/web-share-target",
-        method: "POST",
-        enctype: "multipart/form-data",
-        params: { files: [{ name: "file", accept: ["application/vnd.excalidraw+json", "application/json", ".excalidraw"] }] },
-      },
     },
   });
 
@@ -929,7 +891,7 @@ export default async function kurviqConfig(configEnv: { mode: string; command: s
         online ? "" : (env.KURVIQ_AUTH_URL || "https://kurviq.com").replace(/\/$/, ""),
       ),
       // a dev build against the fake Google of `wrangler dev` (FAKE_GOOGLE=1): "/fake-google"
-      "import.meta.env.VITE_APP_GOOGLE_API_BASE": JSON.stringify(process.env.KURVIQ_FAKE_GOOGLE ? "/fake-google" : ""),
+      "import.meta.env.VITE_APP_GOOGLE_API_BASE": JSON.stringify(FAKE_GOOGLE ? "/fake-google" : ""),
       // the Google Picker's browser API key (restricted by website; set in .env or as a GitHub secret, not kept in the repository)
       "import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY": JSON.stringify(env.KURVIQ_GOOGLE_BROWSER_KEY || ""),
       "import.meta.env.VITE_APP_SCENES_SERVER_URL": JSON.stringify(

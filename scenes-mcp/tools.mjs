@@ -1,31 +1,35 @@
-import { presentationOf } from "./presentation.mjs";
 /**
  * The scenes MCP tools, independent of where they run:
  *
- * = the upstream excalidraw-mcp tools (read_me, create_view, …) unchanged,
- *   plus tools to manage scenes in Google Drive (list/get/save/open/rename/delete/
- *   clone, co-working on scenes, slides, conflicts, …).
+ * = the upstream excalidraw-mcp tools (create_view, …; read_me is replaced by
+ *   Kurviq's own element reference), plus tools to manage scenes in Google
+ *   Drive (list/get/save/open/rename/delete/clone, co-working on scenes,
+ *   slides, conflicts, …).
  *
  * Stateless: drafts (create_view checkpoints) and agent baselines are kept by
  * the app in the browser; scenes live in the browser and in Google Drive.
  *
- * Everything goes through `serverFetch` = the scenes server's HTTP API:
+ * Everything goes through `serverFetch` = the scenes server's HTTP API, and
+ * everything runs in the user's open Kurviq tab (reads, edits, pictures,
+ * conversions), which the server relays to:
  *  - locally (./server.mjs, stdio): the scenes server on this machine;
- *    detached mode (default) = the agent works in its own headless Excalidraw
- *    tab, live mode = in the user's open tab
- *  - online (../online/worker, Kurviq): the user's open Kurviq tab answers
- *    it through the pairing WebSocket
+ *    detached mode (default) = the agent edits scenes by name, merged into
+ *    what the user does; live mode = it co-edits the canvas the user has open
+ *  - online (../online/worker, Kurviq): through the pairing WebSocket
+ *    (always detached)
  */
 import { z } from "zod";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { convertInNode, needsConversion } from "./convert.mjs";
+import { PSEUDO_TYPES, REQUEST_ID, isEmptyEdit } from "./agentEdits.mjs";
+import { needsConversion } from "./convert.mjs";
 import { markdownOfElement } from "./richText.mjs";
 import { conflictList, resolveConflicts } from "./editConflicts.mjs";
-import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "./feedback.mjs";
+import { FEEDBACK_KINDS, TEXT_MAX, TITLE_MAX, cleanFeedback } from "./feedback.mjs";
 import { byIds, commonBounds, deckOrder, diffElements, findSlide, inRegion, summarize, templateChangesOf, toRect } from "./inspect.mjs";
 import { readEditFile, resolveImages } from "./media.mjs";
+import { presentationOf } from "./presentation.mjs";
 import { commentsForAgents } from "./sceneComments.mjs";
 
 /** get_scene returns an overview instead of all elements above this size */
@@ -44,11 +48,10 @@ const MAX_CHANGE_DETAILS = 25;
  * @param {string} options.skill SKILL.md (the server's instructions)
  * @param {string} options.reference REFERENCE.md (what read_me returns: the element format, editing, text, slides)
  * @param {(server: McpServer, store: object) => void} options.registerUpstream registers excalidraw-mcp's tools
- * @param {(name: string, pdf: Uint8Array, file?: string) => Promise<object>} options.savePdf
+ * @param {(name: string, pdf: Uint8Array, file?: string) => Promise<object>} [options.savePdf] writes
+ *   export_pdf's file (only with localFiles)
  * @param {boolean} [options.livePreview] live mode: mirror create_view into the app
  * @param {string} [options.name] server name
- * @param {boolean} [options.driveOptional] online: the user's app may have no Google Drive connected
- *   (app_status `drive: false`): new scenes are then local-only
  */
 export const createScenesMcp = ({
   serverFetch,
@@ -61,7 +64,6 @@ export const createScenesMcp = ({
   savePdf,
   livePreview = true,
   name = "Kurviq",
-  driveOptional = false,
   /**
    * reads that only look at a scene take it without image bytes (Kurviq
    * online: the tab that serves it keeps the images and fills them in for
@@ -73,19 +75,19 @@ export const createScenesMcp = ({
    * output); Kurviq online can't, so those options aren't offered there
    */
   localFiles = true,
-  /** Kurviq online: where agents upload images and big edits (payloadId) */
-  uploadUrl = null,
   /** Kurviq online: store a bug report / change request ({ id } | { error }); absent: no send_feedback tool */
   sendFeedback = null,
 }) => {
   const LOCAL_FILES = !!localFiles;
   const APP_HINT = appHint;
   const MODE = mode;
+  /** the tools agents co-work with in this mode (detached: by scene name; live: the open scene) */
+  const CO_WORK = MODE === "detached" ? { read: "read_scene", edit: "edit_scene" } : { read: "read_open_scene", edit: "edit_open_scene" };
 
   // -----------------------------------------------------------------------------
   // checkpoint store: create_view checkpoints (agent drafts) live in the
-  // browser (IndexedDB of the app, or of the throwaway headless renderer when
-  // no tab is open). This process and the scenes server keep no data at all.
+  // user's browser (IndexedDB of the app). This process and the scenes server
+  // keep no data at all.
   // -----------------------------------------------------------------------------
 
   const checkCheckpointId = (id) => {
@@ -97,40 +99,61 @@ export const createScenesMcp = ({
   const store = {
     async save(id, data) {
       checkCheckpointId(id);
-      await agentCommand({ type: "checkpoint-save", id, data });
+      await appCommand({ type: "checkpoint-save", id, data });
     },
     async load(id) {
       checkCheckpointId(id);
-      return (await agentCommand({ type: "checkpoint-load", id })).data ?? null;
+      return (await appCommand({ type: "checkpoint-load", id })).data ?? null;
     },
   };
 
   const newCheckpointId = () =>
     crypto.randomUUID().replaceAll("-", "").slice(0, 18);
 
+  /** store a scene ({ elements, files, appState, kurviqFonts }) as a new checkpoint: its id */
+  const saveCheckpoint = async (scene) => {
+    const id = newCheckpointId();
+    await store.save(id, scene);
+    return id;
+  };
+
   // -----------------------------------------------------------------------------
   // scenes server client
   // -----------------------------------------------------------------------------
 
-  const call = async (pathname, init = {}) => {
+  /** a request to the server: the answer if it is ok, else an error with the server's message and status */
+  const request = async (pathname, init = {}) => {
     let res;
     try {
       res = await serverFetch(pathname, init);
     } catch {
       throw new Error(unreachable);
     }
-    const text = await res.text();
-    if (!res.ok) {
-      let message = text;
-      try {
-        message = JSON.parse(text).error || text;
-      } catch {}
-      const error = new Error(message);
-      error.status = res.status;
-      throw error;
+    if (res.ok) {
+      return res;
     }
-    return text;
+    const text = await res.text();
+    let message = text;
+    try {
+      message = JSON.parse(text).error || text;
+    } catch {
+      // not JSON: the text itself is the message
+    }
+    const error = new Error(message);
+    error.status = res.status;
+    throw error;
   };
+
+  const call = async (pathname, init) => (await request(pathname, init)).text();
+
+  /** the answer, or null when the server says it doesn't exist (404); other errors are thrown */
+  const unless404 = (promise) =>
+    promise.catch((error) => {
+      if (error.status === 404) {
+        return null;
+      }
+      throw error;
+    });
 
   const callJson = async (pathname, init) => JSON.parse(await call(pathname, init));
 
@@ -141,11 +164,11 @@ export const createScenesMcp = ({
       body: JSON.stringify(command),
     }).then((res) => res.result);
 
-  /** the agent's own work (render, convert, drafts): its headless tab in detached mode */
-  const agentCommand = (command) =>
-    appCommand(MODE === "detached" ? { ...command, agentSide: true } : command);
-
-  /** ask the user's tabs to push their unpushed changes of a scene (sync only) */
+  /**
+   * ask the user's tabs to push their unpushed changes of a scene (sync only);
+   * { tabs, results } with one row per tab ({ error } when it didn't answer),
+   * or { failed } when the call itself failed
+   */
   const flushUser = async (name) => {
     try {
       return await callJson("/api/app/flush", {
@@ -153,8 +176,8 @@ export const createScenesMcp = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
-    } catch {
-      return null;
+    } catch (error) {
+      return { tabs: null, results: [], failed: error.message };
     }
   };
 
@@ -169,30 +192,16 @@ export const createScenesMcp = ({
   const leanQuery = (lean) => (lean && LEAN ? "?lean=1" : "");
 
   /** a scene in Google Drive plus its version, the MD5 of its content (null if it doesn't exist) */
-  const loadSceneWithMd5 = async (name, { lean = false } = {}) => {
-    const res = await serverFetch(`${sceneUrl(name)}${leanQuery(lean)}`).catch (() => {
-      throw new Error(unreachable);
-    });
-    if (res.status === 404) {
-      return null;
-    }
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
-    // x-scene-sha: pre-rename tabs; remove after 2027-02
-    return { file: await res.json(), md5: res.headers.get("x-scene-md5") ?? res.headers.get("x-scene-sha") };
-  };
+  const loadSceneWithMd5 = (name, { lean = false } = {}) =>
+    unless404(
+      request(`${sceneUrl(name)}${leanQuery(lean)}`).then(async (res) => ({
+        file: await res.json(),
+        // x-scene-sha: pre-rename tabs; remove after 2027-02
+        md5: res.headers.get("x-scene-md5") ?? res.headers.get("x-scene-sha"),
+      })),
+    );
 
-  const loadSceneFile = async (name, { lean = false } = {}) => {
-    try {
-      return JSON.parse(await call(`${sceneUrl(name)}${leanQuery(lean)}`));
-    } catch (error) {
-      if (error.status === 404) {
-        return null;
-      }
-      throw error;
-    }
-  };
+  const loadSceneFile = async (name, { lean = false } = {}) => (await loadSceneWithMd5(name, { lean }))?.file ?? null;
 
   /**
    * Local-only scenes exist only in the user's browser (never in Google Drive): the
@@ -200,6 +209,30 @@ export const createScenesMcp = ({
    * user's app.
    */
   const isLocalOnly = (flushed) => (flushed?.results || []).some((r) => r?.localOnly);
+
+  /** the flush could not tell what the user's app has of this scene (no tab answered in time, or it failed) */
+  const flushUnknown = (flushed) => {
+    const rows = flushed?.results || [];
+    const answered = rows.some((r) => r && !r.error);
+    return !answered && (!!flushed?.failed || rows.some((r) => r?.error));
+  };
+
+  /**
+   * Where a scene lives: { local, flushed } after asking the user's app to
+   * push it. When the app didn't answer, it is unknown whether the scene is
+   * local-only, and falling back to Google Drive could read (or edit) a copy
+   * the user took out of sync: refused instead.
+   */
+  const sceneHome = async (name) => {
+    const flushed = await flushUser(name);
+    if (flushUnknown(flushed)) {
+      const why = flushed.failed ?? flushed.results.find((r) => r?.error)?.error;
+      throw new Error(
+        `The user's app did not answer (${why}), so it is unknown whether "${name}" is a local-only scene or which version is newest. Nothing was read or changed: try again in a moment; app_status shows whether the tab is busy.`,
+      );
+    }
+    return { local: isLocalOnly(flushed), flushed };
+  };
 
   const LOCAL_NOTE =
     "Local-only scene: it exists only in the user's browser and is never synced to Google Drive (the user decides if it ever is). You read and edit it through their app, which must be open.";
@@ -209,8 +242,8 @@ export const createScenesMcp = ({
 
   /** a scene's content: from the user's browser if it is local-only, else from Google Drive */
   const loadAnyScene = async (name, { lean = false } = {}) => {
-    const flushed = await flushUser(name);
-    if (isLocalOnly(flushed)) {
+    const { local } = await sceneHome(name);
+    if (local) {
       return { local: true, file: (await loadLocalScene(name, undefined, { lean })).file };
     }
     return { local: false, file: await loadSceneFile(name, { lean }) };
@@ -225,19 +258,21 @@ export const createScenesMcp = ({
   // elements
   // -----------------------------------------------------------------------------
 
-  const PSEUDO_TYPES = new Set(["cameraUpdate", "delete", "restoreCheckpoint"]);
-
-  /** resolve create_view-style input (restoreCheckpoint / delete pseudo elements) */
+  /**
+   * resolve create_view-style input (restoreCheckpoint / delete pseudo
+   * elements): { elements, checkpoint } (the restored checkpoint, with the
+   * pictures, background and fonts it holds, or null)
+   */
   const resolveElements = async (input) => {
     const restore = input.find((el) => el.type === "restoreCheckpoint");
-    let base = [];
+    let checkpoint = null;
     if (restore?.id) {
-      const checkpoint = await store.load(restore.id);
+      checkpoint = await store.load(restore.id);
       if (!checkpoint) {
         throw new Error(`Checkpoint "${restore.id}" not found`);
       }
-      base = checkpoint.elements;
     }
+    const base = checkpoint?.elements ?? [];
     const deleteIds = new Set();
     for (const el of input) {
       if (el.type === "delete") {
@@ -246,14 +281,16 @@ export const createScenesMcp = ({
         }
       }
     }
-    return [...base, ...input].filter(
+    const elements = [...base, ...input].filter(
       (el) =>
         !PSEUDO_TYPES.has(el.type) &&
         !deleteIds.has(el.id) &&
         !deleteIds.has(el.containerId),
     );
+    return { elements, checkpoint };
   };
 
+  /** the user's tab converts short-format elements with the real Excalidraw (text measured with the real fonts) */
   const toSceneElements = async (elements, deck) => {
     const hasTemplate = elements.some((el) => el?.type === "frame" && el.customData?.slides?.role === "template");
     if (!elements.some(needsConversion) && !hasTemplate) {
@@ -261,13 +298,13 @@ export const createScenesMcp = ({
     }
     try {
       // a deck's slides get their template copies (header, footer, page numbers)
-      const result = await agentCommand({ type: "convert", elements, ...(deck ? { deck } : {}) });
+      const result = await appCommand({ type: "convert", elements, ...(deck ? { deck } : {}) });
       return { elements: result.elements, convertedBy: "browser" };
     } catch (error) {
-      if (error.status !== 409 && error.status !== 504) {
-        throw error;
+      if (error.status === 504) {
+        error.message = `${error.message} Nothing was saved. Try again in a moment; app_status shows whether the tab is busy.`;
       }
-      return { elements: convertInNode(elements), convertedBy: "node (estimated text sizes)" };
+      throw error;
     }
   };
 
@@ -424,10 +461,6 @@ export const createScenesMcp = ({
     };
   };
 
-  /**
-   * add / update / delete of an edit, from the arguments and/or a JSON file;
-   * image elements (src / svg / icon) become image elements + files
-   */
   /** an edit the agent uploaded (kept by the user's tab), like an edit file */
   const payloadEdit = async (id) => {
     const { json } = await appCommand({ type: "payload", id });
@@ -435,6 +468,11 @@ export const createScenesMcp = ({
     return Array.isArray(data) ? { add: data } : data;
   };
 
+  /**
+   * add / update / delete of an edit, from the arguments and/or a JSON file
+   * (each may be empty: an edit can be only comments or deck operations);
+   * image elements (src / svg / icon) become image elements + files
+   */
   const editInput = async ({ add, update, delete: remove, file, payloadId }) => {
     let fromFile = {};
     if (file) {
@@ -457,11 +495,36 @@ export const createScenesMcp = ({
     const { elements, files } = await resolveImages(addElements);
     const updates = [...(update || []), ...(fromFile.update || [])];
     const deletes = [...(remove || []), ...(fromFile.delete || [])];
-    if (!elements.length && !updates.length && !deletes.length) {
-      throw new Error("Nothing to do: pass add, update and/or delete (or an uploaded payloadId / a file with them)");
-    }
     return { add: elements, update: updates, delete: deletes, files };
   };
+
+  /** fields without the unset ones (undefined, null, "", false, empty lists and objects); false of `keepFalse` stays */
+  const withoutEmpty = (fields, keepFalse = []) =>
+    Object.fromEntries(
+      Object.entries(fields).filter(([key, value]) => {
+        if (value === false) {
+          return keepFalse.includes(key);
+        }
+        if (Array.isArray(value)) {
+          return value.length > 0;
+        }
+        if (value && typeof value === "object") {
+          return Object.keys(value).length > 0;
+        }
+        return value !== undefined && value !== null && value !== "";
+      }),
+    );
+
+  /**
+   * what an edit asks the tab to do, as the edit commands take it: add /
+   * update / delete plus the edit's other operations (unset ones left out;
+   * isPresentation: false is an operation)
+   */
+  const editOperations = ({ add, update, delete: remove }, { upsert, restyle, reset, addTitleBlock, isPresentation, comments }) =>
+    withoutEmpty({ add, update, delete: remove, upsert, restyle, reset, addTitleBlock, isPresentation, comments }, ["isPresentation"]);
+
+  const NOTHING_TO_DO =
+    "Nothing to do: pass add, update, delete, comments, isPresentation, restyle, reset or addTitleBlock (or an uploaded payloadId / a file with them)";
 
   const EDIT_FILE = z
     .string()
@@ -516,8 +579,8 @@ export const createScenesMcp = ({
     } See conflicts: rebase on the user's version and send those again.`;
   };
 
-  /** what an edit reports besides added / updated / deleted */
-  const EDIT_EXTRAS = ["commentsAdded", "alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "reset", "titleBlock", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile"];
+  /** what an edit reports besides added / updated / deleted (pending: applied, Kurviq's server has not confirmed it yet) */
+  const EDIT_EXTRAS = ["commentsAdded", "alreadyApplied", "slideNumbers", "alsoDeleted", "replaced", "restyled", "reset", "titleBlock", "layerProblems", "imagesRepaired", "imagesWithoutFile", "sceneFile", "missingIds", "pending"];
   const editExtras = (edited) =>
     Object.fromEntries(EDIT_EXTRAS.filter((key) => edited?.[key] !== undefined).map((key) => [key, edited[key]]));
 
@@ -532,6 +595,88 @@ export const createScenesMcp = ({
   - Deck style = the template's elements: style them (font, color, size … as on any element) and every slide follows; there is no separate theme (customData.slides.theme only holds the slide transition: "glide" | "cut").
   - Template copies ("<element>~<slide>") follow their template element property by property: what was changed on a slide (by the user or by you) stays there, everything else follows the template; read_scene lists those changes as changedOnSlide. Headline and eyebrow copies (customData.slides.role) are the slide's own words: update their text (or markdown) on the slide; their place and style come from the template. reset: [slides] / restyle: true bring the template's version back (as the app's buttons do); every template has headline and eyebrow (the app adds them once to older ones; addTitleBlock: true right away).`;
 
+  /** the input of both edit tools (edit_scene, edit_open_scene) besides where the edit goes */
+  const EDIT_SCHEMA = {
+    add: z.string().optional().describe("JSON array string of new elements (format: read_me)"),
+    update: z
+      .array(z.object({ id: z.string() }).passthrough())
+      .optional()
+      .describe("Partial updates: [{ id, ...props }]"),
+    delete: z.array(z.string()).optional(),
+    ...EDIT_SOURCE,
+    onConflict: ON_CONFLICT,
+    upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
+    isPresentation: z.boolean().optional().describe("Saved presentation flag. Frames alone do not make a presentation. False keeps all content."),
+    comments: COMMENT_OPS,
+    restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
+    reset: z
+      .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
+      .optional()
+      .describe('Deck: back to the template: slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
+    addTitleBlock: z
+      .boolean()
+      .optional()
+      .describe("Deck: a headline and an eyebrow on a template that never had them (the app adds them by itself when it opens such a deck): placed and styled there for all slides; slide texts where they go become the slides' own words"),
+    view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
+  };
+
+  /**
+   * The conflict step of both edit tools: updates (and adds with upsert) that
+   * set what the user changed since `changes.base` are not applied (or, with
+   * overwrite, applied and listed). `check`: whether there is a version to
+   * compare with.
+   */
+  const checkConflicts = ({ changes, current, edit, upsert, onConflict, check }) => {
+    if (!check || changes.firstLook || !changes.count) {
+      return { updates: edit.update, adds: edit.add, conflicts: [] };
+    }
+    return resolveConflicts({ base: changes.base, current, updates: edit.update, adds: edit.add, upsert: !!upsert, onConflict });
+  };
+
+  /** the answer when every update clashed and nothing else was in the edit: the scene is unchanged */
+  const nothingAppliedResult = ({ changes, conflicts, onConflict, basedOn, scene, revision }) =>
+    text({
+      warning: conflictWarning(changes, conflicts, onConflict, { nothingApplied: true }),
+      conflicts,
+      conflictNote: CONFLICT_NOTE(basedOn),
+      userChanges: changes.report,
+      scene,
+      addedIds: [],
+      updated: [],
+      deleted: [],
+      ...withoutEmpty({ revision }),
+      note: "Nothing was changed: all your updates clashed with the user's changes.",
+    });
+
+  /** the answer of both edit tools: what was applied, the user's changes and conflicts, and `rest` (revision, note, …) */
+  const editResult = ({ warning, conflicts, basedOn, changes, scene, edited, rest }) =>
+    text({
+      ...withoutEmpty({ warning }),
+      ...(conflicts.length ? { conflicts, conflictNote: CONFLICT_NOTE(basedOn) } : {}),
+      ...(changes.count ? { userChanges: changes.report } : {}),
+      scene,
+      addedIds: idList(edited.addedIds),
+      updated: idList([...new Set(edited.updated)]),
+      deleted: idList(edited.deleted),
+      ...editExtras(edited),
+      ...rest,
+    });
+
+  /**
+   * the local-only scenes of the app's status: rows { name, localOnly }, or
+   * (older tabs) lines "<name>: <status> (…)"; scene names have no ":"
+   */
+  const localOnlyScenes = (rows = []) =>
+    rows
+      .map((row) => {
+        if (typeof row !== "string") {
+          return row?.localOnly ? row.name : null;
+        }
+        const colon = row.indexOf(": ");
+        return colon > 0 && row.slice(colon + 2).startsWith("local-only") ? row.slice(0, colon) : null;
+      })
+      .filter((name) => typeof name === "string");
+
   const registerSceneTools = (server) => {
     if (sendFeedback) {
       server.registerTool(
@@ -540,7 +685,7 @@ export const createScenesMcp = ({
           title: "Report a bug or request a change",
           description: `Send Kurviq's developers a bug report or a change request about Kurviq itself (the app, these tools, the docs): when something doesn't work as documented, a tool is missing or confusing, or the user asks you to report something. Not for the user's drawings. Plain text only (no code, markup or links with scripts): what you did, what happened, what you expected. Title up to ${TITLE_MAX} characters, description up to ${TEXT_MAX}. Nothing personal: no secrets, tokens or private content from scenes.`,
           inputSchema: {
-            kind: z.enum(["bug", "change"]).describe('"bug": something doesn\'t work; "change": a feature or change request'),
+            kind: z.enum(FEEDBACK_KINDS).describe('"bug": something doesn\'t work; "change": a feature or change request'),
             title: z.string().describe(`A short summary (up to ${TITLE_MAX} characters)`),
             text: z.string().describe(`What happened / what you'd like, and why (up to ${TEXT_MAX} characters, plain text)`),
             scene: z.string().optional().describe("The scene it happened in, if any"),
@@ -572,9 +717,7 @@ export const createScenesMcp = ({
         const { scenes } = await callJson("/api/scenes?refresh");
         const app = await callJson("/api/app/state");
         const status = app.connected ? await appCommand({ type: "status" }).catch (() => null) : null;
-        const localOnly = (status?.scenes || [])
-          .filter((line) => / local-only /.test(line))
-          .map((line) => line.slice(0, line.indexOf(": local-only")));
+        const localOnly = localOnlyScenes(status?.scenes);
         return text({
           scenes,
           ...(localOnly.length ? { localOnlyScenes: localOnly, localOnlyNote: LOCAL_NOTE } : {}),
@@ -590,41 +733,38 @@ export const createScenesMcp = ({
     server.registerTool(
       "get_scene",
       {
-        description: `Read a scene as stored in Google Drive (the user's browser may have newer, not yet pushed changes; list_scenes / app_status show the sync status; for the scene open in the app use read_open_scene). Scenes can be huge, so:
+        description: `Read a scene as data (for co-working, ${CO_WORK.read} also reports what the user changed). Scenes can be huge, so:
   - summary=true (default for scenes with more than ${SUMMARY_THRESHOLD} elements): overview only: scene bounds, element counts, frames and all text labels with their positions. Use it to find the part you need.
   - region or elementIds: only the elements in that area / those elements (+ their labels).
   - otherwise all elements (compact).
-  Always returns a checkpointId of the FULL scene (for view_scene, or as the start of a NEW drawing with create_view + save_scene). To change this scene use read_scene + edit_scene; to LOOK at it, view_scene.`,
+  checkpoint=true also returns a checkpointId of the FULL scene (elements, pictures, background, fonts) as the start of a NEW drawing (create_view with restoreCheckpoint, or save_scene under a new name). To change this scene use ${CO_WORK.read} + ${CO_WORK.edit}; to LOOK at it, view_scene(name).`,
         inputSchema: {
           name: SCENE_NAME,
           summary: z.boolean().optional().describe("Return an overview instead of elements"),
           textsOffset: TEXTS_OFFSET,
           region: REGION.optional(),
           elementIds: z.array(z.string()).optional(),
+          checkpoint: z.boolean().optional().describe("Also store the whole scene as a checkpoint (checkpointId) to start a new drawing from"),
         },
         annotations: { readOnlyHint: true },
       },
-      tool(async ({ name, summary, region, elementIds, textsOffset }) => {
-        const { file, local } = await loadAnyScene(name, { lean: true });
+      tool(async ({ name, summary, region, elementIds, textsOffset, checkpoint }) => {
+        // a checkpoint is a whole scene, pictures included: only then is the scene read with its image bytes
+        const { file, local } = await loadAnyScene(name, { lean: !checkpoint });
         if (!file) {
           throw notFound(name);
         }
         const elements = (file.elements || []).filter((el) => !el.isDeleted);
-        const checkpointId = newCheckpointId();
-        await store.save(checkpointId, { elements });
-        const base = { name, checkpointId, elementCount: elements.length, ...(local ? { localOnly: LOCAL_NOTE } : {}) };
-
-        if (elementIds?.length || region) {
-          return text({ ...base, ...selection(elements, { region, elementIds }) });
-        }
-        if (summary ?? elements.length > SUMMARY_THRESHOLD) {
-          return text({
-            ...base,
-            note: "Overview only. Use region/elementIds for element data, view_scene to see it.",
-            ...summarize(elements, { textsOffset }),
-          });
-        }
-        return text({ ...base, sceneBounds: toRect(commonBounds(elements)), elements: compact(elements) });
+        const checkpointId = checkpoint ? await saveCheckpoint({ ...sceneOf(file), elements }) : null;
+        const overview = !elementIds?.length && !region && (summary ?? elements.length > SUMMARY_THRESHOLD);
+        return text({
+          name,
+          ...withoutEmpty({ checkpointId }),
+          elementCount: elements.length,
+          ...(local ? { localOnly: LOCAL_NOTE } : {}),
+          ...(overview ? { note: "Overview only. Use region/elementIds for element data, view_scene to see it." } : {}),
+          ...sceneView(elements, { summary, region, elementIds, textsOffset }, elements.length > SUMMARY_THRESHOLD),
+        });
       }),
     );
 
@@ -684,21 +824,8 @@ export const createScenesMcp = ({
       };
     };
 
-    const readOpenResult = ({ open, elements, changes, revision, changesOnly, summary, region, elementIds, textsOffset }) => {
-      const result = text({
-        scene: sceneLabel(open.scene),
-        isPresentation: open.isPresentation === true,
-        unsavedChanges: open.dirty,
-        sync: syncNote(open),
-        elementCount: elements.length,
-        userChanges: changes.firstLook
-          ? "First time an agent reads this scene: no earlier baseline to compare with. From now on, changes by the user will be reported."
-          : changes.report,
-        revision,
-        ...(changesOnly ? {} : sceneView(elements, { summary, region, elementIds, textsOffset }, elements.length > SUMMARY_THRESHOLD)),
-      });
-      return result;
-    };
+    /** userChanges of a read: the report, or what a first look means */
+    const userChangesOf = (changes, firstLookNote) => (changes.firstLook ? firstLookNote : changes.report);
 
     /** the scene's comment threads (people's review notes): what agents read of them */
     const sceneComments = (file, elements) => {
@@ -706,105 +833,34 @@ export const createScenesMcp = ({
       return threads.length ? { comments: threads } : {};
     };
 
-    const readSceneResult = ({ name, current, local, flushed, elements, changes, changesOnly, summary, region, elementIds, textsOffset, slide, relative }) => {
-      const result = text({
-        scene: name,
-        isPresentation: presentationOf(current.file),
-        revision: current.md5,
-        sync: local ? LOCAL_NOTE : userSyncNote(flushed),
-        elementCount: elements.length,
-        ...fileStats(current.file),
-        userChanges: changes.firstLook
-          ? "No earlier agent edit of this scene found: everything is new to you. From your first edit on, the user's changes are reported."
-          : changes.report,
-        ...(changesOnly ? {} : sceneView(elements, { summary, region, elementIds, textsOffset, slide, relative }, elements.length > SUMMARY_THRESHOLD)),
-        ...sceneComments(current.file, elements),
-      });
-      return result;
+    /**
+     * the picture of a read: what the user changed (`changedImages`), else the
+     * scene (`source`: which one, for the render command) or the part asked for
+     */
+    const appendReadImage = async (result, changedImages, source, elements, { region, elementIds }) => {
+      if (changedImages) {
+        result.content.push(...(await changedImages()));
+        return;
+      }
+      if (!elements.length) {
+        return;
+      }
+      try {
+        const { image, meta } = await renderImage({ ...source, ...withoutEmpty({ region, elementIds }) });
+        result.content.push(image, {
+          type: "text",
+          text: `Image above: the scene (${meta.elementsRendered}/${meta.elementsTotal} elements, scale ${meta.scale}).`,
+        });
+      } catch (error) {
+        result.content.push({ type: "text", text: `(could not render image: ${error.message})` });
+      }
     };
 
-    const applyOpenEdit = async ({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, revision, onConflict }) => {
-      const edited = await appCommand({
-        type: "edit",
-        onConflict,
-        targetScene: before.scene,
-        expectScene: expectScene !== undefined ? expectScene : before.scene,
-        ...(edit.add.length ? { add: edit.add } : {}),
-        ...(updates.length ? { update: updates } : {}),
-        ...(edit.delete.length ? { delete: edit.delete } : {}),
-        ...(Object.keys(edit.files).length ? { files: edit.files } : {}),
-        ...(upsert ? { upsert } : {}),
-        ...(restyle ? { restyle } : {}),
-        ...(reset ? { reset } : {}),
-        ...(addTitleBlock ? { addTitleBlock } : {}),
-        ...(isPresentation === undefined ? {} : { isPresentation }),
-        ...(comments?.length ? { comments } : {}),
-        storeBaseline: "edit",
-        revision,
-      });
-      return edited;
-    };
-
-    const detachedEditCommand = ({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, onConflict }) => {
-      const command = {
-        type: local ? "local-edit" : "scene-edit",
-        ...(local ? { targetScene: name } : {}),
-        name,
-        requestId,
-        onConflict,
-        ...(edit.add.length ? { add: edit.add } : {}),
-        ...(updates.length ? { update: updates } : {}),
-        ...(edit.delete.length ? { delete: edit.delete } : {}),
-        ...(Object.keys(edit.files).length ? { files: edit.files } : {}),
-        ...(upsert ? { upsert } : {}),
-        ...(restyle ? { restyle } : {}),
-        ...(reset ? { reset } : {}),
-        ...(addTitleBlock ? { addTitleBlock } : {}),
-        ...(isPresentation === undefined ? {} : { isPresentation }),
-        ...(comments?.length ? { comments } : {}),
-      };
-      return command;
-    };
-
-    const detachedEditResult = ({ warning, conflicts, basedOn, changes, name, edited, requestId, local }) => {
-      warning = [warning, edited.imagesWithoutFile].filter(Boolean).join(" ");
-      const result = text({
-        ...(warning ? { warning } : {}),
-        ...(conflicts.length ? { conflicts, conflictNote: CONFLICT_NOTE(basedOn) } : {}),
-        ...(changes.count ? { userChanges: changes.report } : {}),
-        scene: name,
-        addedIds: idList(edited.addedIds),
-        updated: idList([...new Set(edited.updated)]),
-        deleted: idList(edited.deleted),
-        ...editExtras(edited),
-        ...(edited.missingIds ? { missingIds: edited.missingIds } : {}),
-        // Applied; Kurviq's server has not confirmed it yet.
-        ...(edited.pending ? { pending: edited.pending } : {}),
-        requestId,
-        // sha / commit: pre-rename tabs; remove after 2027-02
-        revision: local ? edited.revision : edited.md5 ?? edited.sha,
-        ...(local
-          ? { note: `${LOCAL_NOTE} Your edit is in their app now; nothing else to do.` }
-          : { driveRevision: edited.driveRevision ?? edited.commit, note: "Saved to Google Drive. The user's app merges it within seconds; nothing else to do." }),
-      });
-      return result;
-    };
-
-    const renderSceneImage = async ({ scene, name, slide, step, slides, steps, elementIds, region, padding, maxSize }) => {
-      const { image, meta } = await renderImage({
-        ...(scene ? { scene, deck: name ?? "Untitled" } : {}),
-        ...(slide !== undefined ? { slide } : {}),
-        ...(step !== undefined ? { step } : {}),
-        ...(slides !== undefined ? { sheet: slides } : {}),
-        ...(steps ? { steps } : {}),
-        ...(elementIds?.length ? { elementIds } : {}),
-        ...(region ? { region } : {}),
-        ...(padding !== undefined ? { padding } : {}),
-        ...(maxSize !== undefined ? { maxSize } : {}),
-      });
-      return { image, meta };
-    };
-
+    /**
+     * the elements of save_scene (checkpoint and / or elements), converted:
+     * { withImages, sceneElements, convertedBy, checkpoint } (the restored
+     * checkpoint's pictures, background and fonts go into the scene too)
+     */
     const saveSceneElements = async (checkpointId, elements, name) => {
       let input = [];
       if (checkpointId) {
@@ -817,9 +873,10 @@ export const createScenesMcp = ({
         }
         input = parsed.some((el) => el.type === "restoreCheckpoint") ? parsed : [...input, ...parsed];
       }
-      const withImages = await resolveImages(await resolveElements(input));
+      const resolved = await resolveElements(input);
+      const withImages = await resolveImages(resolved.elements);
       const { elements: sceneElements, convertedBy } = await toSceneElements(withImages.elements, name);
-      return { withImages, sceneElements, convertedBy };
+      return { withImages, sceneElements, convertedBy, checkpoint: resolved.checkpoint };
     };
 
     const appendConflictImages = async (result, info, name) => {
@@ -834,7 +891,7 @@ export const createScenesMcp = ({
           continue;
         }
         try {
-          const { image, meta } = await renderImage({ conflict: { name, side }, elementIds: sideIds, maxSize: 1200 }, { userTab: true }); // NOSONAR S9382: in order on purpose (preserves rendering or server operation order)
+          const { image, meta } = await renderImage({ conflict: { name, side }, elementIds: sideIds, maxSize: 1200 }); // NOSONAR S9382: in order on purpose (preserves rendering or server operation order)
           result.content.push(image, {
             type: "text",
             text: `Image above: ${side === "mine" ? "the USER's version (mine)" : "DRIVE's version"} of the clashing area (bounds ${JSON.stringify(meta.renderedBounds)}).`,
@@ -845,66 +902,8 @@ export const createScenesMcp = ({
       }
     };
 
-    const appendOpenReadImages = async (result, changes, open, elements, region, elementIds) => {
-      if (changes.changedIds.length) {
-        result.content.push(...(await imageOfOpen(changes.changedIds, open.scene)));
-      } else if (elements.length) {
-        try {
-          const { image, meta } = await renderImage({
-            targetScene: open.scene,
-            ...(region ? { region } : {}),
-            ...(elementIds?.length ? { elementIds } : {}),
-          });
-          result.content.push(image, {
-            type: "text",
-            text: `Image above: the scene (${meta.elementsRendered}/${meta.elementsTotal} elements, scale ${meta.scale}).`,
-          });
-        } catch (error) {
-          result.content.push({ type: "text", text: `(could not render image: ${error.message})` });
-        }
-      }
-    };
-
-    const appendSceneReadImages = async (result, changes, current, elements, region, elementIds) => {
-      if (changes.changedIds.length) {
-        result.content.push(...(await imageOf(current.file, changes.changedIds, "what the user changed")));
-      } else if (elements.length) {
-        try {
-          const { image, meta } = await renderImage({
-            scene: sceneOf(current.file),
-            ...(region ? { region } : {}),
-            ...(elementIds?.length ? { elementIds } : {}),
-          });
-          result.content.push(image, {
-            type: "text",
-            text: `Image above: the scene (${meta.elementsRendered}/${meta.elementsTotal} elements, scale ${meta.scale}).`,
-          });
-        } catch (error) {
-          result.content.push({ type: "text", text: `(could not render image: ${error.message})` });
-        }
-      }
-    };
-
-    const openEditResult = (warning, conflicts, changes, info, revision) => {
-      const result = text({
-        ...(warning ? { warning } : {}),
-        ...(conflicts.length ? { conflicts, conflictNote: CONFLICT_NOTE(null) } : {}),
-        ...(changes.count ? { userChanges: changes.report } : {}),
-        scene: sceneLabel(info.scene),
-        addedIds: info.addedIds,
-        updated: info.updated,
-        deleted: info.deleted,
-        ...editExtras(info),
-        ...(info.missingIds ? { missingIds: info.missingIds } : {}),
-        // Applied; Kurviq's server has not confirmed it yet.
-        ...(info.pending ? { pending: info.pending } : {}),
-        revision,
-        note: liveEditNote(info),
-      });
-      return result;
-    };
-
-    const sendDetachedEdit = async (send, requestId) => {
+    /** an edit for the tab, asked again once if the tab was slow; `stillLanding`: what to tell the agent if it stays slow */
+    const sendEdit = async (send, stillLanding) => {
       let edited;
       try {
         edited = await send();
@@ -920,9 +919,7 @@ export const createScenesMcp = ({
           if (error_.status !== 504) {
             throw error_;
           }
-          throw new Error(
-            `${error_.message} Your edit may still land: it has requestId "${requestId}". Call edit_scene again with the same arguments plus requestId: "${requestId}": if it was applied you get its result (alreadyApplied), otherwise it is applied then; it is never applied twice. app_status shows whether the tab is busy.`,
-          );
+          throw new Error(`${error_.message} ${stillLanding}`);
         }
       }
       return edited;
@@ -947,12 +944,12 @@ export const createScenesMcp = ({
     };
 
     const prepareSaveDestination = async (name, local, replace) => {
-      if (!local && driveOptional && (await callJson("/api/app/state")).drive === false) {
+      if (!local && (await callJson("/api/app/state")).drive === false) {
         local = true; // no Google Drive in the user's app: the browser is the scene's home
       }
-      const flushed = await flushUser(name);
+      const { local: localOnly, flushed } = await sceneHome(name);
       const emptyLocal = (flushed?.results || []).some((r) => r?.localOnly && r.empty);
-      if (isLocalOnly(flushed) && !local && !emptyLocal) {
+      if (localOnly && !local && !emptyLocal) {
         throw new Error(
           `"${name}" exists as a local-only scene in the user's browser. Change it with read_scene + edit_scene; replace it with save_scene(local: true, replace: true) only if the user wants the whole scene replaced.`,
         );
@@ -967,7 +964,10 @@ export const createScenesMcp = ({
       return { local, current };
     };
 
-    const saveDriveScene = async (name, scene, current, open, existing, sceneElements, convertedBy) => {
+    /** a step after a save that succeeded: its failure is reported in the result, never as the save's */
+    const afterSave = (promise) => promise.catch((error) => ({ error: error.message }));
+
+    const saveDriveScene = async (name, scene, current, open, convertedBy) => {
       const result = await callJson(sceneUrl(name), {
         method: "PUT",
         headers: {
@@ -981,27 +981,55 @@ export const createScenesMcp = ({
       });
       let app = null;
       if (open) {
-        app = await appCommand({ type: "open", name });
+        app = await afterSave(appCommand({ type: "open", name }));
         if (MODE === "live") {
           // the agent knows this content; later user edits are reported relative to it
           await appCommand({ type: "read", targetScene: name, storeBaseline: "save" }).catch (() => null);
         }
       }
-      // checkpoint of the saved state, for further edits
-      const savedCheckpointId = newCheckpointId();
-      await store.save(savedCheckpointId, { elements: sceneElements });
+      // checkpoint of the saved state, for further drawings
+      const checkpointId = await afterSave(saveCheckpoint(sceneOf(scene)));
       return text({
         saved: name,
-        created: !existing,
+        created: !current,
         driveRevision: result.driveRevision ?? result.commit, // commit: pre-rename tabs
         changed: result.changed,
-        elementCount: sceneElements.length,
+        elementCount: scene.elements.length,
         convertedBy,
-        checkpointId: savedCheckpointId,
+        ...savedCheckpoint(checkpointId),
         ...(MODE === "detached" ? { revision: result.md5 ?? result.sha } : {}),
         ...(app ? { app } : {}),
       });
     };
+
+    /**
+     * The file save_scene writes: the elements with the pictures they use
+     * (new ones, the checkpoint's, the replaced scene's), the background of
+     * the replaced scene or the checkpoint, and what belongs to the scene
+     * rather than the drawing: a replaced scene keeps its comment threads,
+     * and its fonts (the tab adds the fonts the new elements use).
+     */
+    const newSceneFile = (name, elements, { files, checkpoint, existing }) => {
+      const used = new Set(elements.map((el) => el.fileId).filter(Boolean));
+      const allFiles = { ...checkpoint?.files, ...existing?.files, ...files };
+      const appState = existing?.appState ?? checkpoint?.appState ?? { viewBackgroundColor: "#ffffff", gridSize: 20 };
+      const fonts = [...(existing?.kurviqFonts ?? []), ...(checkpoint?.kurviqFonts ?? [])];
+      return {
+        type: "excalidraw",
+        version: 2,
+        source: "excalidraw-scenes-mcp",
+        elements,
+        // the name ties the content to this scene (the server rejects mismatches)
+        appState: { ...appState, name, kurviqPresentation: presentationOf({ elements, appState: existing?.appState }) },
+        files: Object.fromEntries(Object.entries(allFiles).filter(([id]) => used.has(id))),
+        ...(fonts.length ? { kurviqFonts: [...new Map(fonts.map((font) => [font?.id, font])).values()] } : {}),
+        ...(existing?.kurviqComments ? { kurviqComments: existing.kurviqComments } : {}),
+      };
+    };
+
+    /** the result's checkpoint of a save, or why there is none */
+    const savedCheckpoint = (checkpointId) =>
+      typeof checkpointId === "string" ? { checkpointId } : { checkpointNote: `Saved, but no checkpoint of it could be stored (${checkpointId.error}).` };
 
     const SLIDE_FILTER = z
       .union([z.number(), z.string()])
@@ -1012,9 +1040,9 @@ export const createScenesMcp = ({
       .optional()
       .describe('x / y of elements on a slide relative to its top-left corner (with "slide": frame id), as edits take them');
 
-    /** render via the app (or the hidden renderer) → MCP image content */
-    const renderImage = async (command, { userTab = false } = {}) => {
-      const { png, ...meta } = await (userTab ? appCommand : agentCommand)({ type: "render", ...command });
+    /** render in the user's tab → MCP image content */
+    const renderImage = async (command) => {
+      const { png, ...meta } = await appCommand({ type: "render", ...command });
       return { image: { type: "image", data: png, mimeType: "image/png" }, meta };
     };
 
@@ -1125,6 +1153,15 @@ export const createScenesMcp = ({
       };
     };
 
+    /** live mode: what changed since a revision (a checkpoint of the open scene) */
+    const changesSinceRevision = async (since, elements) => {
+      const previous = await store.load(since);
+      if (!previous) {
+        throw new Error(`Revision "${since}" not found (expired?): call without since`);
+      }
+      return { ...describeChanges(previous.elements, elements, `since revision ${since}`), firstLook: false };
+    };
+
     if (MODE === "live") {
       server.registerTool(
         "read_open_scene",
@@ -1165,21 +1202,20 @@ export const createScenesMcp = ({
             );
           }
           const elements = open.elements;
-
-          let changes;
-          if (since) {
-            const previous = await store.load(since);
-            if (!previous) {
-              throw new Error(`Revision "${since}" not found (expired?): call without since`);
-            }
-            changes = { ...describeChanges(previous.elements, elements, `since revision ${since}`), firstLook: false };
-          } else {
-            changes = userChangesSinceAgent(open.agentBaseline, elements);
-          }
-
-          const result = readOpenResult({ open, elements, changes, revision, changesOnly, summary, region, elementIds, textsOffset });
+          const changes = since ? await changesSinceRevision(since, elements) : userChangesSinceAgent(open.agentBaseline, elements);
+          const result = text({
+            scene: sceneLabel(open.scene),
+            isPresentation: open.isPresentation === true,
+            unsavedChanges: open.dirty,
+            sync: syncNote(open),
+            elementCount: elements.length,
+            userChanges: userChangesOf(changes, "First time an agent reads this scene: no earlier baseline to compare with. From now on, changes by the user will be reported."),
+            revision,
+            ...(changesOnly ? {} : sceneView(elements, { summary, region, elementIds, textsOffset }, elements.length > SUMMARY_THRESHOLD)),
+          });
           if (view) {
-            await appendOpenReadImages(result, changes, open, elements, region, elementIds);
+            const changedImages = changes.changedIds.length ? () => imageOfOpen(changes.changedIds, open.scene) : null;
+            await appendReadImage(result, changedImages, { targetScene: open.scene }, elements, { region, elementIds });
           }
           return result;
         }),
@@ -1188,7 +1224,7 @@ export const createScenesMcp = ({
       server.registerTool(
         "edit_open_scene",
         {
-          description: `Edit the scene open in the user's app, live and in place, merged with the user's own work (never overwrites their other changes) and undoable by the user as one step (Cmd/Ctrl+Z). This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to Google Drive and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
+          description: `Edit the scene open in the user's app, live and in place, merged with the user's own work (never overwrites their other changes). It does not enter the user's undo history (Cmd/Ctrl+Z doesn't undo it): to take it back, edit again. This is THE way to co-work on a drawing with the user, and to change any existing scene. It does not push to Google Drive and you don't need to: the app's auto-sync pushes about 10 s after the last edit (save_open_scene only when the user asks to push now).
     Safety net: before applying, it checks whether the USER changed the scene since an agent last read/edited it. If so, the result starts with a WARNING listing the user's changes (plus an image of them). An update entry that sets a property the user changed on that element (text, position, size, a style, a customData key, a shape's label) or of an element they deleted is NOT applied (onConflict "reject", default) but listed in "conflicts" with their current values; "overwrite" applies it anyway (still listed). The rest of the edit applies. Calling read_open_scene first avoids surprises.
     - add: JSON array string of new elements (format: read_me; labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
     - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element. Like in the editor, a moved / resized shape takes its label and bound arrows along, and a moved frame (slide) takes everything on it. A shape's label: { "id": "box", "label": { "text": "…", "fontSize": 28 } } (changes it or adds one; it is re-wrapped and the shape grows to fit).
@@ -1200,40 +1236,23 @@ export const createScenesMcp = ({
   ${IMAGES_HELP}
   Returns an IMAGE of the edited area (view=false to skip). Nothing is applied if the user switched to another scene since your last read (or pass expectScene explicitly).`,
           inputSchema: {
-            add: z.string().optional().describe("JSON array string of new elements (format: read_me)"),
-            update: z
-              .array(z.object({ id: z.string() }).passthrough())
-              .optional()
-              .describe("Partial updates: [{ id, ...props }]"),
-            delete: z.array(z.string()).optional(),
+            ...EDIT_SCHEMA,
             expectScene: z
               .string()
               .optional()
               .describe("The scene you are co-working on (as returned by read_open_scene): routes the edit to the tab showing it; nothing is applied if no tab shows it"),
-            onConflict: ON_CONFLICT,
-            ...EDIT_SOURCE,
-            upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
-            isPresentation: z.boolean().optional().describe("Saved presentation flag. Frames alone do not make a presentation. False keeps all content."),
-            comments: COMMENT_OPS,
-            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
-            reset: z
-              .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
-              .optional()
-              .describe('Deck: back to the template: slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
-            addTitleBlock: z
-              .boolean()
-              .optional()
-              .describe("Deck: a headline and an eyebrow on a template that never had them (the app adds them by itself when it opens such a deck): placed and styled there for all slides; slide texts where they go become the slides' own words"),
-            view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, comments, view = true }) => {
+        tool(async ({ add, update, delete: remove, file, payloadId, expectScene, onConflict = "reject", view = true, ...options }) => {
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
+          if (isEmptyEdit(editOperations(edit, options))) {
+            throw new Error(NOTHING_TO_DO);
+          }
 
           // what did the user do since an agent last looked?
           const before = await appCommand({
             type: "read",
-            ...(expectScene !== undefined ? { targetScene: expectScene } : {}),
+            ...(expectScene === undefined ? {} : { targetScene: expectScene }),
             withBaseline: true,
           });
           const changes = userChangesSinceAgent(before.agentBaseline, before.elements);
@@ -1241,28 +1260,28 @@ export const createScenesMcp = ({
 
           // updates of properties the user changed since an agent last looked: not applied (or overwritten, and listed)
           const current = (before.elements || []).filter((el) => !el.isDeleted);
-          const checked =
-            !changes.firstLook && changes.count && edit.update.length
-              ? resolveConflicts({ base: changes.base, current, updates: edit.update, onConflict })
-              : { updates: edit.update, conflicts: [] };
-          const { conflicts } = checked;
-          const updates = checked.updates;
-          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock && !comments?.length) {
-            return text({
-              warning: conflictWarning(changes, conflicts, onConflict, { nothingApplied: true }),
-              conflicts,
-              conflictNote: CONFLICT_NOTE(null),
-              userChanges: changes.report,
-              scene: sceneLabel(before.scene),
-              addedIds: [],
-              updated: [],
-              deleted: [],
-              note: "Nothing was changed: all your updates clashed with the user's changes.",
-            });
+          const { updates, adds, conflicts } = checkConflicts({ changes, current, edit, upsert: options.upsert, onConflict, check: true });
+          const operations = editOperations({ ...edit, add: adds, update: updates }, options);
+          if (conflicts.length && isEmptyEdit(operations)) {
+            return nothingAppliedResult({ changes, conflicts, onConflict, basedOn: null, scene: sceneLabel(before.scene) });
           }
 
-          const edited = await applyOpenEdit({ before, expectScene, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, revision, onConflict });
-          const { elements, ...info } = edited;
+          const command = {
+            type: "edit",
+            onConflict,
+            targetScene: before.scene,
+            expectScene: expectScene ?? before.scene,
+            ...operations,
+            ...withoutEmpty({ files: edit.files }),
+            storeBaseline: "edit",
+            revision,
+            // sent again after a timeout (the tab may still be working on it), it is never applied twice
+            requestId: `edit-${revision}`,
+          };
+          const { elements, ...info } = await sendEdit(
+            () => appCommand(command),
+            "Your edit may still land (the tab is busy): read_open_scene shows whether it did before you send it again. app_status shows what the tab is working on.",
+          );
           delete info.agentBaseline;
 
           let warning = null;
@@ -1272,14 +1291,12 @@ export const createScenesMcp = ({
             warning = conflictWarning(changes, conflicts, onConflict);
           }
 
-          const result = openEditResult(warning, conflicts, changes, info, revision);
+          const result = editResult({ warning, conflicts, basedOn: null, changes, scene: sceneLabel(info.scene), edited: info, rest: { revision, note: liveEditNote(info) } });
           if (view) {
             result.content.push(...(await imageOfOpen([...info.addedIds, ...info.updated], info.scene)));
-            if (changes.count) {
-              const userIds = changes.changedIds.filter((id) => elements.some((el) => el.id === id));
-              if (userIds.length) {
-                result.content.push({ type: "text", text: "Next image: what the USER changed since an agent last looked." }, ...(await imageOfOpen(userIds, info.scene)));
-              }
+            const userIds = changes.changedIds.filter((id) => hasElement(elements, id));
+            if (changes.count && userIds.length) {
+              result.content.push({ type: "text", text: "Next image: what the USER changed since an agent last looked." }, ...(await imageOfOpen(userIds, info.scene)));
             }
           }
           return result;
@@ -1288,14 +1305,15 @@ export const createScenesMcp = ({
     }
 
     // ---------------------------------------------------------------------------
-    // detached mode: the agent works in its own headless Excalidraw on the
-    // Google Drive version; the user's app picks the edits up within seconds
+    // detached mode: the agent reads and edits scenes by name; the edits run
+    // in the user's tab, which merges them into what the user does and saves
+    // them (to Google Drive, or in the browser for local-only scenes)
     // ---------------------------------------------------------------------------
 
-    /** a specific version (MD5 of its content) of a scene */
-    const loadVersion = async (name, md5) =>
+    /** a specific version (MD5 of its content) of a scene: null if there is no such version (other errors are thrown) */
+    const loadVersion = (name, md5) =>
       // sha=: for pre-rename tabs; remove after 2027-02
-      JSON.parse(await call(`${sceneUrl(name)}?md5=${encodeURIComponent(md5)}&sha=${encodeURIComponent(md5)}${LEAN ? "&lean=1" : ""}`));
+      unless404(call(`${sceneUrl(name)}?md5=${encodeURIComponent(md5)}&sha=${encodeURIComponent(md5)}${LEAN ? "&lean=1" : ""}`).then((json) => JSON.parse(json)));
 
     /** user's sync state for this scene, after the flush, so the agent knows what it sees */
     const userSyncNote = (flushed) => {
@@ -1317,7 +1335,7 @@ export const createScenesMcp = ({
       let base = null;
       let label;
       if (since) {
-        base = await loadVersion(name, since).catch (() => null);
+        base = await loadVersion(name, since);
         if (!base) {
           throw new Error(`Revision "${since}" of "${name}" not found: call without since/basedOn`);
         }
@@ -1325,7 +1343,7 @@ export const createScenesMcp = ({
       } else {
         const { version } = await callJson(`${sceneUrl(name)}/agent-version`);
         if (version) {
-          base = await loadVersion(name, version.md5 ?? version.sha).catch (() => null); // sha: pre-rename tabs
+          base = await loadVersion(name, version.md5 ?? version.sha); // sha: pre-rename tabs
           label = `since an agent last edited this scene (${version.at})`;
         }
       }
@@ -1382,6 +1400,23 @@ export const createScenesMcp = ({
       return changes.count ? conflictWarning(changes, conflicts, onConflict, { checked: !!basedOn }) : null;
     };
 
+    /** no user changes to report */
+    const NO_CHANGES = { count: 0, changedIds: [], report: null, firstLook: false, framesChanged: false };
+
+    /** the warnings of an edit_scene result (user changes, slides named by number after slides moved, pictures without file) */
+    const detachedWarning = ({ changes, conflicts, onConflict, basedOn, edit, edited }) => {
+      const usesSlideNumbers = [...edit.add, ...edit.update].some((el) => typeof el?.slide === "number" || /^\d+$/.test(String(el?.slide ?? "")));
+      return [
+        detachedEditWarning(changes, conflicts, onConflict, basedOn),
+        usesSlideNumbers && changes.framesChanged
+          ? `WARNING: slides were added, deleted or reordered since your version, and your edit names slides by number: check slideNumbers below (which frame each number hit) and use frame ids.`
+          : null,
+        edited.imagesWithoutFile,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    };
+
     const hasElement = (elements, id) => elements.some((el) => el.id === id);
 
     function registerDetachedTools() {
@@ -1407,17 +1442,27 @@ export const createScenesMcp = ({
           annotations: { readOnlyHint: true },
         },
         tool(async ({ name, view, changesOnly, summary, region, elementIds, slide, relative, since, textsOffset }) => {
-          const flushed = await flushUser(name);
-          const local = isLocalOnly(flushed);
+          const { local, flushed } = await sceneHome(name);
           const current = local ? await localVersion(name, since) : await loadSceneWithMd5(name, { lean: true });
           if (!current) {
             throw notFound(name);
           }
           const elements = (current.file.elements || []).filter((el) => !el.isDeleted);
           const changes = local ? current.changes(elements) : await changesSince(name, elements, since);
-          const result = readSceneResult({ name, current, local, flushed, elements, changes, changesOnly, summary, region, elementIds, textsOffset, slide, relative });
+          const result = text({
+            scene: name,
+            isPresentation: presentationOf(current.file),
+            revision: current.md5,
+            sync: local ? LOCAL_NOTE : userSyncNote(flushed),
+            elementCount: elements.length,
+            ...fileStats(current.file),
+            userChanges: userChangesOf(changes, "No earlier agent edit of this scene found: everything is new to you. From your first edit on, the user's changes are reported."),
+            ...(changesOnly ? {} : sceneView(elements, { summary, region, elementIds, textsOffset, slide, relative }, elements.length > SUMMARY_THRESHOLD)),
+            ...sceneComments(current.file, elements),
+          });
           if (view) {
-            await appendSceneReadImages(result, changes, current, elements, region, elementIds);
+            const changedImages = changes.changedIds.length ? () => imageOf(current.file, changes.changedIds, "what the user changed") : null;
+            await appendReadImage(result, changedImages, { scene: sceneOf(current.file) }, elements, { region, elementIds });
           }
           return result;
         }),
@@ -1426,7 +1471,7 @@ export const createScenesMcp = ({
       server.registerTool(
         "edit_scene",
         {
-          description: `Edit a scene: applied with the real Excalidraw to the newest version and saved right away (one version per edit). Call read_me once before your first edit (the element reference). The user's app picks it up within seconds and merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call the scenes server's HTTP API yourself (direct writes are refused).
+          description: `Edit a scene: applied with the real Excalidraw to the newest version and saved right away (one version per edit). Call read_me once before your first edit (the element reference). The edit runs in the user's open Kurviq tab, which merges it with whatever they are doing: their other changes are never overwritten, and their view is not touched. This is the ONLY way to change an existing scene: never push, sync, write .excalidraw files or call Kurviq's HTTP API yourself (direct writes are refused).
   Safety net: the user's app first pushes its unpushed changes of this scene. If the user changed the scene since basedOn (the revision from your last read_scene / edit_scene; default: the last agent edit), the result starts with a WARNING listing their changes (plus an image). With basedOn, an update entry that sets a property the user changed on that element since then (text / markdown, position (x, y, also slide-relative), size, a style like strokeColor or fontSize, a customData key, a shape's label) or of an element they deleted is NOT applied (onConflict "reject", the default): it comes back in "conflicts" ({ id, properties, yours, theirs: their current values, for text their text and markdown, resolution }); rebase it on their version and send it again. onConflict "overwrite" applies it anyway (still listed). The other updates, adds and deletes apply; if nothing is left, nothing is changed.
   - add: JSON array string of new elements (format: read_me; labels, startBinding/endBinding; arrows may bind to existing elements). Use new unique ids.
   - update: [{ "id": "...", ...props }] partial updates of existing elements, e.g. move (x, y), resize, recolor, change "text" of a text element (labels are text elements with containerId). Send only what you change: resending a whole markdown to color one phrase clashes with the user's edit of that text; use format.
@@ -1440,41 +1485,24 @@ ${EDIT_HELP}
   Returns an IMAGE of the edited area (view=false to skip) and the new revision.`,
           inputSchema: {
             name: SCENE_NAME,
-            add: z.string().optional().describe("JSON array string of new elements (format: read_me)"),
-            update: z
-              .array(z.object({ id: z.string() }).passthrough())
-              .optional()
-              .describe("Partial updates: [{ id, ...props }]"),
-            delete: z.array(z.string()).optional(),
-            ...EDIT_SOURCE,
+            ...EDIT_SCHEMA,
             basedOn: z.string().optional().describe("The revision your edit is based on (from read_scene / edit_scene)"),
-            onConflict: ON_CONFLICT,
-            upsert: z.boolean().optional().describe("add with the id of an existing element replaces that element"),
-            isPresentation: z.boolean().optional().describe("Saved presentation flag. Frames alone do not make a presentation. False keeps all content."),
-            comments: COMMENT_OPS,
-            restyle: z.boolean().optional().describe('Deck: every slide back to the template, like "Reset all slides" in the app (template elements as in the template, also where changed on a slide)'),
-            reset: z
-              .union([z.array(z.union([z.string(), z.number(), z.object({ id: z.string(), changes: z.array(z.string()).optional() })])), z.literal("all")])
-              .optional()
-              .describe('Deck: back to the template: slides (frame ids, slide numbers, or "all": the slide card\'s icon in the app), template copies by id ("<element>~<slide>": all their changes on that slide) or { "id": "<copy id>", "changes": ["color"] } for some (names as in changedOnSlide: the canvas\'s "Changed here" bar in the app)'),
-            addTitleBlock: z
-              .boolean()
-              .optional()
-              .describe("Deck: a headline and an eyebrow on a template that never had them (the app adds them by itself when it opens such a deck): placed and styled there for all slides; slide texts where they go become the slides' own words"),
             requestId: z
               .string()
-              .regex(/^[A-Za-z0-9_.:-]{1,80}$/)
+              .regex(REQUEST_ID)
               .optional()
               .describe("Your id for this edit (letters, digits, _ . : -): sent again, it is never applied twice. Default: a new one, named in the result"),
-            view: z.boolean().optional().describe("Return an IMAGE of the edited area (default true)"),
           },
         },
-        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, onConflict = "reject", upsert, restyle, reset, addTitleBlock, isPresentation, comments, requestId: givenRequestId, view = true }) => {
+        tool(async ({ name, add, update, delete: remove, file, payloadId, basedOn, onConflict = "reject", requestId: givenRequestId, view = true, ...options }) => {
           const requestId = givenRequestId || `edit-${newCheckpointId()}`;
           const edit = await editInput({ add, update, delete: remove, file, payloadId });
+          if (isEmptyEdit(editOperations(edit, options))) {
+            throw new Error(NOTHING_TO_DO);
+          }
 
           // what did the user do since the agent's version?
-          const local = isLocalOnly(await flushUser(name));
+          const { local } = await sceneHome(name);
           const before = local ? await localVersion(name, basedOn) : await loadSceneWithMd5(name, { lean: true });
           if (!before) {
             throw new Error(`Scene "${name}" not found in Google Drive. Create new scenes with create_view + save_scene.`);
@@ -1483,50 +1511,51 @@ ${EDIT_HELP}
           const changes = local ? before.changes(beforeElements) : await changesSince(name, beforeElements, basedOn);
 
           // updates of properties the user changed since basedOn: not applied (or, with overwrite, applied and listed)
-          const checked =
-            basedOn && !changes.firstLook && changes.count && edit.update.length
-              ? resolveConflicts({ base: changes.base, current: beforeElements, updates: edit.update, onConflict })
-              : { updates: edit.update, conflicts: [] };
-          const { conflicts } = checked;
-          const updates = checked.updates;
-          if (conflicts.length && !edit.add.length && !updates.length && !edit.delete.length && !restyle && !reset && !addTitleBlock && !comments?.length) {
-            // nothing left to apply: the scene stays as it is
-            return text({
-              warning: conflictWarning(changes, conflicts, onConflict, { nothingApplied: true }),
-              conflicts,
-              conflictNote: CONFLICT_NOTE(basedOn),
-              userChanges: changes.report,
-              scene: name,
-              addedIds: [],
-              updated: [],
-              deleted: [],
-              revision: before.md5,
-              note: "Nothing was changed: all your updates clashed with the user's changes.",
-            });
+          const { updates, adds, conflicts } = checkConflicts({ changes, current: beforeElements, edit, upsert: options.upsert, onConflict, check: !!basedOn });
+          const operations = editOperations({ ...edit, add: adds, update: updates }, options);
+          if (conflicts.length && isEmptyEdit(operations)) {
+            return nothingAppliedResult({ changes, conflicts, onConflict, basedOn, scene: name, revision: before.md5 });
           }
 
           // local-only scenes are edited in the user's app (their only copy)
-          const command = detachedEditCommand({ local, name, requestId, edit, updates, upsert, restyle, reset, addTitleBlock, isPresentation, comments, onConflict });
-          const send = () => (local ? appCommand : agentCommand)(command);
-          const edited = await sendDetachedEdit(send, requestId);
+          const command = {
+            type: local ? "local-edit" : "scene-edit",
+            ...(local ? { targetScene: name } : {}),
+            name,
+            requestId,
+            onConflict,
+            ...operations,
+            ...withoutEmpty({ files: edit.files }),
+          };
+          const edited = await sendEdit(
+            () => appCommand(command),
+            `Your edit may still land: it has requestId "${requestId}". Call edit_scene again with the same arguments plus requestId: "${requestId}": if it was applied you get its result (alreadyApplied), otherwise it is applied then; it is never applied twice. app_status shows whether the tab is busy.`,
+          );
           const after = {
             elements: edited.elements,
             files: { ...before.file.files, ...edit.files },
             appState: before.file.appState || {},
           };
+          // a retry of an edit that had landed: what changed since basedOn is that edit itself, not the user's work
+          const userChanges = edited.alreadyApplied ? NO_CHANGES : changes;
 
-          const usesSlideNumbers = [...edit.add, ...edit.update].some((el) => typeof el?.slide === "number" || /^\d+$/.test(String(el?.slide ?? "")));
-          const warning = [
-            detachedEditWarning(changes, conflicts, onConflict, basedOn),
-            usesSlideNumbers && changes.framesChanged
-              ? `WARNING: slides were added, deleted or reordered since your version, and your edit names slides by number: check slideNumbers below (which frame each number hit) and use frame ids.`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" ") || null;
-
-          const result = detachedEditResult({ warning, conflicts, basedOn, changes, name, edited, requestId, local });
-          await appendDetachedEditImages(view, result, after, edited, changes, before);
+          const result = editResult({
+            warning: detachedWarning({ changes: userChanges, conflicts, onConflict, basedOn, edit, edited }),
+            conflicts: edited.alreadyApplied ? [] : conflicts,
+            basedOn,
+            changes: userChanges,
+            scene: name,
+            edited,
+            rest: {
+              requestId,
+              // sha / commit: pre-rename tabs; remove after 2027-02
+              revision: local ? edited.revision : edited.md5 ?? edited.sha,
+              ...(local
+                ? { note: `${LOCAL_NOTE} Your edit is in their app now; nothing else to do.` }
+                : { driveRevision: edited.driveRevision ?? edited.commit, note: "Saved to Google Drive and merged into the user's app; nothing else to do." }),
+            },
+          });
+          await appendDetachedEditImages(view, result, after, edited, userChanges, before);
           return result;
         }),
       );
@@ -1536,11 +1565,36 @@ ${EDIT_HELP}
       registerDetachedTools();
     }
 
+    /** what view_scene draws: { scene, source } (scene undefined: the scene open in the app, which the tab has) */
+    const viewSource = async (name, checkpointId) => {
+      if (checkpointId) {
+        const checkpoint = await store.load(checkpointId);
+        if (!checkpoint) {
+          throw new Error(`Checkpoint "${checkpointId}" not found`);
+        }
+        const elements = (checkpoint.elements || []).filter((el) => !PSEUDO_TYPES.has(el.type));
+        return { scene: { ...sceneOf(checkpoint), elements }, source: `checkpoint ${checkpointId}` };
+      }
+      if (name) {
+        const { file, local } = await loadAnyScene(name, { lean: true });
+        if (!file) {
+          throw notFound(name);
+        }
+        return { scene: sceneOf(file), source: `scene "${name}" (${local ? "local only, from the user's browser" : "Google Drive"})` };
+      }
+      const state = await callJson("/api/app/state");
+      if (!state.connected) {
+        throw new Error("No scene name given and the app is not open: pass name or checkpointId");
+      }
+      const label = state.current === null ? "Untitled" : `"${state.current}"`;
+      return { scene: undefined, source: `open scene in the app: ${label}${state.dirty ? " (unsaved edits)" : ""}` };
+    };
+
     server.registerTool(
       "view_scene",
       {
-        description: `SEE a scene: returns an actual PNG image of it, rendered by Excalidraw itself (no browser automation needed: uses the open app tab or a hidden headless renderer).
-  Source (pick one): name = a saved scene (in the user's app / Google Drive); checkpointId = a create_view/get_scene checkpoint (e.g. to check your drawing before saving); neither = the scene currently open in the user's app, including unsaved edits.
+        description: `SEE a scene: returns an actual PNG image of it, rendered by Excalidraw itself in the user's open Kurviq tab (no browser automation needed).
+  Source (pick one): name = a saved scene (in the user's app / Google Drive); checkpointId = a create_view checkpoint or one of get_scene(checkpoint: true) / save_scene (e.g. to check your drawing before saving); neither = the scene currently open in the user's app, including unsaved edits.
   Slides: slide = slide number (1-based, deck order) or frame id renders exactly that slide as the audience sees it, with the template's header/footer/logo and filled-in {page}/{total}/{deck}; step = what is visible after that many clicks (default: everything). slides = "all" (or "2-5") renders a contact sheet of the whole deck in one image; add steps=true for every click state.
   Focus (optional): elementIds = just those elements (+padding, + whatever overlaps that area), ideal to check the part you worked on; region = a scene-coordinate rectangle. Without focus the whole scene is rendered; for huge scenes render an overview first (get_scene summary=true tells you where things are), then zoom in with region.
   The result also reports renderedBounds/sceneBounds (scene coordinates) and the scale.`,
@@ -1562,31 +1616,11 @@ ${EDIT_HELP}
         annotations: { readOnlyHint: true },
       },
       tool(async ({ name, checkpointId, elementIds, region, padding, maxSize, slide, step, slides, steps }) => {
-        let scene;
-        let source;
-        if (checkpointId) {
-          const checkpoint = await store.load(checkpointId);
-          if (!checkpoint) {
-            throw new Error(`Checkpoint "${checkpointId}" not found`);
-          }
-          scene = { elements: checkpoint.elements.filter((el) => !PSEUDO_TYPES.has(el.type)) };
-          source = `checkpoint ${checkpointId}`;
-        } else if (name) {
-          const { file, local } = await loadAnyScene(name, { lean: true });
-          if (!file) {
-            throw notFound(name);
-          }
-          scene = sceneOf(file);
-          source = `scene "${name}" (${local ? "local only, from the user's browser" : "Google Drive"})`;
-        } else {
-          const state = await callJson("/api/app/state");
-          if (!state.connected) {
-            throw new Error("No scene name given and the app is not open: pass name or checkpointId");
-          }
-          const label = state.current === null ? "Untitled" : `"${state.current}"`;
-          source = `open scene in the app: ${label}${state.dirty ? " (unsaved edits)" : ""}`;
-        }
-        const { image, meta } = await renderSceneImage({ scene, name, slide, step, slides, steps, elementIds, region, padding, maxSize });
+        const { scene, source } = await viewSource(name, checkpointId);
+        const { image, meta } = await renderImage({
+          ...(scene ? { scene, deck: name ?? "Untitled" } : {}),
+          ...withoutEmpty({ slide, step, sheet: slides, steps, elementIds, region, padding, maxSize }),
+        });
         return {
           content: [image, { type: "text", text: JSON.stringify({ source, ...meta }, null, 2) }],
         };
@@ -1610,7 +1644,7 @@ ${EDIT_HELP}
         if (!presentationOf(file)) {
           return text({ isPresentation: false, slides: [], findings: [], note: "This scene is not marked as a presentation." });
         }
-        const result = await agentCommand({
+        const result = await appCommand({
           type: "deck-check",
           elements: file.elements || [],
           // pictures (for text on them); lean online: the tab fills in the bytes
@@ -1651,12 +1685,12 @@ ${EDIT_HELP}
         if (items.some((item) => typeof item.text !== "string" && typeof item.markdown !== "string")) {
           throw new Error("Each item needs text or markdown");
         }
-        return text(await agentCommand({ type: "measure", items }));
+        return text(await appCommand({ type: "measure", items }));
       }),
     );
 
     // PDFs are written to the agent's machine: not with Kurviq online (the user exports there)
-    if (LOCAL_FILES) {
+    if (LOCAL_FILES && savePdf) {
     server.registerTool(
       "export_pdf",
       {
@@ -1674,7 +1708,7 @@ ${EDIT_HELP}
         if (!scene) {
           throw notFound(name);
         }
-        const { html, slides: exported } = await agentCommand({
+        const { html, slides: exported } = await appCommand({
           type: "slides-html",
           elements: scene.elements || [],
           files: scene.files || {},
@@ -1702,7 +1736,7 @@ ${EDIT_HELP}
     server.registerTool(
       "save_scene",
       {
-        description: `Save a NEW drawing as a scene: writes scenes/<name>.excalidraw, saves it to Google Drive. Call read_me once before your first drawing (the element reference).
+        description: `Save a NEW drawing as a scene: saved as <name>.excalidraw in the user's Google Drive (folder Kurviq), or local-only in their browser. Call read_me once before your first drawing (the element reference).
   Provide EITHER checkpointId (from create_view: draw with create_view, then save its checkpoint) OR elements (same JSON format as create_view, incl. restoreCheckpoint/delete). open=true switches the user's app to it${MODE === "detached" ? " (only when the user asked to see it)" : ""}.
   NOT for changing an existing scene: the user's app holds the newest version (possibly with unpushed edits) and syncs it to Google Drive by itself (auto-sync), so writing to Google Drive directly races with it and causes conflicts. To change an existing scene: ${MODE === "detached" ? "read_scene + edit_scene" : "open_scene(name) if it isn't open, then read_open_scene + edit_open_scene; the app pushes"}. save_scene refuses existing scenes unless replace=true: for when the user explicitly wants the whole scene replaced by a new drawing, or when the app isn't open in any browser (the app merges it on its next sync).
   ${IMAGES_HELP}
@@ -1739,36 +1773,21 @@ ${EDIT_HELP}
         const destination = await prepareSaveDestination(name, local, replace);
         local = destination.local;
         const current = destination.current;
-        const { withImages, sceneElements, convertedBy } = await saveSceneElements(checkpointId, elements, name);
-
-        const existing = current?.file ?? null;
-        const fileIds = new Set(sceneElements.map((el) => el.fileId).filter(Boolean));
-        const files = Object.fromEntries(
-          Object.entries({ ...existing?.files, ...withImages.files }).filter(([id]) => fileIds.has(id)),
-        );
-        const scene = {
-          type: "excalidraw",
-          version: 2,
-          source: "excalidraw-scenes-mcp",
-          elements: sceneElements,
-          // the name ties the content to this scene (the server rejects mismatches)
-          appState: { ...(existing?.appState || { viewBackgroundColor: "#ffffff", gridSize: 20 }), name, kurviqPresentation: presentationOf({ elements: sceneElements, appState: existing?.appState }) },
-          files,
-        };
+        const { withImages, sceneElements, convertedBy, checkpoint } = await saveSceneElements(checkpointId, elements, name);
+        const scene = newSceneFile(name, sceneElements, { files: withImages.files, checkpoint, existing: current?.file });
         if (local) {
           // the user's app keeps it (their browser is its only home)
           const saved = await appCommand({ type: "local-save", name, json: JSON.stringify(scene), replace: !!replace, open: !!open });
-          const savedCheckpointId = newCheckpointId();
-          await store.save(savedCheckpointId, { elements: sceneElements });
+          const savedCheckpointId = await afterSave(saveCheckpoint(sceneOf(scene)));
           return text({
             ...saved,
             elementCount: sceneElements.length,
             convertedBy,
-            checkpointId: savedCheckpointId,
+            ...savedCheckpoint(savedCheckpointId),
             note: LOCAL_NOTE,
           });
         }
-        return saveDriveScene(name, scene, current, open, existing, sceneElements, convertedBy);
+        return saveDriveScene(name, scene, current, open, convertedBy);
       }),
     );
 
@@ -1796,7 +1815,7 @@ ${EDIT_HELP}
           return text(await appCommand({ type: "rename", name, to: newName }));
         }
         // the user's unpushed changes go along
-        if (isLocalOnly(await flushUser(name))) {
+        if ((await sceneHome(name)).local) {
           return text({ ...(await appCommand({ type: "rename", name, to: newName })), note: LOCAL_NOTE });
         }
         await callJson(`${sceneUrl(name)}/rename`, {
@@ -1819,7 +1838,7 @@ ${EDIT_HELP}
         if (MODE === "live" && (await appConnected())) {
           return text(await appCommand({ type: "delete", name }));
         }
-        if (isLocalOnly(await flushUser(name))) {
+        if ((await sceneHome(name)).local) {
           return text({ ...(await appCommand({ type: "delete", name })), note: "Deleted in the user's browser (it was local only, so there is no other copy)." });
         }
         await callJson(sceneUrl(name), {
@@ -1844,7 +1863,7 @@ ${EDIT_HELP}
         if (MODE === "live" && (await appConnected())) {
           return text(await appCommand({ type: "clone", name, to: newName, open: !!open }));
         }
-        if (isLocalOnly(await flushUser(name))) {
+        if ((await sceneHome(name)).local) {
           return text({ ...(await appCommand({ type: "clone", name, to: newName, open: !!open })), note: "The copy is local only too." });
         }
         const file = await loadSceneFile(name);
@@ -1904,7 +1923,7 @@ ${EDIT_HELP}
         // the health check: a ping through the same queues as edits and pictures
         const started = Date.now();
         const answered = await Promise.race([
-          agentCommand({ type: "ping" }).then(
+          appCommand({ type: "ping" }).then(
             () => true,
             (error) => (/Unknown command/.test(error.message) ? true : error.message),
           ),
@@ -1916,7 +1935,7 @@ ${EDIT_HELP}
           health = `ok: edits and pictures are answered (${ms} ms)`;
         } else if (answered === false) {
           const working = status.busy?.length ? `; working on: ${status.busy.join(", ")}` : "";
-          health = `BUSY: edits and pictures wait (no answer within 8 s)${working}. Edits sent now run when it is done (a stuck task is given up after 90 s); Background tabs may answer more slowly. Wait and retry the same requestId (never applied twice); edits are not lost. Keep working on other tasks. Only mention the tab to the user if retries still fail after about 2 minutes.`;
+          health = `BUSY: edits and pictures wait (no answer within 8 s)${working}. Edits sent now run when it is done (a stuck task is given up after ${status.queueWatchdog ?? "90 s"}); Background tabs may answer more slowly. Wait and retry the same requestId (never applied twice); edits are not lost. Keep working on other tasks. Only mention the tab to the user if retries still fail after about 2 minutes.`;
         } else {
           health = `error: ${answered}`;
         }
@@ -2003,7 +2022,7 @@ ${EDIT_HELP}
     server.registerTool(
       "get_conflict",
       {
-        description: `Show a merge conflict of a scene (status "conflict" in app_status / read_open_scene): elements that the user's local version AND Drive's version both changed differently since their common version. Everything else was merged automatically. Per clashing element you get base / mine (the user's local version) / drive, and which fields each side changed. view=true adds two images of the clashing area: the user's version and Drive's. Then settle it with resolve_conflict.`,
+        description: `Show a merge conflict of a scene (status "conflict" in app_status / ${CO_WORK.read}): elements that the user's local version AND Drive's version both changed differently since their common version. Everything else was merged automatically. Per clashing element you get base / mine (the user's local version) / drive, and which fields each side changed. view=true adds two images of the clashing area: the user's version and Drive's. Then settle it with resolve_conflict.`,
         inputSchema: {
           name: SCENE_NAME,
           view: z.boolean().optional().describe("Also return images of the clashing area: mine and Drive's version"),
@@ -2041,7 +2060,7 @@ ${EDIT_HELP}
   - "mine": the user's whole local version overwrites Google Drive (Drive's other changes are lost).
   - "drive": take Drive's version, discard the user's local changes.
   - "both": take Drive's version and keep the user's version as a copy scene.
-  Afterwards, fix details with read_open_scene / edit_open_scene if needed. Ask the user when it is unclear which version they want; never silently discard their work.`,
+  Afterwards, fix details with ${CO_WORK.read} / ${CO_WORK.edit} if needed. Ask the user when it is unclear which version they want; never silently discard their work.`,
         inputSchema: {
           name: SCENE_NAME,
           resolution: z.enum(["merge", "mine", "drive", "both"]),

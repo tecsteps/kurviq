@@ -1,6 +1,9 @@
 // Renders a scene (or part of it) to PNG with Excalidraw's own exporter, so
 // agents can look at scenes without any browser automation.
 
+import { withBoundText } from "../../scenes-mcp/boundText.mjs";
+import { needsConversion } from "../../scenes-mcp/convert.mjs";
+
 import { registerSceneFonts } from "./fonts";
 import { scenesController } from "./controller";
 import { fillFiles } from "./leanFiles";
@@ -153,24 +156,6 @@ const blobToBase64 = (blob: Blob) =>
     reader.readAsDataURL(blob);
   });
 
-/** containers bring their labels, labels bring their containers */
-const withBoundText = <T extends ExcalidrawElement>(
-  picked: readonly T[],
-  all: readonly T[],
-) => {
-  const ids = new Set(picked.map((el) => el.id));
-  for (const el of all) {
-    const containerId = (el as any).containerId;
-    if (containerId && ids.has(containerId)) {
-      ids.add(el.id);
-    }
-    if (ids.has(el.id) && containerId) {
-      ids.add(containerId);
-    }
-  }
-  return all.filter((el) => ids.has(el.id));
-};
-
 const renderSlide = (visible: readonly NonDeletedExcalidrawElement[], command: RenderCommand) => {
   let slide: NonDeletedExcalidrawElement | null = null;
   if (command.slide !== undefined) {
@@ -230,10 +215,7 @@ const renderSource = async (command: RenderCommand, open: () => { elements: read
     // custom fonts first: the picture must show them
     await registerSceneFonts(command.scene as any);
     const raw = command.scene.elements || [];
-    const needsConversion = raw.some(
-      (el: any) => el?.label !== undefined || el?.version === undefined,
-    );
-    elements = needsConversion
+    elements = raw.some(needsConversion)
       ? await convert(raw)
       : restoreElements(raw, null, { repairBindings: true });
     // a lean scene (from the agent's server) gets its images back from this tab

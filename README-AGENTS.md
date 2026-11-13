@@ -8,10 +8,12 @@ your Google Drive with your sign-in (without sign-in, scenes stay local
 only in that browser). To install everything with an agent, use the prompt
 in [README.md](README.md#install-with-an-agent).
 
-**Kurviq (online, https://kurviq.com):** no install. The user clicks **MCP**
-in Kurviq and gives you a personal link `https://kurviq.com/mcp/<key>`
-(remote MCP, Streamable HTTP). You then work through the user's open Kurviq
-tab with the same tools as below. Read https://kurviq.com/llms.txt
+**Kurviq (online, https://kurviq.com):** no install. Add
+`https://kurviq.com/mcp` as a remote MCP server (Streamable HTTP, OAuth
+sign-in): on first use the client opens the user's browser, where Kurviq asks
+them to allow the agent. (The old personal links `https://kurviq.com/mcp/<key>`
+no longer work.) You then work through the user's open Kurviq tab with the
+same tools as below. Read https://kurviq.com/llms.txt
 ([online/llms.txt](online/llms.txt)).
 
 ```
@@ -40,7 +42,7 @@ The server is a stdio MCP server and works from any directory. Use the absolute
 path: `/path/to/kurviq/scenes-mcp/server.mjs`.
 
 **Claude Code, in this folder:** nothing to do. `.mcp.json` registers it as
-`excalidraw`. Approve it when Claude Code asks the first time.
+`kurviq-local`. Approve it when Claude Code asks the first time.
 
 **Claude Code, in every project:**
 
@@ -125,13 +127,15 @@ The tools describe themselves, so plain requests work:
 | `measure_text` | How wide and tall text will be in a given font and size (and how it wraps), measured by Excalidraw; also for formatted text (`markdown`). |
 | **`read_scene`** | Reads a scene (your tab's current state) and reports **`userChanges`**: what you added, changed or deleted since an agent last edited it. Returns a `revision`; `since=<revision>` gives exactly the changes since then, `view=true` adds an image of them. |
 | **`edit_scene`** | Adds, updates or deletes elements in your open tab, which merges them and saves the scene to Drive right away. Works like the editor: moved shapes take their labels and arrows along, a moved slide takes its content; `label: {text}` changes a shape's label; `markdown` instead of `text` writes formatted text (bold, lists, colors); `format: { match, color, bold, … }` styles a phrase of the current text; updates that clash with your changes since the agent's `basedOn` are returned as `conflicts` instead of applied (`onConflict: "overwrite"` applies them). Returns an image of the edited area and the new `revision`. |
-| `get_scene` | A scene as data. `summary=true` (the default for big scenes) gives bounds, counts and all labels with positions. `region` / `elementIds` select a part. |
+| `get_scene` | A scene as data. `summary=true` (the default for big scenes) gives bounds, counts and all labels with positions. `region` / `elementIds` select a part. `checkpoint: true` also stores the whole scene (pictures, background, fonts) as a checkpoint to start a new drawing from. |
 | `save_scene` | Saves a **new** drawing (`checkpointId` or `elements`). `open: true` switches your app to it. Existing scenes are changed with `edit_scene`; `replace: true` overwrites one completely. |
 | `open_scene` | Switches your app to a scene, only when you ask. `create: true` makes a new one. |
 | `rename_scene` / `clone_scene` / `delete_scene` | Rename, duplicate or delete a scene, in your app and in Drive (a renamed scene keeps its file and links; a deleted one goes to Drive's bin). |
 | `set_local_only` | Makes a scene local only (kept in your browser, never synced to Drive) or syncs it again. `save_scene(local: true)` creates a new local-only scene. |
 | `get_conflict` / `resolve_conflict` | Shows a merge conflict (each clashing element as base / yours / Drive's, plus images of both versions) and resolves it: element by element (`merge`), or wholesale (`mine`, `drive`, `both`). |
 | `list_scenes` / `app_status` | Your scenes, and what your app has open, whether Drive is connected (`drive`) and each scene's sync status. |
+| `add_font` | Adds a Google font by name (e.g. "Inter") to your app, so texts can use it; it travels with every scene that uses it. |
+| `short_link` | A scene's links to share (long and optional short `kurviq.com/pub/<name>`), and who can open them; only when you ask. |
 
 ### Co-working (you and the agent on the same drawing)
 

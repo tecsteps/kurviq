@@ -128,6 +128,19 @@ const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (char) => `&#${char.codePointAt(0)};`);
 
 /**
+ * The rewritten page goes out without the asset's validators: its title,
+ * preload and short-link target depend on the scene, not only on the asset, so
+ * a revalidation (304) must never bring back the browser's old copy.
+ */
+const uncached = (page: Response) => {
+  const response = new Response(page.body, page);
+  response.headers.set("Cache-Control", "no-cache");
+  response.headers.delete("ETag");
+  response.headers.delete("Last-Modified");
+  return response;
+};
+
+/**
  * /s/<fileId>/<slug> and the short link /pub/<name> (./pubLinks.ts): the app
  * page, titled after the scene (if it is public). A short link's page names
  * its file (meta kurviq-pub), so the app needs no lookup of its own.
@@ -144,16 +157,18 @@ export const handleSharedPage = async (
   if ((!match && !pubName) || request.method !== "GET") {
     return null;
   }
-  const page = await assets.fetch(new Request(new URL("/", url), { headers: request.headers }));
+  // the whole page every time (no If-None-Match / If-Modified-Since): it is rewritten below
+  const headers = new Headers(request.headers);
+  headers.delete("If-None-Match");
+  headers.delete("If-Modified-Since");
+  const page = await assets.fetch(new Request(new URL("/", url), { headers }));
   const fileId = match ? match[1] : await pubFile(env, pubName!).catch(() => null);
   if (!fileId || !FILE_ID_RE.test(fileId) || !(page.headers.get("Content-Type") || "").includes("text/html")) {
     if (pubName && !fileId) {
       const missing = new HTMLRewriter()
         .on("head", { element: (el) => el.append(`<meta name="robots" content="noindex">`, { html: true }) })
         .transform(page);
-      const response = new Response(missing.body, missing);
-      response.headers.set("Cache-Control", "no-cache");
-      return response;
+      return uncached(missing);
     }
     return page;
   }
@@ -185,7 +200,5 @@ export const handleSharedPage = async (
         ),
     })
     .transform(page);
-  const response = new Response(rewritten.body, rewritten);
-  response.headers.set("Cache-Control", "no-cache");
-  return response;
+  return uncached(rewritten);
 };

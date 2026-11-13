@@ -7,7 +7,8 @@ import { Fonts, exportToSvg, getNonDeletedElements } from "@excalidraw/excalidra
 
 import { BASE_URL, IS_ONLINE } from "./api";
 import { withTemplate } from "./cowork";
-import { getSlides, slideData } from "./slides";
+import { escapeHtml } from "./richText/layout";
+import { getSlides, resolveSlide, slideData } from "./slides";
 
 import type { Frame } from "./slides";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
@@ -16,20 +17,6 @@ import type { BinaryFiles } from "@excalidraw/excalidraw/types";
 /** 16:9 like presentation software: 13.333 × 7.5 in */
 const PAGE_WIDTH_IN = 13.333;
 
-const escapeHtml = (text: string) =>
-  text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-
-/** the slides one part of the spec names: a range "2-4", a number or a frame id */
-const slidesForPart = (slides: Frame[], part: number | string): Array<Frame | undefined> => {
-  const range = typeof part === "string" && /^(\d+)\s*-\s*(\d+)$/.exec(part);
-  if (range) {
-    return slides.slice(Number(range[1]) - 1, Number(range[2]));
-  }
-  if (typeof part === "number" || /^\d+$/.test(part)) {
-    return [slides[Number(part) - 1]];
-  }
-  return [slides.find((slide) => slide.id === part)];
-};
 
 /**
  * Which slides: "all" (skipped ones left out), or numbers (1-based, deck
@@ -48,11 +35,11 @@ export const pickSlides = (
   const picked: Frame[] = [];
   for (const raw of parts) {
     const part = typeof raw === "number" ? raw : raw.trim();
-    const found = slidesForPart(slides, part);
-    if (!found.length || found.some((slide) => !slide)) {
+    const found = resolveSlide(part, elements, { ranges: true });
+    if (!found.length) {
       throw new Error(`No slide "${part}": the deck has ${slides.length} slides`);
     }
-    for (const slide of found as Frame[]) {
+    for (const slide of found) {
       if (!picked.includes(slide)) {
         picked.push(slide);
       }
@@ -64,11 +51,13 @@ export const pickSlides = (
 /** pictures are kept at this many pixels per pixel of the slide (a slide page prints at 144 dpi: 2 → 288 dpi) */
 const IMAGE_DENSITY = 2;
 
-const loadImage = (src: string) =>
+/** a picture decoded (rejects when it can't be read, or takes longer than 10 s) */
+export const loadImage = (src: string) =>
   new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error("picture could not be read"));
+    setTimeout(() => reject(new Error("picture took too long to read")), 10_000);
     image.src = src;
   });
 
@@ -208,23 +197,33 @@ ${pages.map((page) => `<div class="page">${page}</div>`).join("\n")}
 </body></html>`;
 };
 
+/** no scenes server can print here (kurviq.com, none running, an older one, no Chrome): the browser's print dialog does it */
+export class NoPdfPrinter extends Error {
+  override name = "NoPdfPrinter";
+}
+
 /** print the page to a PDF (scenes server + headless Chrome) */
 export const printToPdf = async (html: string) => {
   if (IS_ONLINE) {
-    // Kurviq has no print server: the browser's dialog does it
-    throw new Error("PDF printing needs the local scenes server");
+    throw new NoPdfPrinter("PDF printing needs the local scenes server");
   }
-  const res = await fetch(`${BASE_URL}/api/pdf`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ html }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/api/pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ html }),
+    });
+  } catch {
+    throw new NoPdfPrinter("the scenes server is not running");
+  }
   if (!res.ok) {
     let message = `PDF export failed (${res.status})`;
     try {
       message = (await res.json()).error || message;
     } catch {}
-    throw new Error(message);
+    // 404: a server without PDF printing; 409: no Chrome to print with
+    throw res.status === 404 || res.status === 409 ? new NoPdfPrinter(message) : new Error(message);
   }
   return res.blob();
 };

@@ -11,59 +11,48 @@
 //
 // Changes need the person's Google access token (Authorization: Bearer, the
 // one the app already has): Drive must say they can edit the file. The token
-// is used for that one question and not kept.
+// is used for that one question and not kept. A name whose file is in the
+// bin can still be freed by the file's owner (else it would be lost for good).
 //
 // /pub/<name> itself is the app page (./shared.ts handleSharedPage).
 
 import { PUB_MAX, pubNameProblem } from "../../scenes-plugin/src/online/pubName";
 
-import { isLocalOrigin } from "./auth";
-import { getFile, problemOf } from "./driveApi";
+import { isLocalInstall } from "./auth";
+import { readJson } from "./bytes";
+import { database } from "./database";
+import type { D1 } from "./database";
+import { FILE_ID_RE, getFile, problemOf } from "./driveApi";
 import type { GoogleEnv } from "./google";
-
-type D1Statement = {
-  bind: (...values: unknown[]) => D1Statement;
-  first: <T>() => Promise<T | null>;
-  run: () => Promise<unknown>;
-};
-type D1 = { prepare: (sql: string) => D1Statement; batch: (statements: D1Statement[]) => Promise<unknown> };
 
 export type PubEnv = GoogleEnv & { FEEDBACK?: D1 };
 
-const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
-
-const SCHEMA = `CREATE TABLE IF NOT EXISTS pub_links (
-  name TEXT PRIMARY KEY,
-  file_id TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL
-)`;
-
-let schemaReady = false;
-
-const database = async (env: PubEnv) => {
-  const db = env.FEEDBACK;
-  if (db && !schemaReady) {
-    await db.prepare(SCHEMA).bind().run();
-    schemaReady = true;
-  }
-  return db ?? null;
-};
+/** a claim's body: a file id and a name (a few hundred bytes) */
+const MAX_BODY = 2000;
 
 /** the file a short name stands for, or null */
 export const pubFile = async (env: PubEnv, name: string): Promise<string | null> => {
   if (name.length > PUB_MAX || !/^[a-z0-9-]+$/.test(name)) {
     return null;
   }
-  const db = await database(env);
+  const db = await database(env.FEEDBACK);
   const row = db && (await db.prepare("SELECT file_id FROM pub_links WHERE name = ?").bind(name).first<{ file_id: string }>());
   return row?.file_id ?? null;
 };
 
-/** may this token's owner edit the file? "unreachable": Google did not answer */
-const canEdit = async (env: PubEnv, token: string, fileId: string): Promise<true | "signed-out" | "no-access" | "unreachable"> => {
-  const file = await getFile(env, token, fileId, "id,trashed,capabilities(canEdit)");
+type Verdict = true | "signed-out" | "no-access" | "unreachable";
+
+/**
+ * May this token's owner change the file's short link? To claim one: edit the
+ * file, which is not in the bin. To free one: edit it, or own it (in the bin
+ * too). "unreachable": Google did not answer.
+ */
+const mayChange = async (env: PubEnv, token: string, fileId: string, change: "claim" | "free"): Promise<Verdict> => {
+  const file = await getFile(env, token, fileId, "id,trashed,ownedByMe,capabilities(canEdit)");
   if (file.status === 200) {
-    return file.data?.capabilities?.canEdit && !file.data.trashed ? true : "no-access";
+    const canEdit = !!file.data?.capabilities?.canEdit;
+    const allowed = change === "claim" ? canEdit && !file.data.trashed : canEdit || !!file.data?.ownedByMe;
+    return allowed ? true : "no-access";
   }
   const problem = problemOf(file);
   if (problem === "unreachable" || problem === "rate-limited") {
@@ -86,14 +75,11 @@ const readPubLink = async (name: string | null, url: URL, db: D1, env: PubEnv, j
 };
 
 const claimPubLink = async (request: Request, env: PubEnv, db: D1, token: string, json: PubJson, refuse: PubRefuse) => {
-  const text = await request.text();
-  if (text.length > 2000) {
+  const read = await readJson(request, MAX_BODY);
+  if (read === "too-big") {
     return json(413, { error: "Too long" });
   }
-  let body: any = null;
-  try {
-    body = JSON.parse(text);
-  } catch { }
+  const body: any = read === "invalid" ? null : read.value;
   const fileId = String(body?.fileId ?? "");
   const wanted = String(body?.name ?? "");
   if (!FILE_ID_RE.test(fileId)) {
@@ -107,7 +93,7 @@ const claimPubLink = async (request: Request, env: PubEnv, db: D1, token: string
   if (holder && holder.file_id !== fileId) {
     return json(409, { error: `kurviq.com/pub/${wanted} is already taken`, code: "taken" });
   }
-  const verdict = await canEdit(env, token, fileId);
+  const verdict = await mayChange(env, token, fileId, "claim");
   if (verdict !== true) {
     return refuse(verdict);
   }
@@ -128,12 +114,12 @@ const claimPubLink = async (request: Request, env: PubEnv, db: D1, token: string
 };
 
 type PubJson = (status: number, body: unknown) => Response;
-type PubRefuse = (verdict: Exclude<Awaited<ReturnType<typeof canEdit>>, true>) => Response;
+type PubRefuse = (verdict: Exclude<Verdict, true>) => Response;
 
 const pubHeaders = (request: Request, env: PubEnv, url: URL) => {
   const origin = request.headers.get("Origin");
   // Kurviq's pages, and the local install (it signs in through kurviq.com)
-  const trusted = !origin || origin === url.origin || isLocalOrigin(origin) || (!!env.DEV_ORIGIN && origin === env.DEV_ORIGIN);
+  const trusted = !origin || origin === url.origin || isLocalInstall(origin) || (!!env.DEV_ORIGIN && origin === env.DEV_ORIGIN);
   const headers = new Headers({ "Content-Type": "application/json", "Cache-Control": "no-store" });
   if (origin && origin !== url.origin && trusted) {
     headers.set("Access-Control-Allow-Origin", origin);
@@ -147,7 +133,7 @@ const deletePubLink = async (name: string, env: PubEnv, db: D1, token: string, j
   if (!fileId) {
     return json(200, { name: null });
   }
-  const verdict = await canEdit(env, token, fileId);
+  const verdict = await mayChange(env, token, fileId, "free");
   if (verdict !== true) {
     return refuse(verdict);
   }
@@ -169,11 +155,17 @@ export const handlePubApi = async (request: Request, env: PubEnv): Promise<Respo
     headers.set("Access-Control-Max-Age", "86400");
     return new Response(null, { status: 204, headers });
   }
-  const db = await database(env);
+  const db = await database(env.FEEDBACK);
   if (!db) {
     return json(503, { error: "Short links are not available here" });
   }
-  const name = match[1] ? decodeURIComponent(match[1]).toLowerCase() : null;
+  let name: string | null = null;
+  try {
+    name = match[1] ? decodeURIComponent(match[1]).toLowerCase() : null;
+  } catch {
+    // malformed percent-encoding (%zz): no name a link could have
+    return json(400, { error: "Not a short link name" });
+  }
 
   if (request.method === "GET") {
     return readPubLink(name, url, db, env, json);
@@ -187,7 +179,7 @@ export const handlePubApi = async (request: Request, env: PubEnv): Promise<Respo
   if (!token) {
     return json(401, { error: "Sign in with Google to make a short link", code: "signed-out" });
   }
-  const refuse = (verdict: Exclude<Awaited<ReturnType<typeof canEdit>>, true>) => {
+  const refuse = (verdict: Exclude<Verdict, true>) => {
     if (verdict === "unreachable") {
       return json(503, { error: "Google is not reachable: try again in a moment" });
     }

@@ -6,6 +6,7 @@ import { DEFAULT_ELEMENT_PROPS, DEFAULT_FONT_SIZE } from "@excalidraw/common";
 import { CaptureUpdateAction, FONT_FAMILY, Fonts } from "@excalidraw/excalidraw";
 
 import { scenesController } from "./controller";
+import { createStore } from "./externalStore";
 import {
   addBodyText,
   addTitleBlock,
@@ -20,6 +21,8 @@ import {
   getTransition,
   renderSlide,
   slideData,
+  slideSteps,
+  slideTitle,
   slidesOrigin,
   slideVersion,
   syncTemplate,
@@ -28,7 +31,7 @@ import {
 
 import type { Frame, Transition } from "./slides";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
-import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 export type SlideInfo = {
   id: string;
@@ -63,12 +66,35 @@ const THUMB_WIDTH = 480;
 /** set while a presentation runs (see present.tsx): a page that went away mid-presentation is cleaned up */
 export const PRESENTING_KEY = "kurviq-presenting";
 
+/** the open scene's name, as the deck's {deck} placeholder shows it */
+export const deckName = () => scenesController.getState().current ?? "Untitled";
+
+/**
+ * A cheap fingerprint of what the deck depends on: element versions, files,
+ * background. Excalidraw's onChange also fires for scrolling and pointer
+ * moves; with the same fingerprint there is nothing to do.
+ */
+const sceneFingerprint = (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
+  let versions = 0;
+  let nonces = 0;
+  for (const el of elements) {
+    versions += el.version;
+    nonces = (nonces + el.versionNonce) | 0;
+  }
+  return `${elements.length}:${versions}:${nonces}:${Object.keys(files).length}:${appState.viewBackgroundColor}`;
+};
+
 class Deck {
   private api: ExcalidrawImperativeAPI | null = null;
-  private readonly listeners = new Set<() => void>();
   private lastKey = "";
-  /** the slides at the last change: ids, and whether they were Kurviq's grid (from where) */
+  /** the scene at the last onChange (see sceneFingerprint) */
+  private lastFingerprint = "";
+  /** templateKey at the last template sync: unchanged, there is nothing to sync */
   private lastTemplateKey = 0;
+  /** a template sync is due (it waits while the canvas is in view mode) */
+  private syncWanted = false;
+  /** a template that made adding headline and eyebrow fail: not tried again for this scene */
+  private titlesFailedFor: string | null = null;
   /** the body text style last made the editor's default */
   private lastBodyKey = "";
   /** the scene whose new-text style was set to Excalidraw's default (once per scene opened) */
@@ -80,24 +106,23 @@ class Deck {
   private syncTimer = 0;
   private thumbTimer = 0;
   private readonly thumbVersions = new Map<string, number>();
+  /** a thumbnail pass is running; `thumbsAgain`: a change came in meanwhile, one more pass follows */
+  private thumbsRunning = false;
+  private thumbsAgain = false;
   /** paused while presenting (nothing is edited then) */
   paused = false;
 
   state: DeckState = { isPresentation: false, slides: [], templateId: null, transition: "glide", thumbs: {}, selection: [], activeId: null };
   private lastSelection = "";
+  private readonly store = createStore(this.state);
 
-  subscribe = (listener: () => void) => {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  };
+  readonly subscribe = this.store.subscribe;
 
   getState = () => this.state;
 
   private set(patch: Partial<DeckState>) {
     this.state = { ...this.state, ...patch };
-    this.listeners.forEach((listener) => listener());
+    this.store.set(this.state);
   }
 
   private detach: (() => void) | null = null;
@@ -116,11 +141,11 @@ class Deck {
         api.updateScene({ appState: { zenModeEnabled: false } });
       }
     } catch {}
-    const offChange = api.onChange((elements, appState) => {
+    const offChange = api.onChange((elements, appState, files) => {
       if (this.state.isPresentation !== ((appState as any).kurviqPresentation === true)) {
         this.set({ isPresentation: (appState as any).kurviqPresentation === true });
       }
-      this.onChange(elements);
+      this.onChange(elements, appState, files);
       this.onSelection(elements, appState.selectedElementIds);
     });
     // a click into a slide (an element on it, or its empty space) makes it the active one; a click
@@ -171,7 +196,8 @@ class Deck {
       document.removeEventListener("keydown", onKey, true);
     };
     this.set({ isPresentation: (api.getAppState() as any).kurviqPresentation === true });
-    this.onChange(api.getSceneElementsIncludingDeleted());
+    this.lastFingerprint = "";
+    this.onChange(api.getSceneElementsIncludingDeleted(), api.getAppState(), api.getFiles());
   }
 
   /**
@@ -217,10 +243,22 @@ class Deck {
   }
 
   private deckName() {
-    return scenesController.getState().current ?? "Untitled";
+    return deckName();
   }
 
-  private onChange(elements: readonly ExcalidrawElement[]) {
+  private onChange(elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) {
+    const fingerprint = sceneFingerprint(elements, appState, files);
+    if (fingerprint !== this.lastFingerprint) {
+      this.lastFingerprint = fingerprint;
+      this.onSceneChange(elements);
+    }
+    // a sync that waited for view mode to end (the shared viewer stays in it: no timer runs there)
+    if (this.syncWanted && !this.paused && !appState.viewModeEnabled && !this.syncTimer) {
+      this.scheduleTemplateSync();
+    }
+  }
+
+  private onSceneChange(elements: readonly ExcalidrawElement[]) {
     // slide list (cheap key over frames and stepped elements)
     let key = "";
     let stepped = "";
@@ -238,6 +276,7 @@ class Deck {
     }
     if (this.state.slides.length || this.state.templateId) {
       this.scheduleThumbs();
+      this.syncWanted = true;
       this.scheduleTemplateSync();
     }
   }
@@ -245,19 +284,13 @@ class Deck {
   private rebuild(elements: readonly ExcalidrawElement[]) {
     const slides = getSlides(elements);
     const template = getTemplate(elements);
-    const steps = new Map<string, number>();
-    for (const el of elements) {
-      const step = slideData(el).step;
-      if (!el.isDeleted && step && el.frameId) {
-        steps.set(el.frameId, Math.max(steps.get(el.frameId) ?? 0, step));
-      }
-    }
+    const steps = slideSteps(elements);
     this.set({
       slides: slides.map((frame, index) => {
         const data = slideData(frame);
         return {
           id: frame.id,
-          title: frame.name?.trim() || `Slide ${index + 1}`,
+          title: slideTitle(frame, index),
           index,
           skip: !!data.skip,
           template: data.template !== false,
@@ -305,52 +338,34 @@ class Deck {
 
   private scheduleTemplateSync() {
     clearTimeout(this.syncTimer);
-    this.syncTimer = window.setTimeout(() => this.runTemplateSync(), 300);
+    this.syncTimer = window.setTimeout(() => {
+      this.syncTimer = 0;
+      this.runTemplateSync();
+    }, 300);
   }
 
-  runTemplateSync({ reset }: { reset?: Set<string> } = {}) {
+  runTemplateSync() {
     const api = this.api;
     if (!api || this.paused) {
       return;
     }
     const appState = api.getAppState();
-    if (
-      !reset &&
-      (appState.viewModeEnabled ||
-        appState.newElement ||
-        appState.editingTextElement ||
-        appState.resizingElement ||
-        appState.selectedElementsAreBeingDragged)
-    ) {
+    if (appState.viewModeEnabled) {
+      return; // onChange starts it again when view mode ends (syncWanted stays set)
+    }
+    if (appState.newElement || appState.editingTextElement || appState.resizingElement || appState.selectedElementsAreBeingDragged) {
       this.scheduleTemplateSync(); // try again when the user is done
       return;
     }
+    this.syncWanted = false;
     const elements = api.getSceneElementsIncludingDeleted();
     // a template from before headline, eyebrow and body text: they come once, measured with the deck's fonts
-    if (needsTitleBlock(elements) || needsBodyText(elements)) {
-      if (!this.addingTitles) {
-        this.addingTitles = true;
-        Fonts.loadElementsFonts(elements.filter((el) => el.type === "text" && !el.isDeleted) as any)
-          .catch(() => [])
-          .then(() => {
-            if (this.api !== api) {
-              return;
-            }
-            const titled = addTitleBlock(api.getSceneElementsIncludingDeleted())?.elements ?? api.getSceneElementsIncludingDeleted();
-            const withBody = addBodyText(titled) ?? titled;
-            if (withBody !== api.getSceneElementsIncludingDeleted()) {
-              api.updateScene({ elements: withBody, captureUpdate: CaptureUpdateAction.NEVER });
-            }
-          })
-          .finally(() => {
-            this.addingTitles = false;
-            this.scheduleTemplateSync();
-          });
-      }
+    if ((needsTitleBlock(elements) || needsBodyText(elements)) && this.titlesFailedFor !== this.deckName()) {
+      this.addTitles(api, elements);
       return;
     }
     const key = templateKey(elements, this.deckName());
-    if (!reset && key === this.lastTemplateKey) {
+    if (key === this.lastTemplateKey) {
       return;
     }
     // a headline / eyebrow measured before its font was loaded (cut off): measured again, once the font is there
@@ -365,15 +380,45 @@ class Deck {
           }
         });
     }
-    const result = syncTemplate(elements, this.deckName(), { reset });
+    const result = syncTemplate(elements, this.deckName());
     if (result) {
-      api.updateScene({
-        elements: result.elements,
-        // a reset is a user action (undoable); following the template is not
-        captureUpdate: reset ? CaptureUpdateAction.IMMEDIATELY : CaptureUpdateAction.NEVER,
-      });
+      // following the template is not the user's action: not in the undo history
+      api.updateScene({ elements: result.elements, captureUpdate: CaptureUpdateAction.NEVER });
     }
     this.lastTemplateKey = templateKey(api.getSceneElementsIncludingDeleted(), this.deckName());
+  }
+
+  /**
+   * Headline, eyebrow and body text added to an older template (once). If
+   * that fails, the scene's template sync goes on without them instead of
+   * running into the same failure again and again.
+   */
+  private addTitles(api: ExcalidrawImperativeAPI, elements: readonly ExcalidrawElement[]) {
+    if (this.addingTitles) {
+      return;
+    }
+    this.addingTitles = true;
+    const scene = this.deckName();
+    Fonts.loadElementsFonts(elements.filter((el) => el.type === "text" && !el.isDeleted) as any)
+      .catch(() => [])
+      .then(() => {
+        if (this.api !== api) {
+          return;
+        }
+        const titled = addTitleBlock(api.getSceneElementsIncludingDeleted())?.elements ?? api.getSceneElementsIncludingDeleted();
+        const withBody = addBodyText(titled) ?? titled;
+        if (withBody !== api.getSceneElementsIncludingDeleted()) {
+          api.updateScene({ elements: withBody, captureUpdate: CaptureUpdateAction.NEVER });
+        }
+      })
+      .catch((error) => {
+        console.warn("[slides] adding headline and eyebrow to the template failed", error);
+        this.titlesFailedFor = scene;
+      })
+      .finally(() => {
+        this.addingTitles = false;
+        this.scheduleTemplateSync();
+      });
   }
 
   // ---------------------------------------------------------------------------
@@ -382,10 +427,29 @@ class Deck {
 
   private scheduleThumbs() {
     clearTimeout(this.thumbTimer);
-    this.thumbTimer = window.setTimeout(() => this.renderThumbs(), 600);
+    this.thumbTimer = window.setTimeout(() => {
+      this.renderThumbs().catch((error) => console.warn("[slides] thumbnails failed", error));
+    }, 600);
   }
 
+  /** one pass at a time: a change during a pass starts one more when it ends */
   private async renderThumbs() {
+    if (this.thumbsRunning) {
+      this.thumbsAgain = true;
+      return;
+    }
+    this.thumbsRunning = true;
+    try {
+      do {
+        this.thumbsAgain = false;
+        await this.renderThumbsOnce(); // NOSONAR S9382: one pass after the other on purpose
+      } while (this.thumbsAgain);
+    } finally {
+      this.thumbsRunning = false;
+    }
+  }
+
+  private async renderThumbsOnce() {
     const api = this.api;
     if (!api) {
       return;
@@ -398,9 +462,16 @@ class Deck {
     if (template) {
       frames.push(template);
     }
-    let thumbs = this.state.thumbs;
+    // only the current frames' pictures are kept (not those of deleted slides or other decks)
+    const current = new Set(frames.map((frame) => frame.id));
+    for (const id of this.thumbVersions.keys()) {
+      if (!current.has(id)) {
+        this.thumbVersions.delete(id);
+      }
+    }
+    let thumbs: Record<string, string> = Object.fromEntries(Object.entries(this.state.thumbs).filter(([id]) => current.has(id)));
     for (const frame of frames) {
-      const version = slideVersion(elements, frame);
+      const version = slideVersion(elements, frame, files, background);
       if (this.thumbVersions.get(frame.id) === version && thumbs[frame.id]) {
         continue;
       }
@@ -412,12 +483,11 @@ class Deck {
         console.warn("[slides] thumbnail failed", error);
       }
     }
-    if (thumbs !== this.state.thumbs) {
+    const before = this.state.thumbs;
+    if (Object.keys(thumbs).length !== Object.keys(before).length || Object.entries(thumbs).some(([id, url]) => before[id] !== url)) {
       this.set({ thumbs });
     }
   }
 }
 
 export const deck = new Deck();
-
-(window as any).__deck = deck;

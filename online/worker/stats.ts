@@ -14,7 +14,10 @@
 //
 // Everything goes to one Durable Object (Stats) that adds it up in its own
 // storage and writes it to D1 (stats_hourly, stats_daily) with its alarm,
-// every 15 minutes while there is something to write.
+// every 15 minutes while there is something to write. A write to D1 is never
+// lost nor applied twice: the counts stay in the object (as "in flight", with
+// the write's id) until D1 confirmed them, and D1 notes the id in the same
+// transaction (stats_flushes), so a write whose answer got lost is not repeated.
 //
 // Never stored: IP addresses, user agents, cookies, account or scene ids,
 // scene names. The country comes from Cloudflare (request.cf.country), the
@@ -26,6 +29,11 @@
 // Active live scenes per hour work the same way with the scene's Drive id.
 
 import { DurableObject } from "cloudflare:workers";
+
+import { database } from "./database";
+import type { D1 } from "./database";
+import { FILE_ID_RE } from "./driveApi";
+import { isDevOrigin } from "./origins";
 
 // -----------------------------------------------------------------------------
 // what is counted
@@ -78,14 +86,9 @@ const MCP_TOOLS = new Set([
 /** crawlers, link previews and scripts: not counted */
 const BOT_RE = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|curl|wget|python|httpclient|okhttp|go-http|java\/|headless|lighthouse|pingdom|uptime|monitor/i;
 
-const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
-
 // -----------------------------------------------------------------------------
 // the Worker's side
 // -----------------------------------------------------------------------------
-
-type D1Statement = { bind: (...values: unknown[]) => D1Statement; run: () => Promise<unknown> };
-type D1 = { prepare: (sql: string) => D1Statement; batch: (statements: D1Statement[]) => Promise<unknown> };
 
 export type StatsEnv = {
   STATS?: DurableObjectNamespace;
@@ -97,16 +100,16 @@ export type StatsEnv = {
 };
 
 /** [metric, dim, n] */
-export type Count = [string, string, number];
+type Count = [string, string, number];
 /** what the Worker sends to the Stats object */
-export type StatsBatch = { c: Count[]; /** IP + user agent, for the visitors estimate (hashed there, never stored) */ u?: string; /** live scenes' Drive ids, for the active scenes estimate (hashed there, never stored) */ s?: string[] };
+type StatsBatch = { c: Count[]; /** IP + user agent, for the visitors estimate (hashed there, never stored) */ u?: string; /** live scenes' Drive ids, for the active scenes estimate (hashed there, never stored) */ s?: string[] };
 
-export const statsEnabled = (env: StatsEnv) => !!env.STATS && env.STATS_ENABLED === "on" && (!env.DEV_ORIGIN || env.STATS_DEV === "1");
+const statsEnabled = (env: StatsEnv) => !!env.STATS && env.STATS_ENABLED === "on" && (!env.DEV_ORIGIN || env.STATS_DEV === "1");
 
 const statsStub = (env: StatsEnv) => env.STATS!.get(env.STATS!.idFromName("stats"));
 
 /** hand a batch to the Stats object, after the response (one Durable Object request) */
-export const recordStats = (env: StatsEnv, ctx: ExecutionContext, batch: StatsBatch) => {
+const recordStats = (env: StatsEnv, ctx: ExecutionContext, batch: StatsBatch) => {
   if (!statsEnabled(env) || (!batch.c.length && !batch.s?.length)) {
     return;
   }
@@ -201,7 +204,8 @@ export const pageStats = (request: Request, response: Response, env: StatsEnv, c
 /** a public scene read through the Worker (/api/public/<fileId>: the viewer and link previews; version polls not counted) */
 export const publicReadStats = (request: Request, env: StatsEnv, ctx: ExecutionContext) => {
   const url = new URL(request.url);
-  if (request.method === "GET" && /^\/api\/public\/[A-Za-z0-9_-]{10,200}$/.test(url.pathname) && !isBot(request.headers.get("User-Agent") ?? "")) {
+  const fileId = /^\/api\/public\/([^/]+)$/.exec(url.pathname)?.[1] ?? "";
+  if (request.method === "GET" && FILE_ID_RE.test(fileId) && !isBot(request.headers.get("User-Agent") ?? "")) {
     countStat(env, ctx, "public_reads");
   }
 };
@@ -210,11 +214,11 @@ export const publicReadStats = (request: Request, env: StatsEnv, ctx: ExecutionC
  * Local tests only (wrangler dev with DEV_ORIGIN and STATS_DEV=1, never in
  * production): POST /api/stats-dev/flush?now=<ms> writes to D1 at once, as
  * the alarm would at that time (a later `now` closes today's estimates);
- * POST /api/stats-dev/retention runs the daily retention job now
+ * POST /api/stats-dev/retention runs the hourly retention job now
  */
 export const handleStatsDev = async (request: Request, env: StatsEnv, retention: () => Promise<unknown>) => {
   const url = new URL(request.url);
-  if (request.method !== "POST" || !statsEnabled(env) || !env.DEV_ORIGIN || !/^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(`${env.DEV_ORIGIN}/`)) {
+  if (request.method !== "POST" || !statsEnabled(env) || !isDevOrigin(env.DEV_ORIGIN)) {
     return new Response("Not found", { status: 404 });
   }
   if (url.pathname.endsWith("/retention")) {
@@ -332,10 +336,10 @@ const periodEnd = (period: string) => {
   return at.length === 10 ? Date.parse(`${at}T00:00:00Z`) + 86_400_000 : Date.parse(`${at}:00:00Z`) + 3_600_000;
 };
 
-const D1_SCHEMA = [
-  `CREATE TABLE IF NOT EXISTS stats_hourly (hour TEXT NOT NULL, metric TEXT NOT NULL, dim TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (hour, metric, dim)) WITHOUT ROWID`,
-  `CREATE TABLE IF NOT EXISTS stats_daily (day TEXT NOT NULL, metric TEXT NOT NULL, dim TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (day, metric, dim)) WITHOUT ROWID`,
-];
+/** written D1 ids (stats_flushes) are kept this long: far longer than any retry */
+const FLUSH_IDS_DAYS = 7;
+
+type HourRow = { hour: string; metric: string; dim: string; value: number };
 
 /** STATS_FLUSH_MS: a shorter flush interval for local tests (only with a local DEV_ORIGIN) */
 type StatsDoEnv = { FEEDBACK?: D1; DEV_ORIGIN?: string; STATS_FLUSH_MS?: string };
@@ -345,7 +349,6 @@ export class Stats extends DurableObject<StatsDoEnv> {
   private readonly registers = new Map<string, Uint8Array>();
   private readonly keys = new Map<string, Promise<CryptoKey>>();
   private alarmAt: number | null | undefined;
-  private d1Ready = false;
   private readonly flushMs = FLUSH_MS;
   /** the hour estimates were last closed in (closing again only when it changes) */
   private closedAt = "";
@@ -353,7 +356,7 @@ export class Stats extends DurableObject<StatsDoEnv> {
   constructor(ctx: DurableObjectState, env: StatsDoEnv) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
-    if (/^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(`${env.DEV_ORIGIN ?? ""}/`) && Number(env.STATS_FLUSH_MS) >= 1_000) {
+    if (isDevOrigin(env.DEV_ORIGIN) && Number(env.STATS_FLUSH_MS) >= 1_000) {
       this.flushMs = Number(env.STATS_FLUSH_MS);
     }
     this.sql.exec(`CREATE TABLE IF NOT EXISTS pending (hour TEXT NOT NULL, metric TEXT NOT NULL, dim TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (hour, metric, dim)) WITHOUT ROWID`);
@@ -362,6 +365,8 @@ export class Stats extends DurableObject<StatsDoEnv> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS day_key (day TEXT PRIMARY KEY, key BLOB NOT NULL)`);
     // daily estimates of closed days, until they are in D1 (the hourly one goes to pending)
     this.sql.exec(`CREATE TABLE IF NOT EXISTS pending_daily (day TEXT NOT NULL, metric TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (day, metric)) WITHOUT ROWID`);
+    // hourly counts handed to D1 under a write id (batch), kept until D1 confirmed that write
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS inflight (batch TEXT NOT NULL, hour TEXT NOT NULL, metric TEXT NOT NULL, dim TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (batch, hour, metric, dim)) WITHOUT ROWID`);
   }
 
   async fetch(request: Request) {
@@ -465,8 +470,7 @@ export class Stats extends DurableObject<StatsDoEnv> {
     if (this.alarmAt === undefined) { // NOSONAR S6606: null is a cached result; only undefined triggers an alarm read
       this.alarmAt = await this.ctx.storage.getAlarm();
     }
-    const pending =
-      this.sql.exec(`SELECT 1 FROM pending LIMIT 1`).toArray().length > 0 || this.sql.exec(`SELECT 1 FROM pending_daily LIMIT 1`).toArray().length > 0;
+    const pending = ["pending", "pending_daily", "inflight"].some((table) => this.sql.exec(`SELECT 1 FROM ${table} LIMIT 1`).toArray().length > 0);
     const periods = this.sql.exec<{ period: string }>(`SELECT DISTINCT period FROM hll`).toArray();
     const keys = this.sql.exec(`SELECT 1 FROM day_key LIMIT 1`).toArray().length > 0;
     let at = pending ? now + this.flushMs : Infinity;
@@ -487,18 +491,13 @@ export class Stats extends DurableObject<StatsDoEnv> {
   }
 
   private async d1() {
-    const db = this.env.FEEDBACK;
+    const db = await database(this.env.FEEDBACK);
     if (!db) {
       throw new Error("no D1 database (FEEDBACK)");
-    }
-    if (!this.d1Ready) {
-      await db.batch(D1_SCHEMA.map((sql) => db.prepare(sql)));
-      this.d1Ready = true;
     }
     return db;
   }
 
-  /** closes finished estimates and writes the counts to D1; what fails is kept for the next alarm */
   /**
    * Finished periods: the estimate is computed and kept (pending, for D1),
    * the registers are deleted, and so are the keys of days that are over.
@@ -540,54 +539,83 @@ export class Stats extends DurableObject<StatsDoEnv> {
     this.closedAt = hourOf(now);
   }
 
+  /** the daily estimates of closed days (absolute values: writing one twice does no harm), deleted once D1 has them */
+  private async flushDaily(db: D1) {
+    const daily = this.sql.exec<{ day: string; metric: string; value: number }>(`SELECT day, metric, value FROM pending_daily`).toArray();
+    if (!daily.length) {
+      return;
+    }
+    await db.batch(
+      daily.map((row) =>
+        db
+          .prepare(`INSERT INTO stats_daily (day, metric, dim, value) VALUES (?, ?, 'all', ?) ON CONFLICT (day, metric, dim) DO UPDATE SET value = excluded.value`)
+          .bind(row.day, row.metric, row.value),
+      ),
+    );
+    for (const row of daily) {
+      this.sql.exec(`DELETE FROM pending_daily WHERE day = ? AND metric = ?`, row.day, row.metric);
+    }
+  }
+
+  /**
+   * One write of hourly counts (they are added to D1's): its id goes into
+   * stats_flushes in the same transaction, so the write can be recognised as
+   * done if its answer is lost
+   */
+  private async writeHourly(db: D1, batch: string, rows: HourRow[], now: number) {
+    const statements = [
+      db.prepare(`INSERT INTO stats_flushes (id, at) VALUES (?, ?)`).bind(batch, new Date(now).toISOString()),
+      db.prepare(`DELETE FROM stats_flushes WHERE at < ?`).bind(new Date(now - FLUSH_IDS_DAYS * 86_400_000).toISOString()),
+    ];
+    for (let i = 0; i < rows.length; i += ROWS_PER_INSERT) {
+      const chunk = rows.slice(i, i + ROWS_PER_INSERT);
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO stats_hourly (hour, metric, dim, value) VALUES ${chunk.map(() => "(?, ?, ?, ?)").join(", ")} ON CONFLICT (hour, metric, dim) DO UPDATE SET value = stats_hourly.value + excluded.value`,
+          )
+          .bind(...chunk.flatMap((row) => [row.hour, row.metric, row.dim, row.value])),
+      );
+    }
+    await db.batch(statements);
+  }
+
+  /**
+   * The hourly counts. A write left in flight by an earlier flush (the object
+   * was evicted, or D1's answer did not come) is finished first: done if D1
+   * knows its id, else sent again under the same id. Then the pending counts
+   * become the next write. Rows leave the object only after D1 confirmed them.
+   */
+  private async flushHourly(db: D1, now: number) {
+    const left = this.sql.exec<{ batch: string }>(`SELECT DISTINCT batch FROM inflight`).toArray();
+    for (const { batch } of left) {
+      const done = await db.prepare(`SELECT 1 AS x FROM stats_flushes WHERE id = ?`).bind(batch).first(); // NOSONAR S9382: in order on purpose (one write after the other)
+      if (!done) {
+        const rows = this.sql.exec<HourRow>(`SELECT hour, metric, dim, value FROM inflight WHERE batch = ?`, batch).toArray();
+        await this.writeHourly(db, batch, rows, now); // NOSONAR S9382: in order on purpose (one write after the other)
+      }
+      this.sql.exec(`DELETE FROM inflight WHERE batch = ?`, batch);
+    }
+    // the counts: moved to in flight at once (no await in between), so new counts go to the next write
+    const rows = this.sql.exec<HourRow>(`SELECT hour, metric, dim, value FROM pending`).toArray();
+    if (!rows.length) {
+      return;
+    }
+    const batch = crypto.randomUUID();
+    this.sql.exec(`INSERT INTO inflight (batch, hour, metric, dim, value) SELECT ?, hour, metric, dim, value FROM pending`, batch);
+    this.sql.exec(`DELETE FROM pending`);
+    await this.writeHourly(db, batch, rows, now);
+    this.sql.exec(`DELETE FROM inflight WHERE batch = ?`, batch);
+  }
+
+  /** closes finished estimates and writes them and the counts to D1; what fails is kept for the next alarm */
   private async flush(now: number) {
     this.closePeriods(now);
     try {
       const db = await this.d1();
       // estimates of closed days / hours that wait for D1 (their registers and keys are gone already)
-      const daily = this.sql.exec<{ day: string; metric: string; value: number }>(`SELECT day, metric, value FROM pending_daily`).toArray();
-      if (daily.length) {
-        await db.batch(
-          daily.map((row) =>
-            db
-              .prepare(`INSERT INTO stats_daily (day, metric, dim, value) VALUES (?, ?, 'all', ?) ON CONFLICT (day, metric, dim) DO UPDATE SET value = excluded.value`)
-              .bind(row.day, row.metric, row.value),
-          ),
-        );
-        for (const row of daily) {
-          this.sql.exec(`DELETE FROM pending_daily WHERE day = ? AND metric = ?`, row.day, row.metric);
-        }
-      }
-      // the counts: taken out at once (no await in between), back in if D1 fails
-      const rows = this.sql.exec<{ hour: string; metric: string; dim: string; value: number }>(`SELECT hour, metric, dim, value FROM pending`).toArray();
-      this.sql.exec(`DELETE FROM pending`);
-      try {
-        const statements = [];
-        for (let i = 0; i < rows.length; i += ROWS_PER_INSERT) {
-          const chunk = rows.slice(i, i + ROWS_PER_INSERT);
-          statements.push(
-            db
-              .prepare(
-                `INSERT INTO stats_hourly (hour, metric, dim, value) VALUES ${chunk.map(() => "(?, ?, ?, ?)").join(", ")} ON CONFLICT (hour, metric, dim) DO UPDATE SET value = stats_hourly.value + excluded.value`,
-              )
-              .bind(...chunk.flatMap((row) => [row.hour, row.metric, row.dim, row.value])),
-          );
-        }
-        if (statements.length) {
-          await db.batch(statements);
-        }
-      } catch (error) {
-        for (const row of rows) {
-          this.sql.exec(
-            `INSERT INTO pending (hour, metric, dim, value) VALUES (?, ?, ?, ?) ON CONFLICT (hour, metric, dim) DO UPDATE SET value = value + excluded.value`,
-            row.hour,
-            row.metric,
-            row.dim,
-            row.value,
-          );
-        }
-        throw error;
-      }
+      await this.flushDaily(db);
+      await this.flushHourly(db, now);
     } catch (error) {
       console.warn(`[stats] flush failed, retrying with the next alarm: ${(error as Error).message}`);
       if (this.alarmAt === undefined) { // NOSONAR S6606: null is a cached result; only undefined triggers an alarm read

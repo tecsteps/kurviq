@@ -37,12 +37,12 @@ import {
   sliceDoc,
   splitParagraph,
 } from "./model";
+import { SIZE_STEPS, isMac } from "./platform";
 import { createToolbar } from "./toolbar";
 
 import type { Marks, ParaKind, Pos, RichDoc } from "./model";
 
 const RICH_MIME = "application/x-excalidraw-rich-text";
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 type Snapshot = { doc: RichDoc; from: number; to: number };
 
@@ -75,7 +75,6 @@ export type RichEditorApi = {
   root: HTMLElement;
 };
 
-export const SIZE_STEPS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96];
 
 export const createRichEditable = (
   ownerDocument: Document,
@@ -194,6 +193,8 @@ export const createRichEditable = (
   let pending: { marks: Marks; at: Pos } | null = null;
   let emitting = false;
   let composing = false;
+  /** where the text being composed (an input method: Japanese, Chinese, Korean …) starts */
+  let composeStart: Pos | null = null;
   const undoStack: Snapshot[] = [];
   const redoStack: Snapshot[] = [];
   let lastTyping = 0;
@@ -252,7 +253,6 @@ export const createRichEditable = (
     emit();
   };
 
-  /** the browser typed into the DOM: read it back, keep the DOM tidy */
   /**
    * Puts the DOM back into the shape the doc renders to (after the browser
    * typed text outside a span, merged paragraphs …). Later than the input
@@ -519,7 +519,8 @@ export const createRichEditable = (
     return true;
   };
 
-  const historyShortcut = (event: KeyboardEvent, code: string, key: string) => {
+  /** undo / redo, and ⌘⇧. / ⌘⇧, for the selection's size */
+  const sizeOrHistoryShortcut = (event: KeyboardEvent, code: string, key: string) => {
     if (!event.shiftKey && key === "z") undo();
     else if ((event.shiftKey && key === "z") || (!isMac && key === "y")) redo();
     else if (event.shiftKey && (code === "Period" || code === "Comma") && comparePos(readSelection().from, readSelection().to)) {
@@ -560,7 +561,7 @@ export const createRichEditable = (
     const code = event.code;
     const key = event.key.toLowerCase();
     if (mod(event) && !event.altKey) {
-      handled = markShortcut(event, key) || listShortcut(event, code) || formatShortcut(event, code, key) || historyShortcut(event, code, key);
+      handled = markShortcut(event, key) || listShortcut(event, code) || formatShortcut(event, code, key) || sizeOrHistoryShortcut(event, code, key);
     } else if (event.key === "Tab" && !event.altKey && !mod(event)) {
       indent(event.shiftKey ? -1 : 1);
     } else if (event.key === "Backspace" && !mod(event) && !event.altKey) {
@@ -628,8 +629,27 @@ export const createRichEditable = (
     sync();
   });
 
+  /**
+   * Formatting chosen before composing (⌘B, a color, with nothing selected)
+   * goes to the composed text: the browser typed it into the neighbouring
+   * span, without it. True if it changed the doc.
+   */
+  const formatComposed = () => {
+    const start = composeStart;
+    const marks = pending && start && comparePos(pending.at, start) === 0 ? pending.marks : null;
+    composeStart = null;
+    pending = null;
+    const end = readSelection().to;
+    if (!marks || !start || comparePos(start, end) >= 0) {
+      return false;
+    }
+    apply(formatRange(doc, start, end, () => ({ ...marks })), end);
+    return true;
+  };
+
   root.addEventListener("compositionstart", () => {
     composing = true;
+    composeStart = readSelection().from;
   });
   root.addEventListener("compositionend", () => {
     composing = false;
@@ -637,7 +657,9 @@ export const createRichEditable = (
     ownerWindow.setTimeout(() => {
       if (!composing) {
         sync();
-        emit();
+        if (!formatComposed()) {
+          emit();
+        }
       }
     });
   });

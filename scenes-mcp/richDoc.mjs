@@ -216,29 +216,57 @@ const markdownPrefix = (para) => {
   return "";
 };
 
+const BACKSLASH = "\\";
+
+/** a link address as docFromMarkdown reads it: parentheses that don't pair up (and backslashes) escaped */
+const markdownLink = (url) => {
+  let open = 0;
+  for (const char of url) {
+    open += Number(char === "(") - Number(char === ")");
+    if (open < 0) break;
+  }
+  return open === 0 && !url.includes("\\") ? url : url.replaceAll(/[()\\]/g, String.raw`\$&`);
+};
+
+/** a color setting: quoted when it has spaces (`rgb(1, 2, 3)`) */
+const colorSetting = (name, value) => (/[\s}"]/.test(value) ? `${name}="${value}"` : `${name}=${value}`);
+
+const markdownRun = (run) => {
+  let text = escapeMd(run.t);
+  const style = [
+    run.c && colorSetting("color", run.c),
+    run.h && colorSetting("highlight", run.h),
+    run.z && `size=${Math.round(run.z * 100) / 100}`,
+    run.n && `tip="${escapeTip(run.n)}"`,
+  ].filter(Boolean);
+  if (style.length) text = `{${style.join(" ")}}${text}{/}`;
+  if (run.s) text = `~~${text}~~`;
+  if (run.u) text = `__${text}__`;
+  // `* a*` would not be italics (and a bullet at a line's start): the leading space is escaped
+  if (run.i) text = `*${/^\s/.test(text) ? BACKSLASH : ""}${text}*`;
+  if (run.b) text = `**${text}**`;
+  if (run.a) text = `[${text}](${markdownLink(run.a)})`;
+  return text;
+};
+
+/** what docFromMarkdown would read as a heading or list marker at a line's start */
+const LINE_PREFIX = /^( *)(?:(#{1,3} |[-*•] )|(\d+)([.)] ))/;
+
+/** a plain paragraph that starts like a heading or a list item: its first character (or the number's dot) escaped */
+const escapeLineStart = (body) => {
+  const prefix = LINE_PREFIX.exec(body);
+  if (!prefix) return body;
+  const [, indent, marker, digits] = prefix;
+  if (marker) return `${indent}${BACKSLASH}${body.slice(indent.length)}`;
+  return `${indent}${digits}${BACKSLASH}${body.slice(indent.length + digits.length)}`;
+};
+
 /** a doc as the markdown-like text docFromMarkdown reads */
 export const markdownOf = (doc) =>
   doc.p
     .map((para) => {
-      const indent = para.k ? "  ".repeat(para.d || 0) : "";
-      const prefix = markdownPrefix(para);
-      const body = para.r
-        .map((run) => {
-          let text = escapeMd(run.t);
-          const style = [run.c && `color=${run.c}`, run.h && `highlight=${run.h}`, run.z && `size=${Math.round(run.z * 100) / 100}`, run.n && `tip="${escapeTip(run.n)}"`].filter(
-            Boolean,
-          );
-          if (style.length) {
-            text = `{${style.join(" ")}}${text}{/}`;
-          }
-          if (run.s) text = `~~${text}~~`;
-          if (run.u) text = `__${text}__`;
-          if (run.i) text = `*${text}*`;
-          if (run.b) text = `**${text}**`;
-          if (run.a) text = `[${text}](${run.a})`;
-          return text;
-        })
-        .join("");
-      return indent + prefix + body;
+      const body = para.r.map(markdownRun).join("");
+      if (!para.k) return escapeLineStart(body);
+      return "  ".repeat(para.d || 0) + markdownPrefix(para) + body;
     })
     .join("\n");

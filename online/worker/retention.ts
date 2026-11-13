@@ -6,7 +6,8 @@
 // or message carries no sender identifier beyond that (at most ~25 hours).
 // Statistics are counters only (no personal data) and are kept.
 
-type D1 = { prepare: (sql: string) => { bind: (...values: unknown[]) => { run: () => Promise<unknown> } } };
+import { database } from "./database";
+import type { D1 } from "./database";
 
 const yearsAgo = (now: number, years: number) => {
   const date = new Date(now);
@@ -14,10 +15,16 @@ const yearsAgo = (now: number, years: number) => {
   return date.toISOString();
 };
 
-/** delete what is past its retention; a table that does not exist yet is skipped */
+/** delete what is past its retention */
 export const runRetention = async (env: { FEEDBACK?: D1 }, now = Date.now()) => {
-  const db = env.FEEDBACK;
   const done: Record<string, string> = {};
+  let db: D1 | null;
+  try {
+    db = await database(env.FEEDBACK);
+  } catch (error) {
+    console.warn(`[retention] database not reachable: ${(error as Error).message}`);
+    return done;
+  }
   if (!db) {
     return done;
   }
@@ -31,7 +38,7 @@ export const runRetention = async (env: { FEEDBACK?: D1 }, now = Date.now()) => 
       const blanked: any = await db.prepare(`UPDATE ${table} SET sender = '' WHERE created_at < ? AND sender != ''`).bind(dayAgo).run(); // NOSONAR S9382: in order on purpose (each table deletion precedes sender cleanup)
       done[table] = `deleted ${deleted?.meta?.changes ?? "?"}, sender removed from ${blanked?.meta?.changes ?? "?"}`;
     } catch (error) {
-      done[table] = /no such table/i.test(String((error as Error).message)) ? "no table yet" : `failed: ${(error as Error).message}`;
+      done[table] = `failed: ${(error as Error).message}`;
     }
   }
   console.log(`[retention] ${JSON.stringify(done)}`);

@@ -2,7 +2,8 @@ import { editorYield } from "./editorYield";
 import { serializeAsJSON, presentationOf, presentationEdit } from "./presentation";
 // Co-working on the scene open in the editor: the agent reads the live canvas
 // (incl. the user's unsaved edits) and applies edits that merge with whatever
-// the user is doing: one undoable step per agent edit.
+// the user is doing. Agent edits stay out of the user's undo history: Cmd/Ctrl+Z
+// undoes the user's own steps, never an agent's change.
 
 import { showAgentChange } from "./agentGlow";
 import {
@@ -28,6 +29,7 @@ import { getFontString } from "@excalidraw/common";
 
 import { registerSceneFonts, withFonts } from "./fonts";
 import { applyCommentOps, authorKey, withComments } from "../../scenes-mcp/sceneComments.mjs";
+import { conflictList } from "../../scenes-mcp/editConflicts.mjs";
 import type { CommentOp, SceneComment } from "../../scenes-mcp/sceneComments.mjs";
 import { scenesApi } from "./api";
 import { connection } from "./online/drive";
@@ -49,6 +51,7 @@ import {
 import { scenesController, withSceneName } from "./controller";
 import { getAgentBaseline, getCheckpoint, setAgentBaseline, setCheckpoint } from "./storage";
 import { liveDifference } from "./online/liveMerge";
+import { MAX_UPLOADS } from "./uploads";
 
 import type { ApiError } from "./api";
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
@@ -241,7 +244,7 @@ const layoutAfterEdit = (
 };
 
 /** how big the scene file is now (images make it big) */
-export const sceneSize = (json: string, elements: readonly ExcalidrawElement[]) => ({
+const sceneSize = (json: string, elements: readonly ExcalidrawElement[]) => ({
   sceneFile: `${Math.round(json.length / 1024)} KB, ${elements.filter((el) => el.type === "image" && !el.isDeleted).length} image elements`,
 });
 
@@ -249,7 +252,7 @@ export const sceneSize = (json: string, elements: readonly ExcalidrawElement[]) 
 export const withTemplate = (elements: ExcalidrawElement[], deck: string) =>
   syncTemplate(elements, deck)?.elements ?? elements;
 
-/** fields an agent must not set directly */
+/** a JSON object (not null, not an array) */
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -283,6 +286,7 @@ const mergeCustomData = (current: Record<string, unknown> | null | undefined, pa
   return merged;
 };
 
+/** fields an agent must not set directly */
 const PROTECTED = new Set(["id", "type", "version", "versionNonce", "isDeleted", "index"]);
 
 /**
@@ -749,7 +753,7 @@ export const refuseImagesWithoutFile = (before: readonly ExcalidrawElement[], af
   if (missing.length) {
     const list = missing.map((el) => `${el.id} (fileId ${(el as any).fileId ?? "none"})`).join(", ");
     throw new Error(
-      `Pictures missing for ${list}: neither in the scene nor among this browser's uploads (it keeps the newest 100). Upload them again, or use src / svg / icon, and repeat the edit (nothing was changed)`,
+      `Pictures missing for ${list}: neither in the scene nor among this browser's uploads (it keeps the newest ${MAX_UPLOADS}). Upload them again, or use src / svg / icon, and repeat the edit (nothing was changed)`,
     );
   }
 };
@@ -862,6 +866,112 @@ const editScope = (command: EditCommand | SceneEditCommand, elements: readonly a
   return ids;
 };
 
+/** "name" in quotes, or Untitled */
+const sceneLabel = (name: string | null | undefined) => (name ? `"${name}"` : "Untitled");
+
+const switchedScenes = (now: string | null, expected: string | null | undefined, after = "") =>
+  new Error(`The user switched scenes: the app now shows ${sceneLabel(now)}, not ${sceneLabel(expected)}. Read the open scene again.${after}`);
+
+const commentsReadOnly = () => new Error("Comments can't be changed in this scene now (it is read only here)");
+
+/** the edit is refused when the user changed the same elements meanwhile (unless onConflict is "overwrite") */
+const refuseClashes = (changes: ReturnType<typeof liveDifference>) => {
+  if (changes.clashes.length) {
+    const conflicts = conflictList(changes.clashes.map((id) => ({ id, properties: changes.conflictFields[id] })));
+    throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
+  }
+};
+
+const stamp = (el: any) => `${el.version}:${el.versionNonce}:${!!el.isDeleted}`;
+
+/** the same elements in the same versions: nobody changed anything in between */
+const sameVersions = (a: readonly any[], b: readonly any[]) => {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const stamps = new Map(a.map((el) => [el.id, stamp(el)]));
+  return b.every((el) => stamps.get(el.id) === stamp(el));
+};
+
+/**
+ * An edit was made on `base`, the scene holds `current` now (the user may
+ * have drawn, moved or typed while the edit was converted). Unchanged: the
+ * edit's result is the new state. Else only what the edit changed against
+ * `base` goes onto `current`, so the user's work of the meantime stays; an
+ * element both changed refuses the edit (onConflict "overwrite": the agent's
+ * version wins).
+ */
+export const keepUserChanges = (
+  base: readonly ExcalidrawElement[],
+  next: readonly ExcalidrawElement[],
+  current: readonly ExcalidrawElement[],
+  overwrite = false,
+): ExcalidrawElement[] => {
+  if (sameVersions(base, current)) {
+    return [...next];
+  }
+  const changes = liveDifference(current as any, next as any, base as any, overwrite);
+  refuseClashes(changes);
+  const changed = new Map(changes.map((el) => [el.id, el]));
+  const now = new Map(current.map((el) => [el.id, el]));
+  const nextIds = new Set(next.map((el) => el.id));
+  const merged: any[] = [];
+  for (const el of next) {
+    const pick = changed.get(el.id) ?? now.get(el.id);
+    if (pick) {
+      merged.push(pick);
+    }
+  }
+  // what only the scene has now: added by the user meanwhile (on top), or deleted by the edit
+  for (const el of current) {
+    if (!nextIds.has(el.id)) {
+      merged.push(changed.get(el.id) ?? el);
+    }
+  }
+  return merged;
+};
+
+type LiveSession = NonNullable<ReturnType<typeof scenesController.liveCurrent>>;
+
+/** the open scene is live: the agent's change goes out as its own batch (via "agent", with its id) */
+const applyToLiveScene = (
+  live: LiveSession,
+  command: EditCommand,
+  readState: readonly ExcalidrawElement[],
+  next: readonly ExcalidrawElement[],
+  addedIds: readonly string[],
+) => {
+  const changes = liveDifference(live.elements(), next.filter((el) => !el.isDeleted) as any, readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...next], addedIds));
+  refuseClashes(changes);
+  return live.agentEdit(changes, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
+};
+
+/** the open scene, not live: the edit goes onto the canvas as it is now (what the user did meanwhile stays) */
+const applyToCanvas = (
+  api: ReturnType<typeof requireApi>,
+  command: EditCommand,
+  readState: readonly ExcalidrawElement[],
+  next: readonly ExcalidrawElement[],
+) => {
+  const elements = keepUserChanges(readState, next, api.getSceneElementsIncludingDeleted(), command.onConflict === "overwrite");
+  api.updateScene({
+    elements,
+    appState: presentationSettings(command, api.getAppState(), readState) as any,
+    captureUpdate: CaptureUpdateAction.NEVER, // agent changes do not enter the user history
+  });
+  // the user sees what the agent changed (live scenes: liveSync shows it)
+  showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), elements as any);
+};
+
+/** an agent's comments on the open scene: where it saves them (live sync, or its own save) */
+const saveEditorComments = (changed: readonly SceneComment[]) => {
+  for (const comment of changed) {
+    if (!commentStore.change(comment, "editor")) {
+      throw commentsReadOnly();
+    }
+  }
+};
+
 export const editOpenScene = async (
   command: EditCommand,
   convert: (elements: any[]) => Promise<any[]>,
@@ -869,16 +979,9 @@ export const editOpenScene = async (
   const api = requireApi();
   const { scene } = sceneInfo();
   if (command.expectScene !== undefined && command.expectScene !== scene) {
-    throw new Error(
-      `The user switched scenes: the app now shows ${
-        scene === null ? "Untitled" : `"${scene}"`
-      }, not "${command.expectScene}". Read the open scene again.`,
-    );
+    throw switchedScenes(scene, command.expectScene);
   }
-
-  if (command.files && Object.keys(command.files).length) {
-    api.addFiles(Object.values(command.files));
-  }
+  const live = scenesController.liveCurrent();
   // what the edit is made on, as copies: the user may go on drawing while it is converted, and the
   // editor changes its element objects in place (the comparison base must not move with them)
   const readState = api.getSceneElementsIncludingDeleted().map((el) => structuredClone(el));
@@ -888,42 +991,38 @@ export const editOpenScene = async (
     convert,
     scene ?? "Untitled",
   );
-
-  refuseImagesWithoutFile(readState as ExcalidrawElement[], elements, { ...api.getFiles(), ...command.files } as BinaryFiles);
-  const images = repairImages(elements, api.getFiles());
-  const live = scenesController.liveCurrent();
+  const files = { ...api.getFiles(), ...command.files } as BinaryFiles;
+  refuseImagesWithoutFile(readState as ExcalidrawElement[], elements, files);
+  const images = repairImages(elements, files);
+  // comments checked before anything is applied: a bad operation changes nothing
+  const commented = await agentComments(command, commentStore.editorList(), images.elements);
+  if (commented.changed.length && live && !live.commentsAllowed()) {
+    throw commentsReadOnly();
+  }
+  // the edit belongs to the scene it was made on: the user may have switched meanwhile
+  const now = sceneInfo().scene;
+  if (now !== scene || scenesController.liveCurrent() !== live) {
+    throw switchedScenes(now, scene, " (nothing was changed)");
+  }
+  const target = requireApi();
+  if (command.files && Object.keys(command.files).length) {
+    target.addFiles(Object.values(command.files));
+  }
   /** applied, not confirmed by Kurviq's server yet (it goes out by itself) */
   let pending: string | null = null;
   if (live) {
-    // a live scene: the agent's change goes out as its own batch (via "agent", with its id)
-    const changes = liveDifference(live.elements(), images.elements.filter((el) => !el.isDeleted), readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...images.elements], edit.addedIds));
-    if (changes.clashes.length) {
-      const conflicts = changes.clashes.map((id) => `${id} (${changes.conflictFields[id].join(", ")})`).join(", ");
-      throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
-    }
-    pending = await live.agentEdit(changes, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
+    pending = await applyToLiveScene(live, command, readState, images.elements, edit.addedIds);
   } else {
-    api.updateScene({
-      elements: images.elements,
-      appState: presentationSettings(command, api.getAppState(), readState) as any,
-      captureUpdate: CaptureUpdateAction.NEVER, // agent changes do not enter the user history
-    });
-    // the user sees what the agent changed (live scenes: liveSync shows it)
-    showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), images.elements as any);
+    applyToCanvas(target, command, readState, images.elements);
   }
 
-  // comments: where the open scene saves them (live sync, or its own save)
-  const commented = await agentComments(command, commentStore.editorList(), images.elements);
-  for (const comment of commented.changed) {
-    if (!commentStore.change(comment, "editor")) {
-      throw new Error("Comments can't be changed in this scene now (it is read only here)");
-    }
-  }
+  saveEditorComments(commented.changed);
   await editorYield();
   const after = requireApi().getSceneElements();
+  const stillOpen = sceneInfo().scene === scene;
   return {
     ...sceneInfo(),
-    ...(await handleBaseline(scene, after, command)),
+    ...(stillOpen ? await handleBaseline(scene, after, command) : {}),
     ...edit,
     ...images.info,
     ...commented.info,
@@ -931,6 +1030,37 @@ export const editOpenScene = async (
     elements: after,
   };
 };
+
+type SceneData = { elements?: any[]; files?: BinaryFiles; appState?: any; kurviqComments?: unknown; kurviqFonts?: unknown };
+type DetachedEdit = SceneEditCommand | Extract<LocalSceneCommand, { type: "local-edit" }>;
+
+/**
+ * An agent's edit of a scene that is not (or not only) the open canvas
+ * (Drive, live and local-only scenes): its fonts registered, the edit applied
+ * to its elements (`base`), pictures checked and repaired, the template copies
+ * on the slides. Where it is read from and written to is the caller's part.
+ */
+const editSceneData = async (
+  command: DetachedEdit,
+  data: SceneData,
+  base: readonly any[],
+  convert: (elements: any[]) => Promise<any[]>,
+) => {
+  await registerSceneFonts(data);
+  const restored = restoreElements(structuredClone(base) as any, null, { repairBindings: true });
+  const { elements: edited, ...edit } = await applyEdits(restored, command, convert, command.name);
+  const files = { ...data.files, ...command.files } as BinaryFiles;
+  refuseImagesWithoutFile(base as any, edited, files);
+  const images = repairImages(withTemplate(edited, command.name).filter((el) => !el.isDeleted), files);
+  return { edit, restored, elements: images.elements, files, info: images.info };
+};
+
+/** the scene file for an edit's elements (settings from `data`, the scene's comments and fonts, its name) */
+const sceneFileJson = (command: DetachedEdit, data: SceneData, elements: readonly ExcalidrawElement[], files: BinaryFiles, comments: unknown) =>
+  withSceneName(
+    withComments(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), comments),
+    command.name, // ties the content to this scene
+  );
 
 /**
  * Detached mode, in the agent's headless tab: apply the edit to the newest
@@ -953,25 +1083,13 @@ export const editSceneOnDrive = async (
   for (let attempt = 1; ; attempt++) {
     const latest = await scenesApi.load(command.name);
     const data = JSON.parse(latest.json);
-    await registerSceneFonts(data);
-    const edit = await applyEdits(
-      restoreElements(data.elements || [], null, { repairBindings: true }),
-      command,
-      convert,
-      command.name,
-    );
-    const files = { ...data.files, ...command.files };
-    refuseImagesWithoutFile(data.elements || [], edit.elements, files);
-    const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
-    const elements = images.elements;
+    const result = await editSceneData(command, data, data.elements ?? [], convert);
+    const { elements } = result;
     const commented = await agentComments(command, data.kurviqComments, elements);
-    const json = withSceneName(
-      withComments(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), commented.comments),
-      command.name, // ties the content to this scene
-    );
+    const json = sceneFileJson(command, data, elements, result.files, commented.comments);
     try {
       const saved = await scenesApi.save(command.name, json, latest.md5, "agent");
-      return { ...edit, ...images.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(saved.md5, saved.driveRevision), changed: saved.changed };
+      return { ...result.edit, ...result.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(saved.md5, saved.driveRevision), changed: saved.changed };
     } catch (error) {
       if ((error as ApiError).status !== 409 || attempt >= 3) {
         throw error;
@@ -980,20 +1098,30 @@ export const editSceneOnDrive = async (
   }
 };
 
-/**
- * An agent's comment operations (command.comments) on a scene's comments, as
- * the signed-in person (marked as agent); without operations the comments
- * stay as they are. info: the ids of new comments, for the agent.
- */
-const agentComments = async (command: EditOptions, comments: unknown, elements: readonly any[]) => {
-  if (!command.comments?.length) {
+type CommentAuthor = { name: string; key: string };
+
+/** comments an agent writes carry the signed-in person's name (marked as agent) */
+const agentAuthor = async (): Promise<CommentAuthor> => {
+  const user = connection.getState().user;
+  return { name: user?.name || user?.email?.split("@")[0] || "You", key: await authorKey(user?.email || "local") };
+};
+
+/** the agent's comment operations on a scene's comments (throws for a bad one); info: the ids of new comments */
+const commentOps = (command: EditOptions, comments: unknown, elements: readonly any[], author: CommentAuthor | null) => {
+  if (!command.comments?.length || !author) {
     return { comments, changed: [] as SceneComment[], info: {} };
   }
-  const user = connection.getState().user;
-  const author = { name: user?.name || user?.email?.split("@")[0] || "You", key: await authorKey(user?.email || "local") };
   const result = applyCommentOps(comments, command.comments, author, new Map(elements.map((el) => [el.id, el])));
   return { comments: result.comments, changed: result.changed, info: { commentsAdded: result.added } };
 };
+
+/**
+ * An agent's comment operations (command.comments) on a scene's comments, as
+ * the signed-in person (marked as agent); without operations the comments
+ * stay as they are.
+ */
+const agentComments = async (command: EditOptions, comments: unknown, elements: readonly any[]) =>
+  commentOps(command, comments, elements, command.comments?.length ? await agentAuthor() : null);
 
 /**
  * The saved version in an edit's result: md5 (content MD5) and driveRevision;
@@ -1012,32 +1140,26 @@ const editLiveScene = async (
   convert: (elements: any[]) => Promise<any[]>,
 ) => {
   const data = JSON.parse(live.sceneJson());
-  await registerSceneFonts(data);
   const readState = structuredClone(live.elements());
-  const edit = await applyEdits(restoreElements(structuredClone(readState) as any, null, { repairBindings: true }), command, convert, command.name);
-  const files = { ...data.files, ...command.files };
-  refuseImagesWithoutFile(readState as any, edit.elements, files);
-  const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
-  const elements = images.elements;
-  // against what the edit was made on: what the user did meanwhile stays
-  const changed = liveDifference(live.elements(), elements, readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...images.elements], edit.addedIds));
-  if (changed.clashes.length) {
-    const conflicts = changed.clashes.map((id) => `${id} (${changed.conflictFields[id].join(", ")})`).join(", ");
-    throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
-  }
-  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
+  const result = await editSceneData(command, data, readState, convert);
+  const { elements } = result;
+  // comments checked before anything is sent: a bad operation changes nothing
   const commented = await agentComments(command, live.commentList(), elements);
+  if (commented.changed.length && !live.commentsAllowed()) {
+    throw commentsReadOnly();
+  }
+  // against what the edit was made on: what the user did meanwhile stays
+  const changed = liveDifference(live.elements(), elements, readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...elements], result.edit.addedIds));
+  refuseClashes(changed);
+  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
   for (const comment of commented.changed) {
     if (!live.changeComment(comment)) {
-      throw new Error("Comments can't be changed in this scene now (it is read only here)");
+      throw commentsReadOnly();
     }
   }
-  const json = withSceneName(
-    withComments(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), commented.comments),
-    command.name,
-  );
+  const json = sceneFileJson(command, data, elements, result.files, commented.comments);
   const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
-  return { ...edit, ...images.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0 || commented.changed.length > 0, ...(pending ? { pending } : {}) };
+  return { ...result.edit, ...result.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0 || commented.changed.length > 0, ...(pending ? { pending } : {}) };
 };
 
 // -----------------------------------------------------------------------------
@@ -1095,32 +1217,26 @@ export const editLocalScene = async (
   convert: (elements: any[]) => Promise<any[]>,
 ) => {
   const data = JSON.parse(await scenesController.localOnlyJson(command.name));
-  await registerSceneFonts(data);
-  const edit = await applyEdits(
-    restoreElements(data.elements || [], null, { repairBindings: true }),
-    command,
-    convert,
-    command.name,
-  );
-  const files = { ...data.files, ...command.files };
-  refuseImagesWithoutFile(data.elements || [], edit.elements, files);
-  const images = repairImages(withTemplate(edit.elements, command.name).filter((el) => !el.isDeleted), files);
-  const elements = images.elements;
-  const commented = await agentComments(command, data.kurviqComments, elements);
-  const json = withSceneName(
-    withComments(withFonts(serializeAsJSON(elements, presentationSettings(command, data.appState, data.elements ?? []), files, "local"), elements), commented.comments),
-    command.name,
-  );
+  const result = await editSceneData(command, data, data.elements ?? [], convert);
+  const author = command.comments?.length ? await agentAuthor() : null;
+  // the scene again (the canvas, if it is open): the user may have drawn while the edit was
+  // converted, and what they did must stay (nothing is awaited between this read and the write)
+  const now = JSON.parse(await scenesController.localOnlyJson(command.name));
+  const current = restoreElements(structuredClone(now.elements ?? []), null, { repairBindings: true });
+  const elements = keepUserChanges(result.restored, result.elements, current, command.onConflict === "overwrite");
+  const commented = commentOps(command, now.kurviqComments, elements, author);
+  const files = { ...now.files, ...result.files } as BinaryFiles;
+  const json = sceneFileJson(command, now, elements, files, commented.comments);
   await scenesController.writeLocalOnly(command.name, json);
   await setAgentBaseline(command.name, { at: new Date().toISOString(), action: "edit", elements });
   return {
-    ...edit,
-    ...images.info,
+    ...result.edit,
+    ...result.info,
     ...commented.info,
     ...sceneSize(json, elements),
     elements,
     files,
-    appState: data.appState || {},
+    appState: now.appState || {},
     revision: await rememberRevision(command.name, elements, json),
   };
 };

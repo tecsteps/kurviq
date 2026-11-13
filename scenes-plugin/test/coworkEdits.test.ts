@@ -46,14 +46,16 @@ const dependencies: Record<string, any> = {
   },
   "@excalidraw/common": { getFontString: () => "20px test" },
   "./agentGlow": { showAgentChange: vi.fn() },
-  "./fonts": { registerSceneFonts: vi.fn(), withFonts: vi.fn() },
+  "./fonts": { registerSceneFonts: vi.fn(), withFonts: vi.fn((json: string) => json) },
   "./online/drive": { connection: { getState: () => ({ user: { email: "me@example.test", name: "Me" } }) } },
-  "./comments/store": { commentStore: { editorList: () => [], change: () => true } },
+  "./comments/store": { commentStore: { editorList: vi.fn(() => []), change: vi.fn(() => true) } },
   "../../scenes-mcp/sceneComments.mjs": await import("../../scenes-mcp/sceneComments.mjs"),
   "./api": { scenesApi: {} },
-  "./controller": { scenesController: {}, withSceneName: vi.fn() },
+  "./controller": { scenesController: {} as Record<string, any>, withSceneName: vi.fn((json: string) => json) },
   "./storage": { getAgentBaseline: vi.fn(), getCheckpoint: vi.fn(), setAgentBaseline: vi.fn(), setCheckpoint: vi.fn() },
-  "./online/liveMerge": {},
+  "./online/liveMerge": await import("../src/online/liveMerge"),
+  "../../scenes-mcp/editConflicts.mjs": await import("../../scenes-mcp/editConflicts.mjs"),
+  "./uploads": { MAX_UPLOADS: 100 },
   "./richText/agent": { applyMarkdownUpdate },
   "./richText/format": { applyFormat },
   "./richText/model": { docFromPlain, isPlainDoc, richDocOf },
@@ -78,7 +80,7 @@ runInNewContext(compiled.outputText, {
     if (!(name in dependencies)) throw new Error(`Unexpected dependency: ${name}`);
     return dependencies[name];
   },
-  Map, Set, Date, Math, Error,
+  Map, Set, Date, Math, Error, structuredClone,
 });
 const applyEdits: typeof import("../src/cowork").applyEdits = loaded.applyEdits;
 const movesFrames: typeof import("../src/cowork").movesFrames = loaded.movesFrames;
@@ -355,5 +357,136 @@ describe("slide frames moved by an agent", () => {
   it("still follows the deck order when no frame is moved", async () => {
     await edit([frame("q11", 0), frame("q12", 2160)], { update: [{ id: "q11", name: "Agenda" }] });
     expect(followDeckOrder).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("agent edits merged with what the user did meanwhile", () => {
+  const keepUserChanges: typeof import("../src/cowork").keepUserChanges = loaded.keepUserChanges;
+  const at = (id: string, x: number, version = 1, props: Record<string, any> = {}) => el(id, { x, version, versionNonce: version, ...props });
+
+  it("takes the edit's result as it is when nothing changed in between", () => {
+    const base = [at("a", 0)];
+    const next = [at("a", 50, 2), at("new", 0)];
+    expect(keepUserChanges(base, next, base.map((item) => ({ ...item })))).toEqual(next);
+  });
+
+  it("keeps what the user added and moved while the edit was converted", () => {
+    const base = [at("a", 0), at("b", 0)];
+    const next = [at("a", 50, 2), at("b", 0), at("agent", 0)];
+    const current = [at("a", 0), at("b", 99, 2), at("user", 5)];
+    const merged = keepUserChanges(base, next, current);
+    expect(merged.map((item) => [item.id, item.x])).toEqual([["a", 50], ["b", 99], ["agent", 0], ["user", 5]]);
+  });
+
+  it("refuses an edit of an element the user changed too, unless the agent overwrites", () => {
+    const base = [at("a", 0)];
+    const next = [at("a", 50, 2)];
+    const current = [at("a", 70, 2)];
+    expect(() => keepUserChanges(base, next, current)).toThrow(/The user changed a \(x\).*nothing was changed/);
+    expect(keepUserChanges(base, next, current, true)[0].x).toBe(50);
+  });
+
+  it("deletes what the edit deleted, and keeps what the user deleted deleted", () => {
+    const base = [at("a", 0), at("b", 0)];
+    const next = [at("a", 0, 2, { isDeleted: true }), at("b", 0)];
+    const current = [at("a", 0), at("b", 0, 2, { isDeleted: true })];
+    const merged = keepUserChanges(base, next, current);
+    expect(merged.map((item) => [item.id, item.isDeleted])).toEqual([["a", true], ["b", true]]);
+  });
+});
+
+describe("agent edits of the open scene and of local-only scenes", () => {
+  const controller = dependencies["./controller"].scenesController;
+  const commentStore = dependencies["./comments/store"].commentStore;
+  const fakeApi = (initial: any[]) => {
+    let scene = initial;
+    return {
+      getSceneElementsIncludingDeleted: () => scene,
+      getSceneElements: () => scene.filter((item) => !item.isDeleted),
+      getFiles: () => ({}),
+      getAppState: () => ({}),
+      addFiles: vi.fn(),
+      updateScene: vi.fn(({ elements }: { elements: any[] }) => {
+        scene = elements;
+      }),
+      draw: (next: any[]) => {
+        scene = next;
+      },
+    };
+  };
+  const openScene = (api: ReturnType<typeof fakeApi>, live: any = null) => {
+    const state = { current: "A", dirty: false };
+    Object.assign(controller, {
+      getApi: () => api,
+      getState: () => state,
+      autoSyncFor: () => true,
+      statusOf: () => "synced",
+      liveCurrent: () => live,
+    });
+    return state;
+  };
+  const badComment = [{ action: "reply", thread: "nope", text: "hi" }];
+
+  it("keeps a shape the user drew while the edit was converted (not live)", async () => {
+    const api = fakeApi([el("a")]);
+    openScene(api);
+    convert.mockImplementation(async (elements) => {
+      api.draw([el("a"), el("user")]);
+      return elements;
+    });
+    await loaded.editOpenScene({ type: "edit", add: [el("agent")] }, convert);
+    expect(api.updateScene).toHaveBeenCalledTimes(1);
+    expect(api.getSceneElements().map((item: any) => item.id).sort((x: string, y: string) => x.localeCompare(y))).toEqual(["a", "agent", "user"]);
+  });
+
+  it("does not apply an edit to another scene the user switched to meanwhile", async () => {
+    const api = fakeApi([el("a")]);
+    const state = openScene(api);
+    convert.mockImplementation(async (elements) => {
+      state.current = "B";
+      return elements;
+    });
+    await expect(loaded.editOpenScene({ type: "edit", add: [el("agent")] }, convert)).rejects.toThrow(/switched scenes: the app now shows "B", not "A".*nothing was changed/);
+    expect(api.updateScene).not.toHaveBeenCalled();
+  });
+
+  it("checks the comment operations before the elements are changed", async () => {
+    const api = fakeApi([el("a")]);
+    openScene(api);
+    await expect(loaded.editOpenScene({ type: "edit", update: [{ id: "a", x: 5 }], comments: badComment }, convert)).rejects.toThrow(/no thread "nope"/);
+    expect(api.updateScene).not.toHaveBeenCalled();
+    expect(commentStore.change).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing to a live scene when a comment operation is bad", async () => {
+    const live = {
+      sceneJson: () => JSON.stringify({ elements: [el("a")] }),
+      elements: () => [el("a")],
+      commentList: () => [],
+      commentsAllowed: () => true,
+      agentEdit: vi.fn(async () => null),
+      changeComment: vi.fn(() => true),
+    };
+    controller.liveSessionFor = async () => live;
+    await expect(loaded.editSceneOnDrive({ type: "scene-edit", name: "A", update: [{ id: "a", x: 5 }], comments: badComment }, convert)).rejects.toThrow(/no thread "nope"/);
+    expect(live.agentEdit).not.toHaveBeenCalled();
+  });
+
+  it("keeps what the user drew in a local-only scene while the edit was converted", async () => {
+    const before = JSON.stringify({ elements: [el("a")] });
+    const during = JSON.stringify({ elements: [el("a"), el("user")] });
+    const reads = [before, during];
+    const written: string[] = [];
+    Object.assign(controller, {
+      localOnlyJson: vi.fn(async () => reads.shift() ?? during),
+      writeLocalOnly: vi.fn(async (_name: string, json: string) => {
+        written.push(json);
+      }),
+    });
+    const result = await loaded.editLocalScene({ type: "local-edit", name: "A", add: [el("agent")], update: [{ id: "a", x: 5 }] }, convert);
+    const saved = JSON.parse(written[0]).elements;
+    expect(saved.map((item: any) => item.id)).toEqual(["a", "agent", "user"]);
+    expect(saved[0].x).toBe(5);
+    expect(result.elements.map((item: any) => item.id)).toEqual(["a", "agent", "user"]);
   });
 });

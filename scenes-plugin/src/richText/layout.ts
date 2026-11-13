@@ -8,7 +8,7 @@
 
 import { applyDarkModeFilter, getFontFamilyString, getFontString } from "@excalidraw/common";
 
-import { markersOf, richDocOf, safeLink } from "./model";
+import { MARK_KEYS, markersOf, richDocOf, safeLink } from "./model";
 
 import type { Marks, Para, RichDoc, Run } from "./model";
 
@@ -35,7 +35,7 @@ type TextSpec = {
 // ---------------------------------------------------------------------------
 // HTML (the editor shows the same)
 
-const escapeHtml = (text: string) =>
+export const escapeHtml = (text: string) =>
   text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 /** a tooltip without underline or link: underlined dotted */
@@ -62,7 +62,7 @@ const runStyle = (run: Marks, z0: number, dark: boolean) => {
 };
 
 const runAttrs = (run: Run) =>
-  (["b", "i", "u", "s", "c", "h", "a", "z", "n"] as const)
+  MARK_KEYS
     .filter((key) => run[key] !== undefined)
     .map((key) => ` data-${key}="${escapeHtml(String(run[key]))}"`)
     .join("") + (run.n ? ` title="${escapeHtml(run.n)}"` : "");
@@ -198,8 +198,25 @@ if (typeof document !== "undefined" && (document as any).fonts?.addEventListener
   (document as any).fonts.addEventListener("loadingdone", () => {
     cache.clear();
     fontMetrics.clear();
+    sizes.clear();
   });
 }
+
+/**
+ * A fragment grows by a character at [left, right): from its leftmost to the
+ * right end of its rightmost visible character. In right-to-left text (Arabic,
+ * Hebrew) each further character lies left of the one before.
+ */
+export const growFragment = (fragment: { x: number; width: number }, ends: Map<object, number>, left: number, right: number, isSpace: boolean) => {
+  fragment.x = Math.min(fragment.x, left);
+  if (!isSpace) {
+    ends.set(fragment, Math.max(ends.get(fragment) ?? -Infinity, right));
+  }
+  const end = ends.get(fragment);
+  if (end !== undefined) {
+    fragment.width = end - fragment.x;
+  }
+};
 
 export const runFont = (marks: Marks, size: number, family: string) =>
   `${marks.i ? "italic " : ""}${round(size)}px ${family}`;
@@ -226,6 +243,7 @@ export const layoutRich = (spec: TextSpec, doc: RichDoc, wrapWidth: number | nul
   const range = document.createRange();
 
   const fragments: Fragment[] = [];
+  const fragmentEnds = new Map<Fragment, number>();
   const markers: ListMarker[] = [];
   const paraTexts: string[] = [];
   let contentWidth = 0;
@@ -284,8 +302,8 @@ export const layoutRich = (spec: TextSpec, doc: RichDoc, wrapWidth: number | nul
           fragments.push(fragment);
         }
         fragment.text += char;
+        growFragment(fragment, fragmentEnds, x, r.right - origin.left, isSpace);
         if (!isSpace) {
-          fragment.width = r.right - origin.left - fragment.x;
           lineLeft = Math.min(lineLeft, fragment.x);
           lineRight = Math.max(lineRight, r.right - origin.left);
         }
@@ -347,10 +365,25 @@ type TextElementLike = TextSpec & {
   customData?: Record<string, any> | null;
 };
 
-/** sizes of texts laid out lately: element (id, font) + wrapped text -> size */
+/** sizes of texts laid out lately: element (id, font, formatting) + wrapped text -> size */
 const sizes = new Map<string, { width: number; height: number }>();
+/** a number per formatting object (a change of formatting is a new object): part of the size's key */
+const richIds = new WeakMap<object, number>();
+let lastRichId = 0;
+const richId = (rich: unknown) => {
+  if (!rich || typeof rich !== "object") {
+    return 0;
+  }
+  let id = richIds.get(rich);
+  if (id === undefined) {
+    lastRichId += 1;
+    id = lastRichId;
+    richIds.set(rich, id);
+  }
+  return id;
+};
 const sizeKey = (element: TextElementLike, text: string) =>
-  `${element.id}\0${element.fontFamily}\0${element.fontSize}\0${element.lineHeight}\0${element.textAlign}\0${text}`;
+  `${element.id}\0${element.fontFamily}\0${element.fontSize}\0${element.lineHeight}\0${element.textAlign}\0${richId(element.customData?.rich)}\0${text}`;
 const remember = (element: TextElementLike, layout: RichLayout) => {
   sizes.set(sizeKey(element, layout.text), { width: layout.width, height: layout.height });
   if (sizes.size > CACHE_SIZE) {
@@ -374,15 +407,17 @@ export const richMeasure = (element: TextElementLike | null | undefined, text: s
   if (!element?.customData?.rich || typeof document === "undefined") {
     return null;
   }
-  const known = sizes.get(sizeKey(element, text));
-  if (known) {
-    return known;
-  }
+  // the text itself first (cheap: layouts are cached by doc and font); the remembered sizes only
+  // for wrapped text, which is no longer the plain text
   const doc = richDocOf(element, text);
   if (doc) {
     const layout = layoutRich(element, doc, null);
     remember(element, layout);
     return { width: layout.width, height: layout.height };
+  }
+  const known = sizes.get(sizeKey(element, text));
+  if (known) {
+    return known;
   }
   if (text === element.text && richDocOf(element)) {
     return { width: element.width, height: element.height };

@@ -21,41 +21,17 @@
  * No dependencies besides node >= 18.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
+import { loadEnv } from "../scripts/env.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, "..");
+import { httpError, pdfHtmlProblem, printPdf } from "./pdf.mjs";
 
-const loadEnvFile = (file) => {
-  if (!existsSync(file)) {
-    return {};
-  }
-  const env = {};
-  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const match = /^\s*([\w.-]+)\s*=/.exec(line);
-    if (!match) {
-      continue;
-    }
-    const value = line.slice(match[0].length).trim();
-    if (/[\r\n\u2028\u2029]/.test(value)) {
-      continue;
-    }
-    env[match[1]] = value.replace(/^(['"])(.*)\1$/, "$2");
-  }
-  return env;
-};
-
-const env = {
-  ...loadEnvFile(path.join(ROOT, ".env")),
-  ...loadEnvFile(path.join(ROOT, ".env.local")),
-  ...process.env,
-};
+const env = loadEnv();
 
 const PORT = Number(env.SCENES_SERVER_PORT || 3101);
 const ALLOWED_ORIGINS_EXTRA = String(env.SCENES_ALLOWED_ORIGIN || "")
@@ -63,9 +39,8 @@ const ALLOWED_ORIGINS_EXTRA = String(env.SCENES_ALLOWED_ORIGIN || "")
   .map((origin) => origin.trim().replace(/\/$/, ""))
   .filter((origin) => origin && origin !== "*");
 
-
-const httpError = (status, message, extra = {}) =>
-  Object.assign(new Error(message), { status, ...extra });
+/** a request body larger than this is refused (413): generous, only a runaway caller gets there */
+const MAX_BODY_BYTES = 64 * 1024 * 1024;
 
 // -----------------------------------------------------------------------------
 // live channel to the browser app (lets agents drive the open editor)
@@ -161,7 +136,10 @@ const CHROME_CANDIDATES = [
   "/usr/bin/chromium-browser",
 ].filter(Boolean);
 
-let renderer = null; // { proc, ready: Promise }
+/** the headless Chrome started for rendering: { proc, profile, started: Promise }, or null */
+let renderer = null;
+
+const findChrome = () => CHROME_CANDIDATES.find((candidate) => existsSync(candidate));
 
 const waitFor = async (predicate, timeoutMs) => {
   const until = Date.now() + timeoutMs;
@@ -174,36 +152,21 @@ const waitFor = async (predicate, timeoutMs) => {
   return false;
 };
 
-/** dedicated: the agent's own headless tab is needed even if user tabs are open */
-const rendererTab = () => {
-  for (const [tabId, client] of clients) {
-    if (client.role === "renderer") {
-      return tabId;
-    }
-  }
-  return null;
-};
-
-const ensureRenderer = async ({ dedicated = false } = {}) => {
-  if (dedicated ? rendererTab() : activeTabId({ allowRenderer: true })) {
-    return;
-  }
-  if (!renderer) {
-    const chrome = CHROME_CANDIDATES.find((candidate) => existsSync(candidate));
-    if (!chrome) {
-      const error = new Error(
-        "No browser tab is open and no Chrome found for headless rendering (set CHROME_PATH)",
-      );
-      error.status = 409;
-      throw error;
-    }
+/**
+ * Starts the renderer. The entry is returned (and stored by the caller)
+ * before anything is awaited, so two commands arriving together share one
+ * Chrome instead of starting two and losing track of the first.
+ */
+const launchRenderer = (chrome) => {
+  const entry = { proc: null, profile: null, started: null };
+  entry.started = (async () => {
     // throwaway browser profile: nothing the renderer stores survives it
-    const profile = await fs.mkdtemp(path.join(os.tmpdir(), "excalidraw-scenes-renderer-"));
-    const proc = spawn(
+    entry.profile = await fs.mkdtemp(path.join(os.tmpdir(), "kurviq-renderer-"));
+    entry.proc = spawn(
       chrome,
       [
         "--headless=new",
-        `--user-data-dir=${profile}`,
+        `--user-data-dir=${entry.profile}`,
         "--no-first-run",
         "--no-default-browser-check",
         "--window-size=1600,1200",
@@ -212,77 +175,42 @@ const ensureRenderer = async ({ dedicated = false } = {}) => {
       { stdio: "ignore" },
     );
     console.log(`started headless renderer (${chrome})`);
-    renderer = { proc, profile };
-    proc.on("exit", () => {
-      renderer = null;
-      rmSync(profile, { recursive: true, force: true });
+    entry.proc.on("exit", () => {
+      // a later renderer may have replaced this one already: leave it alone
+      if (renderer === entry) {
+        renderer = null;
+      }
+      rmSync(entry.profile, { recursive: true, force: true });
     });
-  }
-  const ok = await waitFor(
-    () => (dedicated ? rendererTab() : activeTabId({ allowRenderer: true })),
-    30000,
-  );
-  if (!ok) {
-    const error = new Error(
-      `Headless renderer did not connect. Is the app running at ${APP_URL}?`,
-    );
-    error.status = 504;
+  })().catch((error) => {
+    if (renderer === entry) {
+      renderer = null;
+    }
     throw error;
-  }
+  });
+  return entry;
 };
 
-// -----------------------------------------------------------------------------
-// PDF: slides arrive as one HTML page of SVGs (real text, embedded fonts) and
-// are printed by headless Chrome, so the PDF keeps text as text
-// -----------------------------------------------------------------------------
-
-/** what the printed page may do: nothing but show its inline content */
-const PDF_CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'">`;
-/** how the app's export starts: the policy is in force before any content (not merely somewhere in the text) */
-const PDF_START = `<!doctype html>\n<html><head><meta charset="utf-8">\n${PDF_CSP}\n`;
-
-const printPdf = async (html) => {
-  const chrome = CHROME_CANDIDATES.find((candidate) => existsSync(candidate));
-  if (!chrome) {
-    const error = new Error("No Chrome found to print the PDF (set CHROME_PATH)");
-    error.status = 409;
-    throw error;
+const ensureRenderer = async () => {
+  if (activeTabId({ allowRenderer: true })) {
+    return;
   }
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "excalidraw-scenes-pdf-"));
-  try {
-    const page = path.join(dir, "slides.html");
-    const out = path.join(dir, "slides.pdf");
-    await fs.writeFile(page, html);
-    await new Promise((resolve, reject) =>
-      execFile(
-        chrome,
-        [
-          "--headless=new",
-          `--user-data-dir=${path.join(dir, "profile")}`,
-          "--no-first-run",
-          "--no-default-browser-check",
-          "--disable-gpu",
-          "--no-pdf-header-footer",
-          // the page is only printed: no scripts, no network (on top of its CSP)
-          "--blink-settings=scriptEnabled=false",
-          "--host-resolver-rules=MAP * ~NOTFOUND",
-          "--virtual-time-budget=15000",
-          `--print-to-pdf=${out}`,
-          `file://${page}`,
-        ],
-        { timeout: 120000 },
-        (error) => (error && !existsSync(out) ? reject(error) : resolve()),
-      ),
-    );
-    return await fs.readFile(out);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+  if (!renderer) {
+    const chrome = findChrome();
+    if (!chrome) {
+      throw httpError(409, "No browser tab is open and no Chrome found for headless rendering (set CHROME_PATH)");
+    }
+    renderer = launchRenderer(chrome);
+  }
+  await renderer.started;
+  if (!(await waitFor(() => activeTabId({ allowRenderer: true }), 30000))) {
+    throw httpError(504, `Headless renderer did not connect. Is the app running at ${APP_URL}?`);
   }
 };
 
 const stopRenderer = () => {
-  if (renderer) {
-    renderer.proc.kill();
+  renderer?.proc?.kill();
+  if (renderer?.profile) {
     rmSync(renderer.profile, { recursive: true, force: true });
   }
 };
@@ -293,6 +221,8 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     process.exit(0);
   });
 }
+
+const notOpen = () => `Kurviq is not open in a browser: open ${APP_URL}`;
 
 /** run a command in the active app tab (render/convert: any tab, or a headless one) */
 const sendCommand = async (command) => {
@@ -310,11 +240,7 @@ const sendCommand = async (command) => {
     ...(command?.targetScene !== undefined ? { scene: command.targetScene } : {}),
   });
   if (!tab) {
-    const error = new Error(
-      `The Excalidraw app is not open in a browser: open ${APP_URL}`,
-    );
-    error.status = 409;
-    throw error;
+    throw httpError(409, notOpen());
   }
   return sendCommandTo(tab, command);
 };
@@ -324,9 +250,7 @@ const sendCommandTo = (tab, command, timeoutMs = COMMAND_TIMEOUT_MS) => {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      const error = new Error("The Excalidraw app did not answer in time");
-      error.status = 504;
-      reject(error);
+      reject(httpError(504, "Kurviq did not answer in time"));
     }, timeoutMs);
     pending.set(id, { resolve, reject, timer });
     clients
@@ -345,9 +269,7 @@ const settleCommand = (id, { ok, result, error }) => {
   if (ok) {
     entry.resolve(result);
   } else {
-    const err = new Error(error || "Command failed in app");
-    err.status = 422;
-    entry.reject(err);
+    entry.reject(httpError(422, error || "Command failed in app"));
   }
   return true;
 };
@@ -355,10 +277,8 @@ const settleCommand = (id, { ok, result, error }) => {
 const readJson = async (req) => {
   try {
     return JSON.parse((await readBody(req)) || "{}");
-  } catch {
-    const error = new Error("Invalid JSON body");
-    error.status = 400;
-    throw error;
+  } catch (error) {
+    throw error.status ? error : httpError(400, "Invalid JSON body");
   }
 };
 
@@ -366,10 +286,26 @@ const readJson = async (req) => {
 // http
 // -----------------------------------------------------------------------------
 
+const tooLarge = () => httpError(413, `Request body too large (at most ${MAX_BODY_BYTES / 1024 / 1024} MB)`);
+
+/** the request body as text, at most MAX_BODY_BYTES (413 beyond; the rest is not kept) */
 const readBody = (req) =>
   new Promise((resolve, reject) => {
+    if (Number(req.headers["content-length"] || 0) > MAX_BODY_BYTES) {
+      reject(tooLarge());
+      return;
+    }
     const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        chunks.length = 0;
+        reject(tooLarge());
+      } else {
+        chunks.push(chunk);
+      }
+    });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
@@ -382,24 +318,30 @@ const allowedOrigins = () => {
 
 /** host names this server answers to (anything else: DNS rebinding) */
 const allowedHosts = () => {
-  const hosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
+  const hosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
   try {
     hosts.add(new URL(env.SCENES_SERVER_URL || "").host);
   } catch {}
   return hosts;
 };
 
-/** the CORS origin to answer with: the request's own, if allowed */
-const corsOrigin = (res) => res.kqCorsOrigin || "null";
+/**
+ * CORS headers: the request's own origin, if allowed. A disallowed origin
+ * gets no Access-Control-Allow-Origin at all ("null" would approve sandboxed
+ * iframes, whose origin is "null").
+ */
+const corsHeaders = (res) =>
+  res.kqCorsOrigin
+    ? { "Access-Control-Allow-Origin": res.kqCorsOrigin, Vary: "Origin" } // NOSONAR S8348: kqCorsOrigin is set only after an exact allowedOrigins membership check
+    : { Vary: "Origin" };
 
 /** the scene version headers the tab answers with (X-Scene-Sha: pre-rename name, remove after 2027-02) */
 const SCENE_VERSION_HEADERS = "X-Scene-Md5, X-Scene-Sha";
 
 const send = (res, status, body, type = "application/json") => {
-  res.writeHead(status, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
+  res.writeHead(status, { // NOSONAR S8348: corsHeaders reflects Origin only after an exact allowedOrigins membership check
     "Content-Type": type,
-    "Access-Control-Allow-Origin": corsOrigin(res),
-    Vary: "Origin",
+    ...corsHeaders(res),
     "Access-Control-Allow-Methods": "GET, PUT, POST, DELETE, OPTIONS",
     // X-Base-Sha / X-Scene-Sha: pre-rename names (older tabs and MCP servers); remove after 2027-02
     "Access-Control-Allow-Headers": "Content-Type, X-Scenes-Source, X-Scenes-Client, X-Base-Md5, X-Base-Sha",
@@ -421,6 +363,12 @@ const refuse = (req) => {
   if (origin !== undefined && !allowedOrigins().has(origin)) {
     return "origin not allowed";
   }
+  // no Origin is fine for local tools, which send no Fetch Metadata either; a
+  // browser leaves out Origin on no-cors GETs (<img>, <script>) of other
+  // sites, and marks them with Sec-Fetch-Site
+  if (origin === undefined && ["cross-site", "same-site"].includes(String(req.headers["sec-fetch-site"]))) {
+    return "cross-site request";
+  }
   // a body is always JSON (a cross-site form or text/plain request can't be)
   if (
     (req.method === "POST" || req.method === "PUT") &&
@@ -433,12 +381,11 @@ const refuse = (req) => {
 };
 
 const serveEvents = async (req, res, url) => {
-  res.writeHead(200, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
+  res.writeHead(200, { // NOSONAR S8348: corsHeaders reflects Origin only after an exact allowedOrigins membership check
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
-    "Access-Control-Allow-Origin": corsOrigin(res),
-    Vary: "Origin",
+    ...corsHeaders(res),
   });
   res.write(": connected\n\n");
   const tabId = url.searchParams.get("tab") || `anon-${Date.now()}`;
@@ -484,15 +431,15 @@ const servePdf = async (req, res) => {
   }
   const { html } = await readJson(req);
   // the page must forbid scripts and network (CSP set by the app's export)
-  if (typeof html !== "string" || !html.startsWith(PDF_START)) {
-    return send(res, 400, { error: "Expected { html }" });
+  const problem = pdfHtmlProblem(html);
+  if (problem) {
+    return send(res, 400, { error: problem });
   }
-  const pdf = await printPdf(html);
-  res.writeHead(200, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
+  const pdf = await printPdf(html, findChrome());
+  res.writeHead(200, { // NOSONAR S8348: corsHeaders reflects Origin only after an exact allowedOrigins membership check
     "Content-Type": "application/pdf",
     "Content-Length": pdf.length,
-    "Access-Control-Allow-Origin": corsOrigin(res),
-    Vary: "Origin",
+    ...corsHeaders(res),
   });
   return res.end(pdf);
 };
@@ -513,7 +460,7 @@ const relayScene = async (req, res, url) => {
   // the open tab answers (it reads and saves with the user's Google sign-in)
   const tab = activeTabId();
   if (!tab) {
-    throw httpError(409, `Kurviq is not open in a browser: open ${APP_URL}`);
+    throw httpError(409, notOpen());
   }
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) {
@@ -530,12 +477,11 @@ const relayScene = async (req, res, url) => {
     // the other tabs sync right away
     broadcast({ type: "scene-saved", source: "agent" });
   }
-  res.writeHead(answer?.status ?? 500, { // NOSONAR S8348: corsOrigin uses an exact allowedOrigins membership check before reflecting Origin
+  res.writeHead(answer?.status ?? 500, { // NOSONAR S8348: corsHeaders reflects Origin only after an exact allowedOrigins membership check
     "Content-Type": "application/json",
     ...answer?.headers,
-    "Access-Control-Allow-Origin": corsOrigin(res),
+    ...corsHeaders(res),
     "Access-Control-Expose-Headers": SCENE_VERSION_HEADERS,
-    Vary: "Origin",
   });
   return res.end(answer?.body ?? "");
 };
@@ -553,12 +499,7 @@ const serveAppState = async (req, res) => {
 
 const sendError = (res, error) => {
   console.error(error.message);
-  return send(res, error.status || 500, {
-    error: error.message,
-    ...(error.remoteMd5 !== undefined ? { remoteMd5: error.remoteMd5 } : {}),
-    ...(error.offline ? { offline: true } : {}),
-    ...(error.exists ? { exists: true } : {}),
-  });
+  return send(res, error.status || 500, { error: error.message });
 };
 
 const handleRequest = async (req, res, url) => {
@@ -603,6 +544,10 @@ const server = http.createServer(async (req, res) => {
   try {
     return await handleRequest(req, res, url);
   } catch (error) {
+    if (error.status === 413) {
+      // the rest of an oversized body is not read: close the connection once refused
+      res.on("finish", () => req.destroy());
+    }
     return sendError(res, error);
   }
 });

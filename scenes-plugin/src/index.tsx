@@ -26,7 +26,7 @@ import { SlideNotesOverlay } from "./notes";
 import { TextTipsOverlay } from "./textTips";
 import { TemplateChangesBar } from "./templateChanges";
 import { installTitleTips } from "./titleTips";
-import { ICON_PATHS } from "./icons";
+import { ICON_PATHS, PlaceSvg } from "./icons";
 import { QuickTip } from "./quickTip";
 import { ownSceneList } from "./storage";
 import type { HomeScene } from "./storage";
@@ -88,8 +88,8 @@ const useScenes = () =>
 
 // -----------------------------------------------------------------------------
 // scene filter: sticky (localStorage), e.g. "Madsack" to show only that
-// customer's scenes while sharing the screen (in the switcher, the sidebar
-// list and the activity log). The open scene is always shown.
+// customer's scenes in the scene switcher while sharing the screen. The open
+// scene is always shown.
 // -----------------------------------------------------------------------------
 
 const FILTER_KEY = "excalidraw-scenes-filter";
@@ -138,6 +138,12 @@ const useNow = (intervalMs = 5000) => {
   return now;
 };
 
+/**
+ * Connects the controller to the editor. Used once, by ScenesSidebar (a
+ * child of <Excalidraw/>, so its lifetime is the editor's): the pill is
+ * rendered in a different tree on phones and unmounts when the form factor
+ * changes, while the editor stays.
+ */
 const useAttachController = () => {
   const api = useExcalidrawAPI();
   useEffect(() => {
@@ -192,16 +198,15 @@ const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> 
   "live-unsaved": { icon: "!", label: "Not saved", tone: "danger" },
 };
 
+/** states that need no badge (the place icons say it) and no words in the scene panel */
+const QUIET_STATUS = new Set<string>(["synced", "live-drive", "live-server", "live-saving", "local", "local-only", "untitled"]);
+
 // where a scene is kept (this browser / Google Drive) and who can see it
 // (private / public): two small icons with tooltips, in the list and the pill
 
 
 const PlaceIcon = ({ kind, title, onClick }: { kind: keyof typeof ICON_PATHS; title: string; onClick?: () => void }) => {
-  const svg = (
-    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      {ICON_PATHS[kind]}
-    </svg>
-  );
+  const svg = <PlaceSvg kind={kind} />;
   return (
     <QuickTip tip={title} className={clsx(`scenes-place scenes-place--${kind}`, { "scenes-place--action": onClick })}>
       {onClick ? (
@@ -380,12 +385,11 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
       return <span className="scenes-pill__status">syncing…</span>;
     }
     return (
-      // "local" / "local-only": the browser icon says it
-      !["synced", "local", "local-only", "live-drive", "live-server", "live-saving"].includes(status) && <StatusBadge status={status} compact />
+      // "local" / "local-only": the browser icon says it; an untitled drawing is shown as not saved
+      (status === "untitled" || !QUIET_STATUS.has(status)) && <StatusBadge status={status} compact />
     );
   };
 
-  useAttachController();
   const state = useScenes();
   const { current, busy, list } = state;
   const currentItem = list.find((item) => item.name === current);
@@ -525,13 +529,6 @@ const useCloseOnOutsidePointer = (onClose: () => void) => {
 };
 
 /**
- * Quick switch: the scenes as a dropdown under the pill. Type to filter,
- * arrows + Enter to pick, Esc to close. The pen on the open scene manages
- * it (SceneFlyover), "Google Drive…" the connection (DriveFlyover).
- * Scenes others shared with the user are listed too; each opens in a space
- * of its own (the tab reloads into it).
- */
-/**
  * The heading above a group of the scene list: this tab's scenes ("My scenes",
  * or the shared folder it shows), then each folder shared with the user. A
  * click folds or unfolds the group (folded: how many scenes it holds).
@@ -570,6 +567,13 @@ const loadGroups = () => {
   }
 };
 
+/**
+ * Quick switch: the scenes as a dropdown under the pill. Type to filter,
+ * arrows + Enter to pick, Esc to close. The pen on the open scene manages
+ * it (SceneFlyover), "Google Drive…" the connection (DriveFlyover).
+ * Scenes others shared with the user are listed too; each opens in a space
+ * of its own (the tab reloads into it).
+ */
 const SceneSwitcher = ({
   onClose,
   onManageScene,
@@ -768,7 +772,7 @@ const SceneSwitcher = ({
               {entry.owner}
             </QuickTip>
           )}
-          {item && !["synced", "local", "local-only", "untitled", "live-drive", "live-server", "live-saving"].includes(item.status) && (
+          {item && !QUIET_STATUS.has(item.status) && (
             <StatusBadge status={item.status} compact />
           )}
         </button>
@@ -1272,10 +1276,8 @@ const confirmDelete = (item: SceneListItem) => {
   return window.confirm(lines.filter(Boolean).join("\n\n"));
 };
 
-const ActivityLog = ({ activity: all, now, hidden }: { activity: Activity[]; now: number; hidden: string[] }) => {
+const ActivityLog = ({ activity, now }: { activity: Activity[]; now: number }) => {
   const [open, setOpen] = useState(false);
-  // entries naming a filtered-out scene are not shown
-  const activity = all.filter((entry) => !hidden.some((name) => entry.text.includes(`"${name}"`)));
   if (!activity.length) {
     return null;
   }
@@ -1312,13 +1314,6 @@ const when = (iso: string | null, now: number) => {
     return ago(iso, now);
   }
   return new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-};
-
-/** "Update scene: oredev" → "Update" (the scene is clear here) */
-const versionLabel = (version: SceneVersion) => {
-  const text = version.message.replace(/^Agent:\s*/i, "").replace(/scenes?:.*$/i, "").trim() || "Change";
-  const label = text[0].toUpperCase() + text.slice(1);
-  return label === "Add" ? "Created" : label;
 };
 
 /** the scene's versions in Drive; one can be looked at and restored */
@@ -1416,7 +1411,7 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
             <li key={version.driveRevision} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.driveRevision })}>
               <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.driveRevision}>
                 <span className="scenes-history__label">
-                  {versionLabel(version)}
+                  Change
                   {index === 0 && <span className="scenes-history__tag">latest</span>}
                   {version.agent && <span className="scenes-history__tag scenes-history__tag--agent">agent</span>}
                 </span>
@@ -1485,7 +1480,7 @@ const DriveFlyover = ({ onClose }: { onClose: () => void }) => {
     <Flyover title="Google Drive" onClose={onClose}>
       <DrivePanel />
       {withDrive && <SyncBar state={state} now={now} />}
-      <ActivityLog activity={state.activity} now={now} hidden={[]} />
+      <ActivityLog activity={state.activity} now={now} />
       {IS_ONLINE && <KurviqFooter />}
     </Flyover>
   );
@@ -1500,8 +1495,6 @@ const saveAsIcon = (
   </svg>
 );
 
-/** states that need no words in the scene panel (the badge and its tooltip say it) */
-const QUIET_STATUS = new Set<string>(["synced", "live-drive", "live-server", "live-saving", "local", "local-only", "untitled"]);
 
 /** the open scene: save, rename, share, sync mode, history */
 const SceneFlyover = ({ onClose }: { onClose: () => void }) => {

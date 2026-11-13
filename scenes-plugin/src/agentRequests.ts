@@ -81,7 +81,7 @@ export const editsRunning = () => running.size;
 // uploaded edit payloads
 // -----------------------------------------------------------------------------
 
-export const MAX_PAYLOAD_CHARS = 1_000_000;
+const MAX_PAYLOAD_CHARS = 1_000_000;
 
 export const keepPayload = async ({ id, json }: { id: string; json: string }) => {
   if (!/^[0-9a-f]{40}$/.test(id) || typeof json !== "string" || json.length > MAX_PAYLOAD_CHARS) {

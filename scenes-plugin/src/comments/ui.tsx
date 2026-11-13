@@ -12,9 +12,10 @@ import { createPortal } from "react-dom";
 import { sceneCoordsToViewportCoords, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 
-import { authorKey, commentId, pinFor, pinPosition, threadsOf, withoutDone } from "../../../scenes-mcp/sceneComments.mjs";
+import { authorKey, changeStamp, commentId, pinFor, pinPosition, threadsOf, withoutDone } from "../../../scenes-mcp/sceneComments.mjs";
 import { scenesController } from "../controller";
 import { deck } from "../deck";
+import { createStore } from "../externalStore";
 import { liveSync } from "../online/liveSync";
 import { connection, listPermissions } from "../online/drive";
 import { usePresenter } from "../present";
@@ -41,22 +42,9 @@ type UiState = {
   list: boolean;
 };
 
-let ui: UiState = { placing: false, open: null, draft: null, showResolved: false, list: false };
-const uiListeners = new Set<() => void>();
-const setUi = (patch: Partial<UiState>) => {
-  ui = { ...ui, ...patch };
-  uiListeners.forEach((listener) => listener());
-};
-const useUi = () =>
-  useSyncExternalStore(
-    (listener) => {
-      uiListeners.add(listener);
-      return () => {
-        uiListeners.delete(listener);
-      };
-    },
-    () => ui,
-  );
+const uiStore = createStore<UiState>({ placing: false, open: null, draft: null, showResolved: false, list: false });
+const setUi = (patch: Partial<UiState>) => uiStore.set({ ...uiStore.get(), ...patch });
+const useUi = uiStore.use;
 
 const useComments = () => useSyncExternalStore(commentStore.subscribe, commentStore.list);
 
@@ -232,9 +220,10 @@ const IconButton = ({
 // writing: a text box with @mentions (the people the scene is shared with, and its authors)
 // -----------------------------------------------------------------------------
 
-const usePeople = (comments: SceneComment[]) => {
+const usePeople = (comments: SceneComment[], viewer: boolean) => {
   const state = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
-  const fileId = state.list.find((item) => item.name === state.current)?.fileId ?? null;
+  // the shared viewer shows another scene than the editor's: only the thread's authors there
+  const fileId = viewer ? null : state.list.find((item) => item.name === state.current)?.fileId ?? null;
   const [shared, setShared] = useState<string[]>([]);
   useEffect(() => {
     setShared([]);
@@ -361,6 +350,9 @@ const save = (comment: SceneComment, setError: (error: string | null) => void) =
 
 const now = () => Date.now();
 
+/** a change's `u`: after the version it changes, even if this device's clock is behind (see changeStamp) */
+const stamp = (comment: SceneComment) => changeStamp(comment, now());
+
 // -----------------------------------------------------------------------------
 // one comment in a thread
 // -----------------------------------------------------------------------------
@@ -427,7 +419,7 @@ const CommentItem = ({
                   type="button"
                   className="kq-cm-danger"
                   onClick={() => {
-                    save({ ...comment, gone: true, text: "", u: now() }, onError);
+                    save({ ...comment, gone: true, text: "", u: stamp(comment) }, onError);
                     setMenu(null);
                   }}
                 >
@@ -447,7 +439,7 @@ const CommentItem = ({
           autoFocus
           onCancel={() => setEditing(false)}
           onSubmit={(text) => {
-            const ok = save({ ...comment, text, edited: now(), u: now() }, onError);
+            const ok = save({ ...comment, text, edited: now(), u: stamp(comment) }, onError);
             if (ok) setEditing(false);
             return ok;
           }}
@@ -522,14 +514,18 @@ const ThreadView = ({
   const all = [thread.root, ...thread.replies];
   const mineRoot = !!me && thread.root.by.key === me.key;
   const resolve = () => {
-    save(thread.resolved ? { ...withoutDone(thread.root), u: now() } : { ...thread.root, done: { name: me?.name ?? "Someone", at: now() }, u: now() }, setError);
+    const u = stamp(thread.root);
+    save(thread.resolved ? { ...withoutDone(thread.root), u } : { ...thread.root, done: { name: me?.name ?? "Someone", at: now() }, u }, setError);
   };
   const removeThread = () => {
-    const at = now();
+    // closed only when everything was removed: else the popover stays and shows why
+    let ok = true;
     for (const comment of all.filter((entry) => !entry.gone)) {
-      save({ ...comment, gone: true, text: "", u: at }, setError);
+      ok = save({ ...comment, gone: true, text: "", u: stamp(comment) }, setError) && ok;
     }
-    setUi({ open: null });
+    if (ok) {
+      setUi({ open: null });
+    }
   };
   return (
     <>
@@ -647,6 +643,10 @@ type PinSpot = { id: string; x: number; y: number };
 const usePinSpots = (threads: CommentThread[], draft: CommentPin | null) => {
   const [spots, setSpots] = useState<PinSpot[]>([]);
   useEffect(() => {
+    if (!threads.length && !draft) {
+      setSpots([]);
+      return; // nothing to follow: no loop (the layer is always mounted)
+    }
     let frame = 0;
     let last = "";
     const loop = () => {
@@ -654,7 +654,8 @@ const usePinSpots = (threads: CommentThread[], draft: CommentPin | null) => {
       const next: PinSpot[] = [];
       if (api) {
         const appState = api.getAppState();
-        const elements = new Map(api.getSceneElementsIncludingDeleted().map((el: any) => [el.id, el]));
+        // Excalidraw's own map: nothing is built per frame
+        const elements = api.getSceneElementsMapIncludingDeleted();
         const place = (id: string, pin: CommentPin) => {
           const at = pinPosition(pin, elements);
           const view = sceneCoordsToViewportCoords({ sceneX: at.x, sceneY: at.y }, appState);
@@ -728,7 +729,7 @@ export const CommentsLayer = () => {
   const allThreads = useMemo(() => threadsOf(comments), [comments]);
   const shown = useMemo(() => allThreads.filter((thread) => !thread.resolved || state.showResolved || thread.id === state.open), [allThreads, state.showResolved, state.open]);
   const spots = usePinSpots(shown, state.draft);
-  const people = usePeople(comments);
+  const people = usePeople(comments, viewer);
   const current = useSyncExternalStore(scenesController.subscribe, () => scenesController.getState().current);
 
   // another scene: nothing of the last one stays open

@@ -8,8 +8,7 @@ import { getCommonBounds } from "@excalidraw/element";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
-import { scenesController } from "./controller";
-import { deck } from "./deck";
+import { deck, deckName } from "./deck";
 import { usePresenter } from "./present";
 import { resetTemplateChanges, templateChanges } from "./slides";
 
@@ -66,7 +65,7 @@ const reset = (ids: readonly string[], names: readonly string[] | null) => {
   if (!api) {
     return;
   }
-  const next = resetTemplateChanges(api.getSceneElementsIncludingDeleted(), ids, names, scenesController.getState().current ?? "Untitled");
+  const next = resetTemplateChanges(api.getSceneElementsIncludingDeleted(), ids, names, deckName());
   if (next) {
     api.updateScene({ elements: next, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
   }

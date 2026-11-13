@@ -1,9 +1,11 @@
 // Kurviq on Cloudflare: one Worker serves the app (static assets), Sign in
 // with Google (/auth), public scenes from Google Drive (/api/public), agent
 // pairings (Durable Object) and the remote MCP.
-// Deploy: `npm run deploy:online` in the project root. Secrets (set once,
-// see README): GOOGLE_CLIENT_SECRET, COOKIE_KEY, GOOGLE_API_KEY. The Google
-// client id and other public values: ./google.json.
+// Deploy: `npm run deploy:online` in the project root. Secrets (set once with
+// `npm run secrets -- <NAME>`, online/secrets.mjs says what each one seals):
+// GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY, COOKIE_KEY (COOKIE_KEY_PREVIOUS while
+// rotating it), and for live sync TOKEN_KEY, PSEUDONYM_KEY. The Google client
+// id and other public values: ./google.json.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kurviq",
@@ -27,7 +29,7 @@
       // live sync (docs/live-sync): one per Drive scene, one per account
       { "name": "SCENE", "class_name": "SceneRoom" },
       { "name": "ACCOUNT", "class_name": "AccountGuard" },
-      // the fake Google for local tests (only used with FAKE_GOOGLE=1)
+      // the fake Google for local tests (only used with FAKE_GOOGLE=1; a stub in production bundles)
       { "name": "FAKE_GOOGLE_STORE", "class_name": "FakeGoogle" },
       // usage statistics: anonymous counters per hour, written to D1 (worker/stats.ts, CLAUDE.md)
       { "name": "STATS", "class_name": "Stats" }
