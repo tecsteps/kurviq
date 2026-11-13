@@ -28,6 +28,8 @@ import {
   driveWebLink,
   enterSpace,
   folderSharingOf,
+  pickFiles,
+  sharedWithMe,
   getByline,
   linkAccessOf,
   listPermissions,
@@ -60,6 +62,7 @@ import lilitaLatin from "@excalidraw/excalidraw/fonts/Lilita/Lilita-Regular-i7dP
 import { deck, isDeck } from "../deck";
 import { appVersion, isAutoReloading, reloadApp } from "./version";
 import { openPublicScene } from "../router";
+import { linkHint } from "./linkHint";
 
 import "./online.scss";
 
@@ -1191,6 +1194,54 @@ export const SceneSharing = ({ item, iconOnly }: { item: SceneListItem; disabled
       className={iconOnly ? "scenes-icon-btn" : undefined}
       tip={item.fileId ? `Copies the link to this scene (${audience})` : "Not in Google Drive yet: you can copy its link once it has synced"}
     />
+  );
+};
+
+/** the hint's Picker: the scene shared with the user, then the tab goes there (the new scene goes if still empty) */
+const findShared = async (name: string) => {
+  const ids = await pickFiles({ shared: true, query: name });
+  if (ids.length !== 1) {
+    return;
+  }
+  const picked = (await sharedWithMe()).find((entry) => entry.fileId === ids[0])?.name ?? name;
+  const api = scenesController.getApi();
+  if (scenesController.getState().current === name && api && !api.getSceneElements().length) {
+    await scenesController.remove(name).catch(() => {});
+  }
+  await scenesController.leaveForReload();
+  enterSpace(ids[0], `/s/${ids[0]}/${encodeURIComponent(picked)}`);
+};
+
+export const LinkHint = () => {
+  const name = useSyncExternalStore(linkHint.subscribe, linkHint.get);
+  const current = useSyncExternalStore(scenesController.subscribe, () => scenesController.getState().current);
+  useEffect(() => {
+    if (name !== null && current !== name) {
+      linkHint.set(null); // another scene: the hint is gone
+    }
+  }, [name, current]);
+  if (name === null || current !== name) {
+    return null;
+  }
+  return (
+    <output className="kq-update kq-linkhint">
+      <span>
+        New scene "{name}". Did someone share a scene of that name with you?
+      </span>
+      <button
+        type="button"
+        className="scenes-btn scenes-btn--primary"
+        onClick={() => {
+          linkHint.set(null);
+          findShared(name).catch((error) => console.error("[drive]", error));
+        }}
+      >
+        Find it in Drive…
+      </button>
+      <button type="button" className="kq-close" aria-label="Close" onClick={() => linkHint.set(null)}>
+        ×
+      </button>
+    </output>
   );
 };
 

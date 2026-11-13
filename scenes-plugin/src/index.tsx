@@ -60,6 +60,7 @@ import {
   McpButton,
   ReadOnlyGuard,
   SceneSharing,
+  LinkHint,
   UpdateBanner,
   openShareDialog,
   startDrive,
@@ -1716,6 +1717,7 @@ export const ScenesSidebar = () => {
       <ReadOnlyGuard />
       <LiveBanner />
       {IS_ONLINE && <UpdateBanner />}
+      <LinkHint />
     </>
   );
 };

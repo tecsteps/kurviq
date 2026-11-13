@@ -8,6 +8,7 @@
 
 import { scenesController } from "./controller";
 import { pubNameHolder, sceneElsewhere, sharedFileId } from "./online/drive";
+import { offerSharedLookup } from "./online/linkHint";
 import { pubNameFromPath } from "./online/pubName";
 import { isPublicScene, publicScene } from "./publicScene";
 import { deck } from "./deck";
@@ -103,11 +104,22 @@ const pathFor = (name: string | null) => {
   return name === null ? "/" : `/${encodeURIComponent(name)}`;
 };
 
-/** a scene link: the tab's scene of that name, else one in a shared folder (sceneElsewhere), else a new one */
+/**
+ * a scene link: the tab's scene of that name, else one shared with the user or in a shared
+ * folder (sceneElsewhere), else a new one (with an offer to look among the scenes shared with
+ * the user that Kurviq can't see yet)
+ */
 const navigateTo = (name: string) =>
-  scenesController.openOrCreate(name, { elsewhere: sceneElsewhere }).catch((error) => {
-    console.error(`[scenes] could not open "${name}" from URL`, error);
-  });
+  scenesController
+    .openOrCreate(name, { elsewhere: sceneElsewhere })
+    .then((created) => {
+      if (created) {
+        offerSharedLookup(name);
+      }
+    })
+    .catch((error) => {
+      console.error(`[scenes] could not open "${name}" from URL`, error);
+    });
 
 /** open a public scene from a link in the app (e.g. the welcome screen) */
 export const openPublicScene = (name: string) => {

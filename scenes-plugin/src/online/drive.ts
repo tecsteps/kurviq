@@ -1604,23 +1604,31 @@ export const enterSpace = (fileId: string | null, path = "/") => {
 
 /**
  * A scene link whose name the tab's scenes don't have: the scene of that name
- * in a folder shared with the user (or, from a folder's tab, among their own
- * scenes). Answers how to go there (the page reloads into that space), or
- * null: there is none, it is a new scene.
+ * shared with the user on its own (one they opened in Kurviq once), or in a
+ * folder shared with them (or, from a folder's tab, among their own scenes).
+ * Answers how to go there (the page reloads into that space), or null: there
+ * is none, it is a new scene.
  */
 export const sceneElsewhere = async (name: string): Promise<(() => void) | null> => {
   if (sharedFileId || !state.user || !state.drive) {
     return null;
   }
-  const folders = await sharedFolders().catch((): SharedFolder[] => []);
+  const [folders, files] = await Promise.all([
+    sharedFolders().catch((): SharedFolder[] => []),
+    sharedWithMe().catch((): SharedWithMe[] => []),
+  ]);
   const own = sharedFolderId ? ownSceneList().map((scene) => scene.name) : [];
-  const target = linkTargetOf(name, folders, own, sharedFolderId);
+  const target = linkTargetOf(name, folders, own, sharedFolderId, files);
   if (!target) {
     return null;
   }
-  return target.kind === "own"
-    ? () => enterSpace(null, `/${encodeURIComponent(name)}`)
-    : () => enterFolder(target.folderId, name);
+  if (target.kind === "own") {
+    return () => enterSpace(null, `/${encodeURIComponent(name)}`);
+  }
+  if (target.kind === "file") {
+    return () => enterSpace(target.fileId, `/s/${target.fileId}/${encodeURIComponent(name)}`);
+  }
+  return () => enterFolder(target.folderId, name);
 };
 
 // -----------------------------------------------------------------------------
@@ -1753,7 +1761,7 @@ export const pickerAvailable = () => !!import.meta.env.VITE_APP_GOOGLE_BROWSER_K
  * the picked file ids (empty: cancelled). shared: Drive's "Shared with me",
  * several at once (no email or link needed: picking lets Kurviq open them)
  */
-export const pickFiles = async ({ fileId, shared }: { fileId?: string; shared?: boolean } = {}): Promise<string[]> => {
+export const pickFiles = async ({ fileId, shared, query }: { fileId?: string; shared?: boolean; query?: string } = {}): Promise<string[]> => {
   const value = await getToken();
   if (!value) {
     throw notConnectedError();
@@ -1766,6 +1774,10 @@ export const pickFiles = async ({ fileId, shared }: { fileId?: string; shared?: 
   }
   if (shared) {
     view.setOwnedByMe(false);
+  }
+  if (query) {
+    // searched for already (a scene link's name)
+    view.setQuery(query);
   }
   return new Promise<string[]>((resolve) => {
     const pickerTitle = () => {
