@@ -1,7 +1,9 @@
 # Email notifications for comments
 
-Status: proposal (Must), 2026-11-13; redesigned for the rule "no customer data
-on our servers, not even temporarily"
+Status: postponed (decided by Fabian, 2026-11-13: "leave notifications out for now"); proposal (Must),
+redesigned for the rule "no customer data on our servers, not even temporarily". Open before building it:
+the mail service (Postmark was recommended for its suppression API; Cloudflare Email Service as the
+alternative without a new account).
 
 ## Why
 

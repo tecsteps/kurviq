@@ -20,8 +20,8 @@ export const OWN_SPACE_KEY = "kurviq-own-space";
 /** before spaces per account: the account the signed-out space ("") was synced with */
 export const LEGACY_ACCOUNT_KEY = "kurviq-drive-account";
 
-/** key used for the scene that has not been named / saved yet (also in ./storage.ts) */
-const UNTITLED = "\u0000untitled";
+/** key used for the scene that has not been named / saved yet */
+export const UNTITLED = "\u0000untitled";
 
 const SHARED_RE = /^[fd]:[\w-]{10,200}$/;
 const ACCOUNT_RE = /^a:[^\s@/]{1,200}@[^\s@/]{1,200}$/;
@@ -36,7 +36,7 @@ export const ownSpaceOf = (email: string) => `a:${accountKey(email)}`;
 export const spaceAccountOf = (space: string) => (ACCOUNT_RE.test(space) ? space.slice(2) : null);
 
 /** a shared scene's or folder's space (it works with whoever is signed in) */
-export const isSharedSpace = (space: string) => space.startsWith("f:") || space.startsWith("d:");
+const isSharedSpace = (space: string) => space.startsWith("f:") || space.startsWith("d:");
 
 /** suffix of a space's storage keys */
 export const spaceSuffix = (space: string) => (space ? `@${space}` : "");

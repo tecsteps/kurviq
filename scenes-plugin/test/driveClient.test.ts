@@ -98,3 +98,15 @@ describe("slugs of links and short names", () => {
     expect(slugify("-start", 40)).toBe("start");
   });
 });
+
+describe("the moved note on an old scene file", () => {
+  it("is '<home> <link>', fits Drive's 124 bytes or is refused, and is read back", async () => {
+    const { movedNote, parseMovedNote } = await import("../src/online/driveNames");
+    expect(movedNote("database", "https://kurviq.com/db/abc/1")).toBe("database https://kurviq.com/db/abc/1");
+    expect(movedNote("database", `https://kurviq.com/${"x".repeat(120)}`)).toBeNull();
+    expect(parseMovedNote("drive https://kurviq.com/s/1234567890/Plan")).toEqual({ home: "drive", link: "https://kurviq.com/s/1234567890/Plan" });
+    expect(parseMovedNote("elsewhere https://x")).toBeNull();
+    expect(parseMovedNote("database javascript:alert(1)")).toBeNull();
+    expect(parseMovedNote(null)).toBeNull();
+  });
+});

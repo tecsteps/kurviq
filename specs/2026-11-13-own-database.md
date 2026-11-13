@@ -2,7 +2,9 @@
 
 Status: proposal, 2026-11-13; decisions of 2026-11-13 included (OAuth from
 the start, one space per database, SMTP optional, public scenes as the
-owner's choice)
+owner's choice). Step 1 (the adapter interface, with "browser" and "Google
+Drive" behind it) done 2026-11-13: `scenes-plugin/src/homes/`, contract in
+`docs/homes/CONCEPT.md`; steps 2 to 6 open.
 
 ## Idea
 

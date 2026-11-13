@@ -36,6 +36,45 @@ export type MergeResult = {
   fromTheirs: number;
 };
 
+/**
+ * The z-order (index) is not content (sameContent ignores it), so an element
+ * only moved to the front or back counts as unchanged and the other side's
+ * copy is picked. The side that changed the order against the base keeps
+ * its order (mine when both did).
+ */
+const keptOrder = (pick: El, base: El | undefined, mine: El | undefined, theirs: El | undefined): El => {
+  if (!base || !mine || !theirs) {
+    return pick;
+  }
+  let index = pick.index;
+  if (mine.index !== base.index) {
+    index = mine.index;
+  } else if (theirs.index !== base.index) {
+    index = theirs.index;
+  }
+  return index === pick.index ? pick : { ...pick, index };
+};
+
+/** the scene settings merged three-way (scene JSON's appState): background and grid */
+const SETTINGS = ["viewBackgroundColor", "gridSize", "gridStep", "gridModeEnabled"] as const;
+
+/**
+ * Background and grid of a merged scene: mine if I changed it since the
+ * base, else theirs (Drive's change is kept, like an element's). Without a
+ * known base, mine.
+ */
+export const mergeSceneSettings = (base: Record<string, any> | undefined | null, mine: Record<string, any> | undefined, theirs: Record<string, any> | undefined) => {
+  const settings: Record<string, unknown> = {};
+  for (const key of SETTINGS) {
+    const changedHere = !base || JSON.stringify(mine?.[key]) !== JSON.stringify(base[key]);
+    const value = changedHere ? mine?.[key] : theirs?.[key];
+    if (value !== undefined) {
+      settings[key] = value;
+    }
+  }
+  return settings;
+};
+
 export const mergeElements = (
   base: readonly El[] | undefined,
   mine: readonly El[],
@@ -70,7 +109,7 @@ export const mergeElements = (
       clashes.push(id);
     }
     if (pick) {
-      result.push(pick);
+      result.push(keptOrder(pick, be, me, te));
     }
   }
 

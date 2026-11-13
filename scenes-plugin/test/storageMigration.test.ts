@@ -87,7 +87,7 @@ describe("scene metadata: baseSha / remoteSha → baseMd5 / remoteMd5", () => {
     expect(meta.scenes.a).toEqual({ baseMd5: B, dirty: false });
   });
 
-  it("still marks pre-sync-engine records (no base at all) as legacy", () => {
+  it("gives records of the first versions (no base at all) an empty base, without the old legacy mark (D21)", () => {
     data.set(
       storage.META_KEY,
       JSON.stringify({
@@ -99,8 +99,17 @@ describe("scene metadata: baseSha / remoteSha → baseMd5 / remoteMd5", () => {
     expect(storage.loadMeta().scenes.a).toEqual({
       baseMd5: null,
       dirty: true,
-      legacy: true,
     });
+  });
+
+  it("scene names like constructor or toString are only names (B37)", () => {
+    data.set(storage.META_KEY, JSON.stringify({ current: null, scenes: { Plan: { baseMd5: null, dirty: false } }, pendingDeletes: {} }));
+    const meta = storage.loadMeta();
+    expect(meta.scenes.constructor).toBeUndefined();
+    expect(meta.scenes.toString).toBeUndefined();
+    expect(meta.pendingDeletes.hasOwnProperty).toBeUndefined();
+    expect("constructor" in meta.scenes).toBe(false);
+    expect(JSON.parse(JSON.stringify(meta)).scenes).toEqual({ Plan: { baseMd5: null, dirty: false } });
   });
 });
 

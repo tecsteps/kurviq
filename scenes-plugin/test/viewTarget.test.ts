@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { MIN_FIT_ZOOM, fitView, viewTarget } from "../src/viewTarget";
+import { fitView, viewTarget } from "../src/viewTarget";
+
+// the smallest zoom a fit goes to (viewTarget.ts MIN_FIT_ZOOM)
+const MIN_FIT_ZOOM = 0.01;
 
 const frame = (id: string, x: number, extra: object = {}) => ({ id, type: "frame", x, y: 0, width: 1920, height: 1080, ...extra });
 const deck = [

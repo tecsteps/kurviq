@@ -27,7 +27,7 @@ import { accountKey, spaceAccountOf } from "../spaces";
 import { currentSpace, ownSceneList, SPACE_KEY } from "../storage";
 import { FOLDER_COUNT_PROPERTY, folderCountOf, groupSharedFolders } from "./folderAccess";
 import type { FolderGroup } from "./folderAccess";
-import { BYLINE_MAX_BYTES, BYLINE_PROPERTY, SCENE_MIME, cleanByline, cutBytes } from "./driveNames";
+import { BYLINE_MAX_BYTES, BYLINE_PROPERTY, MOVED_PROPERTY, SCENE_MIME, cleanByline, cutBytes, movedNote, parseMovedNote } from "./driveNames";
 import { linkTargetOf } from "./linkTarget";
 import { slugify } from "./pubName";
 import { endDatePatch, generalAccessChanges, organizationDomain } from "./shareAccess";
@@ -934,6 +934,32 @@ export const writePenMark = async (fileId: string, mark: string | null) => {
   if (res.status !== 200) {
     fail(res, "The scene's pen mark could not be written");
   }
+};
+
+// -----------------------------------------------------------------------------
+// "moved to …": a scene moved to another home leaves this note on its old
+// file (appProperties.kurviqMoved = "<home> <link>", metadata only) before
+// the file goes to the bin, so a link to it can point to the new place
+// -----------------------------------------------------------------------------
+
+export const writeMovedNote = async (fileId: string, home: string, link: string) => {
+  const value = movedNote(home, link);
+  if (value === null) {
+    throw httpError(400, "The new place's link is too long for a note on the old file");
+  }
+  const res = await drive(`/files/${fileId}?fields=id&supportsAllDrives=true`, { method: "PATCH", body: { appProperties: { [MOVED_PROPERTY]: value } } });
+  if (res.status !== 200) {
+    fail(res, "The note on the old file could not be written");
+  }
+};
+
+export const readMovedNote = async (fileId: string) => {
+  const res = await drive(`/files/${fileId}?fields=appProperties,modifiedTime&supportsAllDrives=true`);
+  if (res.status !== 200) {
+    fail(res, "The scene's file could not be read");
+  }
+  const note = parseMovedNote(res.data?.appProperties?.[MOVED_PROPERTY]);
+  return note ? { ...note, at: (res.data?.modifiedTime as string | undefined) ?? null } : null;
 };
 
 

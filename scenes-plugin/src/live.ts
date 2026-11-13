@@ -19,7 +19,7 @@ import {
 } from "@excalidraw/common";
 import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from "@excalidraw/element";
 
-import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
+import { BASE_URL, IS_ONLINE, TAB_ID, agentRelay } from "./api";
 import { IDLE_PUSH_MS, scenesController } from "./controller";
 import { penRefusal } from "./online/pen";
 import {
@@ -33,6 +33,7 @@ import {
   setLinkAccess,
   sharedFileId,
   sharedFolderId,
+  driveScenes,
   sharedFolders,
   shareLink,
 } from "./online/drive";
@@ -925,7 +926,7 @@ const runCommand = async (command: Command) => {
       const run = onceForRequest(
         command.requestId,
         () => queueEdit(() => editSceneOnDrive(command, convertMcpElements)),
-        async () => JSON.parse((await scenesApi.load(command.name)).json).elements || [],
+        async () => JSON.parse((await driveScenes.load(command.name)).json).elements || [],
       );
       // saved to Drive from this tab: no server announces it, sync right away
       run.then(() => scenesController.syncNow({ refresh: true })).catch(() => {});
@@ -1051,7 +1052,7 @@ const report = () => {
     }
     return;
   }
-  scenesApi.reportState(tabState()).catch((error) => console.error("[scenes] report state failed", error));
+  agentRelay.reportState(tabState()).catch((error) => console.error("[scenes] report state failed", error));
 };
 
 const handleCommand = async (event: { id: string; command: Command }, reply: (payload: { ok: boolean; result?: unknown; error?: string }) => void) => {
@@ -1212,7 +1213,7 @@ export const connectLive = () => {
     const event = JSON.parse(message.data);
     if (event.type === "command") {
       handleCommand(event, (payload) => {
-        scenesApi.sendResult(event.id, payload).catch((error) => console.error("[scenes] command result failed", error));
+        agentRelay.sendResult(event.id, payload).catch((error) => console.error("[scenes] command result failed", error));
       }).catch((error) => console.error("[scenes] command reply failed", error));
     } else if (["scene-saved", "scene-renamed", "scene-deleted"].includes(event.type)) {
       if (IS_RENDERER || event.source === `app:${TAB_ID}`) {

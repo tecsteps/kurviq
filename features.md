@@ -22,10 +22,10 @@ anonymous statistics counters, and messages people send to Kurviq on purpose
 
 | # | Feature | Why | Spec | Status |
 |---|---|---|---|---|
-| 1 | ~~Live sync for everyone~~ | Superseded: on Drive, one editor at a time with a memory-only relay (live view for everyone else; implemented, `docs/relay/CONCEPT.md`); real-time co-editing with your own database | `2026-11-13-drive-collaboration-without-server-data.md`, `2026-11-13-own-database.md` | superseded (Drive part implemented) |
+| 1 | ~~Live sync for everyone~~ | Superseded: on Drive, one editor at a time with a memory-only relay (live view for everyone else; implemented, `docs/relay/CONCEPT.md`); real-time co-editing with your own database | `2026-11-13-drive-collaboration-without-server-data.md`, `2026-11-13-own-database.md` | superseded (Drive part implemented; own database: step 1, the scene homes interface, done: `docs/homes/CONCEPT.md`) |
 | 2 | Thumbnails in Google Drive | Drive and the picker show scenes as an empty checkerboard | `2026-11-13-drive-thumbnails.md` | implemented (real Drive not yet checked) |
 | 3 | Scene text searchable in Google Drive | Drive's search finds a scene by its words, not only its name | `2026-11-13-drive-search-text.md` | implemented (real Drive search not yet checked) |
-| 4 | Email notifications for comments | Without them comments go unnoticed; redesigned without any storage on our side (no digests) | `2026-11-13-comment-notifications.md` | proposal |
+| 4 | Email notifications for comments | Without them comments go unnoticed; redesigned without any storage on our side (no digests) | `2026-11-13-comment-notifications.md` | postponed (2026-11-13) |
 
 ## Should have
 

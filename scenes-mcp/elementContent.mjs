@@ -6,26 +6,34 @@
 
 const VOLATILE = new Set(["version", "versionNonce", "updated", "seed", "index"]);
 
-/** comparable content: no version stamps, no empty fields (null / [] / missing), sorted keys, rounded numbers */
-const normalize = (value) => {
+const byCodeUnits = (a, b) => {
+  if (a < b) {
+    return -1;
+  }
+  return a > b ? 1 : 0;
+};
+
+/**
+ * Comparable content: no empty fields (null / [] / missing), sorted keys,
+ * rounded numbers, without the `volatile` keys (by default the version
+ * stamps and the z-order). The one canonical form of elements: the app's
+ * merge, the MCP's userChanges, the agent edit checks (editConflicts.mjs)
+ * and the agent edit diff (scenes-plugin/src/editDiff.ts, with its own keys).
+ */
+export const normalize = (value, volatile = VOLATILE) => {
   if (typeof value === "number") {
     return Math.round(value * 100) / 100;
   }
   if (Array.isArray(value)) {
-    return value.map(normalize);
+    return value.map((item) => normalize(item, volatile));
   }
   if (value && typeof value === "object") {
     const out = {};
-    for (const key of Object.keys(value).sort((a, b) => {
-      if (a < b) {
-        return -1;
-      }
-      return a > b ? 1 : 0;
-    })) {
+    for (const key of Object.keys(value).sort(byCodeUnits)) {
       const field = value[key];
       const empty = field === null || field === undefined || (Array.isArray(field) && !field.length);
-      if (!VOLATILE.has(key) && !empty) {
-        out[key] = normalize(field);
+      if (!volatile.has(key) && !empty) {
+        out[key] = normalize(field, volatile);
       }
     }
     return out;

@@ -2,6 +2,8 @@
 // differ (stamped above the scene's own), deletions, and clashes with what the
 // user changed meanwhile (cowork.ts keepUserChanges). Pure, no editor APIs.
 
+import { normalize as normalizeContent } from "../../scenes-mcp/elementContent.mjs";
+
 type El = { id: string; version: number; versionNonce: number; [key: string]: any };
 
 /**
@@ -12,7 +14,8 @@ const VOLATILE = new Set(["version", "versionNonce", "updated", "seed", "status"
 
 const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
-const randomNonce = () => Math.floor(Math.random() * 2 ** 31); // NOSONAR S2245: not security relevant (Excalidraw's versionNonce)
+/** a new versionNonce for an element written anew */
+export const randomNonce = () => Math.floor(Math.random() * 2 ** 31); // NOSONAR S2245: not security relevant (Excalidraw's versionNonce)
 
 const alive = (el: El | undefined) => (el && !el.isDeleted ? el : undefined);
 
@@ -132,33 +135,8 @@ export const editDifference = (current: readonly El[], next: readonly El[], base
 // -----------------------------------------------------------------------------
 
 /** the default sort order: by UTF-16 code units */
-const byCodeUnits = (a: string, b: string) => {
-  if (a < b) {
-    return -1;
-  }
-  return a > b ? 1 : 0;
-};
-
-const normalize = (value: unknown): unknown => {
-  if (typeof value === "number") {
-    return Math.round(value * 100) / 100;
-  }
-  if (Array.isArray(value)) {
-    return value.map(normalize);
-  }
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort(byCodeUnits)) {
-      const field = (value as Record<string, unknown>)[key];
-      const empty = field === null || field === undefined || (Array.isArray(field) && !field.length);
-      if (!VOLATILE.has(key) && !empty) {
-        out[key] = normalize(field);
-      }
-    }
-    return out;
-  }
-  return value;
-};
+/** comparable content without this file's volatile keys (one canonical form: elementContent.mjs) */
+const normalize = (value: unknown) => normalizeContent(value, VOLATILE);
 
 /**
  * Same content, z-order (index) included, never decided by the stamps: a

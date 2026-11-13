@@ -34,7 +34,7 @@ export const PUBLIC_SCENES: Record<string, { title: string; copyName: string }> 
   ? { features: { title: "What Kurviq adds to Excalidraw", copyName: "Kurviq features" } }
   : {};
 
-export const isPublicScene = (name: string | null): name is string => !!name && name in PUBLIC_SCENES;
+export const isPublicScene = (name: string | null): name is string => !!name && Object.hasOwn(PUBLIC_SCENES, name);
 
 // -----------------------------------------------------------------------------
 // open / close (the router follows: URL /<name> while open)
@@ -117,7 +117,7 @@ type Access = { version: string | null; public?: boolean; canEdit?: boolean; can
  * someone else's in a space of its own (the page reloads into it)
  */
 const editShared = async (fileId: string, name: string) => {
-  const own = scenesController.getState().remote?.find((scene) => scene.fileId === fileId);
+  const own = scenesController.getState().remote?.find((scene) => scene.id === fileId);
   publicScene.close();
   if (own && !sharedFileId) {
     await scenesController.open(own.name);

@@ -18,7 +18,7 @@ type Bounds = readonly [number, number, number, number];
 type Offsets = { top: number; right: number; bottom: number; left: number };
 
 /** the shared-scene viewer starts zoomed out at most this far (Excalidraw's own floor is 10 %) */
-export const MIN_FIT_ZOOM = 0.01;
+const MIN_FIT_ZOOM = 0.01;
 const MAX_FIT_ZOOM = 30;
 
 /**

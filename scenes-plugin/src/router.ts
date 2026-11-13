@@ -131,33 +131,13 @@ export const openPublicScene = (name: string) => {
 
 /**
  * Until 22 Oct 2026 a visit to /features put a local-only copy "features"
- * into the visitor's scenes. It goes again if the visitor didn't change it.
+ * into the visitor's scenes, noted under this key. The copies stay (the
+ * visitor may have changed them, and a hash over some of their content
+ * can't tell); only the note goes. Remove after 31 Jan 2027.
  */
-const removeOldPublicCopies = async () => {
-  const KEY = "kurviq-public-scenes";
-  let seeded: Record<string, { content: string }> = {};
+const forgetOldPublicCopies = () => {
   try {
-    seeded = JSON.parse(localStorage.getItem(KEY) || "{}");
-  } catch {}
-  for (const [name, { content }] of Object.entries(seeded)) {
-    if (!scenesController.isLocalOnly(name)) {
-      continue;
-    }
-    const json = await scenesController.localOnlyJson(name); // NOSONAR S9382: in order on purpose (polling and scene removal must finish before proceeding)
-    const elements = (JSON.parse(json).elements ?? [])
-      .filter((el: any) => !el.isDeleted)
-      .map((el: any) => [el.id, Math.round(el.x), Math.round(el.y), Math.round(el.width), Math.round(el.height), el.text ?? ""]);
-    let h = 2166136261;
-    const text = JSON.stringify(elements);
-    for (let i = 0; i < text.length; i++) {
-      h = Math.imul(h ^ text.charCodeAt(i), 16777619); // NOSONAR S7758: this stored content hash uses UTF-16 code units
-    }
-    if ((h >>> 0).toString(36) === content) {
-      await scenesController.remove(name); // NOSONAR S9382: in order on purpose (polling and scene removal must finish before proceeding)
-    }
-  }
-  try {
-    localStorage.removeItem(KEY);
+    localStorage.removeItem("kurviq-public-scenes");
   } catch {}
 };
 
@@ -264,7 +244,7 @@ export const connectRouter = async () => {
   }
 
   await scenesController.ready;
-  await removeOldPublicCopies().catch((error) => console.error("[scenes] removing old public copies", error));
+  forgetOldPublicCopies();
 
   if (target !== null && !isPublicScene(target)) {
     await navigateTo(target);
@@ -290,14 +270,15 @@ export const connectRouter = async () => {
 
   let lastCurrent = scenesController.getState().current;
   scenesController.subscribe(() => {
-    const { current, busy } = scenesController.getState();
+    const { current, busy, urlMode } = scenesController.getState();
     if (busy === "loading" || current === lastCurrent) {
       return;
     }
     lastCurrent = current;
     // another scene: the slide number was the last one's
     setSlideParam(null);
-    syncUrl("push");
+    // a rename or a delete replaces the URL: Back must not lead to a name that is gone (it would create it anew)
+    syncUrl(urlMode);
   });
 
   window.addEventListener("popstate", async () => {

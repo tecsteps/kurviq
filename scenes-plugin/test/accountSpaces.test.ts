@@ -207,6 +207,25 @@ describe("moveSpaceData", () => {
     expect(await idb.get("checkpoint-index", agent("a:b@example.com"))).toEqual({ "checkpoint:b": 2, "checkpoint:g": 1 });
   });
 
+  it("a target scene list the browser refuses to store keeps the source (B38)", async () => {
+    data.set(metaKey(""), JSON.stringify(meta({ plan: { baseMd5: MD5, dirty: false } }, "plan")));
+    await idb.set("plan", { json: "{plan}", baseline: 1, dirty: false }, snapshots(""));
+    const setItem = localStorage.setItem;
+    localStorage.setItem = (key: string, value: string) => {
+      if (key === metaKey("a:a@example.com")) {
+        throw new Error("QuotaExceededError");
+      }
+      setItem(key, value);
+    };
+    try {
+      await expect(storage.moveSpaceData("", "a:a@example.com", true)).rejects.toThrow("QuotaExceededError");
+    } finally {
+      localStorage.setItem = setItem;
+    }
+    expect(JSON.parse(data.get(metaKey(""))!).scenes.plan).toEqual({ baseMd5: MD5, dirty: false });
+    expect(await idb.get("plan", snapshots(""))).toEqual({ json: "{plan}", baseline: 1, dirty: false });
+  });
+
   it("does nothing when the source space has no scenes", async () => {
     await storage.moveSpaceData("a:a@example.com", "a:b@example.com", false);
     expect(data.size).toBe(0);

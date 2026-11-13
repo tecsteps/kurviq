@@ -1,6 +1,6 @@
 import { serializeAsJSON as serialize } from "@excalidraw/excalidraw";
 
-export { presentationOf, editedPresentation, presentationEdit, presentationChange, restorePresentation } from "../../scenes-mcp/presentation.mjs";
+export { presentationOf, presentationEdit, presentationChange, restorePresentation } from "../../scenes-mcp/presentation.mjs";
 import { presentationOf } from "../../scenes-mcp/presentation.mjs";
 
 /** Excalidraw filters unknown app state fields during serialization. */

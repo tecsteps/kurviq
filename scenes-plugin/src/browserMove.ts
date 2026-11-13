@@ -11,10 +11,9 @@
 
 import type { ScenesMeta, Snapshot } from "./storage";
 
-import { mergeSpaceMeta } from "./spaces";
+import { mergeSpaceMeta, UNTITLED } from "./spaces";
 
 export const MOVE_FORMAT = "kurviq-browser-scenes";
-const UNTITLED = "\u0000untitled";
 const META_PREFIX = "excalidraw-scenes";
 const FONTS = { db: "kurviq-fonts", store: "fonts" };
 

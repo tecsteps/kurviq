@@ -14,7 +14,7 @@ const compiled = ts.transpileModule(`class Controller { ${methods} }; exports.Co
 const loaded = { exports: {} as Record<string, any> };
 let saved: any;
 const UNTITLED = "\u0000untitled";
-new Function("exports", "restorePresentation", "loadMeta", "saveMeta", "UNTITLED", "CaptureUpdateAction", "nextFrame", "LIVE_CAPABLE", "hashElementsVersion", "sceneHash", "getNonDeletedElements", "presentationSave", "presentationOf", "restoreAppState", "commentStore", "getSnapshot", compiled)(
+new Function("exports", "restorePresentation", "loadMeta", "saveMeta", "UNTITLED", "CaptureUpdateAction", "editorYield", "LIVE_CAPABLE", "hashElementsVersion", "sceneHash", "getNonDeletedElements", "presentationSave", "presentationOf", "restoreAppState", "commentStore", "getSnapshot", compiled)(
   loaded.exports, restorePresentation,
   () => structuredClone(saved), (meta: any) => { saved = structuredClone(meta); },
   UNTITLED, { NEVER: "never" }, async () => {}, false, () => 1, () => 2, (elements: any[]) => elements, presentationSave, presentationOf, (app: any) => app,

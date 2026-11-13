@@ -29,6 +29,7 @@ import { installTitleTips } from "./titleTips";
 import { ICON_PATHS, PlaceSvg } from "./icons";
 import { QuickTip } from "./quickTip";
 import { ownSceneList } from "./storage";
+import { UNTITLED } from "./spaces";
 import type { HomeScene } from "./storage";
 import { GROUPS_KEY, folderGroup, isOpen, ownGroup, ownerDomain, readGroups, toggled } from "./sceneGroups";
 import type { GroupState } from "./sceneGroups";
@@ -38,7 +39,7 @@ import { PublicSceneOverlay } from "./publicScene";
 import { installWheelZoom } from "./wheelZoom";
 import { CommentsButton, CommentsLayer, SceneCommentCount } from "./comments/ui";
 import { useOpenThreadCounts } from "./comments/sceneCounts";
-import { pen } from "./online/pen";
+import { attachLiveSessions } from "./homes/live";
 import { PenBar } from "./online/penUI";
 import { otherFolderScenes } from "./online/driveNew";
 import type { OtherScene } from "./online/driveNewState";
@@ -75,7 +76,7 @@ import {
 } from "./online/ui";
 
 import type { Activity, SceneListItem, ScenesState, SyncStatus } from "./controller";
-import type { SceneVersion } from "./api";
+import type { HomeHistoryEntry } from "./homes/types";
 
 import "./scenes.scss";
 
@@ -159,7 +160,7 @@ const useAttachController = () => {
       scenesController.attach(api);
       connectLive();
       if (!IS_RENDERER) {
-        pen.attach(api);
+        attachLiveSessions(api);
         startDrive();
         deck.attach(api);
         connectRouter().catch((error) => console.error("[scenes] Routing could not be connected", error));
@@ -342,8 +343,7 @@ const ScenePlace = ({
   );
 };
 
-const isOffline = (state: ScenesState) =>
-  !state.sync.notConnected && (state.sync.serverReachable === false || state.sync.driveOnline === false);
+const isOffline = (state: ScenesState) => !state.sync.notConnected && state.sync.driveOnline === false;
 
 const StatusBadge = ({ status, compact }: { status: SyncStatus; compact?: boolean }) => {
   const info = STATUS[status];
@@ -757,7 +757,7 @@ const SceneSwitcher = ({
 
   const rowKey = (entry: Entry) => {
     if (entry.item) {
-      return `here\u0000${entry.item.name ?? "\u0000untitled"}`;
+      return `here\u0000${entry.item.name ?? UNTITLED}`;
     }
     return entry.home ? `home\u0000${entry.name}` : `shared\u0000${entry.fileId}`;
   };
@@ -938,10 +938,7 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
   const deletes = scenesController.pendingDeletes();
   let tone = "ok";
   let text: string;
-  if (sync.serverReachable === false) {
-    tone = "danger";
-    text = IS_ONLINE ? "Kurviq server not reachable: working locally" : "Scenes server not running: working locally";
-  } else if (sync.readOnly) {
+  if (sync.readOnly) {
     tone = "muted";
     text = `Read only: ${sync.readOnly}`;
   } else if (sync.driveOnline === false) {
@@ -1319,10 +1316,10 @@ const when = (iso: string | null, now: number) => {
 const SceneHistory = ({ item }: { item: SceneListItem }) => {
   const name = item.name!;
   const now = useNow(30000);
-  const [versions, setVersions] = useState<SceneVersion[] | null>(null);
+  const [versions, setVersions] = useState<HomeHistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ driveRevision: string; json?: string; url?: string; error?: string } | null>(null);
+  const [preview, setPreview] = useState<{ id: string; json?: string; url?: string; error?: string } | null>(null);
   const [restored, setRestored] = useState<string | null>(null);
   const [all, setAll] = useState(false);
 
@@ -1348,13 +1345,13 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
     [preview],
   );
 
-  const show = async (version: SceneVersion) => {
-    if (open === version.driveRevision) {
+  const show = async (version: HomeHistoryEntry) => {
+    if (open === version.id) {
       setOpen(null);
       return;
     }
-    setOpen(version.driveRevision);
-    setPreview({ driveRevision: version.driveRevision });
+    setOpen(version.id);
+    setPreview({ id: version.id });
     try {
       const json = await scenesController.loadVersion(name, version);
       const data = JSON.parse(json);
@@ -1366,13 +1363,13 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
         maxWidthOrHeight: 640,
         mimeType: "image/png",
       });
-      setPreview((prev) => (prev?.driveRevision === version.driveRevision ? { driveRevision: version.driveRevision, json, url: URL.createObjectURL(blob) } : prev));
+      setPreview((prev) => (prev?.id === version.id ? { id: version.id, json, url: URL.createObjectURL(blob) } : prev));
     } catch (err: any) {
-      setPreview((prev) => (prev?.driveRevision === version.driveRevision ? { driveRevision: version.driveRevision, error: err.message } : prev));
+      setPreview((prev) => (prev?.id === version.id ? { id: version.id, error: err.message } : prev));
     }
   };
 
-  const restore = (version: SceneVersion, json: string) => {
+  const restore = (version: HomeHistoryEntry, json: string) => {
     const date = version.at ? new Date(version.at).toLocaleString() : "this version";
     if (!window.confirm(`Restore “${name}” as of ${date}?\n\nThe canvas shows that version again; undo with ⌘Z. It is saved as a new version, so nothing in the history is lost.`)) {
       return;
@@ -1407,8 +1404,8 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
             return <div className="scenes-history__note">Loading…</div>;
           };
           return (
-            <li key={version.driveRevision} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.driveRevision })}>
-              <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.driveRevision}>
+            <li key={version.id} className={clsx("scenes-history__item", { "scenes-history__item--open": open === version.id })}>
+              <button type="button" className="scenes-history__row" onClick={() => show(version)} aria-expanded={open === version.id}>
                 <span className="scenes-history__label">
                   Change
                   {index === 0 && <span className="scenes-history__tag">latest</span>}
@@ -1419,7 +1416,7 @@ const SceneHistory = ({ item }: { item: SceneListItem }) => {
                   {version.author ? ` · ${version.author}` : ""}
                 </span>
               </button>
-              {open === version.driveRevision && (
+              {open === version.id && (
                 <div className="scenes-history__preview">
                   {historyPreview()}
                   {index > 0 && preview?.json && (
@@ -1649,7 +1646,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
             disabled={isBusy}
             onClick={() => {
               if (status === "behind" || window.confirm(`Discard your local changes to "${current}" and load the version from Drive?`)) {
-                scenesController.discardLocal(current).catch(ignore);
+                scenesController.takeTheirs(current).catch(ignore);
               }
             }}
           >

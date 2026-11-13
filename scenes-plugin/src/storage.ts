@@ -7,16 +7,18 @@
 //  - snapshots of inactive scenes in IndexedDB (incl. image files, which
 //    would quickly blow the localStorage quota)
 
-import { clear, createStore, del, delMany, get, keys, set } from "idb-keyval";
+import { clear, createStore, del, get, keys, set } from "idb-keyval";
 
-import { mergeSpaceMeta, OWN_SPACE_KEY, pickSpace, SPACE_KEY, spaceSuffix } from "./spaces";
+import { boundedStore } from "./boundedStore";
+
+import { mergeSpaceMeta, OWN_SPACE_KEY, pickSpace, SPACE_KEY, spaceSuffix, UNTITLED } from "./spaces";
 
 // Kurviq: each space keeps its own scenes in the browser (see ./spaces.ts):
 // "" the scenes made signed out, "a:<email>" an account's own scenes,
 // "f:<fileId>" a scene someone shared. Spaces of older versions (one per
 // repository, before Drive) are not opened any more; their data in the
 // browser is left as it is.
-export { SPACE_KEY, spaceSuffix };
+export { SPACE_KEY };
 export const currentSpace = (() => {
   try {
     const shared = localStorage.getItem(SPACE_KEY);
@@ -63,9 +65,6 @@ export const ownSceneList = (): HomeScene[] => {
 };
 const snapshotStore = snapshotStoreOf(currentSpace);
 
-/** key used for the scene that has not been named / saved yet */
-export const UNTITLED = "\u0000untitled";
-
 export type SceneMeta = {
   /** Immediate reload recovery for app state fields filtered by Excalidraw. */
   kurviqPresentation?: boolean;
@@ -90,8 +89,6 @@ export type SceneMeta = {
     /** merge algorithm that found it (older ones are re-checked) */
     v?: number;
   };
-  /** pre-sync-engine metadata, resolved on the first remote listing */
-  legacy?: boolean;
   /**
    * put in Drive by the user (no longer local only) and not there yet:
    * uploaded once even without local changes (a copy Drive has wins)
@@ -105,8 +102,6 @@ export type SceneMeta = {
   renamedFrom?: string;
   /** the retired live sync's mark (metadata of older versions; ignored) */
   live?: { fileId: string };
-  /** legacy field */
-  inRepo?: boolean;
 };
 
 export type ScenesMeta = {
@@ -179,20 +174,29 @@ export const migrateMeta = (meta: { scenes?: Record<string, unknown> }) => {
   return changed;
 };
 
+/**
+ * A record of names → values without a prototype: a scene named
+ * "constructor" or "toString" is just a name (no inherited property answers
+ * for it)
+ */
+const byName = <T>(entries: Record<string, T> | undefined | null): Record<string, T> =>
+  Object.assign(Object.create(null) as Record<string, T>, entries ?? {});
+
 export const loadMeta = (key = META_KEY): ScenesMeta => {
   const fallback: ScenesMeta = {
     current: null,
     baseline: null,
     autoSync: true,
-    scenes: {},
-    pendingDeletes: {},
+    scenes: byName<SceneMeta>({}),
+    pendingDeletes: byName<string>({}),
   };
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
-      const meta: ScenesMeta = { ...fallback, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      const meta: ScenesMeta = { ...fallback, ...parsed, scenes: byName(parsed.scenes), pendingDeletes: byName(parsed.pendingDeletes) };
       let dropped = false;
-      for (const [name, scene] of Object.entries(meta.scenes ?? {})) {
+      for (const [name, scene] of Object.entries(meta.scenes)) {
         if (!scene || typeof scene !== "object" || Array.isArray(scene)) {
           delete meta.scenes[name];
           dropped = true;
@@ -203,10 +207,7 @@ export const loadMeta = (key = META_KEY): ScenesMeta => {
         saveMeta(meta, key);
       }
       for (const scene of Object.values(meta.scenes)) {
-        if (scene.baseMd5 === undefined) {
-          scene.baseMd5 = null;
-          scene.legacy = true;
-        }
+        scene.baseMd5 ??= null; // (records of the first versions had none)
       }
       return meta;
     }
@@ -216,12 +217,18 @@ export const loadMeta = (key = META_KEY): ScenesMeta => {
   return fallback;
 };
 
+/** store the scene metadata (a full storage: logged, the tab keeps working with what it has) */
 export const saveMeta = (meta: ScenesMeta, key = META_KEY) => {
   try {
-    localStorage.setItem(key, JSON.stringify(meta));
+    writeMeta(meta, key);
   } catch (error) {
     console.error(error);
   }
+};
+
+/** store the scene metadata; throws if the browser refuses (e.g. its storage is full) */
+const writeMeta = (meta: ScenesMeta, key: string) => {
+  localStorage.setItem(key, JSON.stringify(meta));
 };
 
 const snapshotKey = (name: string | null) => name ?? UNTITLED;
@@ -276,34 +283,25 @@ const CHECKPOINT_INDEX = "checkpoint-index";
 export const getCheckpoint = (id: string) =>
   get<{ at: number; data: unknown }>(checkpointKey(id), agentStore).then((entry) => entry?.data ?? null);
 
-/** checkpoints written one at a time in this tab (the index is read and written whole) */
-let checkpointWrites: Promise<unknown> = Promise.resolve();
+/** checkpoints written one at a time in this tab, the oldest dropped (see ./boundedStore.ts) */
+const checkpoints = boundedStore(agentStore, {
+  indexKey: CHECKPOINT_INDEX,
+  max: MAX_CHECKPOINTS,
+  isEntry: (key) => key.startsWith("checkpoint:"),
+  // a live scene's revisions: at most MAX_LIVE_REVISIONS of one scene
+  alsoDrop: (key, byAge) => {
+    const live = /^checkpoint:live-rev:([^:]+):/.exec(key);
+    if (!live) {
+      return [];
+    }
+    const own = byAge.filter((k) => k.startsWith(`checkpoint:live-rev:${live[1]}:`));
+    return own.slice(0, Math.max(0, own.length - MAX_LIVE_REVISIONS));
+  },
+});
 
 export const setCheckpoint = (id: string, data: unknown) => {
-  const write = checkpointWrites.then(async () => {
-    const key = checkpointKey(id);
-    const at = Date.now();
-    await set(key, { at, data }, agentStore);
-    // before the index existed: the stored ones, as the oldest
-    const index =
-      (await get<Record<string, number>>(CHECKPOINT_INDEX, agentStore)) ??
-      Object.fromEntries((await keys(agentStore)).filter((k) => String(k).startsWith("checkpoint:")).map((k) => [String(k), 0]));
-    index[key] = at;
-    const byAge = Object.entries(index).sort((a, b) => a[1] - b[1]);
-    const drop = new Set(byAge.slice(0, Math.max(0, byAge.length - MAX_CHECKPOINTS)).map(([k]) => k));
-    const live = /^checkpoint:live-rev:([^:]+):/.exec(key);
-    if (live) {
-      const own = byAge.filter(([k]) => k.startsWith(`checkpoint:live-rev:${live[1]}:`));
-      own.slice(0, Math.max(0, own.length - MAX_LIVE_REVISIONS)).forEach(([k]) => drop.add(k));
-    }
-    drop.forEach((k) => delete index[k]);
-    if (drop.size) {
-      await delMany([...drop], agentStore);
-    }
-    await set(CHECKPOINT_INDEX, index, agentStore);
-  });
-  checkpointWrites = write.catch(() => {});
-  return write;
+  const at = Date.now();
+  return checkpoints.put(checkpointKey(id), { at, data }, at);
 };
 
 // -----------------------------------------------------------------------------
@@ -373,7 +371,8 @@ export const moveSpaceData = async (from: string, to: string, keepSync: boolean)
     await moveAgentEntry(key, renames, fromAgent, toAgent); // NOSONAR S9382: one at a time on purpose (a checkpoint can be many MB)
   }
 
-  saveMeta(meta, toKey);
+  // the source is cleared only once the target's scene list is stored (a full storage throws here)
+  writeMeta(meta, toKey);
   localStorage.removeItem(fromKey);
   await clear(fromSnapshots);
   await clear(fromAgent);

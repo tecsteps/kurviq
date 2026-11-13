@@ -32,8 +32,7 @@ import { applyCommentOps, authorKey, mergeComments, withComments } from "../../s
 import { conflictList, resolveConflicts } from "../../scenes-mcp/editConflicts.mjs";
 import { isPlainObject } from "../../scenes-mcp/agentEdits.mjs";
 import type { CommentOp, SceneComment } from "../../scenes-mcp/sceneComments.mjs";
-import { scenesApi } from "./api";
-import { connection } from "./online/drive";
+import { connection, driveScenes } from "./online/drive";
 import { commentStore } from "./comments/store";
 import { applyMarkdownUpdate } from "./richText/agent";
 import { applyFormat } from "./richText/format";
@@ -1050,14 +1049,14 @@ export const editSceneOnDrive = async (
   convert: (elements: any[]) => Promise<any[]>,
 ) => {
   for (let attempt = 1; ; attempt++) {
-    const latest = await scenesApi.load(command.name);
+    const latest = await driveScenes.load(command.name);
     const data = JSON.parse(latest.json);
     const result = await editSceneData(command, data, data.elements ?? [], convert);
     const { elements } = result;
     const commented = await agentComments(command, data.kurviqComments, elements);
     const json = sceneFileJson(command, data, elements, result.files, commented.comments);
     try {
-      const saved = await scenesApi.save(command.name, json, latest.md5, "agent");
+      const saved = await driveScenes.save(command.name, json, latest.md5, "agent");
       return { ...result.edit, ...result.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(saved.md5, saved.driveRevision), changed: saved.changed };
     } catch (error) {
       if ((error as ApiError).status !== 409 || attempt >= 3) {

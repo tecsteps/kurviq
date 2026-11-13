@@ -38,3 +38,17 @@ export const cutBytes = (text: string, max: number) => {
 /** the author's name as shown (a public property: anyone with edit access may write anything there) */
 export const cleanByline = (value: unknown) =>
   cutBytes((typeof value === "string" ? value : "").replaceAll(/[\u0000-\u001f\u007f]/g, "").trim(), BYLINE_MAX_BYTES);
+
+/** a scene moved to another home leaves "<home> <link>" in this app property of its old file */
+export const MOVED_PROPERTY = "kurviqMoved";
+/** the note's value, or null if it doesn't fit */
+export const movedNote = (home: string, link: string) => {
+  const value = `${home} ${link}`;
+  return new TextEncoder().encode(MOVED_PROPERTY + value).length <= 124 ? value : null; // (Drive's limit, as for the byline)
+};
+
+/** the note read back: where the scene went (null: none, or not a note) */
+export const parseMovedNote = (value: string | null | undefined): { home: string; link: string } | null => {
+  const match = /^(browser|drive|database) (https?:\/\/\S+)$/.exec(value ?? "");
+  return match ? { home: match[1], link: match[2] } : null;
+};

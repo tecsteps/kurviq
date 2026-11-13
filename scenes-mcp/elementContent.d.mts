@@ -3,3 +3,4 @@ type Stamped = { version: number; versionNonce: number; [key: string]: any };
 export declare const sameContent: (a: Stamped | undefined, b: Stamped | undefined) => boolean;
 export declare const changedFields: (a: Stamped, b: Stamped) => string[];
 export declare const comparable: (value: unknown) => unknown;
+export declare const normalize: (value: unknown, volatile?: ReadonlySet<string>) => unknown;

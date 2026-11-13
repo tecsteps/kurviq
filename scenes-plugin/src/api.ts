@@ -1,9 +1,8 @@
-// Client for the scenes backend: Google Drive, called from the browser
-// (./online/drive.ts), in both builds. The local install also talks to its
-// scenes server (../../scenes-server), which relays agent commands to this
-// tab; online that is the pairing WebSocket (live.ts).
-
-import { driveScenes } from "./online/drive";
+// Shared types and settings of the scenes client. Scenes are read and written
+// through their homes (./homes: Google Drive in both builds, via
+// ./online/drive.ts). The local install also talks to its scenes server
+// (../../scenes-server), which relays agent commands to this tab
+// (agentRelay); online that is the pairing WebSocket (live.ts).
 
 export type RemoteScene = {
   name: string;
@@ -60,72 +59,22 @@ export type ApiError = Error & {
   readOnly?: boolean;
 };
 
-const request = async (path: string, init?: RequestInit) => {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE_URL}${path}`, init);
-  } catch {
-    const error = new Error(`Scenes server not reachable at ${BASE_URL}`);
-    Object.assign(error, { status: 0, offline: true });
-    throw error;
-  }
-  if (!res.ok) {
-    let body: any = {};
-    try {
-      body = await res.json();
-    } catch {}
-    const error = new Error(body.error || `${res.status} ${res.statusText}`);
-    Object.assign(error, {
-      status: res.status,
-      offline: res.status === 503 || !!body.offline,
-      remoteMd5: body.remoteMd5,
-      exists: !!body.exists,
-    });
-    throw error;
-  }
-  return res;
-};
+/** a POST to the local scenes server; nobody waits for the answer (the server may not run) */
+const post = (path: string, body: unknown) =>
+  fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(
+    () => {},
+    () => {},
+  );
 
-/** this tab's state and its answers to agent commands, for the local scenes server */
-const localRelay = {
-  reportState: (state: {
-    current: string | null;
-    dirty: boolean;
-    visible: boolean;
-    focusedAt: number;
-  }) =>
-    request("/api/app/state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...state, tab: TAB_ID }),
-    }).catch(() => {}),
-  sendResult: (
-    id: string,
-    payload: { ok: boolean; result?: unknown; error?: string },
-  ) =>
-    request(`/api/app/result/${id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(() => {}),
-};
-
-export const scenesApi = {
-  list: driveScenes.list,
-  /** latest version, or a specific one (its MD5) */
-  load: driveScenes.load,
-  /**
-   * Save to Drive. baseMd5 = the version this content is based on ("none"
-   * for a new scene); 409 if Drive has something else.
-   */
-  save: (name: string, json: string, baseMd5: string, source = `app:${TAB_ID}`) => driveScenes.save(name, json, baseMd5, source),
-  /** delete in Drive; baseMd5: only if Drive still has that version (else 409) */
-  remove: driveScenes.remove,
-  /** rename in Drive (content unchanged, so the version stays) */
-  rename: driveScenes.rename,
-  /** the scene's versions, newest first */
-  history: driveScenes.history,
-  /** the scene as it was in one of those versions */
-  loadVersion: (name: string, version: SceneVersion) => driveScenes.loadAt(name, version.driveRevision),
-  ...(IS_ONLINE ? { reportState: async () => {}, sendResult: async () => {} } : localRelay),
-};
+/** this tab's state and its answers to agent commands, for the local scenes server (nothing online) */
+export const agentRelay = IS_ONLINE
+  ? { reportState: async () => {}, sendResult: async () => {} }
+  : {
+      reportState: (state: { current: string | null; dirty: boolean; visible: boolean; focusedAt: number }) =>
+        post("/api/app/state", { ...state, tab: TAB_ID }),
+      sendResult: (id: string, payload: { ok: boolean; result?: unknown; error?: string }) => post(`/api/app/result/${id}`, payload),
+    };
