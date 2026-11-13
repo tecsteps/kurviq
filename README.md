@@ -71,7 +71,9 @@ install:
   the account signed in to Kurviq (`authuser`), with Drive's Share button at
   the top right (Drive has no link that opens its share dialog directly): add people there, and Google sends its normal
   invitation. (Google's in-page share dialog, ShareClient, was dropped: it runs
-  as the browser's first Google account and hangs when that is another one.) Kurviq doesn't invite people
+  as the browser's first Google account and hangs when that is another one;
+  choosing the account with gapi's undocumented `sessionIndex` doesn't help,
+  tested 2026-11-13.) Kurviq doesn't invite people
   through the Drive API: those invitations landed in the recipient's Drive
   spam, even after Google's brand verification. Kurviq's dialog lists who has
   access (refreshed while Google's dialog is open), changes or removes it,

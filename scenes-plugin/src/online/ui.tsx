@@ -26,7 +26,6 @@ import {
   connection,
   disconnectGoogle,
   driveWebLink,
-  tryDriveShareDialog,
   enterSpace,
   folderSharingOf,
   getByline,
@@ -640,25 +639,6 @@ export const openShareDialog = (name: string) => {
   sharingListeners.forEach((listener) => listener());
 };
 const closeShareDialog = () => openShareDialog(null as unknown as string);
-
-if (typeof window !== "undefined") {
-  /**
-   * Try Google's in-page share dialog for the open scene (browser console):
-   * kurviqTestShareDialog() as Kurviq's account (gapi sessionIndex = its
-   * address), kurviqTestShareDialog(null) without, or with an index (0, 1 …)
-   * or another address. See tryDriveShareDialog in drive.ts.
-   */
-  (window as any).kurviqTestShareDialog = async (account: string | number | null = connection.getState().user?.email ?? null) => {
-    const name = scenesController.getState().current;
-    if (!name) {
-      throw new Error("open a scene first");
-    }
-    const fileId = await scenesController.fileForSharing(name);
-    const result = await tryDriveShareDialog(fileId, account);
-    console.info("[kurviq] Google's share dialog", { scene: name, ...result });
-    return result;
-  };
-}
 
 if (import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE) {
   // end-to-end tests (dev, and builds for the fake Google): the share dialog without the menus
