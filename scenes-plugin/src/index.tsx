@@ -389,28 +389,41 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
   const offline = isOffline(state);
   const [panel, setPanel] = useState<null | "switch" | "scene" | "drive">(null);
   const open = panel === "switch";
+  const toggleSwitcher = () => setPanel((value) => (value ? null : "switch"));
 
   return (
     <div className="scenes-switcher">
-      <button
-        type="button"
-        className={clsx("scenes-pill", { "scenes-pill--mobile": isMobile, "scenes-pill--open": open })}
-        title={`${STATUS[status].label}${offline ? " · offline" : ""}. Switch scene`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setPanel((value) => (value ? null : "switch"))}
-      >
-        <span className="scenes-pill__icon">{LoadIcon}</span>
-        <span className="scenes-pill__name">{current ?? state.opening ?? UNTITLED_LABEL}</span>
-        {currentItem && <ScenePlace item={currentItem} />}
+      {/* the pill: its name (and caret) opens the scene list; the pen, cloud and lock are the scene's own actions */}
+      <div className={clsx("scenes-pill scenes-pill--split", { "scenes-pill--mobile": isMobile, "scenes-pill--open": open })}>
+        <button
+          type="button"
+          className="scenes-pill__open"
+          title={`${STATUS[status].label}${offline ? " · offline" : ""}. Switch scene`}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={toggleSwitcher}
+        >
+          <span className="scenes-pill__icon">{LoadIcon}</span>
+          <span className="scenes-pill__name">{current ?? state.opening ?? UNTITLED_LABEL}</span>
+        </button>
+        {currentItem && current !== null && (
+          <QuickTip tip="Manage this scene: save, rename, share, history" className="scenes-pill__pen" label={false}>
+            <button type="button" className="scenes-switcher__pen" aria-label={`Manage “${current}”`} onClick={() => setPanel((value) => (value === "scene" ? null : "scene"))}>
+              {ManagePenIcon}
+            </button>
+          </QuickTip>
+        )}
+        {currentItem && <ScenePlace item={currentItem} actions />}
         {pillStatus()}
         {offline && (
           <QuickTip tip="Offline: you keep working here, it syncs once you are back online" className="scenes-pill__offline" label={false}>
             offline
           </QuickTip>
         )}
-        <span className="scenes-pill__caret" aria-hidden>▾</span>
-      </button>
+        <button type="button" className="scenes-pill__open scenes-pill__caret" tabIndex={-1} aria-hidden onClick={toggleSwitcher}>
+          ▾
+        </button>
+      </div>
       {panel === "switch" && (
         <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onDrive={() => setPanel("drive")} />
       )}
@@ -420,6 +433,14 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
     </div>
   );
 };
+
+/** the pen that opens a scene's panel (save, rename, share, history): in the scene list and the pill */
+const ManagePenIcon = (
+  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M13.5 3.5l3 3L7 16H4v-3z" />
+    <path d="M11.5 5.5l3 3" />
+  </svg>
+);
 
 /** phones have no top-right Slides / Present buttons: the slides sidebar opens from here */
 const MobileSlidesButton = () => {
@@ -758,10 +779,7 @@ const SceneSwitcher = ({
               aria-label={`Manage “${nameOf(entry) ?? UNTITLED_LABEL}”`}
               onClick={() => manage(item.name)}
             >
-              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M13.5 3.5l3 3L7 16H4v-3z" />
-                <path d="M11.5 5.5l3 3" />
-              </svg>
+              {ManagePenIcon}
             </button>
           </QuickTip>
         )}
