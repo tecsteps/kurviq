@@ -39,3 +39,14 @@ in Kurviq's own picker dialogs.
 - Does Drive show `contentHints.thumbnail` for a custom MIME type
   (`application/vnd.excalidraw+json`) in every view (grid, picker, search)?
   Test with one file first.
+
+## Acceptance criteria
+
+1. Saving a scene to Drive (edit, wait for the save) sets the file's thumbnail: Drive's file metadata
+   (`thumbnailLink` / the fake's stored `contentHints.thumbnail`) is a PNG about 400 px wide showing the scene.
+2. A deck's thumbnail shows its first slide; an empty scene gets no thumbnail (no error).
+3. After the next edit and save, the thumbnail shows the new state (not an old one).
+4. An agent's `edit_scene` on a Drive scene updates the thumbnail too.
+5. A scene with a 10 MB picture still saves; the thumbnail stays below 2 MB.
+6. Local-only scenes never call Drive for a thumbnail.
+7. Nothing about the thumbnail is sent to Kurviq's server (network: only Google's endpoints).

@@ -160,7 +160,8 @@ const useAttachController = () => {
       }
       // unmounted (e.g. a crash while rendering; the editor then hands out
       // null or a destroyed API): nothing may be synced from it any more
-      return () => scenesController.editorGone();
+      // (release: only when nothing attached again, see the controller)
+      return () => scenesController.release(api);
     }
   }, [api]);
   return api;

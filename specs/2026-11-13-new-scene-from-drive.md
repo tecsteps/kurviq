@@ -31,3 +31,11 @@ is already in Drive's "Open with" menu (`drive.install`).
 
 - Does Google require the Drive UI integration's "new" entry to be re-reviewed
   for the OAuth app (brand verification exists)?
+
+## Acceptance criteria
+
+1. In Google Drive, New → More → Kurviq creates a scene in the folder where it was clicked, asks for its name and
+   opens it in Kurviq, signed in as that account.
+2. Signed in to Kurviq as another account: Kurviq says which account to sign in with; nothing is created.
+3. The new scene is listed in Kurviq's scene list (group "Other folders") and opens from there after a reload.
+4. Kurviq's server keeps nothing of the request (the state is only passed to the app).

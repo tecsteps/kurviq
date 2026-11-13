@@ -28,3 +28,10 @@ ends without anyone having to remember.
 
 - Does Drive accept `expirationTime` on `drive.file` files for all account
   types (consumer and Workspace)?
+
+## Acceptance criteria
+
+1. In the share panel, a viewer's or commenter's row offers "Access until…"; setting a date shows "until <date>"
+   and Drive's permission has that `expirationTime`.
+2. "No end date" removes it. Editors' rows don't offer it.
+3. After the date (fake Google: an expired permission) the person can no longer open the scene.

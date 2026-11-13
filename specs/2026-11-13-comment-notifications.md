@@ -62,3 +62,16 @@ own SMTP. Digests and settings are possible there (it is their data).
 
 - Which mail service (EU region, price, suppression handling)?
 - Are Google's own comment mails good enough for commenters' comments?
+
+## Acceptance criteria
+
+1. Mentioning a person (`@Name`, picked from the suggestions) sends that person one mail
+   "<Name> mentioned you in '<Scene>'" with a link that opens the scene with the thread open.
+2. A new thread mails the scene's owner (not the author themself); a reply mails the thread's other participants
+   once; the same thread mails nobody twice within 10 minutes.
+3. The mail contains no comment text.
+4. `POST /api/notify` refuses: without sign-in (401), without access to the file (403), with permission ids that
+   aren't the file's (they are ignored), and it never writes D1 or Durable Object storage (code review + a test).
+5. An unsubscribe link stops further mails to that address (the mail service's suppression), nothing stored by
+   Kurviq.
+6. For a scene in the user's own database, the database sends the mail (no call to Kurviq's server).

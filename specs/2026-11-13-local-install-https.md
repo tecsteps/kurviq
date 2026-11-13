@@ -29,3 +29,12 @@ exists for author keys).
 
 - On https://draw.test: `crypto.subtle` exists, the relay connects.
 - The move carries every local-only scene (elements, images, fonts, comments).
+
+## Acceptance criteria
+
+1. `npm run setup:domain` serves the local install at `https://draw.test`; `crypto.subtle` exists there; sign-in
+   with Google works from it.
+2. "Move my browser scenes" on http://draw.test exports every local-only scene (elements, pictures, fonts,
+   comments) as one file; importing it on https://draw.test shows the same scenes, unchanged.
+3. The relay (live view, pen) works on https://draw.test.
+4. README describes the setup and the move.

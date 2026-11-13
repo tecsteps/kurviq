@@ -26,3 +26,13 @@ Drive's own dialog offers it; Kurviq's share panel doesn't.
   gmail.com.
 - With the fake Google: a colleague of the domain opens the link, someone
   outside can't.
+
+## Acceptance criteria
+
+1. For a Workspace account (e.g. @tecsteps.com) General access offers "Anyone at tecsteps.com with the link can
+   view / comment / edit"; for @gmail.com accounts the option is absent.
+2. Choosing it creates a `domain` permission with that role and `allowFileDiscovery: false`; the panel shows it
+   after reopening.
+3. A signed-in person of the domain opens the scene link (after the picker grant once) with that role; a person
+   outside the domain can't.
+4. Switching back to "Only people added here" removes the domain permission.

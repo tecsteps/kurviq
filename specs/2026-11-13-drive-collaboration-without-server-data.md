@@ -172,3 +172,54 @@ account (an id and a time, no data), which stays (decided).
 - Does picking a folder in Google's picker grant `drive.file` access to the
   files inside it?
 - Does an `appProperties` update change the file's `modifiedTime`?
+
+## Acceptance criteria
+
+**No customer data or tokens on our servers**
+1. After the migration, every scene Durable Object's storage is empty (`storage.list()` returns nothing), and no
+   code path writes scene content, comments or Google tokens to Durable Object storage, D1 or KV (code review of
+   `online/worker`: only short links, sign-out-everywhere records, statistics counters, feedback and contact
+   messages are written).
+2. The relay Durable Object makes no storage calls and doesn't use WebSocket hibernation attachments (grep and a
+   test of its class).
+3. `TOKEN_KEY` and `PSEUDONYM_KEY` are no longer read by the Worker; the shared-folder tables hold no tokens (the
+   folder registration and its tables are gone or empty).
+4. The public viewer loads a public scene from Drive in the browser; `/api/public/<id>` doesn't serve scene
+   content any more (it may answer name/version metadata for link previews, uncached content never).
+
+**One editor at a time (the pen)**
+5. The first person opening a scene with edit rights can edit; a second editor who opens it sees it read-only
+   with "<Name> is editing · Ask to edit", and sees the editor's changes within about a second.
+6. "Ask to edit" shows the holder "<Name> asks to edit · Hand over / Keep"; "Hand over" saves the holder's
+   changes to Drive first, then the asker can edit and the former holder is read-only.
+7. "Take over" is offered when the holder has been idle for 5 minutes or is disconnected, and works.
+8. Two people clicking "Edit" at the same moment: exactly one gets the pen (relay decides).
+9. Closing the holder's tab frees the pen within 2 minutes (or at once when the relay notices the close).
+10. Only the holder's browser saves to Drive; the saved file contains the holder's changes; viewers never write.
+11. A newcomer while the holder has unsaved changes sees them (catch-up through the relay).
+12. Pointers: the holder's pointer is visible to viewers (name, color).
+13. Relay unreachable: the Drive mark (`appProperties.kurviqPen`) decides; a fresh mark makes the scene read-only
+    for others, a stale one (2 minutes) lets the next person edit.
+14. Agents edit only through the pen holder's tab; an agent of a viewer is told who is editing.
+
+**Offline and merges**
+15. Edits made offline merge into Drive when back (element by element); nothing the other person saved meanwhile
+    is lost; conflicting edits of the same element keep both (conflict copy).
+
+**Comments by commenters**
+16. A Drive commenter can add, reply to, resolve their comments while an editor holds the pen: the comment shows
+    for everyone within seconds and is in the Drive file after the editor's next save, recorded on the
+    commenter's behalf.
+17. With no editor present: the commenter's comment goes to Drive's comments (mailbox), shows "waiting for an
+    editor"; the next editor who opens the scene takes it into the file and removes the Drive comment.
+18. A commenter can't change others' comments (text, pin, name, agent mark): the editor's tab refuses them
+    (`commenterRefusal`).
+
+**Shared folders without stored tokens**
+19. A person a Kurviq folder is shared with gets its scenes after picking the folder (or its scenes) in Google's
+    picker once; new scenes in the folder show as "new scenes in this folder: open them" if they need a pick.
+20. Nothing about the folder or its owner's sign-in is stored on Kurviq's server.
+
+**Kept**
+21. Short links, sign-out-everywhere, statistics, feedback and contact still work as before.
+22. The privacy page states what Kurviq stores (the exceptions above) and nothing else.

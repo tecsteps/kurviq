@@ -212,3 +212,44 @@ Still open:
   the setup texts are written.
 - What "publishing" an OAuth app involves at Supabase (the guide only says
   "once you've published your OAuth App").
+
+## Acceptance criteria
+
+**Scene homes**
+1. Settings has "New scenes are kept: in this browser / in Google Drive / in <database>", the choice is used for
+   new scenes and survives a reload.
+2. Every scene shows its home (icon) in the scene list and the pill.
+3. "Move to…" moves a scene between any two homes with everything (elements, pictures, fonts, comments, slides,
+   presentation settings); the old place gets a "moved" note (a link to it opens the new place); deleting the old
+   copy is offered.
+
+**Connect Supabase**
+4. "Connect with Supabase" runs Supabase's OAuth (PKCE), lists the user's projects, can create a new one (password
+   shown once, not stored by Kurviq), runs the schema, and ends with a working connection; the management token is
+   not kept anywhere (browser storage checked).
+5. Kurviq's Worker only exchanges the code (adds the client secret) and stores nothing (route code + test).
+6. The fallback (paste URL + key after running the shown SQL) works the same.
+7. The connection (URL, anon key, name) is in the browser and, if signed in with Google, in Drive's app data; a
+   second browser of the same Google account sees it.
+8. A paused free project shows "Your database is paused: open Supabase to wake it".
+
+**Real time**
+9. Two people on the same database scene see each other's strokes within a second, their pointers (name, color)
+   and selections; edits of different elements never conflict; the same element: the later version wins, nothing
+   else is lost.
+10. Offline edits queue and are written when back.
+
+**Sharing outside Google**
+11. Inviting an email address with a role sends an invitation (from the database's mailer); the invitee opens the
+    link, enters their email, gets a 6-digit code, and is in with exactly that role (viewer can't edit, commenter
+    only comments, editor edits).
+12. Removing a member ends their access at their next request; an expiry date ends it at that date.
+13. A public database scene ("anyone with the link can view") opens without an account, read-only, without
+    comments.
+
+**Nothing on Kurviq's servers**
+14. No database content, keys (besides the public anon key in the link's `#`) or sessions pass through Kurviq's
+    servers (network check: the browser talks to supabase.co directly).
+
+**Agents**
+15. `read_scene` / `edit_scene` work on database scenes through the user's tab, comments included.

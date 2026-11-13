@@ -469,13 +469,36 @@ class ScenesController {
     return this.api;
   }
 
+  /** how many mounted components hold the editor (attach / release); none left a tick later: it is gone */
+  private holds = 0;
+
+  /**
+   * A component that attached lets go: when nothing holds the editor a tick
+   * later, it is gone. (React runs an effect's cleanup also when the editor
+   * hands out a new API object, and twice in development: those attach again
+   * at once, so they don't count as gone.)
+   */
+  release(api: ExcalidrawImperativeAPI) {
+    this.holds = Math.max(0, this.holds - 1);
+    window.setTimeout(() => {
+      if (this.holds === 0) {
+        this.editorGone(api);
+      }
+    }, 0);
+  }
+
   attach(api: ExcalidrawImperativeAPI) {
+    this.holds++;
     if (this.api === api) {
       return;
     }
     if (api.isDestroyed) {
       this.editorGone();
       return;
+    }
+    // a new API object of the same editor (it hands out one more at start): the old one lets go first, quietly
+    if (this.api) {
+      this.detach();
     }
     // the app loads its initial scene asynchronously; switching scenes
     // before that would get overwritten
@@ -577,8 +600,9 @@ class ScenesController {
    * reads an emptied scene: nothing may be read, stored or pushed from it any
    * more, or the empty canvas would be synced over the scene.
    */
-  editorGone() {
-    if (!this.api) {
+  /** the editor went away (`api`: only if that one is still the attached one: a new editor may have replaced it) */
+  editorGone(api?: ExcalidrawImperativeAPI) {
+    if (!this.api || (api && this.api !== api)) {
       return;
     }
     console.error("[scenes] the editor is gone (unmounted): sync stopped, nothing is saved from it");

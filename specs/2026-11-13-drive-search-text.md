@@ -30,3 +30,12 @@ Drive's search finds a scene only by its file name. With its words indexed,
 ## Open
 
 - Speaker notes in the index or not?
+
+## Acceptance criteria
+
+1. After a save, the file's `contentHints.indexableText` contains the scene name and the words of every text
+   element and label (formatted text as plain text), and slide titles; deleted elements' words are not in it.
+2. Comments and (unless decided otherwise) speaker notes are not in it.
+3. A scene with more than 128 KB of text saves; the index text is cut at a word boundary, at most 128 KB.
+4. In Drive's search (real Google) a word that only occurs inside a scene finds that scene.
+5. Agent edits update it the same way; local-only scenes never send it.

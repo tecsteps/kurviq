@@ -32,3 +32,16 @@ since 2026-11-13 (`scenes-plugin/src/comments`).
 
 - Unit: filters and the unread rule.
 - Browser: the shortcut opens placing, Esc cancels; unread dots clear on open.
+
+## Acceptance criteria
+
+1. The shortcut starts placing a new comment; Esc cancels placing and closes popovers; the shortcut does nothing
+   while typing in a text or comment field.
+2. The list's filters (open / resolved / mine / mentioning me) show exactly those threads; counts match.
+3. A thread with replies since it was last opened in this browser shows an unread dot; opening it clears the dot;
+   another browser keeps its own state.
+4. The scene list shows the number of open threads for scenes this browser has.
+5. "Hide resolved after 7 days" hides those pins and list entries; turning it off shows them.
+6. A commenter's comment that waits for an editor shows "waiting for an editor" until the file has it.
+7. S38: a failed thread delete keeps the popover open with the error; S39: mentions in the shared viewer offer the
+   thread's people, not the editor's scene's; U21: one copy-to-clipboard helper (code review).
