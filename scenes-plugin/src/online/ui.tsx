@@ -955,9 +955,7 @@ const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareF
         <button type="button" className="scenes-btn" onClick={onShareFolder}>
           Folder sharing…
         </button>
-        <a className="scenes-link" href={driveWebLink(folder.folderId, true)} target="_blank" rel="noopener noreferrer">
-          Open the folder in Drive
-        </a>
+        <span className="kq-muted">Opens the folder in Drive: click the people icon next to its name.</span>
       </div>
     </div>
   );
