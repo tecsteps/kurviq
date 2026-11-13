@@ -661,6 +661,7 @@ const SceneSwitcher = ({
   };
   // this tab's scenes first, then one group per shared folder; folded groups list nothing (a filter searches them all)
   own.sort(byName);
+  otherOnes.sort(byName);
   tabScenes.sort(byName);
   const grouped = folders.length > 0 || !!sharedFolderId || otherScenes.length > 0;
   const shows = (key: string) => !grouped || !!needle || isOpen(groups, key);
@@ -679,7 +680,7 @@ const SceneSwitcher = ({
         .map((scene): Entry => ({ owner: folder.owner, name: scene.name, fileId: scene.fileId, folder })),
     })),
     // the user's own scenes in other Drive folders: each opens in a space of its own, like a scene shared with them
-    ...(otherScenes.length > 0 ? [{ key: OTHER_FOLDERS_GROUP, title: "Other folders", total: otherScenes.length, entries: otherOnes.sort(byName) }] : []),
+    ...(otherScenes.length > 0 ? [{ key: OTHER_FOLDERS_GROUP, title: "Other folders", total: otherScenes.length, entries: otherOnes }] : []),
   ];
   const items: Entry[] = sections.flatMap((section) => (shows(section.key) ? section.entries : []));
   const toggleGroup = (key: string) => {

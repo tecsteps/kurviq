@@ -98,8 +98,8 @@ const NameDialog = ({ request, onClose }: { request: DriveNewRequest; onClose: (
       await scenesController.leaveForReload();
       // the Kurviq folder: one of the user's own scenes; any other folder: opened like a scene picked in Drive
       enterSpace(kurviqFolder ? null : fileId, kurviqFolder ? `/${encodeURIComponent(trimmed)}` : `/s/${fileId}/${encodeURIComponent(trimmed)}`);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
       setBusy(false);
     }
   };

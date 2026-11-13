@@ -42,7 +42,7 @@ export const base64Length = (bytes: number) => Math.ceil(bytes / 3) * 4;
 
 /** scale of a width × height drawing for a preview THUMBNAIL_WIDTH wide (at most THUMBNAIL_MAX_HEIGHT tall) */
 export const thumbnailScale = (width: number, height: number) => {
-  if (!(width > 0) || !(height > 0)) {
+  if (Number.isNaN(width) || Number.isNaN(height) || width <= 0 || height <= 0) {
     return 1;
   }
   return Math.min(THUMBNAIL_WIDTH / width, THUMBNAIL_MAX_HEIGHT / height);
@@ -180,7 +180,7 @@ export class ContentHintsCache {
   private draw(name: string, data: SceneData, checksum: string, target: ThumbnailTarget) {
     const key = `${name}\n${checksum}`;
     const running = this.rendering.get(key);
-    if (running) {
+    if (running !== undefined) {
       return running;
     }
     const started = this.now();

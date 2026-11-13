@@ -27,19 +27,26 @@ const UPLOAD = GOOGLE_BASE ? `${GOOGLE_BASE}/upload/drive/v3` : "https://www.goo
 
 const PENDING_KEY = "kurviq-drive-new";
 
+/** Drive's state of a checked request, written anew from its checked fields */
+const canonicalState = (request: DriveNewRequest) => JSON.stringify({ action: "create", ...request });
+
+
 /** Drive's request this tab is working on (null: none) */
 export const pendingDriveNew = (): { raw: string; request: DriveNewRequest } | null => {
-  let raw = new URLSearchParams(window.location.search).get(DRIVE_NEW_PARAM);
+  const fromAddress = parseDriveNewState(new URLSearchParams(window.location.search).get(DRIVE_NEW_PARAM));
+  let request = fromAddress;
   try {
-    if (raw) {
-      // a reload (sign-in, the tab moving to the account's scenes) may drop the address: the tab keeps it
-      sessionStorage.setItem(PENDING_KEY, raw);
+    if (fromAddress) {
+      // a reload (sign-in, the tab moving to the account's scenes) may drop the address: the tab keeps
+      // the request, as checked and written anew (never the address's text itself)
+      sessionStorage.setItem(PENDING_KEY, canonicalState(fromAddress));
     } else {
-      raw = sessionStorage.getItem(PENDING_KEY);
+      request = parseDriveNewState(sessionStorage.getItem(PENDING_KEY));
     }
-  } catch {}
-  const request = parseDriveNewState(raw);
-  return raw && request ? { raw, request } : null;
+  } catch {
+    // no session storage (private mode): the request lives as long as the address has it
+  }
+  return request ? { raw: canonicalState(request), request } : null;
 };
 
 /** the request is done (or cancelled): out of the tab and its address */

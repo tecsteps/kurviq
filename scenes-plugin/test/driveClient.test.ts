@@ -45,7 +45,7 @@ describe("the parts receiver (big messages on the agent link)", () => {
     const sent: string[] = [];
     const message = { type: "state", text: "x".repeat(256 * 1024 * 3 + 10) };
     sendMessage({ send: (data) => sent.push(data) }, message);
-    expect(sent.length).toBe(4);
+    expect(sent).toHaveLength(4);
     const receive = createReceiver();
     let result = null;
     for (const part of sent) {

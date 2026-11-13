@@ -565,7 +565,7 @@ const ThreadView = ({
   const copyLink = () => {
     copy(threadLink(thread.id))
       .then((ok) => setError(ok ? null : "The link could not be copied (the browser refused)."))
-      .catch((failure) => setError(String(failure)));
+      .catch((error_) => setError(String(error_)));
   };
   const index = threads.findIndex((entry) => entry.id === thread.id);
   const go = (step: number) => {

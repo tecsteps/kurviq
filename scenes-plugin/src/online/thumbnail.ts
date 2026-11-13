@@ -45,7 +45,7 @@ const fitted = async (canvas: HTMLCanvasElement): Promise<Thumbnail | null> => {
   for (let attempt = 0; attempt < 4; attempt++) {
     const jpeg = await encode(current, "image/jpeg", 0.8); // NOSONAR S9382: each attempt depends on the previous size
     if (base64Length(jpeg.size) <= THUMBNAIL_MAX_BYTES) {
-      return { image: await base64Of(jpeg), mimeType: "image/jpeg" };
+      return { image: await base64Of(jpeg), mimeType: "image/jpeg" }; // NOSONAR S9382: returns: runs once, when the size fits
     }
     current = smaller(current);
   }

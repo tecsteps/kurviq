@@ -25,7 +25,15 @@ export type ListOptions = { me: Viewer | null; hideOldResolved: boolean; now: nu
 export const MENTION_RE = /@[\p{L}\p{N}][\p{L}\p{M}\p{N}._'-]*/gu;
 
 /** a mention or a name as compared: lower case, no spaces, no trailing punctuation */
-const handle = (text: string) => text.toLowerCase().replaceAll(/\s+/g, "").replace(/[._'-]+$/, "");
+const TRAILING = new Set([".", "_", "'", "-"]);
+const handle = (text: string) => {
+  const compact = text.toLowerCase().replaceAll(/\s+/g, "");
+  let end = compact.length;
+  while (end > 0 && TRAILING.has(compact[end - 1])) {
+    end--;
+  }
+  return compact.slice(0, end);
+};
 
 /** the names a mention of this person may use: the full name (as the suggestions write it), the first name, the address's local part */
 export const handlesOf = (me: Pick<Viewer, "name" | "email">) => {
@@ -146,10 +154,9 @@ export const markSeen = (seen: Seen, thread: CommentThread): Seen => {
   const threads = { ...seen.threads, [thread.id]: newest };
   const ids = Object.keys(threads);
   if (ids.length > MAX_SEEN) {
-    ids
-      .sort((a, b) => threads[a] - threads[b])
-      .slice(0, ids.length - MAX_SEEN)
-      .forEach((id) => delete threads[id]);
+    // the oldest go
+    ids.sort((a, b) => threads[a] - threads[b]);
+    ids.slice(0, ids.length - MAX_SEEN).forEach((id) => delete threads[id]);
   }
   return { since: seen.since, threads };
 };

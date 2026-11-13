@@ -141,7 +141,8 @@ await sleep(300);
 // (Kurviq's rich text editor is contenteditable, Excalidraw's a textarea)
 const typed = await page.evaluate(() => {
   const el = document.activeElement;
-  return el?.tagName === "TEXTAREA" ? el.value : el?.isContentEditable ? el.innerText.trim() : null;
+  if (el?.tagName === "TEXTAREA") return el.value;
+  return el?.isContentEditable ? el.innerText.trim() : null;
 });
 ok(typed === "Hello C" && !(await placing(page)), "typing in a text: Shift+C types a C, no placing", typed);
 await page.keyboard.press("Escape");

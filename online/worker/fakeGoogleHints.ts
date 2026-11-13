@@ -70,7 +70,7 @@ export const adminHints = (row: StoredHints | null) => {
   }
   const bytes = row.thumb ? thumbnailBytes(row.thumb) : null;
   return {
-    thumbnail: row.thumb && bytes ? { mimeType: row.thumb_mime, bytes: bytes.length, image: row.thumb, ...(pngSize(bytes) ?? {}) } : null,
+    thumbnail: row.thumb && bytes ? { mimeType: row.thumb_mime, bytes: bytes.length, image: row.thumb, ...pngSize(bytes) } : null,
     indexableText: row.text,
   };
 };

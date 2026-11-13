@@ -80,7 +80,7 @@ await page.evaluateOnNewDocument(() => {
   }
 });
 
-await page.goto(`${BASE}/auth/login?return=${encodeURIComponent(`/${SCENE}`)}`, { waitUntil: "domcontentloaded" });
+await page.goto(`${BASE}/auth/login?return=${encodeURIComponent("/" + SCENE)}`, { waitUntil: "domcontentloaded" });
 await page.goto(page.url().replace("/authorize", "/approve") + `&email=${encodeURIComponent(EMAIL)}`, { waitUntil: "networkidle2" });
 for (let i = 0; i < 80 && !(await page.evaluate(() => !!window.__scenes?.getApi() && !!window.__agentCommand).catch(() => false)); i++) await sleep(250); // NOSONAR S9382: polling
 await page.evaluate(() => window.__scenes.ready);
@@ -98,7 +98,7 @@ const centerColor = (thumbnail) =>
     canvas.height = img.height;
     const context = canvas.getContext("2d");
     context.drawImage(img, 0, 0);
-    return [...context.getImageData(Math.floor(img.width / 2), Math.floor(img.height / 2), 1, 1).data.slice(0, 3)];
+    return Array.from(context.getImageData(Math.floor(img.width / 2), Math.floor(img.height / 2), 1, 1).data.subarray(0, 3));
   }, thumbnail);
 const reddish = ([r, g, b]) => r > 180 && g < 120 && b < 120;
 const bluish = ([r, g, b]) => b > 150 && r < 120;
@@ -212,7 +212,7 @@ ok(!(await page.evaluate((n) => window.__scenes.fileIdOf(n) ?? null, LOCAL)), "6
 
 // 7. the hints only ever go to Google; nothing of a local-only scene leaves the browser
 const sent = await page.evaluate(() => window.__sent);
-const isGoogle = (url) => new URL(url, BASE).pathname.startsWith("/fake-google/") || /^https:\/\/www\.googleapis\.com\//.test(url);
+const isGoogle = (url) => new URL(url, BASE).pathname.startsWith("/fake-google/") || url.startsWith("https://www.googleapis.com/");
 const toKurviq = sent.filter((entry) => !isGoogle(entry.url));
 const leaks = toKurviq.filter((entry) => /contentHints|indexableText|thumbnail/.test(entry.body) || (before && entry.body.includes(before.slice(0, 64))));
 ok(sent.some((entry) => isGoogle(entry.url) && entry.body.includes("contentHints")), "the hints went to Google's endpoints", sent.length);

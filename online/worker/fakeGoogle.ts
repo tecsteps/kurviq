@@ -2030,7 +2030,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (value === undefined || value === null) {
       return null;
     }
-    const at = Date.parse(String(value));
+    const at = typeof value === "string" || typeof value === "number" ? Date.parse(String(value)) : Number.NaN;
     if (type !== "user") {
       return googleError(400, "Expiration dates can only be set on user and group permissions.", "invalidSharingRequest", { location: "expirationTime" });
     }
