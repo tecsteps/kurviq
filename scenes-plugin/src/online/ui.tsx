@@ -648,13 +648,13 @@ if (typeof window !== "undefined") {
    * address), kurviqTestShareDialog(null) without, or with an index (0, 1 …)
    * or another address. See tryDriveShareDialog in drive.ts.
    */
-  (window as any).kurviqTestShareDialog = async (account?: string | number | null) => {
+  (window as any).kurviqTestShareDialog = async (account: string | number | null = connection.getState().user?.email ?? null) => {
     const name = scenesController.getState().current;
     if (!name) {
       throw new Error("open a scene first");
     }
     const fileId = await scenesController.fileForSharing(name);
-    const result = await tryDriveShareDialog(fileId, account === undefined ? (connection.getState().user?.email ?? null) : account);
+    const result = await tryDriveShareDialog(fileId, account);
     console.info("[kurviq] Google's share dialog", { scene: name, ...result });
     return result;
   };
