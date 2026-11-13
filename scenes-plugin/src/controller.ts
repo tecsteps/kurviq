@@ -1563,8 +1563,8 @@ class ScenesController implements LiveHost {
       try {
         return await this.openInner(name);
       } catch (error: any) {
-        // "not found" while opening-or-creating is the cue to create it, no error
-        if (!(missingIsFine && error?.status === 404)) {
+        // "not found" (or no Drive to look in) while opening-or-creating is the cue to create it, no error
+        if (!(missingIsFine && (error?.status === 404 || error?.notConnected))) {
           console.error(error);
           this.setState({ error: error.message });
         }
