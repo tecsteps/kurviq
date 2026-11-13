@@ -930,6 +930,12 @@ const ShortLink = ({ fileId, sceneName, restricted }: { fileId: string; sceneNam
   );
 };
 
+/** what "Add people" does (its tooltip) */
+const addPeopleTip = (email: string | undefined) =>
+  "Opens the scene in Google Drive" +
+  (email ? " as " + email : "") +
+  ': click Share at the top right. Google emails them an invitation; in Kurviq they find the scene under "Shared with you…", or with the link.';
+
 const ROLE_TEXT: Record<string, string> = { writer: "can edit", reader: "can view", commenter: "can view" };
 
 /** above the people: the scene's folder is shared, so these people have every scene in it */
@@ -1083,7 +1089,7 @@ const ShareDialog = ({ name }: { name: string }) => {
               <button
                 type="button"
                 className="scenes-btn scenes-btn--primary"
-                title={`Opens the scene in Google Drive${me ? ` as ${me}` : ""}: click Share at the top right. Google emails them an invitation; in Kurviq they find the scene under "Shared with you…", or with the link.`}
+                title={addPeopleTip(me)}
                 onClick={() => shareInDrive(fileId!, false)}
               >
                 Add people
