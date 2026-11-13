@@ -28,6 +28,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { loadEnv } from "../scripts/env.mjs";
+import { bestTab, commandTimeout, FLUSH_TIMEOUT_MS } from "../scenes-mcp/tabRelay.mjs";
 
 import { httpError, pdfHtmlProblem, printPdf } from "./pdf.mjs";
 
@@ -53,7 +54,6 @@ const tabStates = new Map();
 /** commands sent to the app, awaiting its result */
 const pending = new Map();
 let commandSeq = 0;
-const COMMAND_TIMEOUT_MS = 30000;
 
 const broadcast = (event) => {
   const payload = `data: ${JSON.stringify(event)}\n\n`;
@@ -76,27 +76,14 @@ const RENDERER_COMMANDS = new Set(["render", "convert", "checkpoint-save", "chec
 const activeTabId = ({ allowRenderer = false, scene } = {}) => {
   const rank = (tabId) => {
     const state = tabStates.get(tabId) || {};
-    return [state.visible ? 1 : 0, state.focusedAt || 0, clients.get(tabId).connectedAt];
+    return { visible: state.visible, focusedAt: state.focusedAt, connectedAt: clients.get(tabId).connectedAt };
   };
   const pick = (role, onlyScene) => {
-    let best = null;
-    for (const [tabId, client] of clients) {
-      if ((client.role === "renderer") !== (role === "renderer")) {
-        continue;
-      }
-      if (onlyScene !== undefined && (tabStates.get(tabId)?.current ?? null) !== onlyScene) {
-        continue;
-      }
-      if (!best) {
-        best = tabId;
-        continue;
-      }
-      const [a, b] = [rank(tabId), rank(best)];
-      if ((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0) {
-        best = tabId;
-      }
-    }
-    return best;
+    const candidates = [...clients]
+      .filter(([, client]) => (client.role === "renderer") === (role === "renderer"))
+      .filter(([tabId]) => onlyScene === undefined || (tabStates.get(tabId)?.current ?? null) === onlyScene)
+      .map(([tabId]) => tabId);
+    return bestTab(candidates, rank);
   };
   // an agent working on a specific scene talks to the tab that shows it
   if (scene !== undefined) {
@@ -228,10 +215,8 @@ const notOpen = () => `Kurviq is not open in a browser: open ${APP_URL}`;
 const sendCommand = async (command) => {
   // no headless Excalidraw for the agent's own work: it needs the user's
   // Google sign-in to save, so it runs in the user's tab too (as online)
-  if (command) {
-    delete command.agentSide;
-  }
-  const allowRenderer = RENDERER_COMMANDS.has(command?.type);
+  // (a render of a saved scene by name reads it in the tab: only a user tab has the user's scenes)
+  const allowRenderer = RENDERER_COMMANDS.has(command?.type) && command?.sceneName === undefined;
   if (allowRenderer) {
     await ensureRenderer();
   }
@@ -245,12 +230,12 @@ const sendCommand = async (command) => {
   return sendCommandTo(tab, command);
 };
 
-const sendCommandTo = (tab, command, timeoutMs = COMMAND_TIMEOUT_MS) => {
+const sendCommandTo = (tab, command, timeoutMs = commandTimeout(command?.type)) => {
   const id = String(++commandSeq);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(httpError(504, "Kurviq did not answer in time"));
+      reject(httpError(504, `Kurviq did not answer within ${Math.round(timeoutMs / 1000)} s (${command?.type || "command"})`));
     }, timeoutMs);
     pending.set(id, { resolve, reject, timer });
     clients
@@ -416,7 +401,7 @@ const flushTabs = async (req, res) => {
   const results = [];
   for (const tabId of targets) {
     try {
-      results.push(await sendCommandTo(tabId, { type: "flush", name }, 15000)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
+      results.push(await sendCommandTo(tabId, { type: "flush", name }, FLUSH_TIMEOUT_MS)); // NOSONAR S9382: in order on purpose (preserves event, queue and side effect order)
     } catch (error) {
       results.push({ error: error.message });
     }

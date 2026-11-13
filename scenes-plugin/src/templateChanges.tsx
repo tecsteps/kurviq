@@ -42,7 +42,8 @@ const useBar = (enabled: boolean, selection: readonly string[]) => {
           const chosen = elements.filter((el) => selection.includes(el.id));
           const [x1, , x2, y2] = getCommonBounds(chosen);
           const at = sceneCoordsToViewportCoords({ sceneX: (x1 + x2) / 2, sceneY: y2 }, appState);
-          next = { x: Math.round(at.x + appState.offsetLeft), y: Math.round(at.y + appState.offsetTop), changes: [...changes] };
+          // The viewport coordinates already include the editor's offset (the bar is position: fixed).
+          next = { x: Math.round(at.x), y: Math.round(at.y), changes: [...changes] };
         }
       }
       const key = JSON.stringify(next);

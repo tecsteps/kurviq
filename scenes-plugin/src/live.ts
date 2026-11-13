@@ -59,6 +59,8 @@ import { fillFiles, leanScene } from "./leanFiles";
 import { editsRunning, getPayload, keepPayload, onceForRequest } from "./agentRequests";
 import { getUpload, keepUpload, withUploads } from "./uploads";
 import { createReceiver, sendMessage } from "./online/frames";
+import { needsConversion } from "../../scenes-mcp/convert.mjs";
+import { PSEUDO_TYPES, commentsOnly } from "../../scenes-mcp/agentEdits.mjs";
 import { OUTDATED_MESSAGE, checkServerBuild } from "./online/version";
 
 import { pairing } from "./online/pairing";
@@ -122,23 +124,10 @@ type Command =
   /** the health check (app_status): through the same queues as edits and pictures */
   | { type: "ping" };
 
-/** an agent's edit that only changes comments (no elements, slides or settings) */
-const commentsOnly = (command: any) =>
-  !!command.comments?.length &&
-  !command.add?.length &&
-  !command.update?.length &&
-  !command.delete?.length &&
-  !command.restyle &&
-  !command.reset &&
-  !command.addTitleBlock &&
-  command.isPresentation === undefined;
-
 /** hidden headless tab started by the scenes server, only renders/converts */
 export const IS_RENDERER = new URLSearchParams(window.location.search).has(
   "scenes-renderer",
 );
-
-const PSEUDO_TYPES = new Set(["cameraUpdate", "delete", "restoreCheckpoint"]);
 
 /** the size texts will have in this tab (with the real fonts), plain or formatted (markdown), wrapped at maxWidth */
 const measureTexts = async (
@@ -279,7 +268,7 @@ const withBodyStyle = (el: any, body: NonNullable<ReturnType<typeof bodyStyle>>)
   return el;
 };
 
-const restoreArrowBindings = (result: any[], rawById: Map<string, any>, needsConversion: (el: any) => boolean, byId: Map<string, any>) => {
+const restoreArrowBindings = (result: any[], rawById: Map<string, any>, byId: Map<string, any>) => {
   for (const arrow of result) {
     const raw = rawById.get(arrow.id);
     if (!raw || !needsConversion(raw) || arrow.type !== "arrow") {
@@ -306,7 +295,7 @@ const restoreArrowBindings = (result: any[], rawById: Map<string, any>, needsCon
   }
 };
 
-const restoreFrameBounds = (result: any[], rawById: Map<string, any>, needsConversion: (el: any) => boolean) => {
+const restoreFrameBounds = (result: any[], rawById: Map<string, any>) => {
   for (const el of result) {
     const raw = rawById.get(el.id);
     if (raw && (el.type === "frame" || el.type === "magicframe") && needsConversion(raw)) {
@@ -360,7 +349,7 @@ const restoreRichText = (el: any, raw: any, byId: Map<string, any>) => {
   }
 };
 
-const restoreConvertedText = (result: any[], rawById: Map<string, any>, byId: Map<string, any>, needsConversion: (el: any) => boolean) => {
+const restoreConvertedText = (result: any[], rawById: Map<string, any>, byId: Map<string, any>) => {
   for (const el of result) {
     const raw = rawById.get(el.id);
     // labels made from `label` live on their shape's slide
@@ -414,10 +403,8 @@ const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) 
         ? { ...el, children: all.filter((child) => child.frameId === el.id).map((child) => child.id) }
         : el,
     );
-  // elements that are already complete (e.g. from an existing scene) must not
-  // be converted again; that would detach their bound text
-  const needsConversion = (el: any) =>
-    el.label !== undefined || el.version === undefined;
+  // elements that are already complete (e.g. from an existing scene) are not
+  // converted again (needsConversion); that would detach their bound text
   const rawById = new Map(real.map((el) => [el.id, el]));
 
   const converted = convertToExcalidrawElements(
@@ -467,13 +454,13 @@ const convertMcpElements = async (raw: any[], { deck }: { deck?: string } = {}) 
   // convertToExcalidrawElements only understands `start`/`end`; carry over the
   // `startBinding`/`endBinding` ({ elementId, fixedPoint }) used by excalidraw-mcp
   const byId = new Map(result.map((el) => [el.id, el]));
-  restoreArrowBindings(result, rawById, needsConversion, byId);
+  restoreArrowBindings(result, rawById, byId);
   // normalize like the editor does on load (fractional indices, bindings, …)
   // so the committed file doesn't change again when the app saves it
   // frames keep the position and size given: the converter fits frames with
   // children to them whenever x / y is 0 (falsy)
-  restoreFrameBounds(result, rawById, needsConversion);
-  restoreConvertedText(result, rawById, byId, needsConversion);
+  restoreFrameBounds(result, rawById);
+  restoreConvertedText(result, rawById, byId);
   syncInvalidIndices(result);
   const restored = restoreElements(result, null, { repairBindings: true });
   return deck ? withTemplate(restored, deck) : restored;
@@ -591,6 +578,20 @@ const driveStatus = (sync: ReturnType<typeof scenesController.getState>["sync"])
   return "checking (the first check with Drive hasn't finished yet)";
 };
 
+/** a scene's row in the status: its sync status, local-only as its own field, notes for agents */
+const sceneRow = ({ name, status, pendingRename, localOnly }: ReturnType<typeof scenesController.getState>["list"][number]) => {
+  const notes: string[] = [];
+  if (localOnly) {
+    notes.push("only in the user's browser, never synced to Drive");
+  } else if (!scenesController.autoSyncFor(name!)) {
+    notes.push("auto-sync off");
+  }
+  if (pendingRename) {
+    notes.push(`rename in Drive pending, still "${pendingRename}" there`);
+  }
+  return { name: name!, status, localOnly: !!localOnly, ...(notes.length ? { note: notes.join("; ") } : {}) };
+};
+
 const status = () => {
   const { current, dirty, list, sync, autoSync } = scenesController.getState();
   return {
@@ -614,16 +615,8 @@ const status = () => {
     // queues closed tabs (or a reload) left, sent from this tab under their own tab ids
     ...(liveSync.replayReport().length ? { liveReplays: liveSync.replayReport() } : {}),
     visible: document.visibilityState === "visible",
-    // "name: status": synced / ahead (not pushed) / behind / diverged / conflict / local
-    scenes: list
-      .filter((item) => item.name !== null)
-      .map(({ name, status, pendingRename, localOnly }) => {
-        let syncInfo = "";
-        if (localOnly) syncInfo = " (only in the user's browser, never synced to Drive)";
-        else if (!scenesController.autoSyncFor(name!)) syncInfo = " (auto-sync off)";
-        const rename = pendingRename ? ` (rename in Drive pending, still "${pendingRename}" there)` : "";
-        return `${name}: ${status}${syncInfo}${rename}`;
-      }),
+    // one row per scene: status synced / ahead (not pushed) / behind / diverged / conflict / local-only
+    scenes: list.filter((item) => item.name !== null).map(sceneRow),
     autoSyncInfo:
       `The app pushes local changes of a scene to Drive by itself (about ${IDLE_PUSH_MS / 1000} s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push. ` +
       "Scenes with a live-… status save live through Kurviq's server (live-browser: the latest change is still in the user's browser; live-server: on the server; live-drive: in Drive): everyone who has them open sees changes within a second, and your edits reach them the same way.",
@@ -856,7 +849,27 @@ const commandResolveConflict = async (command: Extract<Command, { type: "conflic
         throw new Error(`Unknown resolution: ${(command as any).resolution}`);
  };
 
+/** a saved scene a render command names (local-only: this browser's copy; else read as the agent's server reads it) */
+const namedScene = async (name: string, revision?: string) => {
+  if (scenesController.isLocalOnly(name)) {
+    return JSON.parse(await scenesController.localOnlyJson(name));
+  }
+  const query = revision ? `?md5=${encodeURIComponent(revision)}` : "";
+  const res = await serveRequest({ method: "GET", path: `/api/scenes/${encodeURIComponent(name)}${query}` });
+  if (res.status !== 200) {
+    const error = JSON.parse(res.body || "{}").error;
+    throw new Error(res.status === 404 ? `Scene "${name}" not found. list_scenes shows what exists.` : error ?? `Scene "${name}" could not be read`);
+  }
+  return JSON.parse(res.body);
+};
+
 const commandRender = async (command: Extract<Command, { type: "render" }>) => {
+  if (command.sceneName !== undefined && !command.scene) {
+    const scene = await namedScene(command.sceneName, command.revision);
+    return renderScene({ ...command, scene, deck: command.deck ?? command.sceneName }, () => {
+      throw new Error("unreachable");
+    }, convertMcpElements);
+  }
   if (command.conflict) {
           const scene = await scenesController.conflictScene(command.conflict.name, command.conflict.side);
           return renderScene({ ...command, scene }, () => {

@@ -250,7 +250,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
   the MCP server must agree on values such as `SCENES_SERVER_URL` and `SCENES_APP_URL`.
 - **Suggested fix**: one `scripts/env.mjs` (`loadEnv(root)`) imported by all six.
 - **Also in the Astra review**: F50.
-- **Status**: partly 2026-11-13: scripts/env.mjs used by the scenes server, vite.config.mts, with-env.mjs, dev-vars.mjs, secrets.mjs; scenes-mcp/server.mjs still has its copy (needs lead: not my files)
+- **Status**: fixed 2026-11-13: scripts/env.mjs used by the scenes server, vite.config.mts, with-env.mjs, dev-vars.mjs, secrets.mjs and scenes-mcp/server.mjs
 
 ### U16. The source-patching helper exists three times in the Vite config, with different strictness
 - **Area**: Fake Google, local server, build config

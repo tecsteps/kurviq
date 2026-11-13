@@ -176,6 +176,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-plugin/src/render.ts:81-98`
 - **Description**: `sheet: "all"` on a scene that has elements but no frames gives `tiles = []`; `cols` is 0, `tileWidth` is `Infinity` and `tiles[0].frame` throws "Cannot read properties of undefined". The agent gets that text instead of "the scene has no slides".
 - **Suggested fix**: Throw a clear error when `tiles.length === 0` (as `slidesHtml` does for `frames`).
+- **Status**: fixed 2026-11-13 (a contact sheet without slides answers "The scene has no slides"; test renderScene.test.ts)
 
 ## Code smells
 
@@ -205,7 +206,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-plugin/src/deck.ts:70-71`; `scenes-plugin/src/slides.ts:1049-1058`; `scenes-plugin/src/notes.tsx:158-159`; `scenes-plugin/src/richText/editor.ts:255-260`, `:522-530`; `scenes-plugin/src/render.ts:174`, `:203`, `:225`
 - **Description**: `deck.ts:70` describes "the slides at the last change: ids, and whether they were Kurviq's grid" above `lastTemplateKey`, a number (the field it described is gone). In `slides.ts` the doc comment of `addTitleBlock` sits above `remeasureTitleBlock`, 110 lines away from its function. `notes.tsx:158` ("the slide in the slide list") and `editor.ts:255` are leftover first lines above another comment. `historyShortcut` in the editor also handles the size shortcuts. In `render.ts`, `renderSlide`, `renderFocus` and `renderSource` render nothing (they pick the slide, the focus box and the source), and `renderSlide` has the same name as the exported function in `slides.ts` that does render.
 - **Suggested fix**: Remove or move the comments; rename to `pickSlide`, `focusBounds`, `sceneSource`, `sizeOrHistoryShortcut`.
-- **Status**: partly fixed 2026-11-13: deck.ts, slides.ts, notes.tsx, editor.ts (`sizeOrHistoryShortcut`) done; the renames in `render.ts` (`pickSlide`, `focusBounds`, `sceneSource`) are left for its owner
+- **Status**: fixed 2026-11-13 (deck.ts, slides.ts, notes.tsx, editor.ts `sizeOrHistoryShortcut`; render.ts: `pickSlide`, `focusBounds`, `sceneSource`)
 
 ### S38. Removing a thread closes the popover before a failed save can be shown
 - **Area**: Browser: slides, rich text, comments
@@ -283,7 +284,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-plugin/src/slides.ts:121-129` (`slideFrame`), `scenes-plugin/src/pdfExport.ts:23-32` (`slidesForPart`), `scenes-plugin/src/render.ts:174-189`
 - **Description**: Each turns a number, a numeric string, a frame id (and in one case `"template"` or a range) into a frame, with different rules: `slides.ts` and `pdfExport.ts` accept `"3"` as slide 3, `render.ts` treats it as a frame id and answers `No frame with id "3"`; `render.ts` accepts any frame including the template, `pdfExport.ts` only slides; error texts differ. An agent that passes the same `slide` value to `edit_scene` and `view_scene` gets different results.
 - **Suggested fix**: One `resolveSlide(ref, elements, { template?, ranges? })` in `slides.ts`, used by all three.
-- **Status**: partly fixed 2026-11-13: `resolveSlide(ref, elements, { template, ranges, anyFrame })` in slides.ts, used by `placeOnSlides` and `pickSlides` (pdfExport.ts); `render.ts` still has its own lookup and should use it
+- **Status**: fixed 2026-11-13 (`resolveSlide` in slides.ts used by `placeOnSlides`, `pickSlides` and render.ts (`anyFrame: true`): "3" is slide 3 in view_scene too)
 
 ### U35. Appending a top-level field to serialized scene JSON by string surgery, twice
 - **Area**: Browser: slides, rich text, comments
@@ -302,7 +303,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: last click step of a slide: `scenes-plugin/src/deck.ts:248-254`, `scenes-plugin/src/present.tsx:92-100`, `scenes-plugin/src/render.ts:60-61`, `scenes-plugin/src/deckCheck.ts:390-396`; a slide's elements up to a step: `render.ts:108-112`, `:192-197`; slide title: `deck.ts:260` vs `slides.ts:162` (`slideTitle`); a slide rendered to a canvas: `slides.ts:1253-1266` vs `render.ts:113-120`; placeholder pattern: `slides.ts:274` vs `deckCheck.ts:380`; slide size: `slides.ts:85-86` vs the literals `1920` / `1080` in `deckCheck.ts:436-437`; `loadImage`: `deckCheck.ts:85-102` vs `pdfExport.ts:67-73`; `escapeHtml`: `pdfExport.ts:19-20` vs `richText/layout.ts:38-39` (identical); scene name fallback `?? "Untitled"`: `deck.ts:220`, `slidesUI.tsx:90`, `:104`, `templateChanges.tsx:69`
 - **Description**: The step count is computed in four places, two with `elementStep` (a label follows its shape) and two with the raw `step`; they agree today only because the maximum is the same. The others are verbatim or near-verbatim copies.
 - **Suggested fix**: Export `slideSteps(elements, frame)`, `elementsAtStep(elements, frame, step)`, `PLACEHOLDER_RE` and `deckName()` from `slides.ts` / `deck.ts` and use them; use `slideTitle`, `SLIDE_WIDTH` / `SLIDE_HEIGHT` and `renderSlide` where the copies are.
-- **Status**: partly fixed 2026-11-13: `slideSteps`, `elementsAtStep`, `PLACEHOLDER_RE`, `deckName()` exported and used in deck.ts, present.tsx, deckCheck.ts, slidesUI.tsx, templateChanges.tsx; `slideTitle`, `SLIDE_WIDTH` / `SLIDE_HEIGHT`, one `loadImage` (pdfExport.ts) and one `escapeHtml` (richText/layout.ts) used; the copies in `render.ts` (steps, elements up to a step, slide canvas) are left for its owner
+- **Status**: fixed 2026-11-13 (`slideSteps`, `elementsAtStep`, `PLACEHOLDER_RE`, `deckName()`, `slideTitle`, `SLIDE_WIDTH` / `SLIDE_HEIGHT`, one `loadImage`, one `escapeHtml`; render.ts uses `slideSteps`, `elementsAtStep` and `renderSlide` for the sheet tiles)
 
 ### U37. Rich text constants repeated instead of imported
 - **Area**: Browser: slides, rich text, comments

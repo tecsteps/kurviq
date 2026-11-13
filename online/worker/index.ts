@@ -289,12 +289,10 @@ const handleMcp = async (request: Request, env: Env, access: Access, ctx: Execut
     name: "Kurviq",
     mode: "detached",
     appHint: app,
-    driveOptional: true,
     // scenes full of images: read without their bytes (CPU budget), the tab fills them in for pictures
     leanReads: true,
     // no access to the agent's files here: images and big edits are uploaded
     localFiles: false,
-    uploadUrl,
     skill: kurviqSkill(app),
     reference: kurviqReference(uploadUrl),
     unreachable,
@@ -308,8 +306,6 @@ const handleMcp = async (request: Request, env: Env, access: Access, ctx: Execut
       }
       return saved;
     },
-    // export_pdf is not offered online (localFiles: false); should it ever be called, it says why
-    savePdf: () => Promise.reject(new Error("PDF export is not available through the Kurviq MCP; the user exports PDFs in Kurviq (Slides sidebar → PDF).")),
   });
   // stateless: a new server per request, nothing kept between requests
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

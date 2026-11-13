@@ -10,7 +10,7 @@
  * (SCENES_AGENT_MODE=detached) the agent edits scenes as data, merged into
  * what the user does; in live mode it co-edits the open canvas live.
  */
-import { constants, existsSync, readFileSync } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 import { realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { registerTools } from "../excalidraw-mcp/dist/server.js";
+import { loadEnv } from "../scripts/env.mjs";
 
 import { insideRoot } from "./media.mjs";
 import { createScenesMcp } from "./tools.mjs";
@@ -26,24 +27,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = path.resolve(HERE, "..");
 const LOCAL_ROOT = process.cwd();
 
-const readEnv = () => {
-  const env = {};
-  for (const file of [".env", ".env.local"]) {
-    const full = path.join(WORKSPACE, file);
-    if (!existsSync(full)) {
-      continue;
-    }
-    for (const line of readFileSync(full, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/); // NOSONAR S8786: trusted local configuration lines, not remote input
-      if (match) {
-        env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, "$2");
-      }
-    }
-  }
-  return { ...env, ...process.env };
-};
-
-const env = readEnv();
+const env = loadEnv(WORKSPACE);
 const SERVER_URL = (env.SCENES_SERVER_URL || "http://localhost:3101").replace(/\/$/, "");
 
 const server = createScenesMcp({

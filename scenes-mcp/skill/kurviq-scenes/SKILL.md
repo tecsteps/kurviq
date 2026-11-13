@@ -106,9 +106,10 @@ file): element format, colors, edit details, limits, formatted text
   the bin for 30 days; a local-only scene has no other copy).
 - `list_scenes` lists the user's scenes. `app_status`: which scene the
   user has open, whether Drive is connected (`drive`), and each scene's sync
-  status in their app: synced · ahead (not pushed) · behind (newer in
-  Drive) · diverged · conflict · local (not in Drive) · "auto-sync off" (the
-  user pushes when they decide).
+  status in their app (`scenes`: rows `{ name, status, localOnly, note }`):
+  synced · ahead (not pushed) · behind (newer in Drive) · diverged ·
+  conflict · local-only (not in Drive) · note "auto-sync off" (the user
+  pushes when they decide).
 - **Shared folders**: folders others shared with the user are in
   `app_status` → `sharedFolders` (owner, role, scenes). Your tools work on the
   scene list the user's tab shows (`app_status` → `space`): to work in a

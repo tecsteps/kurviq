@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 // @ts-ignore: plain JS module of the MCP tools
-import { conflictList, findConflicts, resolveConflicts } from "../../scenes-mcp/editConflicts.mjs";
+import { conflictBaseOf, conflictList, findConflicts, resolveConflicts, withLateConflicts } from "../../scenes-mcp/editConflicts.mjs";
 
 let stamp = 1;
 const el = (id: string, props: Record<string, any> = {}) => ({
@@ -165,5 +165,27 @@ describe("resolveConflicts", () => {
     expect(result.conflicts).toEqual([expect.objectContaining({ id: "a", properties: ["replaced"], resolution: "rejected" })]);
     expect(resolveConflicts({ base: [a, b], current, updates: [], adds }).adds).toEqual(adds);
     expect(resolveConflicts({ base: [a, b], current, updates: [], adds, upsert: true, onConflict: "overwrite" }).adds).toEqual(adds);
+  });
+});
+
+describe("the conflict check again in the tab", () => {
+  const base = [
+    { id: "box", type: "rectangle" },
+    { id: "box-label", type: "text", containerId: "box" },
+    { id: "other", type: "rectangle" },
+    { id: "added", type: "rectangle" },
+  ];
+
+  it("sends only the base elements the edit names, with their labels (upsert adds only with upsert)", () => {
+    expect(conflictBaseOf(base, { updates: [{ id: "box" }], adds: [{ id: "added" }] }).map((el) => el.id)).toEqual(["box", "box-label"]);
+    expect(conflictBaseOf(base, { updates: [], adds: [{ id: "added" }], upsert: true }).map((el) => el.id)).toEqual(["added"]);
+    expect(conflictBaseOf(undefined, { updates: [{ id: "box" }] })).toEqual([]);
+  });
+
+  it("reports each conflict once when both checks found it", () => {
+    const mcp = [{ id: "box", properties: ["position"] }];
+    const tab = [{ id: "box", properties: ["position"] }, { id: "other", properties: ["text"] }];
+    expect(withLateConflicts(mcp, tab)).toEqual([...mcp, tab[1]]);
+    expect(withLateConflicts(mcp, undefined)).toEqual(mcp);
   });
 });

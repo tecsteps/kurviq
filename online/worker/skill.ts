@@ -18,8 +18,8 @@ one browser: every tool needs Kurviq open there (any scene). Your edits run
 in that tab with the real Excalidraw (text measured with the real fonts,
 real PNG images); the tab merges them into what the user is doing and saves
 them to Google Drive with the user's sign-in. Without sign-in
-(\`app_status\` shows \`drive: false\`) all scenes are local-only: they
-exist only in that browser, and you read and edit them there the same way.
+(\`app_status\` → \`drive\`: "not connected") all scenes are local-only:
+they exist only in that browser, and you read and edit them there the same way.
 
 If a tool answers "Kurviq is not open", ask the user to open ${app} and
 keep the tab open, then try again.

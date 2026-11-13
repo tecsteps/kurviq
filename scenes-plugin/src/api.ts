@@ -24,7 +24,6 @@ export type SceneVersion = {
   driveRevision: string;
   at: string | null;
   author: string | null;
-  message: string;
   /** made by an agent (the file's appProperties.agentRev names this revision) */
   agent: boolean;
   /** the scene's version (MD5 of its content) in that revision */

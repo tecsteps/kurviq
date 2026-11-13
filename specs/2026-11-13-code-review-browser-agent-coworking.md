@@ -70,7 +70,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-plugin/src/templateChanges.tsx:44-46`, `scenes-plugin/src/slides.scss:970-971`, `excalidraw/packages/common/src/utils.ts:339-358`
 - **Description**: `sceneCoordsToViewportCoords` already adds `offsetLeft` / `offsetTop`; the bar (`position: fixed`) adds them again. `agentGlow.ts` uses the same function without the extra offset. As soon as the canvas does not start at 0,0 the bar is displaced by that offset.
 - **Suggested fix**: Drop `+ appState.offsetLeft` / `+ appState.offsetTop`.
-- **Status**: partly fixed: nothing changed here; remains: drop `+ appState.offsetLeft` / `+ appState.offsetTop` in `scenes-plugin/src/templateChanges.tsx` (slides agent's file)
+- **Status**: fixed 2026-11-13 (the bar uses the viewport coordinates as they are; `sceneCoordsToViewportCoords` already adds the offset, as in agentGlow.ts and notes.tsx)
 
 ## Code smells
 
@@ -110,7 +110,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-plugin/src/index.tsx:1317-1322`, source of the value: `scenes-plugin/src/online/drive.ts:1144`
 - **Description**: The function strips "Agent:" and "scene: …" and turns "Add" into "Created". Drive history only ever yields `"Agent edit"` or `""`, so the result is always "Agent edit" or "Change"; the "Agent edit" row also carries the separate "agent" tag (index.tsx:1421).
 - **Suggested fix**: Replace with a fixed label ("Change"; the tag marks agent versions) and drop `message` from `SceneVersion` if nothing else reads it.
-- **Status**: partly fixed: the history shows "Change" (the tag marks agent versions); remains: drop `message` from SceneVersion (`api.ts`, `online/drive.ts`)
+- **Status**: fixed 2026-11-13 (the history shows "Change", the tag marks agent versions; `message` dropped from SceneVersion, nothing read it)
 
 ### D25. ActivityLog's `hidden` filter is never used
 - **Area**: Browser: main UI, agent co-working (index, live, cowork)
@@ -176,7 +176,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `PSEUDO_TYPES`: `scenes-plugin/src/live.ts:142` and `scenes-mcp/tools.mjs:228`; `isPlainObject`: `scenes-plugin/src/cowork.ts:253` and `scenes-mcp/editConflicts.mjs:12`; the requestId pattern: `scenes-plugin/src/agentRequests.ts:18` and `scenes-mcp/tools.mjs:1466`; "id (fields)" conflict list: `scenes-plugin/src/cowork.ts:901, 1025` and `scenes-mcp/editConflicts.mjs:306` (`conflictList`); "does the edit change anything besides comments": `scenes-plugin/src/live.ts:128-136`, `scenes-plugin/src/cowork.ts:852`, `scenes-mcp/tools.mjs:1250, 1492`
 - **Description**: The plugin already imports shared `.mjs` modules from `scenes-mcp`, so these copies have no technical reason. The last one is a hidden coupling: a new edit option that is missing in `commentsOnly` lets an element edit pass the read-only check at live.ts:894 and 959.
 - **Suggested fix**: Export them once from a shared `.mjs` (for example next to `editConflicts.mjs`) and import on both sides.
-- **Status**: partly fixed: the conflict list uses `conflictList` from editConflicts.mjs; remains: export `isPlainObject`, `PSEUDO_TYPES`, the requestId pattern and a "comments only" check from a shared scenes-mcp module and import them in cowork.ts / live.ts / agentRequests.ts
+- **Status**: fixed 2026-11-13 (`PSEUDO_TYPES`, `commentsOnly` (live.ts), `isPlainObject` (cowork.ts) and `REQUEST_ID` (agentRequests.ts) imported from `scenes-mcp/agentEdits.mjs`; the conflict list from editConflicts.mjs)
 
 ### U34. Two tooltip implementations with the same rules (Astra F11)
 - **Area**: Browser: main UI, agent co-working (index, live, cowork)
@@ -185,7 +185,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-plugin/src/titleTips.ts:23-42`, `:67`; `scenes-plugin/src/quickTip.tsx:30-57`
 - **Description**: Both show a tooltip after 120 ms, clamp it 140 px from the window edges and place it above or below with an arrow; one writes DOM directly, the other is a React portal. They already differ: `titleTips` hides on blur and pointer down, `QuickTip` does not.
 - **Suggested fix**: One function for the placement and the timing, used by both.
-- **Status**: partly fixed: nothing changed here; remains: shared placement / timing for `titleTips.ts` and `quickTip.tsx` (outside this agent's files)
+- **Status**: fixed 2026-11-13 (`tipPlacement` and `TIP_DELAY` in titleTips.ts, used by QuickTip too; test tipPlacement.test.ts. The hide-on-blur / pointer-down difference stays: QuickTip hides with its own mouse leave)
 
 ## Over-engineering
 

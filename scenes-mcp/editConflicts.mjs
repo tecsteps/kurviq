@@ -327,3 +327,22 @@ export const resolveConflicts = ({ base, current, updates, adds, upsert = false,
 
 /** one line naming the collisions: "box (text), t2 (position)" */
 export const conflictList = (conflicts) => conflicts.map((c) => `${c.id} (${c.properties.join(", ")})`).join(", ");
+
+/**
+ * The elements of the agent's version (`base`) the conflict check of an edit
+ * needs: those its updates (and, with upsert, its adds) name, and their
+ * labels. Sent with the edit, so the user's tab checks it again against the
+ * version it actually edits (a user change may land after the MCP's check).
+ */
+export const conflictBaseOf = (base, { updates, adds, upsert = false }) => {
+  const named = [...(updates || []), ...(upsert ? adds || [] : [])].map((item) => item?.id).filter((id) => typeof id === "string");
+  const ids = new Set(named);
+  return (base || []).filter((el) => ids.has(el?.id) || ids.has(el?.containerId));
+};
+
+/** the conflicts of the MCP's check and of the tab's check, each once (with "overwrite" both report the same) */
+export const withLateConflicts = (first, late) => {
+  const key = (conflict) => `${conflict.id}\n${conflict.properties.join(",")}`;
+  const seen = new Set(first.map(key));
+  return [...first, ...(late || []).filter((conflict) => !seen.has(key(conflict)))];
+};

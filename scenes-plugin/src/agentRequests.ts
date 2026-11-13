@@ -10,12 +10,13 @@
 
 import { createStore, del, entries, get, set } from "idb-keyval";
 
+import { REQUEST_ID } from "../../scenes-mcp/agentEdits.mjs";
+
 const results = createStore("kurviq-agent-edits", "results");
 const payloads = createStore("kurviq-agent-payloads", "payloads");
 
 const MAX_RESULTS = 60;
 const MAX_PAYLOADS = 30;
-const ID_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
 
 /** edits of this tab still running, by requestId */
 const running = new Map<string, Promise<any>>();
@@ -44,7 +45,7 @@ export const onceForRequest = async <T,>(
   run: () => Promise<T>,
   reload: () => Promise<any[]>,
 ): Promise<T> => {
-  if (!requestId || !ID_RE.test(requestId)) {
+  if (!requestId || !REQUEST_ID.test(requestId)) {
     return run();
   }
   const inFlight = running.get(requestId);

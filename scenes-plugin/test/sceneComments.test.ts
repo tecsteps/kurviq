@@ -244,3 +244,20 @@ describe("readable parts (the server's check without the key)", () => {
     expect(commenterReadableRefusal(commentReadable(thread), commentReadable({ ...thread, done: { name: "Bob", at: 1 }, u: 300 }), bob.key)).toBeNull();
   });
 });
+
+describe("agents' comment changes against a faster clock (B127)", () => {
+  const me = { name: "Fabian", key: "cccccccccccccccc" };
+
+  it("resolve, reopen, edit and delete are stamped after the stored version, also when its stamp is ahead", () => {
+    const first = applyCommentOps([], [{ action: "add", text: "Mine", x: 1, y: 2 }], me, new Map(), 1000);
+    const id = first.added[0];
+    // another device with its clock an hour ahead changed it last
+    const ahead = first.comments.map((comment) => ({ ...comment, u: 3_601_000 }));
+    for (const op of [{ action: "resolve", thread: id }, { action: "reopen", thread: id }, { action: "edit", id, text: "Changed" }, { action: "delete", id }]) {
+      const changed = applyCommentOps(ahead, [op], me, new Map(), 2000).changed[0];
+      expect(changed.u).toBe(3_601_001);
+    }
+    // a clock that is not behind keeps its own time
+    expect(applyCommentOps(first.comments, [{ action: "edit", id, text: "Later" }], me, new Map(), 5000).changed[0]).toMatchObject({ u: 5000, edited: 5000 });
+  });
+});

@@ -130,7 +130,7 @@ const none = await folders(stranger);
 ok(none.status === 200 && !none.body.folders?.some((folder) => folder.folderId === folderId), "stranger: not shared with them", none);
 
 // 3. the scene list shows the folder as a group
-await guest.click(".scenes-pill");
+await guest.click(".scenes-pill__open");
 await sleep(1500);
 const menuText = () => guest.evaluate(() => document.querySelector(".scenes-switcher__menu")?.innerText ?? "");
 const folded = await menuText();
@@ -143,7 +143,7 @@ const menu = await menuText();
 ok(menu.includes(ALPHA) && menu.includes(BETA), "list: unfolded, the folder's scenes", menu.slice(0, 300));
 await guest.keyboard.press("Escape");
 await sleep(300);
-await guest.click(".scenes-pill");
+await guest.click(".scenes-pill__open");
 await sleep(800);
 ok((await menuText()).includes(ALPHA), "list: the group stays unfolded (remembered)");
 const remembered = await guest.evaluate(() => JSON.parse(localStorage.getItem("kurviq-scene-groups") || "{}"));
@@ -170,7 +170,7 @@ ok(opened.list.includes(ALPHA) && opened.list.includes(BETA), "the folder's scen
 ok(opened.elements.join() === "300", "the scene's content came through the server", opened.elements);
 ok(opened.viewMode === true && !!opened.readOnly, "read-only", opened);
 // the list looks the same inside the folder: "My scenes" first, then the folder under its owner
-await guest.click(".scenes-pill");
+await guest.click(".scenes-pill__open");
 await sleep(1000);
 const inside = await guest.evaluate(() => [...document.querySelectorAll(".scenes-switcher__group")].map((el) => el.innerText.replace(/\s+/g, " ")));
 const insideText = await guest.evaluate(() => document.querySelector(".scenes-switcher__menu")?.innerText ?? "");
@@ -277,7 +277,7 @@ const editable = await editor.evaluate(() => ({
 }));
 ok(editable.current === PLAIN && !editable.readOnly && !editable.viewMode, "editor: the scene opens editable", editable);
 const folderStatus = await agentStatus(editor);
-ok(/shared folder/.test(folderStatus.space) && folderStatus.scenes.some((line) => line.startsWith(PLAIN)), "app_status: in the shared folder, its scenes", { space: folderStatus.space, scenes: folderStatus.scenes });
+ok(/shared folder/.test(folderStatus.space) && folderStatus.scenes.some((row) => row.name === PLAIN), "app_status: in the shared folder, its scenes", { space: folderStatus.space, scenes: folderStatus.scenes });
 const revisions = async (fileId) => (await admin(`revisions?fileId=${fileId}`)).revisions?.length ?? (await admin(`file?fileId=${fileId}`)).revisions?.length ?? 0;
 const before = await revisions(plainId);
 await editor.evaluate(() => {

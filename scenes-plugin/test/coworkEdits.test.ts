@@ -55,6 +55,7 @@ const dependencies: Record<string, any> = {
   "./storage": { getAgentBaseline: vi.fn(), getCheckpoint: vi.fn(), setAgentBaseline: vi.fn(), setCheckpoint: vi.fn() },
   "./online/liveMerge": await import("../src/online/liveMerge"),
   "../../scenes-mcp/editConflicts.mjs": await import("../../scenes-mcp/editConflicts.mjs"),
+  "../../scenes-mcp/agentEdits.mjs": await import("../../scenes-mcp/agentEdits.mjs"),
   "./uploads": { MAX_UPLOADS: 100 },
   "./richText/agent": { applyMarkdownUpdate },
   "./richText/format": { applyFormat },
@@ -80,10 +81,15 @@ runInNewContext(compiled.outputText, {
     if (!(name in dependencies)) throw new Error(`Unexpected dependency: ${name}`);
     return dependencies[name];
   },
-  Map, Set, Date, Math, Error, structuredClone,
+  Map, Set, Date, Math, Error, structuredClone, JSON, Object, Array, Number, String,
 });
 const applyEdits: typeof import("../src/cowork").applyEdits = loaded.applyEdits;
 const movesFrames: typeof import("../src/cowork").movesFrames = loaded.movesFrames;
+const checkConflictsHere: typeof import("../src/cowork").checkConflictsHere = loaded.checkConflictsHere;
+const withReplacedComments: typeof import("../src/cowork").withReplacedComments = loaded.withReplacedComments;
+const readLocalScene: typeof import("../src/cowork").readLocalScene = loaded.readLocalScene;
+const saveLocalScene: typeof import("../src/cowork").saveLocalScene = loaded.saveLocalScene;
+const controller = dependencies["./controller"].scenesController;
 const followDeckOrder = dependencies["./slides"].followDeckOrder;
 
 const el = (id: string, props: Record<string, any> = {}): any => ({
@@ -488,5 +494,64 @@ describe("agent edits of the open scene and of local-only scenes", () => {
     expect(saved.map((item: any) => item.id)).toEqual(["a", "agent", "user"]);
     expect(saved[0].x).toBe(5);
     expect(result.elements.map((item: any) => item.id)).toEqual(["a", "agent", "user"]);
+  });
+});
+
+describe("the edit's conflict check in the tab, against the version it edits", () => {
+  const base = [el("box", { x: 0 }), text("label", "old", { containerId: "box" }), el("free")];
+
+  it("leaves the edit as it is without a base (no basedOn)", () => {
+    const command = { type: "scene-edit" as const, name: "S", update: [{ id: "box", x: 5 }] };
+    expect(checkConflictsHere(command, [el("box", { x: 9 })])).toEqual({ command, conflicts: [] });
+  });
+
+  it("rejects an update of what the user changed after the MCP's check, and keeps the rest", () => {
+    const command = { type: "scene-edit" as const, name: "S", conflictBase: base, update: [{ id: "box", x: 5 }, { id: "free", strokeColor: "red" }] };
+    const current = [el("box", { x: 40, version: 2 }), base[1], el("free")];
+    const checked = checkConflictsHere(command, current);
+    expect(checked.command.update).toEqual([{ id: "free", strokeColor: "red" }]);
+    expect(checked.conflicts).toMatchObject([{ id: "box", resolution: "rejected" }]);
+  });
+
+  it("with overwrite applies the update and still lists it", () => {
+    const command = { type: "scene-edit" as const, name: "S", conflictBase: base, onConflict: "overwrite" as const, update: [{ id: "box", x: 5 }] };
+    const checked = checkConflictsHere(command, [el("box", { x: 40, version: 2 })]);
+    expect(checked.command.update).toEqual([{ id: "box", x: 5 }]);
+    expect(checked.conflicts).toMatchObject([{ id: "box", resolution: "overwritten" }]);
+  });
+
+  it("checks upsert adds too, and an element the user deleted meanwhile", () => {
+    const command = { type: "scene-edit" as const, name: "S", conflictBase: base, upsert: true, add: [el("free", { x: 3 })], update: [{ id: "box", x: 1 }] };
+    const checked = checkConflictsHere(command, [el("free", { strokeColor: "blue", version: 2 })]);
+    expect(checked.command.add).toEqual([]);
+    expect(checked.command.update).toEqual([]);
+    expect(checked.conflicts.map((c) => [c.id, c.properties])).toEqual([["box", ["deleted"]], ["free", ["replaced"]]]);
+  });
+});
+
+describe("local-only scenes: comments", () => {
+  const comment = { id: "comment1", thread: "comment1", by: { name: "Ann", key: "0123456789abcdef" }, text: "hi", at: 1, u: 1, pin: { x: 0, y: 0 } };
+
+  it("read_scene gets the scene's comment threads", async () => {
+    controller.localOnlyJson = vi.fn(async () => JSON.stringify({ elements: [el("a")], kurviqComments: [comment] }));
+    const read = await readLocalScene({ name: "Local" });
+    expect(read.file.kurviqComments).toEqual([comment]);
+  });
+
+  it("a replacing scene keeps the replaced scene's comments, merged with its own", () => {
+    const own = { ...comment, id: "comment2", thread: "comment2", text: "new", at: 2, u: 2 };
+    const json = withReplacedComments(JSON.stringify({ elements: [], kurviqComments: [own] }), JSON.stringify({ elements: [], kurviqComments: [comment] }));
+    expect(JSON.parse(json).kurviqComments.map((c: any) => c.id)).toEqual(["comment1", "comment2"]);
+    expect(withReplacedComments("{\"elements\":[]}", null)).toBe("{\"elements\":[]}");
+  });
+
+  it("save_scene(local, replace) stores the scene with the replaced one's comments", async () => {
+    controller.isLocalOnly = vi.fn(() => true);
+    controller.localOnlyJson = vi.fn(async () => JSON.stringify({ elements: [], kurviqComments: [comment] }));
+    controller.createLocalOnly = vi.fn(async () => {});
+    await saveLocalScene({ type: "local-save", name: "Local", json: JSON.stringify({ elements: [el("a")] }), replace: true });
+    const stored = JSON.parse(vi.mocked(controller.createLocalOnly).mock.calls[0][1]);
+    expect(stored.kurviqComments.map((c: any) => c.id)).toEqual(["comment1"]);
+    expect(controller.createLocalOnly).toHaveBeenCalledWith("Local", expect.any(String), { replace: true });
   });
 });

@@ -20,23 +20,40 @@ const hide = () => {
   owner = null;
 };
 
+/** how long the pointer rests on a control before its tooltip shows (ms) */
+export const TIP_DELAY = 120;
+
+export type TipPlacement = { left: number; top: number; above: boolean; arrow: string };
+
+/**
+ * Where a tooltip for a control at `rect` goes: below it, or above when it
+ * would leave the window at the bottom; kept 140 px from the window's sides,
+ * with the arrow still pointing at the control's middle. Shared by the title
+ * tooltips here and QuickTip.
+ */
+export const tipPlacement = (
+  rect: { left: number; width: number; top: number; bottom: number },
+  view: { width: number; height: number } = { width: window.innerWidth, height: window.innerHeight },
+): TipPlacement => {
+  const above = rect.bottom + 48 > view.height;
+  const x = rect.left + rect.width / 2;
+  const left = Math.min(Math.max(x, 140), view.width - 140);
+  return { left, top: above ? rect.top - 8 : rect.bottom + 8, above, arrow: `calc(50% + ${x - left}px)` };
+};
+
 const show = (el: HTMLElement) => {
   const text = el.dataset.kqTitle;
   if (!text || !el.isConnected) {
     return;
   }
-  const rect = el.getBoundingClientRect();
-  const above = rect.bottom + 48 > window.innerHeight;
-  const x = rect.left + rect.width / 2;
-  // kept on screen; the arrow still points at the control
-  const left = Math.min(Math.max(x, 140), window.innerWidth - 140);
+  const at = tipPlacement(el.getBoundingClientRect());
   tip = document.createElement("div");
-  tip.className = `kurviq-tip${above ? " kurviq-tip--above" : ""}`;
+  tip.className = `kurviq-tip${at.above ? " kurviq-tip--above" : ""}`;
   tip.setAttribute("role", "tooltip");
   tip.textContent = text;
-  tip.style.left = `${left}px`;
-  tip.style.top = `${above ? rect.top - 8 : rect.bottom + 8}px`;
-  tip.style.setProperty("--tip-arrow", `calc(50% + ${x - left}px)`);
+  tip.style.left = `${at.left}px`;
+  tip.style.top = `${at.top}px`;
+  tip.style.setProperty("--tip-arrow", at.arrow);
   document.body.appendChild(tip);
 };
 
@@ -64,7 +81,7 @@ export const installTitleTips = () => {
       }
       hide();
       owner = el;
-      timer = window.setTimeout(() => show(el), 120);
+      timer = window.setTimeout(() => show(el), TIP_DELAY);
     },
     true,
   );

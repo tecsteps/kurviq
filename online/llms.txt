@@ -24,7 +24,7 @@ The MCP server's instructions (sent on connect) explain everything in detail. In
 - `read_scene(name, since: revision)` reports exactly what the user changed by hand since your last edit (`userChanges`).
 - `view_scene` returns a real PNG (rendered in the user's tab with Excalidraw itself). `measure_text` measures text with the real fonts.
 - Slides: every frame is a slide; a "Template" frame holds header/footer/logo. `validate_deck` checks a deck (text that doesn't fit, cut-off elements, contrast, …).
-- Formatted text: write markdown in `text` (bold, italic, lists, checklists, links, sizes).
+- Formatted text: write `markdown` instead of `text` (bold, italic, lists, checklists, links, sizes); a plain `text` update drops the formatting.
 - Images and icons: `{ "type": "image", "src": "<http(s) or data URL>" }`, `"svg": "<svg…>"` or `"icon": "lucide:database"`.
 - `app_status`: which scene the user has open, whether Google Drive is connected (`drive`), each scene's sync status. `open_scene` switches what the user sees: only when they ask.
 - Don't push, write files or call HTTP APIs yourself: the tools and the user's app do all syncing and merging.

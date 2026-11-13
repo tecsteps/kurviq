@@ -10,7 +10,6 @@ import { fillFiles } from "./leanFiles";
 import {
   Fonts,
   exportToBlob,
-  exportToCanvas,
   elementsOverlappingBBox,
   getCommonBounds,
   getNonDeletedElements,
@@ -19,7 +18,7 @@ import {
 
 import { withTemplate } from "./cowork";
 import { pickSlides } from "./pdfExport";
-import { elementStep, getSlides, slideTitle } from "./slides";
+import { elementsAtStep, getSlides, renderSlide, resolveSlide, slideSteps, slideTitle } from "./slides";
 
 import type {
   ExcalidrawElement,
@@ -31,6 +30,14 @@ export type RenderCommand = {
   type: "render";
   /** scene to render; omitted = the scene open in this tab (incl. unsaved edits) */
   scene?: { elements: any[]; files?: BinaryFiles; appState?: any };
+  /**
+   * a saved scene to render, read in this tab (its own copy for local-only
+   * scenes, else as the agent's server would read it), so it doesn't travel
+   * to the agent's server and back
+   */
+  sceneName?: string;
+  /** with sceneName: that version of it (md5, or a live-… revision; default: the newest) */
+  revision?: string;
   /** focus on these elements (plus everything overlapping their area) */
   elementIds?: string[];
   /** focus on a scene-coordinate region */
@@ -56,12 +63,11 @@ const MAX_TILES = 48;
 const sheetTiles = (elements: readonly NonDeletedExcalidrawElement[], command: RenderCommand) => {
   const slides = getSlides(elements);
   const frames = pickSlides(elements, command.sheet, { includeSkipped: true });
-  const byId = new Map(elements.map((el) => [el.id, el]));
+  const steps = slideSteps(elements);
   const tiles: Array<{ frame: (typeof frames)[number]; step?: number; label: string }> = [];
   for (const frame of frames) {
     const number = slides.indexOf(frame) + 1;
-    const children = elements.filter((el) => el.frameId === frame.id);
-    const last = Math.max(0, ...children.map((el) => elementStep(el, byId)));
+    const last = steps.get(frame.id) ?? 0;
     const title = `${number} · ${slideTitle(frame, number - 1)}`;
     if (command.steps && last > 0) {
       for (let step = 0; step <= last; step++) {
@@ -82,7 +88,9 @@ const renderSheet = async (
   command: RenderCommand,
 ) => {
   const tiles = sheetTiles(elements, command);
-  const byId = new Map(elements.map((el) => [el.id, el]));
+  if (!tiles.length) {
+    throw new Error("The scene has no slides (frames): a contact sheet shows slides");
+  }
   if (tiles.length > MAX_TILES) {
     throw new Error(`${tiles.length} tiles: too many for one image (max ${MAX_TILES}); pick fewer slides`);
   }
@@ -108,19 +116,7 @@ const renderSheet = async (
   ctx.fillRect(0, 0, sheet.width, sheet.height);
   await Fonts.loadElementsFonts(elements).catch(() => []);
   for (const [i, tile] of tiles.entries()) {
-    const shown = elements.filter(
-      (el) =>
-        el.id === tile.frame.id ||
-        (el.frameId === tile.frame.id && (tile.step === undefined || elementStep(el, byId) <= tile.step)),
-    );
-    const canvas = await exportToCanvas({ // NOSONAR S9382: in order on purpose (preserves rendering or server operation order)
-      elements: shown,
-      files,
-      appState: { exportBackground: true, viewBackgroundColor: background, exportWithDarkMode: false },
-      exportPadding: 0,
-      exportingFrame: tile.frame as any,
-      getDimensions: (w: number, h: number) => ({ width: tileWidth, height: (tileWidth * h) / w, scale: tileWidth / w }),
-    });
+    const canvas = await renderSlide(elementsAtStep(elements, tile.frame, tile.step), files, tile.frame, { width: tileWidth, background }); // NOSONAR S9382: in order on purpose (preserves rendering or server operation order)
     const x = gap + (i % cols) * (tileWidth + gap);
     const y = gap + Math.floor(i / cols) * (tileHeight + labelHeight + gap);
     ctx.drawImage(canvas, x, y, tileWidth, tileHeight);
@@ -156,36 +152,20 @@ const blobToBase64 = (blob: Blob) =>
     reader.readAsDataURL(blob);
   });
 
-const renderSlide = (visible: readonly NonDeletedExcalidrawElement[], command: RenderCommand) => {
-  let slide: NonDeletedExcalidrawElement | null = null;
-  if (command.slide !== undefined) {
-    const slides = getSlides(visible);
-    const frames = visible.filter((el) => el.type === "frame");
-    slide =
-      typeof command.slide === "number"
-        ? slides[command.slide - 1] ?? null
-        : frames.find((el) => el.id === command.slide) ?? null;
-    if (!slide) {
-      throw new Error(
-        typeof command.slide === "number"
-          ? `No slide ${command.slide}: the deck has ${slides.length} slides`
-          : `No frame with id "${command.slide}"`,
-      );
-    }
-    const byId = new Map(visible.map((el) => [el.id, el]));
-    const frameId = slide.id;
-    visible = visible.filter(
-      (el) =>
-        el.id === frameId ||
-        (el.frameId === frameId &&
-          (command.step === undefined || elementStep(el, byId) <= command.step)),
-    );
+/** the slide to render (command.slide: number, as in the deck, or any frame's id) and what of it shows at command.step */
+const pickSlide = (visible: readonly NonDeletedExcalidrawElement[], command: RenderCommand) => {
+  if (command.slide === undefined) {
+    return { slide: null, visible };
   }
-
-  return { slide, visible };
+  const [slide] = resolveSlide(command.slide, visible, { anyFrame: true });
+  if (!slide) {
+    throw new Error(`No slide or frame "${command.slide}": the deck has ${getSlides(visible).length} slides`);
+  }
+  return { slide, visible: elementsAtStep(visible, slide, command.step) as NonDeletedExcalidrawElement[] };
 };
 
-const renderFocus = (elements: readonly ExcalidrawElement[], command: RenderCommand) => {
+/** the area to show: around elementIds (with padding) or command.region; null: the whole scene */
+const focusBounds = (elements: readonly ExcalidrawElement[], command: RenderCommand) => {
   let focus: Bounds | null = null;
   if (command.elementIds?.length) {
     const wanted = new Set(command.elementIds);
@@ -207,7 +187,8 @@ const renderFocus = (elements: readonly ExcalidrawElement[], command: RenderComm
   return focus;
 };
 
-const renderSource = async (command: RenderCommand, open: () => { elements: readonly ExcalidrawElement[]; files: BinaryFiles; background: string }, convert: (elements: any[]) => Promise<any[]>) => {
+/** the scene to render: the one in the command (converted, its pictures filled in) or the open one */
+const sceneSource = async (command: RenderCommand, open: () => { elements: readonly ExcalidrawElement[]; files: BinaryFiles; background: string }, convert: (elements: any[]) => Promise<any[]>) => {
   let elements: readonly ExcalidrawElement[];
   let files: BinaryFiles;
   let background: string;
@@ -238,7 +219,7 @@ export const renderScene = async (
 ) => {
   await document.fonts.load("20px Excalifont").catch(() => {});
 
-  let { elements, files, background } = await renderSource(command, open, convert);
+  let { elements, files, background } = await sceneSource(command, open, convert);
   if (command.deck !== undefined) {
     elements = withTemplate([...elements], command.deck);
   }
@@ -253,12 +234,12 @@ export const renderScene = async (
     return renderSheet(visible, files, background, command);
   }
 
-  const selected = renderSlide(visible, command);
+  const selected = pickSlide(visible, command);
   const slide = selected.slide;
   visible = selected.visible;
 
   const sceneBounds = getCommonBounds(elements) as Bounds;
-  const focus = renderFocus(elements, command);
+  const focus = focusBounds(elements, command);
 
   const overlapping = (bounds: Bounds) =>
     withBoundText(elementsOverlappingBBox({ elements: visible, bounds, type: "overlap" }), visible);

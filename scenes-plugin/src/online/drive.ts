@@ -1164,7 +1164,6 @@ export const driveScenes = {
         driveRevision: revision.id,
         at: revision.modifiedTime ?? null,
         author: revision.lastModifyingUser?.displayName ?? revision.lastModifyingUser?.emailAddress ?? null,
-        message: revision.id === agentRev ? "Agent edit" : "",
         agent: revision.id === agentRev,
         md5: revision.md5Checksum,
       }));

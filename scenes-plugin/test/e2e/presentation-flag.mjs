@@ -38,7 +38,7 @@ await page.evaluate(async (n) => {
 // the switch sits in the scene panel: the scene pill opens the list, the pen of the current scene its panel
 const panelSwitch = async () => {
   if (!(await page.$('input[aria-label="Presentation"]'))) {
-    await page.click(".scenes-pill");
+    await page.click(".scenes-pill__open");
     await page.waitForSelector(".scenes-switcher__row--current .scenes-switcher__pen", { timeout: 5000 });
     await page.click(".scenes-switcher__row--current .scenes-switcher__pen");
     await page.waitForSelector('input[aria-label="Presentation"]', { timeout: 5000 });

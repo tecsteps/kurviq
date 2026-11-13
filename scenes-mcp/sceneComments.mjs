@@ -12,7 +12,11 @@
 //
 // Authors are a name plus a key (authorKey: a hash of their Google address),
 // never the address itself: the file can be read by everyone it is shared
-// with, and with "anyone with the link" by anyone.
+// with, and with "anyone with the link" by anyone. The key is a pseudonym,
+// not a secret: it is the same in every scene, so someone who guesses an
+// address can confirm that its owner commented. It is not salted per scene
+// on purpose: a local-only scene has no file id, a scene's id changes when it
+// goes to Drive or is copied, and its authors must still own their comments.
 
 import { withTopLevelField } from "./sceneJson.mjs";
 
@@ -428,15 +432,21 @@ export const applyCommentOps = (value, ops, author, elementsById, now = Date.now
       case "resolve":
       case "reopen": {
         const thread = threadOf(op.thread, index);
-        put(op.action === "resolve" ? { ...thread, done: { name: author.name, at }, u: at } : { ...withoutDone(thread), u: at }, index);
+        // a change of a stored comment: stamped after it, also when its stamp is ahead of this clock
+        const u = changeStamp(thread, at);
+        put(op.action === "resolve" ? { ...thread, done: { name: author.name, at }, u } : { ...withoutDone(thread), u }, index);
         break;
       }
-      case "edit":
-        put({ ...ownOf(op.id, index), text: op.text, edited: at, u: at }, index);
+      case "edit": {
+        const comment = ownOf(op.id, index);
+        put({ ...comment, text: op.text, edited: at, u: changeStamp(comment, at) }, index);
         break;
-      case "delete":
-        put({ ...ownOf(op.id, index), gone: true, text: "", u: at }, index);
+      }
+      case "delete": {
+        const comment = ownOf(op.id, index);
+        put({ ...comment, gone: true, text: "", u: changeStamp(comment, at) }, index);
         break;
+      }
       default:
         throw opError(index, 'action must be "add", "reply", "resolve", "reopen", "edit" or "delete"');
     }

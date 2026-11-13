@@ -13,6 +13,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 import { createReceiver, sendMessage } from "../../scenes-plugin/src/online/frames";
+import { bestTab, commandTimeout, FLUSH_TIMEOUT_MS } from "../../scenes-mcp/tabRelay.mjs";
 
 type TabState = {
   current?: string | null;
@@ -38,10 +39,6 @@ type Pending = {
   tab: string;
 };
 
-const COMMAND_TIMEOUT_MS = 30_000;
-/** edits (saves with pictures) and pictures may take longer */
-const SLOW_COMMANDS = new Set(["scene-edit", "local-edit", "render", "deck-check", "convert", "upload", "upload-payload", "http"]);
-const SLOW_TIMEOUT_MS = 75_000;
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(typeof body === "string" ? body : JSON.stringify(body), {
@@ -76,24 +73,12 @@ export class Pairing extends DurableObject {
 
   /** the tab agents talk to: the visible, most recently focused one (or the one showing `scene`) */
   private activeTab(scene?: string | null) {
-    const rank = (tab: Attachment) => [tab.state.visible ? 1 : 0, tab.state.focusedAt || 0, tab.connectedAt];
-    const pick = (onlyScene?: string | null) => {
-      let best: (Attachment & { ws: WebSocket }) | null = null;
-      for (const tab of this.allTabs()) {
-        if (onlyScene !== undefined && (tab.state.current ?? null) !== onlyScene) {
-          continue;
-        }
-        if (!best) {
-          best = tab;
-          continue;
-        }
-        const [a, b] = [rank(tab), rank(best)];
-        if ((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0) {
-          best = tab;
-        }
-      }
-      return best;
-    };
+    const rank = (tab: Attachment) => ({ visible: tab.state.visible, focusedAt: tab.state.focusedAt, connectedAt: tab.connectedAt });
+    const pick = (onlyScene?: string | null) =>
+      bestTab(
+        this.allTabs().filter((tab) => onlyScene === undefined || (tab.state.current ?? null) === onlyScene),
+        rank,
+      );
     return (scene !== undefined ? pick(scene) : null) ?? pick();
   }
 
@@ -107,7 +92,7 @@ export class Pairing extends DurableObject {
   private send(ws: WebSocket, command: any, timeoutMs?: number) {
     const id = String(++this.seq);
     const type = String(command?.type ?? "");
-    const wait = timeoutMs ?? (SLOW_COMMANDS.has(type) ? SLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS);
+    const wait = timeoutMs ?? commandTimeout(type);
     return new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -187,7 +172,7 @@ export class Pairing extends DurableObject {
     const results = [];
     for (const tab of targets) {
       try {
-        results.push(await this.send(tab!.ws, { type: "flush", name }, 15_000)); // NOSONAR S9382: in order on purpose (flush tabs in order to preserve request and result order)
+        results.push(await this.send(tab!.ws, { type: "flush", name }, FLUSH_TIMEOUT_MS)); // NOSONAR S9382: in order on purpose (flush tabs in order to preserve request and result order)
       } catch (error: any) {
         results.push({ error: error.message });
       }
@@ -207,7 +192,6 @@ export class Pairing extends DurableObject {
     if (url.pathname === "/api/app/command" && request.method === "POST") {
       const command = JSON.parse(body || "{}");
       // no headless Excalidraw here: the agent's own work runs in the user's tab too
-      delete command.agentSide;
       const tab = this.activeTab(command.targetScene);
       if (!tab) {
         throw this.notOpen();

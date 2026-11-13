@@ -49,7 +49,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/tools.mjs:1744-1757`, written as is by `scenes-plugin/src/online/drive.ts:1004-1040`
 - **Description**: The file is rebuilt as `{ type, version, source, elements, appState, files }`. The existing file's top-level `kurviqComments` and `kurviqFonts` are not carried over, and the tab's PUT writes the body unchanged. Replacing a scene therefore deletes every comment thread in the Drive file (tombstones included, so they are not "deleted" for merges, just absent) and its embedded fonts. A new scene using `"fontFamily": "Inter"` is saved without `kurviqFonts`, although the docs say the font "travels with the scene": people opening the shared file get a fallback font until the owner's app re-saves it. `clone_scene` spreads the whole file and keeps both.
 - **Suggested fix**: Carry `kurviqComments` and `kurviqFonts` of the existing file into the replacement, and let the tab add the fonts on whole-scene saves (it already does for edits with `withFonts`).
-- **Status**: partly fixed: save_scene keeps the replaced Drive scene's `kurviqComments` and `kurviqFonts`, and the tab adds the custom fonts an agent's scene uses (`withAgentFonts` in `online/drive.ts`); remains: replacing a local-only scene (`saveLocalScene` in `scenes-plugin/src/cowork.ts`) does not keep its comments
+- **Status**: fixed 2026-11-13: save_scene keeps the replaced Drive scene's `kurviqComments` and `kurviqFonts`, the tab adds the custom fonts an agent's scene uses (`withAgentFonts`), and replacing a local-only scene keeps its comments (`withReplacedComments` in `saveLocalScene`, merged with any the new scene carries)
 
 ### B55. Checkpoints hold only the elements: pictures, background and fonts are lost (Astra F34)
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -85,7 +85,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/tools.mjs:1477-1511`; `scenes-plugin/src/cowork.ts:953-980` (non-live path loads the newest version again and applies on top, retrying on 409)
 - **Description**: `edit_scene` loads the scene, computes conflicts in the MCP process, then sends the surviving updates. For a Drive scene that is not live, the tab loads the newest version again and applies the edit with no knowledge of `basedOn`; `onConflict` is sent but not used on that path. A user change pushed in between (the queue can hold an edit for up to 75 s online) is overwritten property by property without a conflict. Independently, the check covers `update` only: an `add` with `upsert: true` replaces a whole element the user changed since `basedOn`, with nothing in `conflicts`.
 - **Suggested fix**: Send `basedOn` (or the base elements' ids and fields) with the command and run `resolveConflicts` in the tab against the version it actually edits; include upsert replacements in the check.
-- **Status**: partly fixed: upsert replacements of elements the user changed are conflicts now; remains: the check runs in the MCP, not in the tab against the version it edits (`scenes-plugin/src/cowork.ts`)
+- **Status**: fixed 2026-11-13: upsert replacements are conflicts; the MCP check stays as the first pass (it answers "nothing applied" without a round trip) and sends the base of the named elements (`conflictBaseOf`); the tab runs `resolveConflicts` again against the version it actually edits (`checkConflictsHere` in cowork.ts, every Drive retry, live and local-only scenes), late conflicts are merged into the same `conflicts` (`withLateConflicts`), with a warning when only the tab found them
 
 ### B120. read_scene never shows comments of local-only scenes
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -94,6 +94,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/tools.mjs:704-707`, `:721`; `scenes-plugin/src/cowork.ts:1063-1071` (`parseScene` returns elements, files, appState, kurviqFonts only)
 - **Description**: `sceneComments(current.file, ...)` reads `file.kurviqComments`, but the `local-read` answer has no such field. `edit_scene(comments: ...)` on a local-only scene does store comments (`editLocalScene` passes `data.kurviqComments`), so an agent can add a comment, get its id in `commentsAdded`, and never read it or any reply again.
 - **Suggested fix**: Return `kurviqComments` from `readLocalScene` (and keep it through `leanScene`).
+- **Status**: fixed 2026-11-13 (`readLocalScene` returns `kurviqComments`; `leanScene` keeps every other field)
 
 ### B121. Local and online differ for scenes without Google sign-in (`driveOptional`), with a raw JSON error locally
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -102,7 +103,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/tools.mjs:950-952`, `:179-181`; `scenes-mcp/server.mjs:48-82` (option not passed); `scenes-plugin/src/online/tabServer.ts:154-156`
 - **Description**: Online, `save_scene` falls back to a local-only scene when the tab has no Drive. The local server does not pass `driveOptional`, although the local skill says the same thing ("Without sign-in ... all scenes are local-only ... you read and edit them there the same way") and the same tab code answers 503. Locally `save_scene("X", ...)` without sign-in fails in `loadSceneWithMd5`, which throws the body unparsed: `Error: {"error":"Google Drive is not connected ...","offline":true}`.
 - **Suggested fix**: Drop the option and always apply the fallback; let `loadSceneWithMd5` use the same error parsing as `call`.
-- **Status**: fixed 2026-11-13 (`driveOptional` dropped, the fallback always applies; scene reads parse the server's error); `online/worker/index.ts` still passes `driveOptional` (ignored)
+- **Status**: fixed 2026-11-13 (`driveOptional` dropped, the fallback always applies; scene reads parse the server's error); `online/worker/index.ts` no longer passes it
 
 ### B122. list_scenes finds local-only scenes by pattern-matching a status sentence
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -111,7 +112,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/tools.mjs:574-577`; the sentence is built in `scenes-plugin/src/live.ts:609-617`
 - **Description**: The filter is `/ local-only /` on lines like `"<name>: <status> (...)"`. A synced scene named `my local-only notes` matches on its name; `indexOf(": local-only")` is then -1 and `slice(0, -1)` lists `my local-only notes: synce` as a local-only scene. Any rewording of the status line breaks the list silently.
 - **Suggested fix**: Have `status` return structured rows (`{ name, status, localOnly }`) and read `localOnly`.
-- **Status**: fixed 2026-11-13 (the name ends at the first ": ", which names can't contain; structured rows `{ name, localOnly }` are read too, for when the tab sends them)
+- **Status**: fixed 2026-11-13 (the tab's `status` returns rows `{ name, status, localOnly, note? }`, which list_scenes reads; the old sentence form is still parsed for older tabs; SKILL.md and the shared-folder e2e follow)
 
 ### B123. Local file access breaks when the MCP server is started with cwd `/`
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -149,6 +150,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Suggested fix**: Add a hash of `by.name` and `by.agent` to the readable part and refuse a change of it by anyone but the author.
 - **Also in the Astra review**: F35 (reproduced there: `commenterReadableRefusal` returns null and `readableMatches` true for a changed `by.name` / `by.agent`).
 - **Update 2026-11-13 (specs)**: The server check goes, but the same gap is in `commenterRefusal`, which becomes the editor tab's check: refuse changes to `by.name`, `by.agent` and `edited` of others' comments.
+- **Status**: fixed 2026-11-13 (`commenterRefusal` refuses changes to `by.name`, `by.agent` and `edited` of others' comments; tests in sceneComments.test.ts)
 
 ### B127. Agent comment changes can lose the merge against a comment stamped by a faster clock
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -157,6 +159,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/sceneComments.mjs:402`, `:418-428`, `:116-124`
 - **Description**: `resolve`, `reopen`, `edit` and `delete` stamp `u = now + index`. If the stored comment's `u` is ahead of this browser's clock, the agent's version has the lower `u`: it is stored locally, but the next merge with Drive or another tab (`newer`) brings the old version back. `presentationChange` in `presentation.mjs:48-51` guards against exactly this with `Math.max(now, previous + 1)`.
 - **Suggested fix**: Use `u: Math.max(at, previous.u + 1)` for changes of existing comments.
+- **Status**: fixed 2026-11-13 (`applyCommentOps` stamps resolve / reopen / edit / delete with `changeStamp`: after the stored version also when its stamp is ahead of this clock; test in sceneComments.test.ts)
 
 ### B128. Feedback is refused for the ordinary word "data:"
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -185,7 +188,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `online/llms.txt:27`; `README-AGENTS.md:10-14`, `:42-43`, `:113-134`; `scenes-mcp/skill/kurviq-scenes/SKILL.md:18-19` (same text in `online/worker/skill.ts:21`)
 - **Description**: (1) llms.txt says "Formatted text: write markdown in `text`"; the tools and REFERENCE.md say `markdown` instead of `text`, and that a plain `text` update drops the formatting. (2) README-AGENTS.md still tells online users to hand over `https://kurviq.com/mcp/<key>`, which the Worker refuses (llms.txt says so). (3) README-AGENTS.md says `.mcp.json` registers the server as `excalidraw`; it is `kurviq-local`. (4) Its tool table lacks `add_font` and `short_link`. (5) SKILL.md says `app_status` shows `drive: false`; `app_status` returns `drive` as a sentence ("not connected (...)", "online"); the boolean is only in `list_scenes` → `app` and `/api/app/state`.
 - **Suggested fix**: Correct the five places; for (5) either document the string or return a boolean next to it.
-- **Status**: partly fixed: (2), (3), (4) in README-AGENTS.md and (5) in SKILL.md (`drive`: "not connected"); remains: (1) `online/llms.txt:27` and (5) the same sentence in `online/worker/skill.ts:21`
+- **Status**: fixed 2026-11-13: (2), (3), (4) in README-AGENTS.md, (1) in online/llms.txt (`markdown` instead of `text`), (5) in SKILL.md and online/worker/skill.ts (`drive`: "not connected")
 
 ### S41. Author keys are unsalted hashes of e-mail addresses in files anyone with the link can read
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -194,6 +197,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/sceneComments.mjs:13-15`, `:233-238`
 - **Description**: The header argues the address itself is never stored because the file is readable by everyone it is shared with. `authorKey` is 64 bits of SHA-256 over a fixed prefix plus the address, so anyone with a list of candidate addresses can confirm who commented. It is a pseudonym, not protection of the address.
 - **Suggested fix**: State this limit in the comment and the privacy text, or derive the key per scene (e.g. keyed with the file id) so keys cannot be matched across scenes.
+- **Status**: not changed, by decision 2026-11-13: a per-scene salt (the file id) would work for the Worker (claims.ck has the file id) but not for every caller: local-only scenes have no file id, a scene's id changes when it goes from local-only to Drive or is copied (clone_scene, keep a local copy), and the comment UI's key is per person; its authors would lose their own comments. The limit (a pseudonym, not a secret) is now stated in sceneComments.mjs's header; the privacy page does not mention comments yet (owner's text)
 
 ### S42. Functions extracted only to pass their arguments through
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -214,7 +218,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Description**: `agentCommand` adds `agentSide: true` in detached mode; both servers delete the field before routing. `agentCommand` and `appCommand` are therefore the same call in every mode, and so are `renderImage(..., { userTab: true })` and `local ? appCommand : agentCommand`. The code still reads as if the agent had its own tab.
 - **Suggested fix**: Remove `agentSide`, `agentCommand` and the `userTab` option; call `appCommand` everywhere.
 - **Also in the Astra review**: F36.
-- **Status**: partly fixed: `agentCommand`, `agentSide` and `userTab` are gone from tools.mjs; remains: the `delete command.agentSide` lines in `scenes-server/server.mjs` and `online/worker/pairing.ts`
+- **Status**: fixed 2026-11-13 (`agentCommand`, `agentSide`, `userTab` gone from tools.mjs; the `delete command.agentSide` lines removed from both relays)
 
 ### D2. The Node fallback conversion can only run in one case, where it harms
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -261,6 +265,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-server/server.mjs:81`, `:100-134`, `:298-336`, `:460-478`, `:500-541`; `online/worker/pairing.ts:46-49`, `:91-111`, `:123-141`, `:185-198`, `:232-251`
 - **Description**: Tab ranking, `flushTabs`, the scene relay and command dispatch exist twice. They already differ: online gives `scene-edit`, `local-edit`, `render`, `deck-check`, `convert`, `http` 75 s, the local server 30 s for everything, so the same edit with pictures times out locally and not online. The same tools then behave differently per host for no stated reason.
 - **Suggested fix**: Move the ranking, the slow-command list and the timeouts into a shared module (as done for `sceneName.mjs`), or at least use the same values.
+- **Status**: fixed 2026-11-13 (`scenes-mcp/tabRelay.mjs`: tab ranking `bestTab`, the slow-command list, command / slow / flush timeouts; imported by `scenes-server/server.mjs` and `online/worker/pairing.ts`; locally slow commands now get 75 s like online; test tabRelay.test.ts)
 
 ### U40. Small helpers copied between scenes-mcp and the plugin
 - **Area**: MCP server and shared modules (scenes-mcp)
@@ -269,7 +274,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `needsConversion`: `scenes-mcp/convert.mjs:5-6` vs `scenes-plugin/src/live.ts:416-417` and `scenes-plugin/src/render.ts:233-235` (the plugin copies lack the `markdown` case); `withBoundText`: `scenes-mcp/inspect.mjs:43-54` vs `scenes-plugin/src/render.ts:157-171`; `markdownOfElement`: `scenes-mcp/richText.mjs:7-10` vs `scenes-plugin/src/richText/agent.ts:56-59` (different fallback text); comparable-value canonicalisation: `scenes-mcp/editConflicts.mjs:15-46` vs `scenes-mcp/elementContent.mjs:9-33` (they disagree on `[]` versus missing); path confinement: `scenes-mcp/media.mjs:20-31` vs `scenes-mcp/server.mjs:62-77`
 - **Description**: Each pair states one rule twice and the copies have started to diverge. Example: an element with `version` and `markdown` counts as "needs conversion" in tools.mjs but not in the tab that converts it.
 - **Suggested fix**: Import the scenes-mcp versions in the plugin (the modules are already shared), let `editConflicts` use `elementContent`'s normalisation, and export one `insideRoot(base, target)` helper.
-- **Status**: partly fixed: render.ts imports `needsConversion` (convert.mjs) and `withBoundText` (boundText.mjs), editConflicts compares with `comparable` from elementContent.mjs, `insideRoot` is shared; remains: the copies in `scenes-plugin/src/live.ts:416` (needsConversion) and `scenes-plugin/src/richText/agent.ts:56` (markdownOfElement)
+- **Status**: fixed 2026-11-13: render.ts and live.ts import `needsConversion` (convert.mjs), render.ts `withBoundText` (boundText.mjs), editConflicts compares with `comparable`, `insideRoot` is shared; the `markdownOfElement` copy in richText/agent.ts was unused and is gone
 
 ## Over-engineering
 
@@ -280,7 +285,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-mcp/tools.mjs:613-614` (`get_scene` stores a checkpoint of the full scene on every call), `:1512-1516` and `:931-946` (the edit result's `elements` are sent back as `scene` for the picture, and the pre-edit scene again for the user's changes), `:1575-1579` (`view_scene(name)` loads the scene into the MCP process to send it back to the same tab)
 - **Description**: The tab that owns the scene serves it to the MCP process, which returns it to the same tab to render. Online this passes the pairing WebSocket and the Worker's CPU budget (the reason `leanReads` exists). A render command naming the scene (and a revision) would avoid the round trips; the checkpoint written by every `get_scene` is used only if the agent later views or saves it.
 - **Suggested fix**: Let `render` take `{ name, revision }` and resolve it in the tab; create the `get_scene` checkpoint lazily or drop it in favour of `view_scene(name)`.
-- **Status**: partly fixed: get_scene stores a checkpoint only with `checkpoint: true`; remains: a render command that names the scene and revision, resolved in the tab (`scenes-plugin/src/cowork.ts` / `live.ts`)
+- **Status**: partly fixed 2026-11-13: get_scene stores a checkpoint only with `checkpoint: true`; view_scene(name) sends a render command naming the scene (`sceneName`, optional `revision`), which the tab reads itself (local-only: its own copy; else as `/api/scenes/<name>`), so the scene no longer travels to the MCP and back. Remains: the pictures of edit results (the edited elements and the pre-edit version of the user's changes) still ship elements, as they show versions the tab no longer holds by name
 
 ### O15. Redirect protocol check that cannot fail
 - **Area**: MCP server and shared modules (scenes-mcp)

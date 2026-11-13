@@ -28,8 +28,9 @@ import {
 import { getFontString } from "@excalidraw/common";
 
 import { registerSceneFonts, withFonts } from "./fonts";
-import { applyCommentOps, authorKey, withComments } from "../../scenes-mcp/sceneComments.mjs";
-import { conflictList } from "../../scenes-mcp/editConflicts.mjs";
+import { applyCommentOps, authorKey, mergeComments, withComments } from "../../scenes-mcp/sceneComments.mjs";
+import { conflictList, resolveConflicts } from "../../scenes-mcp/editConflicts.mjs";
+import { isPlainObject } from "../../scenes-mcp/agentEdits.mjs";
 import type { CommentOp, SceneComment } from "../../scenes-mcp/sceneComments.mjs";
 import { scenesApi } from "./api";
 import { connection } from "./online/drive";
@@ -119,6 +120,12 @@ export type EditOptions = {
   /** the agent's id for this edit: sent again (e.g. after a timeout), it is not applied twice */
   requestId?: string;
   onConflict?: "reject" | "overwrite";
+  /**
+   * the agent's version of the elements the edit names (editConflicts.mjs
+   * conflictBaseOf): its updates are checked against the version the tab
+   * edits, not only in the MCP before it was sent
+   */
+  conflictBase?: any[];
 };
 
 export type EditCommand = {
@@ -251,10 +258,6 @@ const sceneSize = (json: string, elements: readonly ExcalidrawElement[]) => ({
 /** a deck's slides get their template copies (header, footer, page numbers) */
 export const withTemplate = (elements: ExcalidrawElement[], deck: string) =>
   syncTemplate(elements, deck)?.elements ?? elements;
-
-/** a JSON object (not null, not an array) */
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === "object" && !Array.isArray(value);
 
 /**
  * customData of an update merges into what the element has (two levels:
@@ -1048,11 +1051,35 @@ const editSceneData = async (
 ) => {
   await registerSceneFonts(data);
   const restored = restoreElements(structuredClone(base) as any, null, { repairBindings: true });
-  const { elements: edited, ...edit } = await applyEdits(restored, command, convert, command.name);
+  const checked = checkConflictsHere(command, base);
+  const { elements: edited, ...applied } = await applyEdits(restored, checked.command, convert, command.name);
+  const edit = { ...applied, ...(checked.conflicts.length ? { conflicts: checked.conflicts } : {}) };
   const files = { ...data.files, ...command.files } as BinaryFiles;
   refuseImagesWithoutFile(base as any, edited, files);
   const images = repairImages(withTemplate(edited, command.name).filter((el) => !el.isDeleted), files);
   return { edit, restored, elements: images.elements, files, info: images.info };
+};
+
+/**
+ * The edit's conflict check against the version it is applied to (`current`):
+ * updates (and upsert adds) that set what the user changed since the agent's
+ * version (command.conflictBase) are left out ("reject") or listed
+ * ("overwrite"). Check and edit see the same version, so a user change that
+ * lands after the MCP's check is not overwritten unnoticed.
+ */
+export const checkConflictsHere = <T extends DetachedEdit>(command: T, current: readonly any[]): { command: T; conflicts: any[] } => {
+  if (!command.conflictBase?.length) {
+    return { command, conflicts: [] };
+  }
+  const { updates, adds, conflicts } = resolveConflicts({
+    base: command.conflictBase,
+    current: current.filter((el) => !el.isDeleted),
+    updates: command.update,
+    adds: command.add,
+    upsert: !!command.upsert,
+    onConflict: command.onConflict ?? "reject",
+  });
+  return { command: { ...command, update: command.update && updates, add: command.add && adds }, conflicts };
 };
 
 /** the scene file for an edit's elements (settings from `data`, the scene's comments and fonts, its name) */
@@ -1189,6 +1216,8 @@ const parseScene = (json: string) => {
     files: data.files || {},
     appState: data.appState || {},
     ...(data.kurviqFonts ? { kurviqFonts: data.kurviqFonts } : {}),
+    // the comment threads too: read_scene shows them (as for Drive scenes)
+    ...(data.kurviqComments ? { kurviqComments: data.kurviqComments } : {}),
   };
 };
 
@@ -1241,12 +1270,26 @@ export const editLocalScene = async (
   };
 };
 
+/**
+ * A scene that replaces a local-only one keeps its comment threads (they
+ * belong to the scene, not the drawing; as save_scene does for Drive scenes).
+ */
+export const withReplacedComments = (json: string, replacedJson: string | null) => {
+  const replaced = replacedJson ? JSON.parse(replacedJson).kurviqComments : undefined;
+  if (!replaced) {
+    return json;
+  }
+  return withComments(json, mergeComments(replaced, JSON.parse(json).kurviqComments));
+};
+
 export const saveLocalScene = async ({ name, json, replace, open }: Extract<LocalSceneCommand, { type: "local-save" }>) => {
-  await scenesController.createLocalOnly(name, json, { replace: !!replace });
-  const file = parseScene(json);
+  const replaced = replace && scenesController.isLocalOnly(name) ? await scenesController.localOnlyJson(name) : null;
+  const scene = withReplacedComments(json, replaced);
+  await scenesController.createLocalOnly(name, scene, { replace: !!replace });
+  const file = parseScene(scene);
   await setAgentBaseline(name, { at: new Date().toISOString(), action: "save", elements: file.elements });
   if (open) {
     await scenesController.open(name);
   }
-  return { saved: name, localOnly: true, revision: await rememberRevision(name, file.elements, json) };
+  return { saved: name, localOnly: true, revision: await rememberRevision(name, file.elements, scene) };
 };

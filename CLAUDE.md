@@ -88,7 +88,11 @@ purpose: it would send navigations the service worker leaves alone (e.g.
 ```
 stats_hourly(hour TEXT 'YYYY-MM-DDTHH' (UTC), metric TEXT, dim TEXT, value INTEGER, PRIMARY KEY(hour, metric, dim))
 stats_daily (day  TEXT 'YYYY-MM-DD'    (UTC), metric TEXT, dim TEXT, value INTEGER, PRIMARY KEY(day, metric, dim))
+stats_flushes(id TEXT PRIMARY KEY, at TEXT)
 ```
+
+`stats_flushes` holds the ids of the Durable Object's finished writes (kept 7
+days), so a write whose answer got lost is not counted twice; no numbers in it.
 
 An hour or day without any activity has no rows (read it as 0).
 

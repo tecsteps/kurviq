@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, ReactNode } from "react";
 import clsx from "clsx";
+import { TIP_DELAY, tipPlacement } from "./titleTips";
+import type { TipPlacement } from "./titleTips";
 
 /**
  * A tooltip that shows right away (the browser's own, from `title`, waits
@@ -20,7 +22,7 @@ export const QuickTip = ({
   label?: boolean;
   children: ReactNode;
 }) => {
-  const [at, setAt] = useState<{ x: number; y: number; above: boolean } | null>(null);
+  const [at, setAt] = useState<TipPlacement | null>(null);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   return (
@@ -32,11 +34,7 @@ export const QuickTip = ({
         // (around a positioned control, e.g. on the canvas, the wrapper has no size: the control's)
         const own = event.currentTarget.getBoundingClientRect();
         const rect = own.width ? own : (event.currentTarget.firstElementChild?.getBoundingClientRect() ?? own);
-        const above = rect.bottom + 48 > window.innerHeight;
-        timer.current = window.setTimeout(
-          () => setAt({ x: rect.left + rect.width / 2, y: above ? rect.top - 8 : rect.bottom + 8, above }),
-          120,
-        );
+        timer.current = window.setTimeout(() => setAt(tipPlacement(rect)), TIP_DELAY);
       }}
       onMouseLeave={() => {
         window.clearTimeout(timer.current);
@@ -49,11 +47,7 @@ export const QuickTip = ({
           <div
             className={clsx("kurviq-tip", { "kurviq-tip--above": at.above })}
             role="tooltip"
-            style={(() => {
-              // kept on screen; the arrow still points at the icon
-              const left = Math.min(Math.max(at.x, 140), window.innerWidth - 140);
-              return { left, top: at.y, "--tip-arrow": `calc(50% + ${at.x - left}px)` } as CSSProperties;
-            })()}
+            style={{ left: at.left, top: at.top, "--tip-arrow": at.arrow } as CSSProperties}
           >
             {tip}
           </div>,

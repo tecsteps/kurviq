@@ -25,7 +25,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PSEUDO_TYPES, REQUEST_ID, isEmptyEdit } from "./agentEdits.mjs";
 import { needsConversion } from "./convert.mjs";
 import { markdownOfElement } from "./richText.mjs";
-import { conflictList, resolveConflicts } from "./editConflicts.mjs";
+import { conflictBaseOf, conflictList, resolveConflicts, withLateConflicts } from "./editConflicts.mjs";
 import { FEEDBACK_KINDS, TEXT_MAX, TITLE_MAX, cleanFeedback } from "./feedback.mjs";
 import { byIds, commonBounds, deckOrder, diffElements, findSlide, inRegion, summarize, templateChangesOf, toRect } from "./inspect.mjs";
 import { readEditFile, resolveImages } from "./media.mjs";
@@ -663,8 +663,8 @@ export const createScenesMcp = ({
     });
 
   /**
-   * the local-only scenes of the app's status: rows { name, localOnly }, or
-   * (older tabs) lines "<name>: <status> (…)"; scene names have no ":"
+   * the local-only scenes of the app's status: rows { name, status, localOnly },
+   * or (older tabs) lines "<name>: <status> (…)"; scene names have no ":"
    */
   const localOnlyScenes = (rows = []) =>
     rows
@@ -1397,7 +1397,19 @@ export const createScenesMcp = ({
       if (changes.firstLook) {
         return basedOn ? null : "You edited without reading this scene first. Call read_scene before editing next time.";
       }
-      return changes.count ? conflictWarning(changes, conflicts, onConflict, { checked: !!basedOn }) : null;
+      if (changes.count) {
+        return conflictWarning(changes, conflicts, onConflict, { checked: !!basedOn });
+      }
+      return conflicts.length ? lateConflictWarning(conflicts, onConflict) : null;
+    };
+
+    /** the user changed what the edit sets after this check, before the tab applied it (the tab's own check found it) */
+    const lateConflictWarning = (conflicts, onConflict) => {
+      const head = "WARNING: the user changed this scene while your edit was on its way.";
+      const list = conflictList(conflicts);
+      return onConflict === "overwrite"
+        ? `${head} ${conflicts.length} of your updates OVERWROTE the user's changes (onConflict: "overwrite"): ${list}.`
+        : `${head} ${conflicts.length} of your updates set properties the user changed and were NOT applied (rejected): ${list}. See conflicts: rebase on the user's version and send those again.`;
     };
 
     /** no user changes to report */
@@ -1517,6 +1529,8 @@ ${EDIT_HELP}
             return nothingAppliedResult({ changes, conflicts, onConflict, basedOn, scene: name, revision: before.md5 });
           }
 
+          // the same check again in the tab, against the version it edits (the user may change it meanwhile)
+          const conflictBase = basedOn && !changes.firstLook ? conflictBaseOf(changes.base, { updates: operations.update, adds: operations.add, upsert: options.upsert }) : [];
           // local-only scenes are edited in the user's app (their only copy)
           const command = {
             type: local ? "local-edit" : "scene-edit",
@@ -1525,7 +1539,7 @@ ${EDIT_HELP}
             requestId,
             onConflict,
             ...operations,
-            ...withoutEmpty({ files: edit.files }),
+            ...withoutEmpty({ files: edit.files, conflictBase }),
           };
           const edited = await sendEdit(
             () => appCommand(command),
@@ -1539,9 +1553,11 @@ ${EDIT_HELP}
           // a retry of an edit that had landed: what changed since basedOn is that edit itself, not the user's work
           const userChanges = edited.alreadyApplied ? NO_CHANGES : changes;
 
+          // with the conflicts the tab found against the version it edited
+          const allConflicts = edited.alreadyApplied ? [] : withLateConflicts(conflicts, edited.conflicts);
           const result = editResult({
-            warning: detachedWarning({ changes: userChanges, conflicts, onConflict, basedOn, edit, edited }),
-            conflicts: edited.alreadyApplied ? [] : conflicts,
+            warning: detachedWarning({ changes: userChanges, conflicts: allConflicts, onConflict, basedOn, edit, edited }),
+            conflicts: allConflicts,
             basedOn,
             changes: userChanges,
             scene: name,
@@ -1576,11 +1592,9 @@ ${EDIT_HELP}
         return { scene: { ...sceneOf(checkpoint), elements }, source: `checkpoint ${checkpointId}` };
       }
       if (name) {
-        const { file, local } = await loadAnyScene(name, { lean: true });
-        if (!file) {
-          throw notFound(name);
-        }
-        return { scene: sceneOf(file), source: `scene "${name}" (${local ? "local only, from the user's browser" : "Google Drive"})` };
+        // the tab reads and renders it itself: the scene doesn't travel here and back
+        const { local } = await sceneHome(name);
+        return { sceneName: name, source: `scene "${name}" (${local ? "local only, from the user's browser" : "Google Drive"})` };
       }
       const state = await callJson("/api/app/state");
       if (!state.connected) {
@@ -1616,9 +1630,10 @@ ${EDIT_HELP}
         annotations: { readOnlyHint: true },
       },
       tool(async ({ name, checkpointId, elementIds, region, padding, maxSize, slide, step, slides, steps }) => {
-        const { scene, source } = await viewSource(name, checkpointId);
+        const { scene, sceneName, source } = await viewSource(name, checkpointId);
         const { image, meta } = await renderImage({
           ...(scene ? { scene, deck: name ?? "Untitled" } : {}),
+          ...(sceneName ? { sceneName, deck: sceneName, targetScene: sceneName } : {}),
           ...withoutEmpty({ slide, step, sheet: slides, steps, elementIds, region, padding, maxSize }),
         });
         return {
