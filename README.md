@@ -67,9 +67,9 @@ install:
   stored), and the image's bytes never go through the model.
 
 - **Share a scene:** **Share…** (the pen on the open scene, or the Slides
-  sidebar). **Share in Google Drive** opens the scene in Drive in a small
-  window, as the account signed in to Kurviq (`authuser`), with Drive's Share
-  button at the top right: add people there, and Google sends its normal
+  sidebar). **Add people** opens the scene in Drive in a small window, as
+  the account signed in to Kurviq (`authuser`), with Drive's Share button at
+  the top right (Drive has no link that opens its share dialog directly): add people there, and Google sends its normal
   invitation. (Google's in-page share dialog, ShareClient, was dropped: it runs
   as the browser's first Google account and hangs when that is another one.) Kurviq doesn't invite people
   through the Drive API: those invitations landed in the recipient's Drive

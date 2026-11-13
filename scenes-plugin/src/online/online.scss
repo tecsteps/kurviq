@@ -613,17 +613,33 @@
   margin: -0.25rem 0 0.5rem;
 }
 
-// the share dialog: "Share in Google Drive" (Drive's own page in a small window)
-.kq-share__drive {
+// the share dialog: "People with access" with "Add people" (Drive's own page in a small window)
+.excalidraw .kq-share__head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
-  font-size: 14px;
+  margin-bottom: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
 
   > button {
     flex: none;
     white-space: nowrap;
+  }
+}
+
+// "Folder sharing…" inside the folder line: looks like a link
+.excalidraw .kq-share__textbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
   }
 }
 
@@ -755,6 +771,14 @@
   p {
     margin: 0 0 8px;
   }
+}
+
+// (the owner's: one line under the people, no box)
+.excalidraw .kq-share__folder.kq-share__folder--mine {
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: var(--color-gray-60);
 }
 
 .excalidraw .kq-share__from {

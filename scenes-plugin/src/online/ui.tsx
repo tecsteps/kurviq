@@ -933,7 +933,7 @@ const ShortLink = ({ fileId, sceneName, restricted }: { fileId: string; sceneNam
 const ROLE_TEXT: Record<string, string> = { writer: "can edit", reader: "can view", commenter: "can view" };
 
 /** above the people: the scene's folder is shared, so these people have every scene in it */
-const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareFolder: () => void }) => {
+const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareFolder?: () => void }) => {
   if (folder.kind === "theirs") {
     return (
       <p className="kq-share__folder">
@@ -947,17 +947,17 @@ const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareF
     return null;
   }
   return (
-    <div className="kq-share__folder">
-      <p>
-        This scene is in your folder <strong>"{folder.name}"</strong>, which is shared with {text.whom}: they {text.what}.
-      </p>
-      <div className="scenes-row">
-        <button type="button" className="scenes-btn" onClick={onShareFolder}>
-          Folder sharing…
-        </button>
-        <span className="kq-muted">Opens the folder in Drive: click the people icon next to its name.</span>
-      </div>
-    </div>
+    <p className="kq-share__folder kq-share__folder--mine">
+      Your folder <strong>"{folder.name}"</strong> is shared with {text.whom}: they {text.what}.{" "}
+      <button
+        type="button"
+        className="kq-share__textbtn"
+        title="Opens the folder in Google Drive: click the people icon next to its name"
+        onClick={onShareFolder}
+      >
+        Folder sharing…
+      </button>
+    </p>
   );
 };
 
@@ -1075,23 +1075,20 @@ const ShareDialog = ({ name }: { name: string }) => {
           </button>
         </div>
         {!permissions && !error && <p className="kq-muted">Saving it to Google Drive and asking who has access…</p>}
-        {permissions && folder && <FolderNote folder={folder} onShareFolder={() => shareInDrive(folder.folderId, true)} />}
+        {permissions && folder?.kind === "theirs" && <FolderNote folder={folder} />}
         {permissions && !inFolderSpace && (
           <>
-            <div className="kq-share__drive">
-              <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => shareInDrive(fileId!, false)}>
-                Share in Google Drive
+            <div className="kq-share__head">
+              <span>People with access</span>
+              <button
+                type="button"
+                className="scenes-btn scenes-btn--primary"
+                title={`Opens the scene in Google Drive${me ? ` as ${me}` : ""}: click Share at the top right. Google emails them an invitation; in Kurviq they find the scene under "Shared with you…", or with the link.`}
+                onClick={() => shareInDrive(fileId!, false)}
+              >
+                Add people
               </button>
-              <span className="kq-muted">
-                Opens the scene in Google Drive{me ? <> as <strong>{me}</strong></> : null}: use <strong>Share</strong> at
-                the top right. Google's own invitations arrive reliably.
-              </span>
             </div>
-            <p className="kq-muted">
-              Google emails them an invitation. In Kurviq they find the scene under <strong>Shared with you…</strong> in
-              the scene list, or with the link. People without a Google account create one for their address (no Gmail
-              needed).
-            </p>
             <ul className="kq-share__people">
               {people.map((person) => {
                 const isMe = person.emailAddress?.toLowerCase() === me;
@@ -1132,6 +1129,7 @@ const ShareDialog = ({ name }: { name: string }) => {
                 );
               })}
             </ul>
+            {folder?.kind === "mine" && <FolderNote folder={folder} onShareFolder={() => shareInDrive(folder.folderId, true)} />}
             <label className="kq-field">
               <span>General access</span>
               <select
@@ -1162,9 +1160,6 @@ const ShareDialog = ({ name }: { name: string }) => {
                 tip="Copies a link that starts presenting this scene"
               />
             )}
-            <a className="scenes-link" href={fileId ? driveWebLink(fileId) : undefined} target="_blank" rel="noopener noreferrer">
-              Open in Drive
-            </a>
           </div>
         )}
         {error && <p className="scenes-error">{error}</p>}

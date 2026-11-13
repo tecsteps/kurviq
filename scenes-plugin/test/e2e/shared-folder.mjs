@@ -210,11 +210,11 @@ const sharePanel = async (page, name) => {
 };
 const guestPanel = await sharePanel(guest, BETA);
 ok(/You have this scene through the Kurviq folder of Own\d+ \(own\d+@example\.test\), shared with you \(you can view\)/.test(guestPanel), "share panel (guest): through the owner's folder", guestPanel.slice(0, 400));
-ok(!guestPanel.includes("Share in Google Drive") && guestPanel.includes("Copy link"), "share panel (guest): no Google dialog, the link", guestPanel.slice(0, 400));
+ok(!guestPanel.includes("Add people") && guestPanel.includes("Copy link"), "share panel (guest): no Google dialog, the link", guestPanel.slice(0, 400));
 // the owner: the folder is shared, so the panel says who has every scene in it
 const ownerPanel = await sharePanel(owner, ALPHA);
-ok(/This scene is in your folder "Kurviq", which is shared with 1 person: they can open every scene in it/.test(ownerPanel), "share panel (owner): the folder note", ownerPanel.slice(0, 400));
-ok(ownerPanel.includes("Folder sharing") && ownerPanel.includes("Share in Google Drive"), "share panel (owner): folder sharing and the scene's own", ownerPanel.slice(0, 400));
+ok(/Your folder "Kurviq" is shared with 1 person: they can open every scene in it/.test(ownerPanel), "share panel (owner): the folder note", ownerPanel.slice(0, 400));
+ok(ownerPanel.includes("Folder sharing") && ownerPanel.includes("Add people"), "share panel (owner): folder sharing and the scene's own", ownerPanel.slice(0, 400));
 
 // 5. a scene the owner adds later shows up
 ok(await create(owner, LATER, 500), "owner: a third scene");
