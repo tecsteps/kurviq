@@ -15,13 +15,8 @@ export class OpQueue {
       const entry: Entry = {
         priority,
         run: () => {
-          let result: Promise<T>;
-          try {
-            result = fn();
-          } catch (error) {
-            result = Promise.reject(error);
-          }
-          result.then(resolve, reject).finally(() => this.next());
+          // fn starts at once; a throw before its first await rejects like a rejected promise
+          new Promise<T>((settle) => settle(fn())).then(resolve, reject).finally(() => this.next());
         },
       };
       if (priority) {

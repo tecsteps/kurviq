@@ -21,7 +21,7 @@ adds `SceneMeta.home` (absent = derived as now, so stored metadata stays valid).
 
 ## The interface (contract)
 
-All calls are by scene name, all versions are opaque strings (`HomeVersion`,
+All calls are by scene name, all versions are opaque strings (`string`,
 compared for equality only: Drive's MD5, the browser's MD5 of the content, a
 database's revision counter or similar).
 

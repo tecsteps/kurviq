@@ -54,7 +54,7 @@ import {
   setSnapshot,
 } from "./storage";
 
-import type { HomeError, HomeHistoryEntry, HomeVersion, ListedScene, LiveHost, SceneHome } from "./homes/types";
+import type { HomeError, HomeHistoryEntry, ListedScene, LiveHost, SceneHome } from "./homes/types";
 import type { SceneMeta, ScenesMeta } from "./storage";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type {
@@ -752,7 +752,7 @@ class ScenesController implements LiveHost {
   }
 
   /** latest known version in Drive: string, null (not there) or undefined (unknown) */
-  private remoteMd5Of(name: string): HomeVersion | null | undefined {
+  private remoteMd5Of(name: string): string | null | undefined {
     if (this.state.remote) {
       return this.listedOf(name)?.version ?? null;
     }
@@ -1380,7 +1380,7 @@ class ScenesController implements LiveHost {
    * The home's `version` is the scene's base now (and the latest known
    * there); `settled`: its conflict is over. Stored right away.
    */
-  private setBase(name: string, version: HomeVersion, { settled = false } = {}) {
+  private setBase(name: string, version: string, { settled = false } = {}) {
     const meta = this.sceneMeta(name);
     meta.baseMd5 = version;
     meta.remoteMd5 = version;
@@ -1508,7 +1508,7 @@ class ScenesController implements LiveHost {
     return !!meta && (meta.localOnly || !meta.baseMd5) && !this.state.remote?.some((scene) => scene.name === name);
   }
 
-  private async loadFromHomeOrEmpty(name: string, meta: SceneMeta | undefined): Promise<{ json: string | null; version: HomeVersion | null }> {
+  private async loadFromHomeOrEmpty(name: string, meta: SceneMeta | undefined): Promise<{ json: string | null; version: string | null }> {
     const onlyHere = this.onlyInThisBrowser(name, meta);
     if (onlyHere && meta?.localOnly) {
       return { json: null, version: null };
@@ -2088,7 +2088,7 @@ class ScenesController implements LiveHost {
    */
   private async recordPushedScene(
     name: string, json: string,
-    result: { version: HomeVersion; changed: boolean },
+    result: { version: string; changed: boolean },
     canvas: ReturnType<ScenesController["serializeCurrent"]> | null,
   ) {
     const meta = this.sceneMeta(name);
@@ -2229,7 +2229,7 @@ class ScenesController implements LiveHost {
   }
 
   /** the version a scene's local copy is based on (null: unknown, everything that differs counts as changed) */
-  private async mergeBase(name: string, baseVersion: HomeVersion | null | undefined) {
+  private async mergeBase(name: string, baseVersion: string | null | undefined) {
     if (!baseVersion) {
       return null;
     }
@@ -2243,7 +2243,7 @@ class ScenesController implements LiveHost {
   private async applyMergedScene(
     name: string,
     { base, mine, theirsData, theirs, merged, unchanged, settled, pushAfter }: {
-      base: any; mine: any; theirsData: any; theirs: { json: string; version: HomeVersion };
+      base: any; mine: any; theirsData: any; theirs: { json: string; version: string };
       merged: ReturnType<typeof mergeElements>; unchanged: () => Promise<boolean>;
       settled: string[]; pushAfter: boolean;
     },
@@ -2318,7 +2318,7 @@ class ScenesController implements LiveHost {
     return null;
   }
 
-  private async takeNonemptyMergeSource(name: string, theirs: { json: string; version: HomeVersion }, unchanged: () => Promise<boolean>) {
+  private async takeNonemptyMergeSource(name: string, theirs: { json: string; version: string }, unchanged: () => Promise<boolean>) {
     if (!(await unchanged())) {
       return false;
     }
@@ -2529,7 +2529,7 @@ class ScenesController implements LiveHost {
   }
 
   /** the listing's entry of `name` gets this version (null: it is gone from Drive) */
-  private updateRemoteMd5(name: string, version: HomeVersion | null) {
+  private updateRemoteMd5(name: string, version: string | null) {
     if (!this.state.remote) {
       return;
     }
@@ -2543,7 +2543,7 @@ class ScenesController implements LiveHost {
   }
 
   /** the listing's entry follows a rename in Drive: the same file (its id, public flag), under the new name */
-  private renameRemote(from: string, to: string, version: HomeVersion) {
+  private renameRemote(from: string, to: string, version: string) {
     if (!this.state.remote) {
       return;
     }

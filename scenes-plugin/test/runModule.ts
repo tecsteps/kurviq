@@ -2,17 +2,14 @@
 // names given by the test (the browser-only editor packages can't be
 // resolved by the test runner), as coworkEdits.test.ts does.
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
-
-const require = createRequire(import.meta.url);
-const ts = require("../../excalidraw/node_modules/typescript");
+import ts from "typescript";
 
 export const runModule = (url: URL, dependencies: Record<string, unknown>, globals: Record<string, unknown> = {}) => {
   const source = readFileSync(url, "utf8").replaceAll("import.meta.env", "__env");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
   const exports: Record<string, any> = {};
-  runInNewContext(compiled.outputText, {
+  runInNewContext(compiled.outputText, { // NOSONAR S1523: runs the repo's own source file under test (read from disk, compiled here), nothing from outside
     exports,
     require: (name: string) => {
       if (!(name in dependencies)) {

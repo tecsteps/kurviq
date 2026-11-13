@@ -25,7 +25,9 @@ const mapped = async <T>(call: () => Promise<T>): Promise<T> => {
 };
 
 /** the Drive home over a Drive client with driveScenes' shape (a fake one in tests) */
-export const driveHomeOf = (scenes: Pick<typeof driveScenes, "list" | "load" | "save" | "remove" | "rename" | "history" | "loadAt" | "fileOf">, notes = { readMovedNote, writeMovedNote }): SceneHome => ({
+const DRIVE_NOTES = { readMovedNote, writeMovedNote };
+
+export const driveHomeOf = (scenes: Pick<typeof driveScenes, "list" | "load" | "save" | "remove" | "rename" | "history" | "loadAt" | "fileOf">, notes = DRIVE_NOTES): SceneHome => ({
   kind: "drive",
   label: "Google Drive",
   capabilities: {

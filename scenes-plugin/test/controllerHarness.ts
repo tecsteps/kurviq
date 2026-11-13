@@ -16,7 +16,7 @@ import { runModule } from "./runModule";
 
 export { UNTITLED };
 
-const md5 = (text: string) => createHash("md5").update(text).digest("hex");
+const md5 = (text: string) => createHash("md5").update(text).digest("hex"); // NOSONAR S4790: emulates Drive's own md5Checksum of the content, nothing secret
 
 /** a deterministic string hash (the editor's hashString stand-in) */
 const hashString = (text: string) => {
@@ -194,9 +194,15 @@ export class FakeStorage {
     saveMeta: (meta: any) => {
       this.saved = structuredClone({ ...meta, scenes: { ...meta.scenes }, pendingDeletes: { ...meta.pendingDeletes } });
     },
-    getSnapshot: async (name: string | null) => this.snapshots.get(name ?? UNTITLED),
-    setSnapshot: async (name: string | null, snapshot: any) => void this.snapshots.set(name ?? UNTITLED, snapshot),
-    deleteSnapshot: async (name: string | null) => void this.snapshots.delete(name ?? UNTITLED),
+    getSnapshot: (name: string | null) => Promise.resolve(this.snapshots.get(name ?? UNTITLED)),
+    setSnapshot: (name: string | null, snapshot: any) => {
+      this.snapshots.set(name ?? UNTITLED, snapshot);
+      return Promise.resolve();
+    },
+    deleteSnapshot: (name: string | null) => {
+      this.snapshots.delete(name ?? UNTITLED);
+      return Promise.resolve();
+    },
     deleteAgentBaseline: async () => {},
     moveAgentBaseline: async () => {},
   };

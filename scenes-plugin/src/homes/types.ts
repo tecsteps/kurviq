@@ -7,12 +7,10 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 export type HomeKind = "browser" | "drive" | "database";
 
-/**
- * A version of a scene in its home, opaque to the controller: compared for
- * equality only. Drive: the file's MD5. A database: whatever names one state
- * of the scene's rows (e.g. a revision counter).
- */
-export type HomeVersion = string;
+// Versions: every `version` / `base` / `remoteVersion` string below names one
+// state of a scene in its home, opaque to the controller: compared for
+// equality only. Drive: the file's MD5. A database: whatever names one state
+// of the scene's rows (e.g. a revision counter).
 
 export type HomeCapabilities = {
   /**
@@ -51,7 +49,7 @@ export type HomeCapabilities = {
 /** a scene as its home lists it */
 export type ListedScene = {
   name: string;
-  version: HomeVersion;
+  version: string;
   updatedAt: string | null;
   /** anyone with the link can open it */
   public?: boolean;
@@ -71,7 +69,7 @@ export type HomeStatus = {
 export type HomeListing = { scenes: ListedScene[]; status: HomeStatus };
 
 /** a scene's content: its scene JSON and the version that is */
-export type HomeContent = { json: string; version: HomeVersion };
+export type HomeContent = { json: string; version: string };
 
 /** an older version of a scene (newest first in lists) */
 export type HomeHistoryEntry = {
@@ -81,7 +79,7 @@ export type HomeHistoryEntry = {
   author: string | null;
   /** made by an agent */
   agent: boolean;
-  version?: HomeVersion;
+  version?: string;
 };
 
 /**
@@ -93,7 +91,7 @@ export type HomeError = Error & {
   status: number;
   /** not reachable: keep working locally, try again later */
   offline?: boolean;
-  remoteVersion?: HomeVersion | null;
+  remoteVersion?: string | null;
   /** rename: the target name is taken there */
   exists?: boolean;
   /** not signed in (or no access to the home at all) */
@@ -127,15 +125,15 @@ export interface LiveHost {
   /** someone else may write the open scene now (their name): it is read only here; null: this tab may write */
   setPenLock(holder: string | null): void;
   /** another tab saved the open scene: its version is the base here too */
-  penAdoptSaved(version: HomeVersion, hash: number | null): void;
+  penAdoptSaved(version: string, hash: number | null): void;
   /** the open scene's saved version and the canvas hash it has */
-  penSavedVersion(): { md5: HomeVersion; hash: number | null } | null;
+  penSavedVersion(): { md5: string; hash: number | null } | null;
   /** save this tab's changes of the open scene now (before handing over); the saved version */
-  penSaveNow(): Promise<{ md5: HomeVersion; hash: number | null } | null>;
+  penSaveNow(): Promise<{ md5: string; hash: number | null } | null>;
   /** edits made here without the right to write are merged into the home before this tab turns read only */
   penFlushOwn(): Promise<void>;
   /** told by the controller: a save of the open scene, a version pulled while following */
-  penHooks: { saved: (name: string, version: HomeVersion, hash: number | null) => void; pulled: (name: string) => void } | null;
+  penHooks: { saved: (name: string, version: string, hash: number | null) => void; pulled: (name: string) => void } | null;
 }
 
 /** a home's live session: joins the open scene of the editor (presence, others' changes) */
@@ -158,17 +156,17 @@ export interface SceneHome {
   /** the home's scenes (refresh: not from a cache) */
   list(refresh?: boolean): Promise<HomeListing>;
   /** the latest version, or a given one (a base for a merge) */
-  load(name: string, version?: HomeVersion): Promise<HomeContent>;
+  load(name: string, version?: string): Promise<HomeContent>;
   /**
    * Store a scene. base: the version this content is based on ("none": must
    * be new; undefined: overwrite). Throws a HomeError 409 with
    * remoteVersion when the home has another version (merge, then save again).
    */
-  save(name: string, json: string, base: HomeVersion | "none" | undefined, source?: string): Promise<{ version: HomeVersion; changed: boolean }>;
+  save(name: string, json: string, base: string | undefined, source?: string): Promise<{ version: string; changed: boolean }>;
   /** delete (base: only if the home still has that version, else 409) */
-  remove(name: string, base?: HomeVersion | null): Promise<void>;
+  remove(name: string, base?: string | null): Promise<void>;
   /** rename (content and version stay) */
-  rename(from: string, to: string): Promise<{ version: HomeVersion }>;
+  rename(from: string, to: string): Promise<{ version: string }>;
 
   /** older versions (capabilities.history) */
   history?(name: string): Promise<HomeHistoryEntry[]>;
