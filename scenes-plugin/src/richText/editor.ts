@@ -58,6 +58,8 @@ export type RichEditorApi = {
     lineHeight: number;
   };
   setLink: (url: string | undefined) => void;
+  /** the tooltip of the selection, or of the whole tooltip the caret is in (undefined removes it); false if there is nothing to put it on */
+  setTip: (tip: string | undefined) => boolean;
   toggleMark: (key: "b" | "i" | "u" | "s") => void;
   setMark: (key: "c" | "h" | "a" | "z", value: string | number | undefined) => void;
   clearFormatting: () => void;
@@ -349,7 +351,8 @@ export const createRichEditable = (
       toolbar?.update();
       return;
     }
-    apply(formatRange(doc, from, to, (marks) => (marks.a ? { a: marks.a } : {})), from, to);
+    // links and tooltips are content, not formatting: they stay
+    apply(formatRange(doc, from, to, ({ a, n }) => ({ ...(a ? { a } : {}), ...(n ? { n } : {}) })), from, to);
   };
 
   const setLink = (url: string | undefined) => {
@@ -368,6 +371,19 @@ export const createRichEditable = (
       }
     }
     apply(formatRange(doc, from, to, (marks) => ({ ...marks, a: url })), from, to);
+  };
+
+  const setTip = (tip: string | undefined) => {
+    let { from, to } = readSelection();
+    if (!comparePos(from, to)) {
+      const range = markRangeAt(doc, from, "n");
+      if (!range) {
+        return false;
+      }
+      ({ from, to } = range);
+    }
+    apply(formatRange(doc, from, to, (marks) => ({ ...marks, n: tip })), from, to);
+    return true;
   };
 
   const toggleList = (kind: ParaKind) => {
@@ -566,7 +582,7 @@ export const createRichEditable = (
       const carried = pending?.marks ?? marksAt(doc, from);
       const result = splitParagraph(deleteRange(doc, from, to), from);
       apply(result.doc, result.end);
-      const { a: _link, ...marks } = carried;
+      const { a: _link, n: _tip, ...marks } = carried;
       pending = Object.keys(marks).length ? { marks, at: result.end } : null;
       return;
     }
@@ -874,6 +890,7 @@ export const createRichEditable = (
     clearFormatting,
     toggleList,
     setLink,
+    setTip,
     stepSize,
     setLineHeight: (value: number) => {
       const el = app.scene.getElement(element.id);

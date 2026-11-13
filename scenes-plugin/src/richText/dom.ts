@@ -33,7 +33,7 @@ const applyDataMarks = (data: DOMStringMap, next: Marks) => {
     if (key in data) next[key] = true;
     else delete next[key];
   }
-  for (const key of ["c", "h", "a"] as const) {
+  for (const key of ["c", "h", "a", "n"] as const) {
     if (data[key]) next[key] = data[key];
     else delete next[key];
   }
@@ -44,7 +44,7 @@ const applyDataMarks = (data: DOMStringMap, next: Marks) => {
 const marksFrom = (el: HTMLElement, marks: Marks, external: boolean): Marks => {
   const tag = el.tagName;
   const data = el.dataset || {};
-  const hasData = ["b", "i", "u", "s", "c", "h", "a", "z"].some((key) => key in data);
+  const hasData = ["b", "i", "u", "s", "c", "h", "a", "z", "n"].some((key) => key in data);
   // a span of the editor's own without formatting: plain text (whatever an
   // outer span the browser wrapped around it says)
   const next: Marks = !external && tag === "SPAN" && !hasData && el.parentElement?.classList.contains("rt-p") ? {} : { ...marks };

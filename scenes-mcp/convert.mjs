@@ -22,7 +22,7 @@ const plainOfMarkdown = (markdown) => {
         .replace(/^(\s*)(?:[-*] )?\[([ xX])\] /, (_, indent, x) => `${indent}${x.trim() ? "☑" : "☐"} `)
         .replace(/^(\s*)[-*•] /, "$1• ")
         .replace(/^(\s*)\d+[.)] /, (_, indent) => `${indent}${++numbered}. `)
-        .replace(/\{(?:\s*(?:color|highlight|size)=[^\s}]+)+\s*\}([\s\S]*?)\{\/\}/g, "$1")
+        .replace(/\{(?:\s*(?:(?:color|highlight|size)=[^\s}"]+|tip="(?:[^"\\]|\\.)*"))+\s*\}([\s\S]*?)\{\/\}/g, "$1")
         .replace(/\[([^\]]+)\]\([^)\s]+\)/g, "$1") // NOSONAR S8786: preserves nested opening brackets in labels and malformed markdown matching; an equivalent linear rewrite is not proven
         .replace(/\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\s][\s\S]*?)\*/g, (_, a, b, c, d) => a ?? b ?? c ?? d)
         .replace(/\\([*_~[\]{}\\])/g, "$1");

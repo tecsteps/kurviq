@@ -67,11 +67,11 @@ install:
   stored), and the image's bytes never go through the model.
 
 - **Share a scene:** **Share…** (the pen on the open scene, or the Slides
-  sidebar). **Share in Google Drive** shows Drive's own share dialog over
-  Kurviq (Google's ShareClient; needs third-party cookies and the browser
-  signed in to Google with the same account; otherwise "open it in Drive"
-  opens the file in a small window with Drive's Share button): add people
-  there, and Google sends its normal invitation. Kurviq doesn't invite people
+  sidebar). **Share in Google Drive** opens the scene in Drive in a small
+  window, as the account signed in to Kurviq (`authuser`), with Drive's Share
+  button at the top right: add people there, and Google sends its normal
+  invitation. (Google's in-page share dialog, ShareClient, was dropped: it runs
+  as the browser's first Google account and hangs when that is another one.) Kurviq doesn't invite people
   through the Drive API: those invitations landed in the recipient's Drive
   spam, even after Google's brand verification. Kurviq's dialog lists who has
   access (refreshed while Google's dialog is open), changes or removes it,
@@ -372,8 +372,8 @@ Text can be formatted in parts, like in a word processor: a bold title,
 normal text, then bullets in a smaller size, all in one text or one
 shape's label. While you edit a text, a toolbar above it offers size, bold,
 italic, underline, strikethrough, checklist, numbered and bulleted lists,
-link, text color, highlight and clear formatting. The usual shortcuts work
-too:
+link, tooltip, text color, highlight and clear formatting. The usual
+shortcuts work too:
 
 | Shortcut | |
 | --- | --- |
@@ -389,8 +389,14 @@ too:
 
 (Ctrl instead of ⌘ on Windows and Linux.) Click a checkbox to tick it.
 Pasting from Google Docs or a web page keeps bold, italic, links and
-lists. The properties panel's font size, font and color still apply to
-the whole text; sizes set in the text stay relative to it.
+lists. The properties panel's font and color still apply to the whole text;
+the size is set in the toolbar (the panel has no font size).
+
+**Tooltips:** select words and click the speech bubble to add a note that
+is not drawn, e.g. what a special term means. The words get a dotted
+underline; the note shows when the pointer is over them on the canvas (a tap
+on touch screens), also in the shared viewer and presentations, and in SVG
+exports. Clear formatting keeps links and tooltips.
 
 The formatting is stored in the element (`customData.rich`); its `text`
 stays the plain words, list markers included, so search, copy and other

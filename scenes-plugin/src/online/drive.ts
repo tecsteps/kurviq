@@ -1718,7 +1718,7 @@ export const readSharedScene = async (fileId: string, { version }: { version?: s
 let gapiScript: Promise<void> | null = null;
 const gapiModules = new Map<string, Promise<void>>();
 
-/** a module of Google's api.js ("picker", "drive-share"), loaded once */
+/** a module of Google's api.js (e.g. "picker"), loaded once */
 const loadGapi = (module: string, what: string) => {
   gapiScript ??= new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
@@ -1746,24 +1746,6 @@ const loadGapi = (module: string, what: string) => {
 };
 
 const loadPicker = () => loadGapi("picker", "Google Picker");
-
-/**
- * Drive's own share dialog over the page (Google's ShareClient): invitations
- * sent from it are Google's normal ones (shares through the API land in the
- * recipient's Drive spam). Needs third-party cookies and the browser signed in
- * to Google with the same account; there is no "closed" event.
- */
-export const showDriveShareDialog = async (fileId: string) => {
-  const value = await getToken();
-  if (!value) {
-    throw notConnectedError();
-  }
-  await loadGapi("drive-share", "Google's share dialog");
-  const client = new (window as any).gapi.drive.share.ShareClient();
-  client.setOAuthToken(value);
-  client.setItemIds([fileId]);
-  client.showSettingsDialog();
-};
 
 export const pickerAvailable = () => !!import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY && !!google.projectNumber;
 

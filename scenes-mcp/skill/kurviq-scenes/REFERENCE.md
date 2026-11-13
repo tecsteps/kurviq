@@ -146,13 +146,18 @@ Write `markdown` instead of `text` (also in labels: `label: { "markdown":
   `[text](https://…)`, `{color=#e03131 highlight=#ffec99 size=0.8}text{/}`
   (size relative to `fontSize`); escape a literal `*` with `\`. In centered
   text, list items stay left-aligned.
+- Tooltip: `{tip="What the term means"}special term{/}` puts a note on the
+  words that is not drawn: the words get a dotted underline and the note shows
+  when the pointer is over them (the user's own explanations; keep them). In
+  the note, escape `"` and `\` with `\`, a line break is `\n`; at most 1000
+  characters. Combines with the other settings: `{color=#1971c2 tip="…"}…{/}`.
 - Replace with `update: [{ "id": "t1", "markdown": "…" }]` (a plain `text`
   update drops the formatting). Format part of a text without resending it,
   keeping the user's edits: `{ "id": "t1", "format": { "match": "A company
   transformation.", "color": "#1565c0", "bold": true } }` (`id`: the text or
   its shape). Keys: `bold`, `italic`, `underline`, `strike` (`false`
-  removes), `color`, `highlight`, `size` (relative to `fontSize`), `link`
-  (`null` removes each of these four); `occurrence`: n (from 1, default 1) or
+  removes), `color`, `highlight`, `size` (relative to `fontSize`), `link`,
+  `tip` (`null` removes each of these five); `occurrence`: n (from 1, default 1) or
   `"all"`; an array formats several phrases. `match` is the exact text without
   list markers (`\n` between lines); not found is an error and changes
   nothing. Not together with `text` / `markdown`. Unlike a resent

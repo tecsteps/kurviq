@@ -201,6 +201,18 @@
     }
   }
 
+  &__tipactions {
+    display: flex;
+    gap: 6px;
+  }
+
+  &__hint {
+    max-width: 240px;
+    margin: 0;
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+
   &__link {
     display: flex;
     gap: 6px;
@@ -212,6 +224,24 @@
 
       input {
         width: 76px;
+      }
+    }
+
+    // the tooltip popover: a text field, its buttons below
+    &.rt-toolbar__tipform {
+      flex-direction: column;
+      align-items: stretch;
+
+      textarea {
+        width: 260px;
+        min-height: 64px;
+        padding: 6px 8px;
+        border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.2));
+        border-radius: 6px;
+        background: var(--input-bg-color, #fff);
+        color: inherit;
+        font: inherit;
+        resize: vertical;
       }
     }
 

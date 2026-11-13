@@ -24,14 +24,16 @@ export type FormatSpec = {
   size?: number | null;
   /** a link (http(s): or mailto:); null removes it */
   link?: string | null;
+  /** a tooltip (a note shown on hover, not on the canvas); null removes it */
+  tip?: string | null;
 };
 
 const FLAGS = { bold: "b", italic: "i", underline: "u", strike: "s" } as const;
-const VALUES = { color: "c", highlight: "h", size: "z", link: "a" } as const;
+const VALUES = { color: "c", highlight: "h", size: "z", link: "a", tip: "n" } as const;
 const KNOWN = new Set(["match", "occurrence", ...Object.keys(FLAGS), ...Object.keys(VALUES)]);
 
 /** a value the stored form accepts (colors, links and sizes are checked there) */
-const accepted = (key: "c" | "h" | "z" | "a", value: unknown) => {
+const accepted = (key: "c" | "h" | "z" | "a" | "n", value: unknown) => {
   const doc = normalizeDoc({ v: 1, p: [{ r: [{ t: "x", [key]: value } as any] }] });
   return (doc.p[0].r[0] as any)[key] !== undefined;
 };
@@ -39,6 +41,7 @@ const accepted = (key: "c" | "h" | "z" | "a", value: unknown) => {
 const valueDescription = (key: string) => {
   if (key === "z") return "a number from 0.1 to 10";
   if (key === "a") return "an http(s): or mailto: link";
+  if (key === "n") return "text of at most 1000 characters";
   return "a CSS color, e.g. #1565c0";
 };
 
@@ -81,11 +84,11 @@ const collectValues = (spec: FormatSpec, where: string, set: Marks, unset: strin
 /** checks a spec, returns how it changes a piece's marks */
 const changeOf = (spec: FormatSpec, where: string) => {
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
-    throw new Error(`${where}: format must be { match, bold / italic / underline / strike / color / highlight / size / link }`);
+    throw new Error(`${where}: format must be { match, bold / italic / underline / strike / color / highlight / size / link / tip }`);
   }
   const unknown = Object.keys(spec).filter((key) => !KNOWN.has(key));
   if (unknown.length) {
-    throw new Error(`${where}: format does not know ${unknown.join(", ")} (it takes match, occurrence, bold, italic, underline, strike, color, highlight, size, link)`);
+    throw new Error(`${where}: format does not know ${unknown.join(", ")} (it takes match, occurrence, bold, italic, underline, strike, color, highlight, size, link, tip)`);
   }
   if (typeof spec.match !== "string" || !spec.match) {
     throw new Error(`${where}: format needs "match": the phrase to format, as it is written in the text`);

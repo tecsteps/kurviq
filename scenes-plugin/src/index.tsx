@@ -23,6 +23,7 @@ import { connectRouter } from "./router";
 import { deck, isDeck } from "./deck";
 import { PresentationOverlay, presenter } from "./present";
 import { SlideNotesOverlay } from "./notes";
+import { TextTipsOverlay } from "./textTips";
 import { TemplateChangesBar } from "./templateChanges";
 import { installTitleTips } from "./titleTips";
 import { ICON_PATHS } from "./icons";
@@ -1705,6 +1706,7 @@ export const ScenesSidebar = () => {
       <SlidesSidebar />
       <PresentationOverlay />
       <SlideNotesOverlay />
+      <TextTipsOverlay />
       <TemplateChangesBar />
       <PublicSceneOverlay />
       <AddFontOverlay />

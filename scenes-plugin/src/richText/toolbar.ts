@@ -5,7 +5,7 @@ import { FONT_FAMILY } from "@excalidraw/common";
 
 import type { RichEditorApi } from "./editor";
 import { parseFontSize } from "../fontSize";
-import { safeLink } from "./model";
+import { MAX_TIP, safeLink, safeTip } from "./model";
 
 import type { ParaKind } from "./model";
 
@@ -26,6 +26,7 @@ const ICONS = {
   ol: icon(p("M10 12h11", "M10 18h11", "M10 6h11", "M4 10h2", "M4 6h1v4", "M6 18H4c0-1 2-2 2-3s-1-1.5-2-1")),
   ul: icon(p("M3 12h.01", "M3 18h.01", "M3 6h.01", "M8 12h13", "M8 18h13", "M8 6h13")),
   link: icon(p("M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71")),
+  tip: icon(p("M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z", "M13 8H7", "M17 12H7")),
   color: icon(p("m6 16 6-12 6 12", "M8 12h8")),
   highlight: icon(p("m9 11-6 6v3h9l3-3", "m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4")),
   lineHeight: icon(p("M11 6h10", "M11 12h10", "M11 18h10", "m3 8 3-3 3 3", "m3 16 3 3 3-3", "M6 5v14")),
@@ -205,6 +206,80 @@ export const createToolbar = (
     );
   };
 
+  // a tooltip: a note on the selected words, shown when the pointer is over them (not on the canvas)
+  const tipForm = (current: string | undefined) => {
+    const form = ownerDocument.createElement("form");
+    form.className = "rt-toolbar__link rt-toolbar__tipform";
+    const input = ownerDocument.createElement("textarea");
+    input.setAttribute("aria-label", "Tooltip");
+    input.placeholder = "Explain the selected words";
+    input.maxLength = MAX_TIP;
+    input.rows = 3;
+    input.value = current || "";
+    const apply = ownerDocument.createElement("button");
+    apply.type = "submit";
+    apply.textContent = "Apply";
+    const actions = ownerDocument.createElement("div");
+    actions.className = "rt-toolbar__tipactions";
+    actions.append(apply);
+    const done = (tip: string | undefined) => {
+      closePopover();
+      api.restoreFocus();
+      api.setTip(tip);
+    };
+    if (current) {
+      const remove = ownerDocument.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => done(undefined));
+      actions.append(remove);
+    }
+    form.append(input, actions);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      done(safeTip(input.value) ?? undefined);
+    });
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      // Enter applies, Shift+Enter is a new line
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePopover();
+        api.restoreFocus();
+      }
+    });
+    api.suspendBlur();
+    setTimeout(() => input.focus(), 0);
+    return form;
+  };
+
+  const openTip = () => {
+    const anchor = buttons.get("tip");
+    if (!anchor) {
+      return;
+    }
+    api.saveSelection();
+    const { marks, collapsed } = api.state();
+    openPopover(
+      anchor,
+      (el) => {
+        if (collapsed && !marks.n) {
+          const hint = ownerDocument.createElement("p");
+          hint.className = "rt-toolbar__hint";
+          hint.textContent = "Select the words the tooltip explains first.";
+          el.appendChild(hint);
+          return;
+        }
+        el.appendChild(tipForm(marks.n));
+      },
+      true,
+    );
+  };
+
   const toggleHighlight = () => {
     api.setMark("h", api.state().marks.h ? undefined : lastHighlight);
   };
@@ -348,6 +423,7 @@ export const createToolbar = (
       ),
       sep(),
       button("link", `Link (${MOD}K)`, ICONS.link, openLink),
+      button("tip", "Tooltip (a note shown on hover)", ICONS.tip, openTip),
       button("color", "Text color", `${ICONS.color}<span class="rt-toolbar__bar"></span>`, (anchor) =>
         openPopover(anchor, swatches(TEXT_COLORS, api.state().marks.c, (color) => api.setMark("c", color), "Default color")),
       ),
@@ -423,6 +499,7 @@ export const createToolbar = (
       buttons.get(kind)?.classList.toggle("rt-toolbar__button--active", kinds.size === 1 && kinds.has(kind));
     }
     buttons.get("link")?.classList.toggle("rt-toolbar__button--active", !!marks.a);
+    buttons.get("tip")?.classList.toggle("rt-toolbar__button--active", !!marks.n);
     buttons.get("color")?.style.setProperty("--rt-bar", marks.c || "currentColor");
     buttons.get("highlight")?.style.setProperty("--rt-bar", marks.h || "transparent");
     const size = buttons.get("size");

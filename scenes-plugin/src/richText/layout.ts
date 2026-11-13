@@ -38,6 +38,9 @@ type TextSpec = {
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
+/** a tooltip without underline or link: underlined dotted */
+const tipOnly = (marks: Marks) => !!marks.n && !marks.u && !marks.a;
+
 const round = (value: number) => Math.round(value * 10000) / 10000;
 
 /** the smallest size in a paragraph: its line height floor (the CSS strut) */
@@ -47,8 +50,10 @@ const runStyle = (run: Marks, z0: number, dark: boolean) => {
   const style: string[] = [];
   if (run.b) style.push(`-webkit-text-stroke:${BOLD_STROKE}em currentColor`);
   if (run.i) style.push("font-style:italic");
-  const decoration = [(run.u || run.a) && "underline", run.s && "line-through"].filter(Boolean);
+  const decoration = [(run.u || run.a || run.n) && "underline", run.s && "line-through"].filter(Boolean);
   if (decoration.length) style.push(`text-decoration:${decoration.join(" ")}`);
+  // a tooltip only: a dotted underline (a real underline or link wins)
+  if (tipOnly(run)) style.push("text-decoration-style:dotted");
   const color = run.c || (run.a ? LINK_COLOR : null);
   if (color) style.push(`color:${applyDarkModeFilter(color, dark)}`);
   if (run.h) style.push(`background-color:${applyDarkModeFilter(run.h, dark)}`);
@@ -57,10 +62,10 @@ const runStyle = (run: Marks, z0: number, dark: boolean) => {
 };
 
 const runAttrs = (run: Run) =>
-  (["b", "i", "u", "s", "c", "h", "a", "z"] as const)
+  (["b", "i", "u", "s", "c", "h", "a", "z", "n"] as const)
     .filter((key) => run[key] !== undefined)
     .map((key) => ` data-${key}="${escapeHtml(String(run[key]))}"`)
-    .join("");
+    .join("") + (run.n ? ` title="${escapeHtml(run.n)}"` : "");
 
 export const paraAttrs = (para: Para, marker: string) => {
   const z0 = paraSize(para);
@@ -412,8 +417,8 @@ export const elementLayout = (element: TextElementLike) => {
 const decorations = (fragment: Fragment) => {
   const { marks, size, baseline } = fragment;
   const thickness = Math.max(1, size / 15);
-  const lines: Array<{ y: number; thickness: number }> = [];
-  if (marks.u || marks.a) lines.push({ y: baseline + size * 0.1, thickness });
+  const lines: Array<{ y: number; thickness: number; dotted?: boolean }> = [];
+  if (marks.u || marks.a || marks.n) lines.push({ y: baseline + size * 0.1, thickness, dotted: tipOnly(marks) });
   if (marks.s) lines.push({ y: baseline - size * 0.28, thickness });
   return lines;
 };
@@ -450,6 +455,13 @@ const drawMarkers = (element: TextElementLike, context: CanvasRenderingContext2D
   }
 };
 
+/** a tooltip's dotted underline: dots a line thick, as far apart */
+const drawDotted = (context: CanvasRenderingContext2D, fragment: Fragment, line: { y: number; thickness: number }) => {
+  for (let x = fragment.x; x < fragment.x + fragment.width; x += line.thickness * 2) {
+    context.fillRect(x, line.y - line.thickness / 2, line.thickness, line.thickness);
+  }
+};
+
 /** draws a formatted text on the canvas (at its top-left); false if it isn't one */
 export const drawRich = (element: TextElementLike, context: CanvasRenderingContext2D, dark: boolean) => {
   const result = elementLayout(element);
@@ -480,7 +492,11 @@ export const drawRich = (element: TextElementLike, context: CanvasRenderingConte
     }
     context.fillText(fragment.text, fragment.x, fragment.baseline);
     for (const line of decorations(fragment)) {
-      context.fillRect(fragment.x, line.y - line.thickness / 2, fragment.width, line.thickness);
+      if (line.dotted) {
+        drawDotted(context, fragment, line);
+      } else {
+        context.fillRect(fragment.x, line.y - line.thickness / 2, fragment.width, line.thickness);
+      }
     }
   }
   drawMarkers(element, context, dark, layout.markers);
@@ -567,8 +583,14 @@ const svgFragments = (element: TextElementLike, dark: boolean, fragments: Fragme
       ...(fragment.marks.i ? { "font-style": "italic" } : {}),
     });
     text.textContent = fragment.text;
+    if (fragment.marks.n) {
+      // hovering the text shows its tooltip where SVG is viewed
+      add(text, "title", {}).textContent = fragment.marks.n;
+    }
     for (const line of decorations(fragment)) {
-      add(parent, "rect", { x: fragment.x, y: line.y - line.thickness / 2, width: fragment.width, height: line.thickness, fill: color });
+      add(parent, line.dotted ? "line" : "rect", line.dotted
+        ? { x1: fragment.x, y1: line.y, x2: fragment.x + fragment.width, y2: line.y, stroke: color, "stroke-width": line.thickness, "stroke-dasharray": `${line.thickness} ${line.thickness}` }
+        : { x: fragment.x, y: line.y - line.thickness / 2, width: fragment.width, height: line.thickness, fill: color });
     }
   }
 };

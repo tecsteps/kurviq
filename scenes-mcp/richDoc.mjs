@@ -10,7 +10,10 @@
 // counts only while its plain text equals `originalText` (an edit by a tool
 // that doesn't know it simply drops it).
 
-export const MARK_KEYS = ["b", "i", "u", "s", "c", "h", "a", "z"];
+export const MARK_KEYS = ["b", "i", "u", "s", "c", "h", "a", "z", "n"];
+
+/** the longest tooltip (`n`: a note shown on hover, not on the canvas) */
+export const MAX_TIP = 1000;
 
 export const MAX_DEPTH = 4;
 
@@ -77,6 +80,15 @@ const isColor = (value) => {
   return (channels.length === 3 || channels.length === 4) && channels.every((channel) => COLOR_CHANNEL.test(channel));
 };
 
+/** a tooltip: plain text (line breaks allowed), not empty, at most MAX_TIP characters */
+export const safeTip = (value) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const tip = value.replaceAll(/\r\n?/g, "\n").replaceAll(/[\u0000-\u0009\u000b-\u001f\u007f]/g, "").trim();
+  return tip && tip.length <= MAX_TIP ? tip : null;
+};
+
 /** links only to the web and to mail (no javascript:, data: …) */
 export const safeLink = (value) => {
   if (typeof value !== "string" || value.length > 2048) {
@@ -98,6 +110,8 @@ const cleanMark = (key, value) => { // NOSONAR S3800: mark values intentionally 
       return typeof value === "string" && isColor(value.trim()) ? value.trim() : undefined;
     case "a":
       return safeLink(value) ?? undefined;
+    case "n":
+      return safeTip(value) ?? undefined;
     case "z":
       return typeof value === "number" && Number.isFinite(value) && value >= 0.1 && value <= 10 && Math.abs(value - 1) >= 0.001
         ? value
@@ -190,6 +204,9 @@ export const richDocOf = (element, originalText = element?.originalText) => {
   return plainOf(clean) === originalText ? clean : null;
 };
 
+/** a tooltip inside {tip="…"}: quotes, backslashes and line breaks escaped */
+const escapeTip = (tip) => tip.replaceAll(/["\\]/g, String.raw`\$&`).replaceAll("\n", String.raw`\n`);
+
 const escapeMd = (text) => text.replace(/([*_~[\]{}\\])/g, String.raw`\$1`);
 
 const markdownPrefix = (para) => {
@@ -208,7 +225,7 @@ export const markdownOf = (doc) =>
       const body = para.r
         .map((run) => {
           let text = escapeMd(run.t);
-          const style = [run.c && `color=${run.c}`, run.h && `highlight=${run.h}`, run.z && `size=${Math.round(run.z * 100) / 100}`].filter(
+          const style = [run.c && `color=${run.c}`, run.h && `highlight=${run.h}`, run.z && `size=${Math.round(run.z * 100) / 100}`, run.n && `tip="${escapeTip(run.n)}"`].filter(
             Boolean,
           );
           if (style.length) {

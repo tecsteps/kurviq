@@ -40,7 +40,6 @@ import {
   setByline,
   setLinkAccess,
   shareLink,
-  showDriveShareDialog,
   sharedFileId,
   sharedFolderId,
   signOutListeners,
@@ -931,59 +930,6 @@ const ShortLink = ({ fileId, sceneName, restricted }: { fileId: string; sceneNam
   );
 };
 
-/**
- * Google's share dialog (ShareClient) runs with the browser's first Google
- * account: when that isn't the one signed in to Kurviq it shows "sharing is
- * unavailable", and its OK button breaks, leaving an overlay that blocks the
- * page. While Google's dialog is in the page, a bar above it can close it and
- * offers Drive's own page instead (opened as the right account).
- */
-const GoogleShareRescue = ({ target, onClose }: { target: { id: string; folder: boolean; before: Set<Element> }; onClose: () => void }) => {
-  // what Google's dialog added to the page that can be seen (its own hidden helper frames stay for the next try)
-  const googleNodes = () =>
-    Array.from(document.body.children).filter(
-      (node) => !target.before.has(node) && !node.classList.contains("kq-rescue") && node.getClientRects().length > 0,
-    );
-  useEffect(() => {
-    let seen = false;
-    const check = () => {
-      const present = googleNodes().length > 0;
-      seen ||= present;
-      if (seen && !present) {
-        onClose();
-      }
-    };
-    const observer = new MutationObserver(check);
-    observer.observe(document.body, { childList: true });
-    check();
-    return () => observer.disconnect();
-  }, [target]);
-  const close = () => {
-    googleNodes().forEach((node) => node.remove());
-    onClose();
-  };
-  const email = connection.getState().user?.email;
-  return createPortal(
-    <output className="kq-rescue">
-      <span>Google's dialog shows an error or doesn't react?</span>
-      <button type="button" onClick={close}>
-        Close it
-      </button>
-      <button
-        type="button"
-        title={email ? `Opens Google Drive as ${email}: use Share at the top right` : undefined}
-        onClick={() => {
-          close();
-          window.open(driveWebLink(target.id, target.folder), "kurviq-drive-share", "popup,width=1100,height=780");
-        }}
-      >
-        Share in Drive instead
-      </button>
-    </output>,
-    document.body,
-  );
-};
-
 const ROLE_TEXT: Record<string, string> = { writer: "can edit", reader: "can view", commenter: "can view" };
 
 /** above the people: the scene's folder is shared, so these people have every scene in it */
@@ -1038,7 +984,6 @@ const ShareDialog = ({ name }: { name: string }) => {
   const [folder, setFolder] = useState<FolderSharing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [rescue, setRescue] = useState<{ id: string; folder: boolean; before: Set<Element> } | null>(null);
   const me = connection.getState().user?.email?.toLowerCase();
   const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
   // a scene of a folder shared with this person: Kurviq reaches it only through its server, who has access is the owner's business
@@ -1080,10 +1025,10 @@ const ShareDialog = ({ name }: { name: string }) => {
   }, [fileId]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && !rescue && closeShareDialog();
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeShareDialog();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rescue]);
+  }, []);
 
   const run = async (what: () => Promise<unknown>) => {
     if (!fileId) {
@@ -1102,22 +1047,17 @@ const ShareDialog = ({ name }: { name: string }) => {
     }
   };
 
-  /** Google's share dialog for the scene or its folder; who has access is asked again for a while (it says nothing when it closes) */
-  const shareInGoogle = (id: string, isFolder: boolean) => {
-    const before = new Set(Array.from(document.body.children));
-    showDriveShareDialog(id).then(
-      () => setRescue({ id, folder: isFolder, before }),
-      (err) => setError(err.message),
-    );
-    const until = Date.now() + 5 * 60_000;
-    const poll = window.setInterval(() => {
-      if (Date.now() > until || !document.querySelector(".kq-share")) {
-        window.clearInterval(poll);
-      } else {
-        reload(fileId!).catch(() => {});
-        reloadFolder(fileId!);
-      }
-    }, 4000);
+  /**
+   * Drive's own page of the scene or its folder in a small window, as the
+   * account signed in to Kurviq (authuser): Share at its top right sends
+   * Google's normal invitations. (Google's in-page share dialog runs as the
+   * browser's first Google account: with another one first it hangs.)
+   * Back here, the focus listener above shows who has access now.
+   */
+  const shareInDrive = (id: string, isFolder: boolean) => {
+    if (!window.open(driveWebLink(id, isFolder), "kurviq-drive-share", "popup,width=1100,height=780")) {
+      setError("Your browser blocked Google Drive's window: allow pop-ups for this site and try again.");
+    }
   };
 
   const people = (permissions ?? []).filter((permission) => permission.type !== "anyone");
@@ -1137,29 +1077,16 @@ const ShareDialog = ({ name }: { name: string }) => {
           </button>
         </div>
         {!permissions && !error && <p className="kq-muted">Saving it to Google Drive and asking who has access…</p>}
-        {permissions && folder && <FolderNote folder={folder} onShareFolder={() => shareInGoogle(folder.folderId, true)} />}
+        {permissions && folder && <FolderNote folder={folder} onShareFolder={() => shareInDrive(folder.folderId, true)} />}
         {permissions && !inFolderSpace && (
           <>
             <div className="kq-share__drive">
-              <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => shareInGoogle(fileId!, false)}>
+              <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => shareInDrive(fileId!, false)}>
                 Share in Google Drive
               </button>
               <span className="kq-muted">
-                Google's own share dialog: its invitations arrive reliably. Asks you to sign in or shows an error? Your
-                browser blocks Google's cookies here, or its first Google account isn't the one you use in Kurviq:{" "}
-                <a
-                  className="scenes-link"
-                  href={driveWebLink(fileId!)}
-                  target="kurviq-drive-share"
-                  rel="noopener"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    window.open(driveWebLink(fileId!), "kurviq-drive-share", "popup,width=1100,height=780");
-                  }}
-                >
-                  open it in Drive
-                </a>{" "}
-                and use <strong>Share</strong> at the top right.
+                Opens the scene in Google Drive{me ? <> as <strong>{me}</strong></> : null}: use <strong>Share</strong> at
+                the top right. Google's own invitations arrive reliably.
               </span>
             </div>
             <p className="kq-muted">
@@ -1244,7 +1171,6 @@ const ShareDialog = ({ name }: { name: string }) => {
         )}
         {error && <p className="scenes-error">{error}</p>}
       </div>
-      {rescue && <GoogleShareRescue target={rescue} onClose={() => setRescue(null)} />}
     </div>
   );
 };

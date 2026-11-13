@@ -10,7 +10,7 @@ import { MARK_KEYS, MAX_DEPTH, markersOf, paraText, marksOf, normalizeDoc } from
 import type { Marks, Run, Para, RichDoc, MarkKey } from "../../../scenes-mcp/richDoc.mjs";
 
 // the stored form, its checks, plain text and markdown: scenes-mcp/richDoc.mjs (shared with the MCP tools)
-export { MARK_KEYS, MAX_DEPTH, markersOf, paraText, plainOf, sameMarks, marksOf, safeLink, normalizeDoc, docFromPlain, isPlainDoc, richDocOf, markdownOf } from "../../../scenes-mcp/richDoc.mjs";
+export { MARK_KEYS, MAX_DEPTH, markersOf, paraText, plainOf, sameMarks, marksOf, safeLink, safeTip, MAX_TIP, normalizeDoc, docFromPlain, isPlainDoc, richDocOf, markdownOf } from "../../../scenes-mcp/richDoc.mjs";
 export type { Marks, Run, ParaKind, Para, RichDoc, MarkKey } from "../../../scenes-mcp/richDoc.mjs";
 
 // ---------------------------------------------------------------------------
@@ -306,17 +306,25 @@ const MD_MARKS: Array<[RegExp, MarkKey]> = [
   [/^\*([^*\s][\s\S]*?)\*/, "i"],
 ];
 
+/** one setting inside {…}: color=, highlight=, size= or tip="…" (quotes and backslashes escaped with \\, a line break as \\n) */
+const STYLE_SETTING = String.raw`(?:color|highlight|size)=[^\s}"]+|tip="(?:[^"\\]|\\.)*"`;
+const STYLED = new RegExp(String.raw`^\{((?:\s*(?:${STYLE_SETTING}))+)\s*\}([\s\S]*?)\{\/\}`);
+
+const unescapeTip = (tip: string) => tip.replaceAll(/\\(.)/g, (_, char: string) => (char === "n" ? "\n" : char));
+
 const styledMarks = (style: string, marks: Marks) => {
-      const next: Marks = { ...marks };
-      for (const [, key, value] of style.matchAll(/(color|highlight|size)=([^\s}]+)/g)) {
-        if (key === "color") {
-          next.c = value;
-        } else if (key === "highlight") {
-          next.h = value;
-        } else if (Number(value) > 0) {
-          next.z = Number(value);
-        }
-      }
+  const next: Marks = { ...marks };
+  for (const [, key, value, tip] of style.matchAll(/(color|highlight|size)=([^\s}"]+)|tip="((?:[^"\\]|\\.)*)"/g)) {
+    if (tip !== undefined) {
+      next.n = unescapeTip(tip);
+    } else if (key === "color") {
+      next.c = value;
+    } else if (key === "highlight") {
+      next.h = value;
+    } else if (Number(value) > 0) {
+      next.z = Number(value);
+    }
+  }
   return next;
 };
 
@@ -342,8 +350,8 @@ const parseInline = (text: string, marks: Marks, runs: Run[]) => {
       rest = rest.slice(link[0].length);
       continue;
     }
-    // {color=#e03131 highlight=#ffec99 size=0.8}text{/}
-    const styled = /^\{((?:\s*(?:color|highlight|size)=[^\s}]+)+)\s*\}([\s\S]*?)\{\/\}/.exec(rest);
+    // {color=#e03131 highlight=#ffec99 size=0.8 tip="a note"}text{/}
+    const styled = STYLED.exec(rest);
     if (styled) {
       flush();
       const next = styledMarks(styled[1], marks);
@@ -368,7 +376,7 @@ const parseInline = (text: string, marks: Marks, runs: Run[]) => {
  * Markdown-like text to a doc: `# ` (size 1.6, bold), `## ` (1.3, bold),
  * `- ` / `* ` bullets, `1. ` numbered, `[ ] ` / `[x] ` checklist (indent with
  * 2 spaces per level); inline **bold**, *italic*, __underline__,
- * ~~strike~~, [link](url) and {color=#hex highlight=#hex size=0.8}…{/}.
+ * ~~strike~~, [link](url) and {color=#hex highlight=#hex size=0.8 tip="a note"}…{/}.
  */
 export const docFromMarkdown = (markdown: string): RichDoc => {
   const paras: Para[] = markdown.replace(/\r\n?/g, "\n").split("\n").map((line) => {

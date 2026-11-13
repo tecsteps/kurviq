@@ -107,19 +107,17 @@ const TEXT_PADDING_ENTRY = path.resolve(HERE, "src/textPadding.tsx");
 
 const FONTS_UI_ENTRY = path.resolve(HERE, "src/fontsUI.tsx");
 
-/** "Add font…" at the bottom of Excalidraw's font picker (custom fonts: src/fonts.ts) */
+/** "Add font…" at the bottom of Excalidraw's font picker (custom fonts: src/fonts.ts); no font size in the shape panel */
 const customFonts = () => ({
   name: "excalidraw-scenes-custom-fonts",
   enforce: "pre" as const,
   transform(code: string, id: string) {
     const file = id.replaceAll("\\", "/").split("?")[0];
-    if (file.endsWith("/packages/excalidraw/actions/actionProperties.tsx")) {
-      const anchor = '<RadioSelection\n              group="font-size"';
-      if (!code.includes(anchor)) throw new Error("Font size control changed upstream");
-      return {
-        code: "import { FontSizeInput as KurviqFontSizeInput } from " + JSON.stringify(FONTS_UI_ENTRY) + ";\n" + code.replace(anchor, '<KurviqFontSizeInput\n              group="font-size"'),
-        map: null,
-      };
+    if (file.endsWith("/packages/excalidraw/components/Actions.tsx")) {
+      // no font size in the shape panel: the text editor's toolbar sets it per character (src/richText/toolbar.ts)
+      const fontSize = 'renderAction("changeFontSize")';
+      if (code.split(fontSize).length !== 3) throw new Error("[excalidraw-scenes] font size: Actions.tsx changed upstream. Update scenes-plugin/vite.config.mts.");
+      return { code: code.replaceAll(fontSize, "null"), map: null };
     }
     if (!file.endsWith("/packages/excalidraw/components/FontPicker/FontPickerList.tsx")) {
       return null;

@@ -17,6 +17,8 @@ export type Marks = {
   a?: string;
   /** size, relative to the element's font size */
   z?: number;
+  /** tooltip: a note shown on hover, not on the canvas */
+  n?: string;
 };
 
 export type Run = Marks & {
@@ -40,7 +42,13 @@ export type RichDoc = {
   p: Para[];
 };
 
-export declare const MARK_KEYS: readonly ["b", "i", "u", "s", "c", "h", "a", "z"];
+export declare const MARK_KEYS: readonly ["b", "i", "u", "s", "c", "h", "a", "z", "n"];
+
+/** the longest tooltip */
+export declare const MAX_TIP = 1000;
+
+/** a tooltip as stored (plain text, trimmed), or null */
+export declare const safeTip: (value: unknown) => string | null;
 
 export type MarkKey = typeof MARK_KEYS[number];
 
