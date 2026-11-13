@@ -462,6 +462,17 @@ const drawDotted = (context: CanvasRenderingContext2D, fragment: Fragment, line:
   }
 };
 
+/** a fragment's underline / strikethrough lines, in the current fill color */
+const drawDecorations = (context: CanvasRenderingContext2D, fragment: Fragment) => {
+  for (const line of decorations(fragment)) {
+    if (line.dotted) {
+      drawDotted(context, fragment, line);
+    } else {
+      context.fillRect(fragment.x, line.y - line.thickness / 2, fragment.width, line.thickness);
+    }
+  }
+};
+
 /** draws a formatted text on the canvas (at its top-left); false if it isn't one */
 export const drawRich = (element: TextElementLike, context: CanvasRenderingContext2D, dark: boolean) => {
   const result = elementLayout(element);
@@ -491,13 +502,7 @@ export const drawRich = (element: TextElementLike, context: CanvasRenderingConte
       context.strokeText(fragment.text, fragment.x, fragment.baseline);
     }
     context.fillText(fragment.text, fragment.x, fragment.baseline);
-    for (const line of decorations(fragment)) {
-      if (line.dotted) {
-        drawDotted(context, fragment, line);
-      } else {
-        context.fillRect(fragment.x, line.y - line.thickness / 2, fragment.width, line.thickness);
-      }
-    }
+    drawDecorations(context, fragment);
   }
   drawMarkers(element, context, dark, layout.markers);
   context.restore();
@@ -566,32 +571,43 @@ const svgMarkers = (element: TextElementLike, dark: boolean, markers: ListMarker
   }
 };
 
+/** a fragment's underline / strikethrough lines (a tooltip's dotted) */
+const svgDecorations = (fragment: Fragment, color: string, add: AddSvg, parent: Element) => {
+  for (const line of decorations(fragment)) {
+    if (line.dotted) {
+      const dash = `${line.thickness} ${line.thickness}`;
+      add(parent, "line", { x1: fragment.x, y1: line.y, x2: fragment.x + fragment.width, y2: line.y, stroke: color, "stroke-width": line.thickness, "stroke-dasharray": dash });
+    } else {
+      add(parent, "rect", { x: fragment.x, y: line.y - line.thickness / 2, width: fragment.width, height: line.thickness, fill: color });
+    }
+  }
+};
+
+/** a fragment's text attributes: font, color, bold, italic */
+const svgTextAttrs = (fragment: Fragment, color: string, family: string) => ({
+  x: fragment.x,
+  y: fragment.baseline,
+  "font-family": family,
+  "font-size": `${round(fragment.size)}px`,
+  fill: color,
+  style: "white-space: pre;",
+  "dominant-baseline": "alphabetic",
+  ...(fragment.marks.b ? { stroke: color, "stroke-width": round(fragment.size * BOLD_STROKE), "stroke-linejoin": "round" } : {}),
+  ...(fragment.marks.i ? { "font-style": "italic" } : {}),
+});
+
 const svgFragments = (element: TextElementLike, dark: boolean, fragments: Fragment[], family: string, add: AddSvg, group: Element) => {
   for (const fragment of fragments) {
     const color = applyDarkModeFilter(fragment.marks.c || (fragment.marks.a ? LINK_COLOR : element.strokeColor), dark);
     const href = safeLink(fragment.marks.a);
     const parent = href ? add(group, "a", { href, target: "_blank", rel: "noopener noreferrer" }) : group;
-    const text = add(parent, "text", {
-      x: fragment.x,
-      y: fragment.baseline,
-      "font-family": family,
-      "font-size": `${round(fragment.size)}px`,
-      fill: color,
-      style: "white-space: pre;",
-      "dominant-baseline": "alphabetic",
-      ...(fragment.marks.b ? { stroke: color, "stroke-width": round(fragment.size * BOLD_STROKE), "stroke-linejoin": "round" } : {}),
-      ...(fragment.marks.i ? { "font-style": "italic" } : {}),
-    });
+    const text = add(parent, "text", svgTextAttrs(fragment, color, family));
     text.textContent = fragment.text;
     if (fragment.marks.n) {
       // hovering the text shows its tooltip where SVG is viewed
       add(text, "title", {}).textContent = fragment.marks.n;
     }
-    for (const line of decorations(fragment)) {
-      add(parent, line.dotted ? "line" : "rect", line.dotted
-        ? { x1: fragment.x, y1: line.y, x2: fragment.x + fragment.width, y2: line.y, stroke: color, "stroke-width": line.thickness, "stroke-dasharray": `${line.thickness} ${line.thickness}` }
-        : { x: fragment.x, y: line.y - line.thickness / 2, width: fragment.width, height: line.thickness, fill: color });
-    }
+    svgDecorations(fragment, color, add, parent);
   }
 };
 

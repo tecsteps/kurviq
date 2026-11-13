@@ -5,6 +5,42 @@
 export const needsConversion = (el) =>
   el.label !== undefined || el.version === undefined || el.markdown !== undefined;
 
+/** one setting of {color=… highlight=… size=… tip="…"} */
+const STYLE_SETTING = /^\s*(?:(?:color|highlight|size)=[^\s}"]+|tip="(?:[^"\\]|\\.)*")/;
+
+/** where a {settings} opener at `at` ends, or -1 if there is none */
+const styleOpenerEnd = (line, at) => {
+  let end = at + 1;
+  let settings = 0;
+  for (let match = STYLE_SETTING.exec(line.slice(end)); match; match = STYLE_SETTING.exec(line.slice(end))) {
+    end += match[0].length;
+    settings++;
+  }
+  const close = /^\s*\}/.exec(line.slice(end));
+  return settings && close ? end + close[0].length : -1;
+};
+
+/** {settings}text{/} as text (escapes stay, they are removed last) */
+const stripStyles = (line) => {
+  let out = "";
+  let index = 0;
+  while (index < line.length) {
+    const end = line[index] === "{" ? styleOpenerEnd(line, index) : -1;
+    if (line[index] === "\\") {
+      out += line.slice(index, index + 2);
+      index += 2;
+    } else if (end > 0) {
+      index = end;
+    } else if (line.startsWith("{/}", index)) {
+      index += 3;
+    } else {
+      out += line[index];
+      index++;
+    }
+  }
+  return out;
+};
+
 /**
  * Markdown-like text as plain text (list markers kept): the formatting needs
  * the browser (an open app); without one the words still arrive
@@ -17,12 +53,11 @@ const plainOfMarkdown = (markdown) => {
       if (!/^\s*\d+[.)] /.test(line)) {
         numbered = 0;
       }
-      return line
+      return stripStyles(line)
         .replace(/^(\s*)#{1,3} /, "$1")
         .replace(/^(\s*)(?:[-*] )?\[([ xX])\] /, (_, indent, x) => `${indent}${x.trim() ? "☑" : "☐"} `)
         .replace(/^(\s*)[-*•] /, "$1• ")
         .replace(/^(\s*)\d+[.)] /, (_, indent) => `${indent}${++numbered}. `)
-        .replace(/\{(?:\s*(?:(?:color|highlight|size)=[^\s}"]+|tip="(?:[^"\\]|\\.)*"))+\s*\}([\s\S]*?)\{\/\}/g, "$1")
         .replace(/\[([^\]]+)\]\([^)\s]+\)/g, "$1") // NOSONAR S8786: preserves nested opening brackets in labels and malformed markdown matching; an equivalent linear rewrite is not proven
         .replace(/\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\s][\s\S]*?)\*/g, (_, a, b, c, d) => a ?? b ?? c ?? d)
         .replace(/\\([*_~[\]{}\\])/g, "$1");
