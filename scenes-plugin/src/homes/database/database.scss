@@ -27,6 +27,15 @@
     cursor: pointer;
   }
 
+  /* the choice's name in bold, its details (muted) not */
+  .kq-db__choice-text {
+    font-weight: 700;
+
+    .kq-muted {
+      font-weight: 400;
+    }
+  }
+
   .kq-db__new,
   .kq-db__invite {
     display: grid;

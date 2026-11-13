@@ -44,7 +44,7 @@ export const deletedVersion = (data: Record<string, any>): Record<string, any> =
   ...data,
   isDeleted: true,
   version: (Number(data.version) || 1) + 1,
-  versionNonce: Math.floor(Math.random() * 2 ** 31),
+  versionNonce: crypto.getRandomValues(new Uint32Array(1))[0] >>> 1,
   updated: Date.now(),
 });
 

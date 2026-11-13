@@ -87,7 +87,10 @@ class Session {
     readonly name: string,
     readonly ref: string,
     private readonly home: DatabaseHome,
-  ) {
+  ) {}
+
+  /** starts the session (called once, right after it is made) */
+  begin() {
     this.start().catch((error) => this.problem(error));
   }
 
@@ -313,7 +316,7 @@ class Session {
 
   /** one write at a time; a change meanwhile: once more after it */
   flush(): Promise<void> {
-    if (this.flushing) {
+    if (this.flushing !== null) {
       this.again = true;
       return this.flushing;
     }
@@ -424,8 +427,7 @@ class Session {
   // ---------------------------------------------------------------------------
 
   private listen() {
-    this.cleanups.push(this.api.onChange(this.onChange));
-    this.cleanups.push(commentStore.subscribe(this.onChange));
+    this.cleanups.push(this.api.onChange(this.onChange), commentStore.subscribe(this.onChange));
     window.addEventListener("pointermove", this.onPointerMove, { passive: true });
     window.addEventListener("online", this.onOnline);
     this.cleanups.push(() => {
@@ -503,7 +505,7 @@ class Session {
 
   private onPresence(channel: RealtimeChannel) {
     const state = channel.presenceState() as Record<string, Peer[]>;
-    for (const tab of [...this.peers.keys()]) {
+    for (const tab of this.peers.keys()) {
       if (!state[tab]) {
         this.peers.delete(tab);
       }
@@ -673,6 +675,7 @@ class DatabaseLive implements HomeLive {
       scenesController.setHomeAccess({ readOnly: PAUSED_MESSAGE, comment: false });
     }
     this.session = new Session(api, name, db.ref, databaseHome(db.ref));
+    this.session.begin();
   }
 
   /** what waits to be written, now (an agent reads the scene, the tab is hidden) */

@@ -133,11 +133,11 @@ export const DatabaseShareDialog = ({ name, onClose }: { name: string; onClose: 
             }}
           >
             <label className="kq-field">
-              Invite by email
+              {"Invite by email"}
               <input type="email" required value={email} placeholder="name@example.com" onChange={(event) => setEmail(event.target.value)} />
             </label>
             <label className="kq-field">
-              Role
+              {"Role"}
               <select value={role} onChange={(event) => setRole(event.target.value as Access["role"])}>
                 {ROLES.map(([value, label]) => (
                   <option key={value} value={value}>
@@ -147,7 +147,7 @@ export const DatabaseShareDialog = ({ name, onClose }: { name: string; onClose: 
               </select>
             </label>
             <label className="kq-field">
-              Access until (optional)
+              {"Access until (optional)"}
               <input type="date" value={until} min={new Date().toISOString().slice(0, 10)} onChange={(event) => setUntil(event.target.value)} />
             </label>
             <button type="submit" className="scenes-btn scenes-btn--primary" disabled={busy || !email.includes("@") || !sceneId}>
@@ -212,7 +212,7 @@ export const DatabaseShareDialog = ({ name, onClose }: { name: string; onClose: 
           />
           <span className="scenes-switch__track" />
           <span className="scenes-switch__label">
-            Anyone with the link can view
+            {"Anyone with the link can view"}
             <span className="scenes-switch__hint">{isPublic ? "read only, without an account (comments stay for people with access)" : "only the people above"}</span>
           </span>
         </label>

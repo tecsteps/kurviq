@@ -12,12 +12,13 @@
 import supabase from "../../../../online/supabase.json";
 
 import { ownerSql } from "./schemaVersion";
+import { withoutPadding } from "./text";
 
 const AUTHORIZE = "https://api.supabase.com/v1/oauth/authorize";
 const PENDING_KEY = "kurviq-supabase-oauth";
 const API = "/api/supabase/v1";
 
-const base64url = (bytes: Uint8Array) => btoa(String.fromCodePoint(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+const base64url = (bytes: Uint8Array) => withoutPadding(btoa(String.fromCodePoint(...bytes)).replaceAll("+", "-").replaceAll("/", "_"));
 
 /** a PKCE verifier (43 characters) and its S256 challenge */
 export const pkcePair = async () => {

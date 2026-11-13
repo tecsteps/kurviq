@@ -477,7 +477,8 @@ export const mergeStored = (local: Stored, remote: Stored): Stored => {
   for (const connection of connections) {
     delete removed[connection.ref];
   }
-  return { connections: connections.sort((a, b) => a.ref.localeCompare(b.ref)), removed };
+  connections.sort((a, b) => a.ref.localeCompare(b.ref));
+  return { connections, removed };
 };
 
 let driveAppData: DriveAppData | null = null;

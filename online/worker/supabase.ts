@@ -91,8 +91,8 @@ const exchange = async (request: Request, env: SupabaseEnv, url: URL) => {
   });
   const tokens = (await answer.json().catch(() => null)) as Record<string, unknown> | null;
   if (!answer.ok || typeof tokens?.access_token !== "string") {
-    const why = tokens?.error_description ?? tokens?.message ?? tokens?.error;
-    const detail = why ? ": " + String(why).slice(0, 200) : "";
+    const why = [tokens?.error_description, tokens?.message, tokens?.error].find((value) => typeof value === "string" && value);
+    const detail = typeof why === "string" ? ": " + why.slice(0, 200) : "";
     return json(answer.status >= 500 ? 502 : 400, { error: `Supabase did not accept the sign-in${detail}` });
   }
   // the refresh token is not passed on: the setup uses the access token once, then drops it
@@ -120,7 +120,7 @@ const forward = async (request: Request, url: URL, path: string) => {
     body,
   });
   const text = await answer.text();
-  if (answer.ok && /\/api-keys$/.test(path)) {
+  if (answer.ok && path.endsWith("/api-keys")) {
     let keys: unknown = null;
     try {
       keys = JSON.parse(text);

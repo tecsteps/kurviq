@@ -17,6 +17,7 @@ import { cleanProjectUrl, connectionOf, createProbe, databases, DEFAULT_SPACE_NA
 import { finishSupabaseConnect, isSupabaseCallback, managementApi, newDatabasePassword, REGIONS, setUpProject, startSupabaseConnect, waitUntilUp } from "./oauth";
 import { PAUSED_MESSAGE } from "./rows";
 import { DatabaseShareDialog } from "./shareUI";
+import { looksLikeEmail } from "./text";
 
 import type { HomeKind, SceneHome } from "../types";
 import type { Organization, Project } from "./oauth";
@@ -100,7 +101,7 @@ const ConnectDialog = () => {
       .then(({ SCHEMA_SQL }) => setSql(SCHEMA_SQL))
       .catch(() => setSql("-- Kurviq's SQL could not be loaded: reload the page"));
   }, []);
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const emailOk = looksLikeEmail(email);
 
   const connectByHand = async () => {
     setError(null);
@@ -142,7 +143,7 @@ const ConnectDialog = () => {
         nothing of it.
       </p>
       <label className="kq-field">
-        Your email
+        {"Your email"}
         <input type="email" value={email} autoComplete="email" onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" />
         <span className="kq-muted">You sign in to the database with it, as its owner.</span>
       </label>
@@ -165,7 +166,7 @@ const ConnectDialog = () => {
         <summary>Or set it up yourself (also for self-hosted Supabase)</summary>
         <ol>
           <li>
-            In your project's SQL editor, run Kurviq's SQL (safe to run again):
+            {"In your project's SQL editor, run Kurviq's SQL (safe to run again):"}
             <textarea className="kq-prompt" readOnly rows={5} value={sql} aria-label="Kurviq's SQL" />
             <button
               type="button"
@@ -181,16 +182,16 @@ const ConnectDialog = () => {
             </button>
           </li>
           <li>
-            Authentication → URL Configuration: add <code>{location.origin}/**</code> to the redirect URLs (sign-in links
+            Authentication → URL Configuration: add <code>{`${location.origin}/**`}</code> to the redirect URLs (sign-in links
             come back to Kurviq).
           </li>
           <li>
             <label className="kq-field">
-              Project URL
+              {"Project URL"}
               <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://abcdefghijklmnopqrst.supabase.co" />
             </label>
             <label className="kq-field">
-              Publishable key (or the legacy anon key; never the secret key)
+              {"Publishable key (or the legacy anon key; never the secret key)"}
               <input value={key} onChange={(event) => setKey(event.target.value)} placeholder="sb_publishable_…" />
             </label>
           </li>
@@ -272,25 +273,25 @@ const SetupDialog = ({ token, email }: { token: string; email: string }) => {
           {projects.map((project) => (
             <label key={project.ref} className="kq-db__choice">
               <input type="radio" name="kq-project" checked={choice === project.ref} onChange={() => setChoice(project.ref)} />
-              <span>
-                <strong>{project.name}</strong> <span className="kq-muted">{project.region} · {project.status.toLowerCase().replaceAll("_", " ")}</span>
+              <span className="kq-db__choice-text">
+                {project.name} <span className="kq-muted">{project.region} · {project.status.toLowerCase().replaceAll("_", " ")}</span>
               </span>
             </label>
           ))}
           <label className="kq-db__choice">
             <input type="radio" name="kq-project" checked={choice === NEW} onChange={() => setChoice(NEW)} />
-            <span>
-              <strong>Create a new project</strong> <span className="kq-muted">(the free plan has two)</span>
+            <span className="kq-db__choice-text">
+              {"Create a new project"} <span className="kq-muted">(the free plan has two)</span>
             </span>
           </label>
           {choice === NEW && (
             <div className="kq-db__new">
               <label className="kq-field">
-                Name
+                {"Name"}
                 <input value={name} onChange={(event) => setName(event.target.value)} />
               </label>
               <label className="kq-field">
-                Organization
+                {"Organization"}
                 <select value={org} onChange={(event) => setOrg(event.target.value)}>
                   {orgs.map((entry) => (
                     <option key={entry.id} value={entry.id}>
@@ -300,7 +301,7 @@ const SetupDialog = ({ token, email }: { token: string; email: string }) => {
                 </select>
               </label>
               <label className="kq-field">
-                Region
+                {"Region"}
                 <select value={region} onChange={(event) => setRegion(event.target.value)}>
                   {REGIONS.map(([id, label]) => (
                     <option key={id} value={id}>
@@ -396,7 +397,7 @@ const SignInDialog = ({ dbRef, sceneId, email: given }: { dbRef: string; sceneId
     <Frame title={`Sign in to ${conn.name}`} onClose={close}>
       <p>No password: the database sends you an email with a sign-in link that brings you back here.</p>
       <label className="kq-field">
-        Your email
+        {"Your email"}
         <input type="email" autoComplete="email" value={email} disabled={sent} onChange={(event) => setEmail(event.target.value)} />
       </label>
       {!sent ? (
@@ -407,7 +408,7 @@ const SignInDialog = ({ dbRef, sceneId, email: given }: { dbRef: string; sceneId
         <>
           <p className="kq-notice">Sent to {email}: open the link in it (in this browser).</p>
           <label className="kq-field">
-            Or the code from the email (shown there when the database's email template has one)
+            {"Or the code from the email (shown there when the database's email template has one)"}
             <input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replaceAll(/\s/g, ""))} />
           </label>
           <div className="scenes-row">
@@ -658,7 +659,7 @@ export const NewScenesHome = () => {
   const value = scenesController.newScenesHome();
   return (
     <label className="kq-field kq-db-setting">
-      New scenes are kept
+      {"New scenes are kept"}
       <select value={value} onChange={(event) => scenesController.setNewScenesHome(event.target.value as NewHome)}>
         {choices.map((choice) => (
           <option key={choice.value} value={choice.value}>

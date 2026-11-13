@@ -76,7 +76,7 @@ const showShared = () => {
 };
 
 /** a database link (/db/<ref>/<scene id>, ./homes/database/connections.ts) or Supabase's sign-in callback: not a scene name */
-const isDatabasePath = (path: string) => /^\/db\//.test(path) || isSupabaseCallback(path);
+const isDatabasePath = (path: string) => path.startsWith("/db/") || isSupabaseCallback(path);
 
 const sceneFromPath = (): string | null => {
   if (sharedFromPath() || pubNameFromPath(window.location.pathname) || isDatabasePath(window.location.pathname)) {

@@ -9,7 +9,8 @@ import { handleSupabase, allowedCall, publicKeysOnly } from "../../online/worker
 import { accessOf, changedComments, deletedVersion, isNewer, localChanges, remoteWinners, settingsKey, vanished } from "../src/homes/database/changes";
 import { asHomeError, isPausedAnswer, PAUSED_MESSAGE } from "../src/homes/database/rows";
 import { assembleScene, elementRows, fileIndex, orderedElements, splitScene } from "../src/homes/database/sceneJson";
-import { ownerSql, schemaState } from "../src/homes/database/schemaVersion";
+import { ownerSql, SCHEMA_VERSION, schemaState } from "../src/homes/database/schemaVersion";
+import { looksLikeEmail, withoutPadding } from "../src/homes/database/text";
 import { elementChanges, writeSceneChanges } from "../src/homes/database/write";
 
 import { fakeSceneRows } from "./fakeSceneRows";
@@ -150,7 +151,11 @@ describe("schema helpers", () => {
   it("the SQL file is versioned and only touches Kurviq's own objects", async () => {
     const { readFileSync } = await import("node:fs");
     const sql = readFileSync(new URL("../src/homes/database/schema.sql", import.meta.url), "utf8");
-    expect(sql).toMatch(/kurviq_schema_version\(\) returns integer\s+language sql immutable as \$\$ select 1 \$\$/);
+    const version = /kurviq_schema_version\(\) returns integer\s+language sql immutable as \$\$ select (\d+) \$\$/.exec(sql);
+    expect(Number(version?.[1])).toBeGreaterThanOrEqual(SCHEMA_VERSION);
+    // the tables' role checks use kurviq_rank: it is made before the first table
+    expect(sql.indexOf("function public.kurviq_rank(")).toBeLessThan(sql.indexOf("create table"));
+    expect(sql).toContain("check (public.kurviq_rank(role) between 1 and 3)");
     const tables = [...sql.matchAll(/create table if not exists ([\w.]+)/g)].map((match) => match[1]);
     expect(tables.every((table) => table.startsWith("public.kurviq_"))).toBe(true);
     const policies = [...sql.matchAll(/create policy "([^"]+)"/g)].map((match) => match[1]);
@@ -319,6 +324,14 @@ describe("the Worker's Supabase routes (stateless)", () => {
     const refused = (await post("/api/supabase/token", { code: "c", codeVerifier: "v".repeat(43) }))!;
     expect(refused.status).toBe(400);
     expect((await refused.json()).error).toMatch(/code expired/);
+    // an object as the reason is not passed on as "[object Object]": the next text is used
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error_description: { nested: true }, message: "bad code" }, { status: 400 }));
+    const nested = (await post("/api/supabase/token", { code: "c", codeVerifier: "v".repeat(43) }))!;
+    expect((await nested.json()).error).toBe("Supabase did not accept the sign-in: bad code");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error: 42 }, { status: 500 }));
+    const noReason = (await post("/api/supabase/token", { code: "c", codeVerifier: "v".repeat(43) }))!;
+    expect(noReason.status).toBe(502);
+    expect((await noReason.json()).error).toBe("Supabase did not accept the sign-in");
   });
 
   it("passes the setup's Management API calls through (only those), without secret keys", async () => {
@@ -344,5 +357,56 @@ describe("the Worker's Supabase routes (stateless)", () => {
     const page = await handleSupabase(new Request("https://kurviq.com/auth/supabase/callback?code=x&state=y"), env);
     expect(await page!.text()).toContain("app");
     expect(await handleSupabase(new Request("https://kurviq.com/auth/login"), env)).toBeNull();
+  });
+});
+
+describe("text checks without backtracking", () => {
+  const oldEmail = (text: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text.trim());
+
+  it("an email address: name@domain with a dot inside the domain, no spaces, one @", () => {
+    for (const ok of ["a@b.c", " you@example.com ", "x.y@sub.example.org", "a@b..", "a@..b", "a@b.c."]) {
+      expect(looksLikeEmail(ok), ok).toBe(true);
+    }
+    for (const bad of ["", "@b.c", "a@", "a@b", "a@.b", "a@b.", "a@@b.c", "a@b@c.d", "a b@c.d", "a@b\t.c", "a@b.c d", "a\u00a0@b.c"]) {
+      expect(looksLikeEmail(bad), bad).toBe(false);
+    }
+  });
+
+  it("says the same as the former pattern, also for long inputs (fast)", () => {
+    const parts = ["a", "@", ".", " ", "b", "@."];
+    for (let i = 0; i < 2000; i++) {
+      let text = "";
+      for (let j = i % 9; j >= 0; j--) {
+        text += parts[(i * 7 + j * 3) % parts.length];
+      }
+      expect(looksLikeEmail(text), JSON.stringify(text)).toBe(oldEmail(text));
+    }
+    const long = "a@" + "b".repeat(100_000) + "!";
+    const started = performance.now();
+    expect(looksLikeEmail(long)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it("base64 padding is removed at the end only", () => {
+    expect(withoutPadding("abc==")).toBe("abc");
+    expect(withoutPadding("abc=")).toBe("abc");
+    expect(withoutPadding("abc")).toBe("abc");
+    expect(withoutPadding("a=b=")).toBe("a=b");
+    expect(withoutPadding("===")).toBe("");
+    expect(withoutPadding("")).toBe("");
+  });
+
+  it("a deleted version gets a fresh 31-bit nonce", () => {
+    for (let i = 0; i < 50; i++) {
+      const { versionNonce } = deletedVersion({ id: "b", version: 1 });
+      expect(Number.isInteger(versionNonce)).toBe(true);
+      expect(versionNonce).toBeGreaterThanOrEqual(0);
+      expect(versionNonce).toBeLessThan(2 ** 31);
+    }
+  });
+
+  it("a changed scene's error carries the revision only as text", () => {
+    expect(asHomeError({ code: "P0409", details: { revision: 3 }, message: "changed" })).toMatchObject({ status: 409, remoteVersion: null });
+    expect(asHomeError({ code: "P0409", details: "", message: "changed" })).toMatchObject({ status: 409, remoteVersion: null });
   });
 });

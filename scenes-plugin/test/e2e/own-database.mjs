@@ -164,6 +164,47 @@ const draw = async (page, x, y) => {
   await page.keyboard.press("Escape");
 };
 
+/** the setup's Management API calls (path below /api/supabase/v1), answered as a new account's Supabase would */
+const NEW_REF = "zyxwvutsrqponmlkjihg";
+const managementAnswer = (method, path, polls) => {
+  if (path === "/organizations") return [[{ id: "org1", name: "Tecsteps" }]];
+  if (path === "/projects" && method === "GET") return [[]];
+  if (path === "/projects" && method === "POST") return [{ id: NEW_REF, name: "Kurviq", region: "eu-central-1", organization_id: "org1", status: "COMING_UP" }];
+  if (path === `/projects/${NEW_REF}`) return [{ id: NEW_REF, name: "Kurviq", region: "eu-central-1", organization_id: "org1", status: polls > 1 ? "ACTIVE_HEALTHY" : "COMING_UP" }];
+  if (path.endsWith("/database/query")) return [[]];
+  if (path.endsWith("/config/auth")) return [method === "GET" ? { site_url: "http://localhost:3000", uri_allow_list: "" } : {}];
+  if (path.endsWith("/api-keys")) return [[{ type: "publishable", name: "default", api_key: "sb_publishable_e2e_new_project" }]];
+  return [{ message: "unexpected" }, 404];
+};
+
+/** a page's requests with Supabase's OAuth, the Worker's code exchange and the Management API mocked (recorded in `management`) */
+const mockedSupabase = (management) => {
+  let polls = 0;
+  return (request) => {
+    const url = new URL(request.url());
+    const json = (body, status = 200) => request.respond({ status, contentType: "application/json", body: JSON.stringify(body) });
+    if (url.host === "api.supabase.com" && url.pathname === "/v1/oauth/authorize") {
+      management.push({ authorize: Object.fromEntries(url.searchParams) });
+      // Supabase's consent page, allowed at once: back to Kurviq with a code and the state sent
+      return request.respond({ status: 302, headers: { Location: `${BASE}/auth/supabase/callback?code=the-code&state=${url.searchParams.get("state")}` } });
+    }
+    if (url.origin === BASE && url.pathname === "/api/supabase/token") {
+      management.push({ token: JSON.parse(request.postData()) });
+      return json({ accessToken: "mgmt-token-e2e", expiresIn: 3600 });
+    }
+    if (url.origin === BASE && url.pathname.startsWith("/api/supabase/v1/")) {
+      const path = url.pathname.slice("/api/supabase/v1".length);
+      management.push({ call: `${request.method()} ${path}`, auth: request.headers().authorization, body: request.postData() ?? null });
+      if (path === `/projects/${NEW_REF}`) polls++;
+      return json(...managementAnswer(request.method(), path, polls));
+    }
+    if (url.host === `${NEW_REF}.supabase.co`) {
+      return request.respond({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" }, body: "{}" });
+    }
+    return request.continue();
+  };
+};
+
 const rowsOf = async (sceneId) => (await rest(`kurviq_elements?scene_id=eq.${sceneId}&select=id,version,data`)).body ?? [];
 
 try {
@@ -377,7 +418,7 @@ try {
   const comment = await commenter.evaluate(async (ref, id, email) => {
     const client = await window.__kurviqDb.clientFor(ref);
     const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`kurviq-comment:${email}`)));
-    const key = [...bytes.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const key = Array.from(bytes.subarray(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
     const now = Date.now();
     const own = { id: `cmt${now}`, thread: `cmt${now}`, by: { name: "C", key }, at: now, u: now, text: "Looks good", pin: { x: 10, y: 10 } };
     const mine = await client.rpc("kurviq_put_comments", { scene: id, comments: [own] });
@@ -474,14 +515,14 @@ try {
   const everything = (json) => {
     const data = JSON.parse(json);
     return {
-      elements: data.elements.filter((el) => !el.isDeleted).map((el) => el.id).sort(),
+      elements: data.elements.filter((el) => !el.isDeleted).map((el) => el.id).sort((a, b) => a.localeCompare(b)),
       picture: data.files?.[`file${RUN}`]?.dataURL === picture,
       comments: (data.kurviqComments ?? []).map((c) => c.text),
       background: data.appState?.viewBackgroundColor,
       presentation: data.appState?.kurviqPresentation,
     };
   };
-  const want = { elements: [`fr${RUN}`, `img${RUN}`].sort(), picture: true, comments: ["Moved along"], background: "#fdf6e3", presentation: true };
+  const want = { elements: [`fr${RUN}`, `img${RUN}`].sort((a, b) => a.localeCompare(b)), picture: true, comments: ["Moved along"], background: "#fdf6e3", presentation: true };
   const moveVia = async (target, label) => {
     if (!(await owner.$('button[aria-label="Move to…"]'))) {
       await owner.evaluate(() => document.querySelector(".scenes-pill__pen button")?.click());
@@ -574,38 +615,8 @@ try {
   oauthPage.on("pageerror", (e) => errors.push(`oauth PAGEERROR: ${e.message.slice(0, 200)}`));
   oauthPage.on("dialog", (d) => d.accept().catch(() => {}));
   const management = [];
-  const NEW_REF = "zyxwvutsrqponmlkjihg";
-  let polls = 0;
   await oauthPage.setRequestInterception(true);
-  oauthPage.on("request", (request) => {
-    const url = new URL(request.url());
-    const json = (body, status = 200) => request.respond({ status, contentType: "application/json", body: JSON.stringify(body) });
-    if (url.host === "api.supabase.com" && url.pathname === "/v1/oauth/authorize") {
-      management.push({ authorize: Object.fromEntries(url.searchParams) });
-      // Supabase's consent page, allowed at once: back to Kurviq with a code and the state sent
-      return request.respond({ status: 302, headers: { Location: `${BASE}/auth/supabase/callback?code=the-code&state=${url.searchParams.get("state")}` } });
-    }
-    if (url.origin === BASE && url.pathname === "/api/supabase/token") {
-      management.push({ token: JSON.parse(request.postData()) });
-      return json({ accessToken: "mgmt-token-e2e", expiresIn: 3600 });
-    }
-    if (url.origin === BASE && url.pathname.startsWith("/api/supabase/v1/")) {
-      const path = url.pathname.slice("/api/supabase/v1".length);
-      management.push({ call: `${request.method()} ${path}`, auth: request.headers().authorization, body: request.postData() ?? null });
-      if (path === "/organizations") return json([{ id: "org1", name: "Tecsteps" }]);
-      if (path === "/projects" && request.method() === "GET") return json([]);
-      if (path === "/projects" && request.method() === "POST") return json({ id: NEW_REF, name: "Kurviq", region: "eu-central-1", organization_id: "org1", status: "COMING_UP" });
-      if (path === `/projects/${NEW_REF}`) return json({ id: NEW_REF, name: "Kurviq", region: "eu-central-1", organization_id: "org1", status: ++polls > 1 ? "ACTIVE_HEALTHY" : "COMING_UP" });
-      if (path.endsWith("/database/query")) return json([]);
-      if (path.endsWith("/config/auth")) return json(request.method() === "GET" ? { site_url: "http://localhost:3000", uri_allow_list: "" } : {});
-      if (path.endsWith("/api-keys")) return json([{ type: "publishable", name: "default", api_key: "sb_publishable_e2e_new_project" }]);
-      return json({ message: "unexpected" }, 404);
-    }
-    if (url.host === `${NEW_REF}.supabase.co`) {
-      return request.respond({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" }, body: "{}" });
-    }
-    return request.continue();
-  });
+  oauthPage.on("request", mockedSupabase(management));
   await oauthPage.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
   await ready(oauthPage);
   await oauthPage.click(".scenes-pill__open");

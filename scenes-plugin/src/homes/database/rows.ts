@@ -84,7 +84,7 @@ type Failure = { code: string; message: string; status: number; details: unknown
 /** the failures with a meaning of their own, in order: a test, and the home's error for it */
 const FAILURES: [(failure: Failure) => boolean, (failure: Failure, what: string) => HomeError][] = [
   [({ status, message }) => isPausedAnswer(status, message), () => homeError(503, PAUSED_MESSAGE, { offline: true, paused: true })],
-  [({ code }) => code === "P0409", ({ details }) => homeError(409, "The scene was changed meanwhile", { remoteVersion: details ? String(details) : null })],
+  [({ code }) => code === "P0409", ({ details }) => homeError(409, "The scene was changed meanwhile", { remoteVersion: typeof details === "string" && details ? details : null })],
   [({ code }) => code === "23505", () => homeError(409, "A scene with this name already exists in the database", { exists: true })],
   [({ code, status }) => code === "P0002" || status === 404, () => homeError(404, "Scene not found in the database")],
   [

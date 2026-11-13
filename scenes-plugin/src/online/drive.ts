@@ -970,7 +970,8 @@ const appDataCall = async (url: string, init: { method?: string; body?: BodyInit
 };
 
 const appDataFileId = async (name: string) => {
-  const res = await appDataCall(`/files?spaces=appDataFolder&fields=files(id)&q=${encodeURIComponent(`name = ${q(name)} and trashed = false`)}`);
+  const query = encodeURIComponent(`name = ${q(name)} and trashed = false`);
+  const res = await appDataCall(`/files?spaces=appDataFolder&fields=files(id)&q=${query}`);
   if (!res) {
     return undefined;
   }

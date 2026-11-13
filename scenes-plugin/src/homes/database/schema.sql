@@ -16,6 +16,16 @@ set client_min_messages = warning;
 -- tables
 -- ---------------------------------------------------------------------------
 
+-- the roles, by rank (0: not a role); the tables' checks use it too
+create or replace function public.kurviq_rank(role text) returns integer
+language sql immutable as $$
+  select case role when 'owner' then 4 when 'editor' then 3 when 'commenter' then 2 when 'viewer' then 1 else 0 end
+$$;
+
+-- the storage bucket of the pictures (see "pictures" below)
+create or replace function public.kurviq_files_bucket() returns text
+language sql immutable as $$ select 'kurviq-files'::text $$;
+
 create table if not exists public.kurviq_space (
   id smallint primary key default 1 check (id = 1),
   name text not null default 'Team space' check (char_length(name) between 1 and 100),
@@ -26,7 +36,7 @@ insert into public.kurviq_space (id) values (1) on conflict (id) do nothing;
 
 create table if not exists public.kurviq_members (
   email text primary key check (email = lower(email) and position('@' in email) > 1),
-  role text not null check (role in ('owner', 'editor', 'commenter', 'viewer')),
+  role text not null check (public.kurviq_rank(role) between 1 and 4), -- owner, editor, commenter, viewer
   invited_by text,
   created_at timestamptz not null default now()
 );
@@ -48,7 +58,7 @@ create unique index if not exists kurviq_scenes_name on public.kurviq_scenes (na
 create table if not exists public.kurviq_scene_access (
   scene_id uuid not null references public.kurviq_scenes (id) on delete cascade,
   email text not null check (email = lower(email) and position('@' in email) > 1),
-  role text not null check (role in ('editor', 'commenter', 'viewer')),
+  role text not null check (public.kurviq_rank(role) between 1 and 3), -- editor, commenter, viewer
   expires_at timestamptz,
   invited_by text,
   created_at timestamptz not null default now(),
@@ -110,15 +120,10 @@ create index if not exists kurviq_versions_scene on public.kurviq_versions (scen
 -- ---------------------------------------------------------------------------
 
 create or replace function public.kurviq_schema_version() returns integer
-language sql immutable as $$ select 1 $$;
+language sql immutable as $$ select 2 $$; -- 2: the same rules as 1 (Kurviq needs 1), written with helper functions
 
 create or replace function public.kurviq_email() returns text
 language sql stable as $$ select lower(coalesce(auth.jwt() ->> 'email', '')) $$;
-
-create or replace function public.kurviq_rank(role text) returns integer
-language sql immutable as $$
-  select case role when 'owner' then 4 when 'editor' then 3 when 'commenter' then 2 when 'viewer' then 1 else 0 end
-$$;
 
 create or replace function public.kurviq_uuid(value text) returns uuid
 language plpgsql immutable as $$
@@ -170,18 +175,23 @@ language sql immutable as $$
   select encode(substring(sha256(convert_to('kurviq-comment:' || lower(trim(email)), 'UTF8')) from 1 for 8), 'hex')
 $$;
 
+-- the space's owner (may change the space and its members)
+create or replace function public.kurviq_is_owner() returns boolean
+language sql stable as $$ select public.kurviq_rank(public.kurviq_space_role()) = 4 $$;
+
 -- the first person to sign in to a space without an owner becomes its owner
 create or replace function public.kurviq_claim_space(space_name text default null) returns text
 language plpgsql security definer set search_path = '' as $$
 declare
   me text := public.kurviq_email();
+  owner_role constant text := 'owner';
 begin
   if me = '' then
-    raise exception 'Sign in first' using errcode = '42501';
+    raise insufficient_privilege using message = 'Sign in first';
   end if;
-  if not exists (select 1 from public.kurviq_members where role = 'owner') then
-    insert into public.kurviq_members (email, role) values (me, 'owner')
-      on conflict (email) do update set role = 'owner';
+  if not exists (select 1 from public.kurviq_members where role = owner_role) then
+    insert into public.kurviq_members (email, role) values (me, owner_role)
+      on conflict (email) do update set role = owner_role;
     if space_name is not null and char_length(trim(space_name)) > 0 then
       update public.kurviq_space set name = left(trim(space_name), 100) where id = 1;
     end if;
@@ -264,24 +274,24 @@ declare
 begin
   if coalesce(auth.role(), '') <> 'service_role' and rank < 3 then
     if rank < 2 then
-      raise exception 'You may not comment on this scene' using errcode = '42501';
+      raise insufficient_privilege using message = 'You may not comment on this scene';
     end if;
     if tg_op = 'INSERT' then
       if (new.data -> 'by' ->> 'key') is distinct from me then
-        raise exception 'A new comment must be the commenter''s own' using errcode = '42501';
+        raise insufficient_privilege using message = 'A new comment must be the commenter''s own';
       end if;
       if coalesce((new.data ->> 'gone')::boolean, false) then
-        raise exception 'Nothing to delete' using errcode = '42501';
+        raise insufficient_privilege using message = 'Nothing to delete';
       end if;
     else
       author := old.data -> 'by' ->> 'key';
       if (old.data ->> 'thread') is distinct from (new.data ->> 'thread')
         or (old.data -> 'at') is distinct from (new.data -> 'at')
         or author is distinct from (new.data -> 'by' ->> 'key') then
-        raise exception 'A comment''s thread, time and author stay' using errcode = '42501';
+        raise insufficient_privilege using message = 'A comment''s thread, time and author stay';
       end if;
       if (old.data -> 'pin') is distinct from (new.data -> 'pin') and author is distinct from me then
-        raise exception 'Only the author moves a pin' using errcode = '42501';
+        raise insufficient_privilege using message = 'Only the author moves a pin';
       end if;
       if author is distinct from me and (
         (old.data ->> 'text') is distinct from (new.data ->> 'text')
@@ -289,7 +299,7 @@ begin
         or (old.data -> 'by' ->> 'name') is distinct from (new.data -> 'by' ->> 'name')
         or coalesce((old.data -> 'by' ->> 'agent')::boolean, false) <> coalesce((new.data -> 'by' ->> 'agent')::boolean, false)
         or (old.data -> 'edited') is distinct from (new.data -> 'edited')) then
-        raise exception 'Only the author edits or deletes a comment' using errcode = '42501';
+        raise insufficient_privilege using message = 'Only the author edits or deletes a comment';
       end if;
     end if;
   end if;
@@ -382,6 +392,7 @@ create or replace function public.kurviq_save_scene(scene uuid, base bigint, ele
 language plpgsql set search_path = '' as $$
 declare
   current_revision bigint;
+  whole_save constant text := 'kurviq.whole_save'; -- read by kurviq_newer_element
 begin
   select s.revision into current_revision from public.kurviq_scenes s
     where s.id = scene and s.deleted_at is null and s.moved_to is null for update;
@@ -391,7 +402,7 @@ begin
   if base is not null and base <> current_revision then
     raise exception 'The scene was changed meanwhile' using errcode = 'P0409', detail = current_revision::text;
   end if;
-  perform set_config('kurviq.whole_save', 'on', true);
+  perform set_config(whole_save, 'on', true);
   update public.kurviq_elements e set version = e.version + 1, data = jsonb_set(jsonb_set(e.data::jsonb, '{isDeleted}', 'true'), '{version}', to_jsonb(e.version + 1))::json
     where e.scene_id = scene and coalesce((e.data ->> 'isDeleted')::boolean, false) = false
       and e.id not in (select item ->> 'id' from json_array_elements(elements) item);
@@ -406,7 +417,7 @@ begin
       select scene, item ->> 'id', item from jsonb_array_elements(comments) item
     on conflict (scene_id, id) do update set data = excluded.data;
   end if;
-  perform set_config('kurviq.whole_save', 'off', true);
+  perform set_config(whole_save, 'off', true);
   return (select s.revision from public.kurviq_scenes s where s.id = scene);
 end $$;
 
@@ -429,14 +440,14 @@ create policy "kurviq: space read" on public.kurviq_space for select to authenti
     or exists (select 1 from public.kurviq_scene_access a where a.email = public.kurviq_email()));
 drop policy if exists "kurviq: space change" on public.kurviq_space;
 create policy "kurviq: space change" on public.kurviq_space for update to authenticated
-  using (public.kurviq_space_role() = 'owner') with check (public.kurviq_space_role() = 'owner');
+  using (public.kurviq_is_owner()) with check (public.kurviq_is_owner());
 
 drop policy if exists "kurviq: members read" on public.kurviq_members;
 create policy "kurviq: members read" on public.kurviq_members for select to authenticated
   using (public.kurviq_space_role() is not null or email = public.kurviq_email());
 drop policy if exists "kurviq: members change" on public.kurviq_members;
 create policy "kurviq: members change" on public.kurviq_members for all to authenticated
-  using (public.kurviq_space_role() = 'owner') with check (public.kurviq_space_role() = 'owner');
+  using (public.kurviq_is_owner()) with check (public.kurviq_is_owner());
 
 drop policy if exists "kurviq: scenes read" on public.kurviq_scenes;
 create policy "kurviq: scenes read" on public.kurviq_scenes for select to anon, authenticated
@@ -514,21 +525,21 @@ revoke execute on function public.kurviq_claim_space(text), public.kurviq_put_el
 -- <scene id>/<file id>, readable like the scene, written by its editors
 -- ---------------------------------------------------------------------------
 
-insert into storage.buckets (id, name, public) values ('kurviq-files', 'kurviq-files', false)
+insert into storage.buckets (id, name, public) select public.kurviq_files_bucket(), public.kurviq_files_bucket(), false
   on conflict (id) do nothing;
 
 drop policy if exists "kurviq: files read" on storage.objects;
 create policy "kurviq: files read" on storage.objects for select to anon, authenticated
-  using (bucket_id = 'kurviq-files' and public.kurviq_can_read(public.kurviq_uuid((storage.foldername(name))[1])));
+  using (bucket_id = public.kurviq_files_bucket() and public.kurviq_can_read(public.kurviq_uuid((storage.foldername(name))[1])));
 drop policy if exists "kurviq: files add" on storage.objects;
 create policy "kurviq: files add" on storage.objects for insert to authenticated
-  with check (bucket_id = 'kurviq-files' and public.kurviq_can_edit(public.kurviq_uuid((storage.foldername(name))[1])));
+  with check (bucket_id = public.kurviq_files_bucket() and public.kurviq_can_edit(public.kurviq_uuid((storage.foldername(name))[1])));
 drop policy if exists "kurviq: files change" on storage.objects;
 create policy "kurviq: files change" on storage.objects for update to authenticated
-  using (bucket_id = 'kurviq-files' and public.kurviq_can_edit(public.kurviq_uuid((storage.foldername(name))[1])));
+  using (bucket_id = public.kurviq_files_bucket() and public.kurviq_can_edit(public.kurviq_uuid((storage.foldername(name))[1])));
 drop policy if exists "kurviq: files delete" on storage.objects;
 create policy "kurviq: files delete" on storage.objects for delete to authenticated
-  using (bucket_id = 'kurviq-files' and public.kurviq_rank(public.kurviq_scene_role(public.kurviq_uuid((storage.foldername(name))[1]))) >= 3);
+  using (bucket_id = public.kurviq_files_bucket() and public.kurviq_rank(public.kurviq_scene_role(public.kurviq_uuid((storage.foldername(name))[1]))) >= 3);
 
 -- ---------------------------------------------------------------------------
 -- realtime: each scene's private channel "kurviq:<scene id>". Everyone who

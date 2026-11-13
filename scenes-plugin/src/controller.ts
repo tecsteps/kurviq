@@ -3098,7 +3098,7 @@ class ScenesController implements LiveHost {
     const saved = await home.save(name, withSceneName(json, name), "none");
     const id = await home.idOf(name);
     const record = this.meta.scenes[name]?.db; // (looked up again: the metadata may have been taken over meanwhile)
-    if (!id || !record || record.ref !== db.ref) {
+    if (!id || record?.ref !== db.ref) {
       throw new Error(`"${name}" could not be put in ${home.label}`);
     }
     record.id = id;
