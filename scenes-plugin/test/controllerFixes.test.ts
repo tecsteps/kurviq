@@ -222,3 +222,26 @@ describe("the homes behind the controller", () => {
     await expect(controller.loadVersion("Here", { id: "1", at: null, author: null, agent: false })).rejects.toThrow(/keeps no older versions/);
   });
 });
+
+describe("a scene link while Drive can't be asked", () => {
+  const notConnected = () => Object.assign(new Error("Google Drive is not connected"), { status: 0, offline: true, notConnected: true });
+
+  it("signed out (not known yet at the first navigation): the scene is made", async () => {
+    const { controller, drive } = await controllerHarness({ online: true });
+    drive.home.list = () => Promise.reject(notConnected());
+    drive.home.load = () => Promise.reject(notConnected());
+    controller.setState({ sync: { ...controller.getState().sync, driveOnline: false, notConnected: false } });
+    await controller.openOrCreate("Fresh plan");
+    expect(controller.getState().current).toBe("Fresh plan");
+    expect(controller.getState().sync.notConnected).toBe(true);
+  });
+
+  it("signed in but Drive unreachable: an error, nothing is made (it may be in Drive)", async () => {
+    const { controller, drive } = await controllerHarness({ online: true });
+    drive.home.list = () => Promise.reject(offline());
+    drive.home.load = () => Promise.reject(offline());
+    controller.setState({ sync: { ...controller.getState().sync, driveOnline: false, notConnected: false } });
+    await expect(controller.openOrCreate("Somewhere in Drive")).rejects.toThrow(/never downloaded/);
+    expect(controller.getState().current).not.toBe("Somewhere in Drive");
+  });
+});

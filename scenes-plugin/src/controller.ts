@@ -1701,10 +1701,7 @@ class ScenesController implements LiveHost {
         if (snapshot) {
           json = snapshot.json;
         } else if (!this.onlyInThisBrowser(name, meta)) {
-          throw Object.assign(
-            new Error(`"${name}" was never downloaded to this browser and Drive is not reachable`),
-            { status: 503 },
-          );
+          throw await this.notHereError(name);
         } // else: an empty scene that was never in Drive, nothing to download
       } else if (snapshot) {
         // show the local copy (no local changes) right away, check Drive in
@@ -1986,6 +1983,22 @@ class ScenesController implements LiveHost {
 
   private syncing = false;
   private syncAgain = false;
+
+  /**
+   * A scene that isn't in this browser while Drive can't be asked. Signed
+   * out (also when that isn't known yet, at the first navigation): Drive's
+   * "not connected", so a scene link makes a new scene. Signed in but Drive
+   * unreachable: an error (a new scene would stand next to the one in Drive).
+   */
+  private async notHereError(name: string) {
+    if (!this.state.sync.notConnected) {
+      await this.refreshSyncListing(false);
+    }
+    if (this.state.sync.notConnected) {
+      return Object.assign(new Error("Google Drive is not connected"), { status: 0, offline: true, notConnected: true });
+    }
+    return Object.assign(new Error(`"${name}" was never downloaded to this browser and Drive is not reachable`), { status: 503 });
+  }
 
   /** Drive's listing: true if Drive answered (sync can go on) */
   private async refreshSyncListing(refresh: boolean) {

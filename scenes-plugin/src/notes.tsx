@@ -11,6 +11,7 @@ import clsx from "clsx";
 
 import { scenesController } from "./controller";
 import { deck, isDeck } from "./deck";
+import { followEditor } from "./editorFollow";
 import { createStore } from "./externalStore";
 import { presenter, usePresenter } from "./present";
 import { QuickTip } from "./quickTip";
@@ -43,9 +44,6 @@ export const slideNotes = {
 const cameraKey = (appState: { scrollX: number; scrollY: number; zoom: { value: number }; width: number; height: number; offsetLeft: number; offsetTop: number }) =>
   `${appState.scrollX},${appState.scrollY},${appState.zoom.value},${appState.width},${appState.height},${appState.offsetLeft},${appState.offsetTop}`;
 
-/** frames to keep reading the names' places after the camera moved: Excalidraw draws them a frame or two later */
-const SETTLE_FRAMES = 4;
-
 // -----------------------------------------------------------------------------
 // where the slides' names are on screen (Excalidraw draws them as divs)
 
@@ -60,25 +58,12 @@ const useNameSpots = (enabled: boolean) => {
       setSpots({});
       return;
     }
-    let frame = 0;
     let last = "";
-    let camera = "";
-    let settle = SETTLE_FRAMES;
-    const loop = () => {
-      frame = requestAnimationFrame(loop);
-      // the names' places only change with the camera, the slides (the effect's dependencies),
-      // view mode and renaming: otherwise nothing is read from the page
+    // the names' places only change with the camera, the slides (the effect's dependencies),
+    // view mode and renaming: read after each editor change, for a few frames (Excalidraw lays
+    // the names out a frame or two later), then not at all
+    return followEditor(() => deck.getApi(), () => {
       const appState = deck.getApi()?.getAppState();
-      const now = appState ? `${cameraKey(appState)},${appState.viewModeEnabled},${appState.editingFrame}` : "";
-      if (now === camera) {
-        if (settle <= 0) {
-          return;
-        }
-        settle -= 1;
-      } else {
-        camera = now;
-        settle = SETTLE_FRAMES;
-      }
       const next: Record<string, Spot> = {};
       const hidden = !appState || appState.viewModeEnabled;
       for (const id of hidden ? [] : [...slides.map((slide) => slide.id), ...(templateId ? [templateId] : [])]) {
@@ -98,9 +83,7 @@ const useNameSpots = (enabled: boolean) => {
         last = key;
         setSpots(next);
       }
-    };
-    frame = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(frame);
+    });
   }, [enabled, slides, templateId]);
   return spots;
 };
@@ -124,10 +107,8 @@ const HiddenVeils = () => {
       setRects({});
       return;
     }
-    let frame = 0;
     let camera = "";
-    const loop = () => {
-      frame = requestAnimationFrame(loop);
+    return followEditor(() => deck.getApi(), () => {
       const appState = deck.getApi()?.getAppState();
       if (!appState || cameraKey(appState) === camera) {
         return;
@@ -140,9 +121,7 @@ const HiddenVeils = () => {
         next[el.id] = { left: Math.round(at.x), top: Math.round(at.y), width: Math.round(el.width * zoom), height: Math.round(el.height * zoom) };
       }
       setRects(next);
-    };
-    frame = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(frame);
+    });
   }, [slides]);
   return (
     <>

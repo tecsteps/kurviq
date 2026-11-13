@@ -42,7 +42,7 @@ Findings of the code review of 2026-11-13 (see `2026-11-13-code-review.md`) in t
 - **Location**: `scenes-plugin/src/live.ts:958-962` (compare `897-901` and `922-926`), `scenes-plugin/src/cowork.ts:884-910`, `scenes-mcp/tools.mjs:726-746`
 - **Description**: `scene-edit` and `local-edit` run through `onceForRequest` + `queueEdit`; `edit` calls `editOpenScene` directly. Two `edit` commands that overlap (two agents, or a retry after the MCP's timeout while the first is still converting) both take `readState` before either applies; in the non-live branch the second `api.updateScene` replaces the canvas with a state that does not contain the first edit, and both report success. `applyOpenEdit` sends no requestId, so a timed-out edit that is sent again is applied twice (`command.requestId` at cowork.ts:904 is always undefined on this path).
 - **Suggested fix**: Wrap the `edit` case in `queueEdit` (and in `onceForRequest` with a requestId generated in `applyOpenEdit`), like the other two edit commands.
-- **Status**: partly fixed: the tab queues `edit` and runs it through `onceForRequest`; remains: `scenes-mcp/tools.mjs` applyOpenEdit must generate and send a requestId
+- **Status**: fixed 2026-11-13: the tab queues `edit` and runs it through `onceForRequest`; `edit_open_scene` sends `requestId: edit-<revision>` (checked in the second QA pass through a logging proxy)
 
 ### B44. Unmounting the scene pill tells the controller that the editor is gone
 - **Area**: Browser: main UI, agent co-working (index, live, cowork)

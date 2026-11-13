@@ -218,6 +218,17 @@ Still open:
 - What "publishing" an OAuth app involves at Supabase (the guide only says
   "once you've published your OAuth App").
 
+## Decided after the build (Fabian, 2026-11-13)
+
+- **Setup calls through the Worker:** Supabase's Management API accepts browser calls only from supabase.com,
+  so the setup's calls go through `online/worker/supabase.ts`: a stateless pass-through of the user's own
+  management token (memory only, nothing stored, an allow-list of the setup's 8 calls, secret keys removed from
+  answers). Accepted as within the rule, like the Google sign-in's code exchange.
+- **Supabase cloud only:** the CSP allows `https://*.supabase.co` / `wss://*.supabase.co`; self-hosted Supabase on
+  other hosts is not supported for now.
+- **Space owner with paste-connect:** the first person to sign in to an empty space becomes its owner (the OAuth
+  setup writes the owner row directly).
+
 ## Acceptance criteria
 
 **Scene homes**

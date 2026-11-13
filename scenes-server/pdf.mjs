@@ -64,6 +64,10 @@ export const printPdf = async (html, chrome) => {
         (error) => (error && !existsSync(out) ? reject(error) : resolve()),
       );
     });
+    if (!existsSync(out)) {
+      // Chrome exited normally without printing (seen with some Chrome versions in headless mode)
+      throw httpError(500, `Chrome (${chrome}) printed nothing: check that it can print headless, or set CHROME_PATH to another Chrome`);
+    }
     return await fs.readFile(out);
   } finally {
     rmSync(dir, { recursive: true, force: true });
