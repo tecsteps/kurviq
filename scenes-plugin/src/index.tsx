@@ -35,6 +35,7 @@ import type { GroupState } from "./sceneGroups";
 import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
+import { installWheelZoom } from "./wheelZoom";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar, setPresentation, usePresentation } from "./slidesUI";
 import {
   connectGoogle,
@@ -72,6 +73,8 @@ import type { SceneVersion } from "./api";
 import "./scenes.scss";
 
 installTitleTips();
+// a mouse wheel zooms, a trackpad pans (while Excalidraw's input-device preference is on auto)
+installWheelZoom(() => scenesController.getApi()?.getAppState().inputDevice ?? null);
 
 
 const UNTITLED_LABEL = "Untitled";
