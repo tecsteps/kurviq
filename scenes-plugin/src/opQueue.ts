@@ -15,8 +15,10 @@ export class OpQueue {
       const entry: Entry = {
         priority,
         run: () => {
-          // fn starts at once; a throw before its first await rejects like a rejected promise
-          new Promise<T>((settle) => settle(fn())).then(resolve, reject).finally(() => this.next());
+          // fn starts at once (an async wrapper runs synchronously up to its first await);
+          // a throw before fn's first await rejects like a rejected promise
+          const started = (async () => await fn())();
+          started.then(resolve, reject).finally(() => this.next());
         },
       };
       if (priority) {
