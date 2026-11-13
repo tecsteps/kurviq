@@ -287,10 +287,10 @@ const ScenePlace = ({
     return "Private: only you, in this browser";
   };
   const sharingAction = () => {
-    if (mine && inDrive) {
+    if (own && inDrive) {
       return { title: `${who.title}. Click to share it`, onClick: () => openShareDialog(item.name!) };
     }
-    if (mine) {
+    if (own) {
       return { title: `${who.title}. To share it, put it in Google Drive first` };
     }
     return {};
@@ -312,7 +312,9 @@ const ScenePlace = ({
         kind: "browser" as const,
         title: browserLocationTitle(),
       };
-  const mine = actions && !owner && item.name !== null && IS_ONLINE;
+  // the user's own scene: the lock shares it (both installs); the cloud moves it in or out of Drive (online only)
+  const own = actions && !owner && item.name !== null;
+  const mine = own && IS_ONLINE;
   const whereAction = mine
     ? {
         title: driveActionTitle(),

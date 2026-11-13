@@ -944,6 +944,14 @@ export class LiveScene {
     if (this.phase === "closed" || this.phase === "disabled") {
       return;
     }
+    if (!globalThis.crypto?.subtle) {
+      // a plain-http page (other than localhost) has no Web Crypto: no key can be read, nothing
+      // encrypted. Said in the banner; changes stay in this browser (Drive is written only live)
+      this.phase = "disabled";
+      this.error = "insecure-context";
+      this.changed();
+      return;
+    }
     this.phase = "connecting";
     let answer: TicketAnswer;
     try {

@@ -1747,6 +1747,30 @@ const loadGapi = (module: string, what: string) => {
 
 const loadPicker = () => loadGapi("picker", "Google Picker");
 
+/**
+ * To try Google's in-page share dialog (ShareClient) by hand, from the
+ * browser console: it runs as the browser's signed-in Google account, which with several
+ * accounts is the first one, not necessarily Kurviq's. `account` goes into
+ * gapi's undocumented "googleapis.config/sessionIndex" (an authuser: index or
+ * address; null leaves it out) to see whether that picks the right account.
+ */
+export const tryDriveShareDialog = async (fileId: string, account: string | number | null) => {
+  const value = await getToken();
+  if (!value) {
+    throw notConnectedError();
+  }
+  await loadGapi("drive-share", "Google's share dialog");
+  const gapi = (window as any).gapi;
+  if (account !== null) {
+    gapi.config?.update?.("googleapis.config/sessionIndex", account);
+  }
+  const client = new gapi.drive.share.ShareClient();
+  client.setOAuthToken(value);
+  client.setItemIds([fileId]);
+  client.showSettingsDialog();
+  return { fileId, account, sessionIndex: gapi.config?.get?.("googleapis.config/sessionIndex") ?? null };
+};
+
 export const pickerAvailable = () => !!import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY && !!google.projectNumber;
 
 /**
