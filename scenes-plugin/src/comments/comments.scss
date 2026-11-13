@@ -97,6 +97,9 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
 .kq-cm-popover {
   position: fixed;
   z-index: 5;
+  margin: 0;
+  padding: 0;
+  color: var(--kq-cm-text);
   display: flex;
   flex-direction: column;
   width: min(22rem, calc(100vw - 16px));
@@ -222,9 +225,7 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
 }
 
 .kq-cm-menu {
-  position: absolute;
-  right: 0;
-  top: 100%;
+  position: fixed; // over the scrolling list (right / top set where it opens)
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -403,7 +404,11 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
 
 .excalidraw .kq-cm-panel {
   position: absolute;
+  left: auto;
   right: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
   top: calc(100% + 0.4rem);
   z-index: 20;
   display: flex;

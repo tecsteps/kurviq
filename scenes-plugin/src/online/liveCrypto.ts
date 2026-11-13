@@ -110,24 +110,7 @@ export const encodeEvent = async (
  */
 export const decodeEvent = async (scene: SceneKey, event: WireEvent, previous?: any): Promise<any> => {
   if (event.k === "el") {
-    if (event.r?.id !== event.id) {
-      throw new Error(`Element event ${event.id} without its readable part`);
-    }
-    let content;
-    if (event.c === "") {
-      content = previous ? contentOf(previous) : null;
-    } else {
-      content = await decryptJson(scene, event.k, event.id, event.c);
-    }
-    if (!content) {
-      return null;
-    }
-    const el = elementOf(event.r, content);
-    // the DO may have given the font another number (a clash): its readable copy is in force
-    if (typeof event.r.fontFamily === "number" && typeof el.fontFamily === "number") {
-      el.fontFamily = event.r.fontFamily;
-    }
-    return el;
+    return decodeElement(scene, event, previous);
   }
   if (event.k === "cmt") {
     // a comment counts only as its readable part (checked by the server) describes it
@@ -135,4 +118,26 @@ export const decodeEvent = async (scene: SceneKey, event: WireEvent, previous?: 
     return comment?.id === event.id && readableMatches(comment, event.cr) ? cleanComment(comment) : null;
   }
   return decryptJson(scene, event.k, event.id, event.c);
+};
+
+/** an element event: readable part on top of the decrypted content (a DO deletion: the previous content, deleted) */
+const decodeElement = async (scene: SceneKey, event: WireEvent, previous?: any) => {
+  if (event.r?.id !== event.id) {
+    throw new Error(`Element event ${event.id} without its readable part`);
+  }
+  let content;
+  if (event.c === "") {
+    content = previous ? contentOf(previous) : null;
+  } else {
+    content = await decryptJson(scene, event.k, event.id, event.c);
+  }
+  if (!content) {
+    return null;
+  }
+  const el = elementOf(event.r, content);
+  // the DO may have given the font another number (a clash): its readable copy is in force
+  if (typeof event.r.fontFamily === "number" && typeof el.fontFamily === "number") {
+    el.fontFamily = event.r.fontFamily;
+  }
+  return el;
 };

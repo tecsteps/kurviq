@@ -1415,12 +1415,7 @@ export class SceneRoom extends DurableObject<SceneEnv> {
     if (file.status === 200) {
       if (file.data.capabilities?.canEdit === false) {
         // Drive's commenters keep commenting; everyone else may only read now
-        const role: Role = file.data.capabilities?.canComment ? "comment" : "read";
-        for (const { ws, att } of this.sockets()) {
-          if (att.sub === sub && att.role !== "read" && att.role !== role) {
-            ws.serializeAttachment({ ...att, role, token: undefined });
-          }
-        }
+        this.lowerRole(sub, file.data.capabilities?.canComment ? "comment" : "read");
       }
       return;
     }
@@ -1428,6 +1423,15 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       this.setRevoked(sub, true);
       for (const ws of this.ctx.getWebSockets(`sub:${sub}`)) {
         this.close(ws, "access");
+      }
+    }
+  }
+
+  /** the person may do less now (Drive said so): their connections that could do more drop to `role` */
+  private lowerRole(sub: string, role: Role) {
+    for (const { ws, att } of this.sockets()) {
+      if (att.sub === sub && ROLE_RANK[att.role] > ROLE_RANK[role]) {
+        ws.serializeAttachment({ ...att, role, token: undefined });
       }
     }
   }
@@ -4744,30 +4748,40 @@ export class SceneRoom extends DurableObject<SceneEnv> {
       const v = Math.max(this.snap.get(k)?.v ?? 0, this.state.get(k)?.v ?? 0) + 1;
       const n = randomNonce();
       const entry: Entry = { k: change.k, id: change.id, c: "", v, n, a: "outside", seq: 0 };
-      if (change.k === "el") {
-        if (change.deleted) {
-          const old = (this.snap.get(k) ?? this.state.get(k))?.r;
-          if (!old) {
-            continue;
-          }
-          entry.r = { ...old, isDeleted: true, version: v, versionNonce: n };
-        } else {
-          const element = { ...change.value, version: v, versionNonce: n };
-          entry.r = readableOf(element);
-          entry.c = await encryptContent(key, "el", change.id, contentOf(element)); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
-        }
-      } else {
-        entry.c = await encryptContent(key, change.k, change.id, change.value); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
-        if (change.k === "font") {
-          entry.fontId = change.value.id;
-        }
-        if (change.k === "cmt") {
-          entry.cr = commentReadable(change.value);
-        }
+      const filled = change.k === "el" ? await this.outsideElement(key, change, entry, k) : await this.outsideOther(key, change, entry); // NOSONAR S9382: in order on purpose (scene state and Drive operations stay sequential)
+      if (filled) {
+        entries.push(entry);
       }
-      entries.push(entry);
     }
     return entries;
+  }
+
+  /** an element changed outside: its readable part and content, or its deletion (false: nothing to delete) */
+  private async outsideElement(key: SceneKey, change: Change, entry: Entry, k: string) {
+    if (change.deleted) {
+      const old = (this.snap.get(k) ?? this.state.get(k))?.r;
+      if (!old) {
+        return false;
+      }
+      entry.r = { ...old, isDeleted: true, version: entry.v, versionNonce: entry.n };
+      return true;
+    }
+    const element = { ...change.value, version: entry.v, versionNonce: entry.n };
+    entry.r = readableOf(element);
+    entry.c = await encryptContent(key, "el", change.id, contentOf(element));
+    return true;
+  }
+
+  /** anything else changed outside (settings, name, image, font, comment): its content, a font's number, a comment's readable part */
+  private async outsideOther(key: SceneKey, change: Change, entry: Entry) {
+    entry.c = await encryptContent(key, change.k, change.id, change.value);
+    if (change.k === "font") {
+      entry.fontId = change.value.id;
+    }
+    if (change.k === "cmt") {
+      entry.cr = commentReadable(change.value);
+    }
+    return true;
   }
 
   /**

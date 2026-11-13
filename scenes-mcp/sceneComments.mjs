@@ -54,6 +54,33 @@ const cleanBy = (by) => {
  * One stored comment, checked value by value (scenes come from anywhere:
  * shared files, agents, other apps); null if it isn't one.
  */
+/** a comment's words: its text (a deletion: empty, marked gone); false if a living comment has none */
+const cleanBody = (raw, comment) => {
+  if (raw.gone === true) {
+    comment.gone = true;
+    comment.text = "";
+    return true;
+  }
+  comment.text = cleanText(raw.text, MAX_TEXT);
+  if (finite(raw.edited)) {
+    comment.edited = raw.edited;
+  }
+  return !!comment.text;
+};
+
+/** a thread's first comment: its place and whether it is resolved; false without a place */
+const cleanThreadStart = (raw, comment) => {
+  const pin = cleanPin(raw.pin);
+  if (!pin) {
+    return false; // a thread needs its place
+  }
+  comment.pin = pin;
+  if (raw.done && typeof raw.done === "object" && finite(raw.done.at)) {
+    comment.done = { name: cleanText(raw.done.name, MAX_NAME) || "Someone", at: raw.done.at };
+  }
+  return true;
+};
+
 export const cleanComment = (raw) => {
   if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !ID_RE.test(raw.id)) {
     return null;
@@ -64,27 +91,8 @@ export const cleanComment = (raw) => {
     return null;
   }
   const comment = { id: raw.id, thread, by, at: raw.at, u: Math.max(raw.u, raw.at) };
-  if (raw.gone === true) {
-    comment.gone = true;
-    comment.text = "";
-  } else {
-    comment.text = cleanText(raw.text, MAX_TEXT);
-    if (!comment.text) {
-      return null;
-    }
-    if (finite(raw.edited)) {
-      comment.edited = raw.edited;
-    }
-  }
-  if (thread === raw.id) {
-    const pin = cleanPin(raw.pin);
-    if (!pin) {
-      return null; // a thread needs its place
-    }
-    comment.pin = pin;
-    if (raw.done && typeof raw.done === "object" && finite(raw.done.at)) {
-      comment.done = { name: cleanText(raw.done.name, MAX_NAME) || "Someone", at: raw.done.at };
-    }
+  if (!cleanBody(raw, comment) || (thread === raw.id && !cleanThreadStart(raw, comment))) {
+    return null;
   }
   return comment;
 };
@@ -281,7 +289,7 @@ export const commenterRefusal = (before, after, key) => {
 const shortHash = (text) => {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
+    hash ^= text.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return hash.toString(16).padStart(8, "0");
@@ -349,6 +357,13 @@ export const pinFor = (element, x, y) => {
   return { x: finite(x) ? x : 0, y: finite(y) ? y : 0 };
 };
 
+/** a thread's first comment, reopened (no longer resolved) */
+export const withoutDone = (comment) => {
+  const copy = { ...comment };
+  delete copy.done;
+  return copy;
+};
+
 /**
  * Applies agents' comment operations to a scene's comments, as `author`
  * (the signed-in person, marked as agent): { action: "add", text, element?,
@@ -360,7 +375,7 @@ export const pinFor = (element, x, y) => {
  */
 export const applyCommentOps = (value, ops, author, elementsById, now = Date.now()) => {
   if (!Array.isArray(ops)) {
-    throw new Error("comments must be an array of operations");
+    throw new TypeError("comments must be an array of operations");
   }
   const byId = new Map(commentsOf(value).map((comment) => [comment.id, comment]));
   const changed = new Map();
@@ -403,8 +418,7 @@ export const applyCommentOps = (value, ops, author, elementsById, now = Date.now
       case "resolve":
       case "reopen": {
         const thread = threadOf(op.thread, index);
-        const { done: _done, ...rest } = thread;
-        put(op.action === "resolve" ? { ...rest, done: { name: author.name, at }, u: at } : { ...rest, u: at }, index);
+        put(op.action === "resolve" ? { ...thread, done: { name: author.name, at }, u: at } : { ...withoutDone(thread), u: at }, index);
         break;
       }
       case "edit":

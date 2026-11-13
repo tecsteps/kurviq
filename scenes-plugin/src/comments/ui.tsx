@@ -12,7 +12,7 @@ import { createPortal } from "react-dom";
 import { sceneCoordsToViewportCoords, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 
-import { authorKey, commentId, pinFor, pinPosition, threadsOf } from "../../../scenes-mcp/sceneComments.mjs";
+import { authorKey, commentId, pinFor, pinPosition, threadsOf, withoutDone } from "../../../scenes-mcp/sceneComments.mjs";
 import { scenesController } from "../controller";
 import { deck } from "../deck";
 import { liveSync } from "../online/liveSync";
@@ -80,11 +80,13 @@ const useMe = (): Me | null => {
   useEffect(() => {
     let alive = true;
     const email = user?.email ?? null;
-    authorKey(email ?? "local").then((key) => {
-      if (alive) {
-        setMe({ name: user?.name || email?.split("@")[0] || "You", key, email });
-      }
-    });
+    authorKey(email ?? "local")
+      .then((key) => {
+        if (alive) {
+          setMe({ name: user?.name || email?.split("@")[0] || "You", key, email });
+        }
+      })
+      .catch((error) => console.error("[comments] no author key", error));
     return () => {
       alive = false;
     };
@@ -143,16 +145,26 @@ const MENTION_RE = /@[\p{L}\p{N}][\p{L}\p{M}\p{N}._'-]*/gu;
 
 /** text with @mentions highlighted */
 const CommentText = ({ text }: { text: string }) => {
-  const parts: Array<string | { mention: string }> = [];
+  // pieces with their place in the text (a stable key: the text doesn't change under them)
+  const parts: Array<{ at: number; text: string; mention: boolean }> = [];
   let last = 0;
   for (const match of text.matchAll(MENTION_RE)) {
-    parts.push(text.slice(last, match.index), { mention: match[0] });
-    last = (match.index ?? 0) + match[0].length;
+    const at = match.index ?? 0;
+    parts.push({ at: last, text: text.slice(last, at), mention: false }, { at, text: match[0], mention: true });
+    last = at + match[0].length;
   }
-  parts.push(text.slice(last));
+  parts.push({ at: last, text: text.slice(last), mention: false });
   return (
     <p className="kq-cm-text">
-      {parts.map((part, index) => (typeof part === "string" ? part : <span key={index} className="kq-cm-mention">{part.mention}</span>))}
+      {parts.map((part) =>
+        part.mention ? (
+          <span key={`m${part.at}`} className="kq-cm-mention">
+            {part.text}
+          </span>
+        ) : (
+          <span key={`t${part.at}`}>{part.text}</span>
+        ),
+      )}
     </p>
   );
 };
@@ -192,7 +204,25 @@ const Icon = ({ name }: { name: keyof typeof ICON }) => (
   </svg>
 );
 
-const IconButton = ({ icon, label, onClick, disabled, active }: { icon: keyof typeof ICON; label: string; onClick: () => void; disabled?: boolean; active?: boolean }) => (
+/** where a menu opens: under its button, right-aligned with it (fixed: the page's coordinates) */
+const menuSpot = (button: HTMLElement) => {
+  const rect = button.getBoundingClientRect();
+  return { right: Math.round(window.innerWidth - rect.right), top: Math.round(rect.bottom + 4) };
+};
+
+const IconButton = ({
+  icon,
+  label,
+  onClick,
+  disabled,
+  active,
+}: {
+  icon: keyof typeof ICON;
+  label: string;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  disabled?: boolean;
+  active?: boolean;
+}) => (
   <button type="button" className={clsx("kq-cm-icon", { "kq-cm-icon--active": active })} title={label} aria-label={label} onClick={onClick} disabled={disabled}>
     <Icon name={icon} />
   </button>
@@ -247,8 +277,11 @@ const Composer = ({
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (autoFocus) {
-      setTimeout(() => area.current?.focus(), 0);
+    // focused when it opens, the caret after the text (editing goes on where it ends)
+    const box = area.current;
+    if (autoFocus && box) {
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
     }
   }, [autoFocus]);
   const suggestions = mention ? people.filter((name) => name.toLowerCase().includes(mention.query.toLowerCase())).slice(0, 6) : [];
@@ -302,7 +335,7 @@ const Composer = ({
         <Icon name="send" />
       </button>
       {suggestions.length > 0 && (
-        <ul className="kq-cm-mentions" role="listbox">
+        <ul className="kq-cm-mentions" aria-label="People">
           {suggestions.map((name) => (
             <li key={name}>
               <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => pick(name)}>
@@ -347,7 +380,8 @@ const CommentItem = ({
   isFirst: boolean;
   onError: (error: string | null) => void;
 }) => {
-  const [menu, setMenu] = useState(false);
+  // the menu opens next to its button, over the list (which scrolls and would cut it off)
+  const [menu, setMenu] = useState<{ right: number; top: number } | null>(null);
   const [editing, setEditing] = useState(false);
   const mine = !!me && comment.by.key === me.key;
   if (comment.gone) {
@@ -365,15 +399,14 @@ const CommentItem = ({
         </span>
         <span className="kq-cm-spacer" />
         <div className="kq-cm-menu-wrap">
-          <IconButton icon="more" label="More" onClick={() => setMenu(!menu)} active={menu} />
+          <IconButton icon="more" label="More" onClick={(event) => setMenu(menu ? null : menuSpot(event.currentTarget))} active={!!menu} />
           {menu && (
-            <div className="kq-cm-menu" role="menu" onMouseLeave={() => setMenu(false)}>
+            <div className="kq-cm-menu" style={menu} onMouseLeave={() => setMenu(null)}>
               <button
                 type="button"
-                role="menuitem"
                 onClick={() => {
                   navigator.clipboard?.writeText(threadLink(comment.thread)).catch(() => {});
-                  setMenu(false);
+                  setMenu(null);
                 }}
               >
                 <Icon name="link" /> Copy link
@@ -381,10 +414,9 @@ const CommentItem = ({
               {mine && (
                 <button
                   type="button"
-                  role="menuitem"
                   onClick={() => {
                     setEditing(true);
-                    setMenu(false);
+                    setMenu(null);
                   }}
                 >
                   <Icon name="comment" /> Edit
@@ -393,11 +425,10 @@ const CommentItem = ({
               {(mine || canModerate) && (
                 <button
                   type="button"
-                  role="menuitem"
                   className="kq-cm-danger"
                   onClick={() => {
                     save({ ...comment, gone: true, text: "", u: now() }, onError);
-                    setMenu(false);
+                    setMenu(null);
                   }}
                 >
                   <Icon name="trash" /> Remove
@@ -433,7 +464,7 @@ const CommentItem = ({
 // -----------------------------------------------------------------------------
 
 const Popover = ({ at, children, onClose }: { at: { x: number; y: number }; children: React.ReactNode; onClose: () => void }) => {
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDialogElement>(null);
   const [place, setPlace] = useState({ left: at.x + 18, top: at.y - 12 });
   useEffect(() => {
     const width = box.current?.offsetWidth ?? 340;
@@ -458,9 +489,9 @@ const Popover = ({ at, children, onClose }: { at: { x: number; y: number }; chil
     };
   }, [onClose]);
   return (
-    <div ref={box} className="kq-cm-popover" style={place} role="dialog" aria-label="Comment">
+    <dialog open ref={box} className="kq-cm-popover" style={place} aria-label="Comment">
       {children}
-    </div>
+    </dialog>
   );
 };
 
@@ -491,8 +522,7 @@ const ThreadView = ({
   const all = [thread.root, ...thread.replies];
   const mineRoot = !!me && thread.root.by.key === me.key;
   const resolve = () => {
-    const { done: _done, ...rest } = thread.root;
-    save(thread.resolved ? { ...rest, u: now() } : { ...rest, done: { name: me?.name ?? "Someone", at: now() }, u: now() }, setError);
+    save(thread.resolved ? { ...withoutDone(thread.root), u: now() } : { ...thread.root, done: { name: me?.name ?? "Someone", at: now() }, u: now() }, setError);
   };
   const removeThread = () => {
     const at = now();
@@ -791,7 +821,7 @@ export const CommentsButton = () => {
         {open.length > 0 && <span className="kq-cm-count">{open.length}</span>}
       </button>
       {state.list && (
-        <div className="kq-cm-panel" role="dialog" aria-label="Comments">
+        <dialog open className="kq-cm-panel" aria-label="Comments">
           <div className="kq-cm-panel__head">
             {canComment ? (
               <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => setUi({ list: false, placing: true, open: null, draft: null })}>
@@ -802,7 +832,7 @@ export const CommentsButton = () => {
             )}
             <label className="kq-cm-switch">
               <input type="checkbox" checked={state.showResolved} onChange={(event) => setUi({ showResolved: event.target.checked })} />
-              Show resolved
+              <span>Show resolved</span>
             </label>
           </div>
           {listed.length ? (
@@ -833,7 +863,7 @@ export const CommentsButton = () => {
           ) : (
             <p className="kq-cm-empty">{threads.length ? "No open comments." : "No comments yet."}</p>
           )}
-        </div>
+        </dialog>
       )}
     </div>
   );

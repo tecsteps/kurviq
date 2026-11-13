@@ -70,3 +70,4 @@ export declare const applyCommentOps: (
 export declare const commentsForAgents: (value: unknown, elementsById: Map<string, any>) => Array<Record<string, unknown>>;
 
 export declare const sha256Fallback: (bytes: Uint8Array) => Uint8Array;
+export declare const withoutDone: (comment: SceneComment) => SceneComment;

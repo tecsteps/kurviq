@@ -1366,7 +1366,7 @@ export class LiveScene {
   }
 
   /** the scene's comments as the DO holds them (sceneComments.mjs); a change of ours still queued stays on top */
-  private comments = new Map<string, SceneComment>();
+  private readonly comments = new Map<string, SceneComment>();
 
   private async takeComment(event: WireEvent, publish = true) {
     const comment = (await this.decode(event)) as SceneComment | null;

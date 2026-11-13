@@ -97,8 +97,8 @@ describe("threads", () => {
   });
 
   it("a deleted first comment stays while replies remain; with none left the thread is gone", () => {
-    expect(threadsOf([root("thread01", { gone: true }), reply("reply001", "thread01")]).length).toBe(1);
-    expect(threadsOf([root("thread01", { gone: true })]).length).toBe(0);
+    expect(threadsOf([root("thread01", { gone: true }), reply("reply001", "thread01")])).toHaveLength(1);
+    expect(threadsOf([root("thread01", { gone: true })])).toHaveLength(0);
   });
 });
 
