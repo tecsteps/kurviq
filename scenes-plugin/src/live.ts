@@ -968,7 +968,7 @@ const runCommand = async (command: Command) => {
       return onceForRequest(
         command.requestId,
         () => queueEdit(() => editOpenScene(command, convertMcpElements)),
-        async () => [...(scenesController.getApi()?.getSceneElements() ?? [])],
+        () => Promise.resolve([...(scenesController.getApi()?.getSceneElements() ?? [])]),
       );
     case "checkpoint-save":
       await setCheckpoint(command.id, command.data);

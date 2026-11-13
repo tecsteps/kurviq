@@ -38,7 +38,7 @@ describe("bounded body reader", () => {
     const body = (text: string) => new Response(text).body;
     expect(new TextDecoder().decode((await readBytes(body("hello"), 5))!)).toBe("hello");
     expect(await readBytes(body("hello!"), 5)).toBeNull();
-    expect((await readBytes(null, 5))!.length).toBe(0);
+    expect((await readBytes(null, 5))!).toHaveLength(0);
   });
 });
 

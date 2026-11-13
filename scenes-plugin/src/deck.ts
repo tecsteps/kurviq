@@ -79,7 +79,7 @@ const sceneFingerprint = (elements: readonly ExcalidrawElement[], appState: AppS
   let nonces = 0;
   for (const el of elements) {
     versions += el.version;
-    nonces = (nonces + el.versionNonce) | 0;
+    nonces = (nonces + el.versionNonce) % 2_147_483_647; // a fingerprint: wrapping keeps it a small integer
   }
   return `${elements.length}:${versions}:${nonces}:${Object.keys(files).length}:${appState.viewBackgroundColor}`;
 };

@@ -436,6 +436,17 @@ const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContex
   return asset;
 };
 
+/** the routes whose answers count in the statistics, tried in order: live sync, shared folders, sign-in */
+const countedRoute = async (request: Request, env: Env): Promise<Response | null> => {
+  for (const handle of [handleSceneRoutes, handleFolderRoutes, handleAuth] as Array<(request: Request, env: Env) => Promise<Response | null>>) {
+    const answer = await handle(request, env); // NOSONAR S9382: in order on purpose (the first route that answers wins)
+    if (answer) {
+      return answer;
+    }
+  }
+  return null;
+};
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // a development configuration (the fake Google) never serves a non-local host
@@ -453,24 +464,11 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
 
-    // live sync (docs/live-sync): tickets, the scene WebSocket, Drive's webhook, sign out everywhere
-    const sceneRoute = await handleSceneRoutes(request, env);
-    if (sceneRoute) {
-      routeStats(request, sceneRoute, env, ctx);
-      return sceneRoute;
-    }
-
-    // shared folders through the owner's sign-in (docs/folders/CONCEPT.md)
-    const folderRoute = await handleFolderRoutes(request, env);
-    if (folderRoute) {
-      routeStats(request, folderRoute, env, ctx);
-      return folderRoute;
-    }
-
-    const auth = await handleAuth(request, env);
-    if (auth) {
-      routeStats(request, auth, env, ctx);
-      return auth;
+    // live sync (docs/live-sync), shared folders (docs/folders/CONCEPT.md), sign-in: counted in the statistics
+    const counted = await countedRoute(request, env);
+    if (counted) {
+      routeStats(request, counted, env, ctx);
+      return counted;
     }
 
     const live = /^\/live\/([^/]+)$/.exec(url.pathname);

@@ -326,7 +326,8 @@ export class Pairing extends DurableObject {
   async webSocketClose(ws: WebSocket, code: number) { // NOSONAR S7503: preserves the Durable Object handler promise and rejection contract
     // the commands that tab was working on get no answer: the agent hears it now, not after the timeout
     const tab = (ws.deserializeAttachment() as Attachment | null)?.tab;
-    for (const [id, entry] of [...this.pending]) {
+    // (a Map may lose entries while it is iterated: settle removes the one at hand)
+    for (const [id, entry] of this.pending) {
       if (entry.tab === tab) {
         this.settle(id, httpError(409, "The Kurviq tab was closed (or reloaded) while it worked on this. Check the scene with read_scene and try again."));
       }

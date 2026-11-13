@@ -72,7 +72,7 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
 const oauthError = (status: number, error: string, description: string) =>
   json(status, { error, error_description: description });
 
-const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** loopback (any port, as native apps use) or https, without credentials or fragment; nothing else may receive codes */
 const allowedRedirect = (uri: string) => {
@@ -84,7 +84,7 @@ const allowedRedirect = (uri: string) => {
     if (url.protocol === "https:") {
       return true;
     }
-    return url.protocol === "http:" && LOOPBACK.includes(url.hostname);
+    return url.protocol === "http:" && LOOPBACK.has(url.hostname);
   } catch {
     return false;
   }
@@ -107,7 +107,7 @@ export const redirectMatches = (registered: string[], uri: string) =>
       return (
         a.protocol === "http:" &&
         b.protocol === "http:" &&
-        LOOPBACK.includes(a.hostname) &&
+        LOOPBACK.has(a.hostname) &&
         a.hostname === b.hostname &&
         a.pathname === b.pathname &&
         a.search === b.search

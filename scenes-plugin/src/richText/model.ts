@@ -373,8 +373,9 @@ class InlineParser {
     };
     let at = start;
     while (at < text.length) {
-      if (text[at] === "\\" && ESCAPABLE.test(text[at + 1] ?? "")) {
-        plain += text[at + 1];
+      const escaped = this.escapedAt(at);
+      if (escaped) {
+        plain += escaped;
         at += 2;
         continue;
       }
@@ -382,7 +383,7 @@ class InlineParser {
         flush();
         return at > start ? { runs, end: at + closer.length } : this.fail(key);
       }
-      const nested = depth < MAX_NESTING ? this.nested(at, marks, depth + 1) : null;
+      const nested = this.nestedBelow(at, marks, depth);
       if (nested) {
         flush();
         runs.push(...nested.runs);
@@ -397,6 +398,17 @@ class InlineParser {
     }
     flush();
     return { runs, end: at };
+  }
+
+  /** the character a backslash at `at` escapes, or null */
+  private escapedAt(at: number) {
+    const next = this.text[at + 1] ?? "";
+    return this.text[at] === "\\" && ESCAPABLE.test(next) ? next : null;
+  }
+
+  /** a nested span at `at`, while the nesting is below its limit */
+  private nestedBelow(at: number, marks: Marks, depth: number) {
+    return depth < MAX_NESTING ? this.nested(at, marks, depth + 1) : null;
   }
 
   private fail(key: string): null {

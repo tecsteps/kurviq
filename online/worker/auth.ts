@@ -801,26 +801,16 @@ export const handleAuth = async (request: Request, env: AuthEnv): Promise<Respon
     return authUnavailable(url, local, origin);
   }
 
-  if (url.pathname === "/auth/login" && request.method === "GET") {
-    return authLogin(request, env, url, url.searchParams, false);
-  }
-
-  if (url.pathname === "/auth/login" && request.method === "POST") {
-    const params = await confirmedParams(request, url);
-    return params ? authLogin(request, env, url, params, true) : json(403, { error: "Forbidden" });
-  }
-
-  if (url.pathname === "/auth/callback" && request.method === "GET") {
-    return authCallback(request, env, url);
-  }
-
-  if (url.pathname === "/auth/token" && request.method === "POST") {
-    return authToken(request, env, url, origin, local);
-  }
-
-  if (url.pathname === "/auth/logout" && request.method === "POST") {
-    return authLogout(request, url, origin, local);
-  }
-
-  return json(404, { error: "Not found" });
+  const routes: Record<string, () => Promise<Response> | Response> = {
+    "GET /auth/login": () => authLogin(request, env, url, url.searchParams, false),
+    "POST /auth/login": async () => {
+      const params = await confirmedParams(request, url);
+      return params ? authLogin(request, env, url, params, true) : json(403, { error: "Forbidden" });
+    },
+    "GET /auth/callback": () => authCallback(request, env, url),
+    "POST /auth/token": () => authToken(request, env, url, origin, local),
+    "POST /auth/logout": () => authLogout(request, url, origin, local),
+  };
+  const route = routes[`${request.method} ${url.pathname}`];
+  return route ? route() : json(404, { error: "Not found" });
 };

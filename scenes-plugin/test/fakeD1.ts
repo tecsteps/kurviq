@@ -9,9 +9,9 @@ export const fakeD1 = () => {
   let failNext: "before" | "after" | null = null;
   const statement = (sql: string, values: unknown[] = []): any => ({
     bind: (...next: unknown[]) => statement(sql, next),
-    first: async () => (db.prepare(sql).get(...(values as any[])) as any) ?? null,
-    run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...(values as any[])).changes) } }),
-    all: async () => ({ results: db.prepare(sql).all(...(values as any[])) }),
+    first: () => Promise.resolve((db.prepare(sql).get(...(values as any[])) as any) ?? null),
+    run: () => Promise.resolve({ meta: { changes: Number(db.prepare(sql).run(...(values as any[])).changes) } }),
+    all: () => Promise.resolve({ results: db.prepare(sql).all(...(values as any[])) }),
     exec: () => db.prepare(sql).all(...(values as any[])),
   });
   return {
@@ -20,7 +20,8 @@ export const fakeD1 = () => {
       failNext = when;
     },
     prepare: (sql: string) => statement(sql),
-    batch: async (statements: any[]) => {
+    // a promise that rejects when the batch fails, like D1's
+    batch: (statements: any[]) => Promise.resolve().then(() => {
       const when = failNext;
       failNext = null;
       if (when === "before") {
@@ -40,6 +41,6 @@ export const fakeD1 = () => {
         }
         throw error;
       }
-    },
+    }),
   };
 };

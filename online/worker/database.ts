@@ -14,7 +14,7 @@
 export type D1Statement = {
   bind: (...values: unknown[]) => D1Statement;
   first: <T>() => Promise<T | null>;
-  run: () => Promise<{ meta?: { changes?: number } } | unknown>;
+  run: () => Promise<{ meta?: { changes?: number } }>;
   all: <T>() => Promise<{ results?: T[] }>;
 };
 

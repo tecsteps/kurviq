@@ -36,10 +36,13 @@ type PatchStep = [string | RegExp, string, number?];
  * count fails the build, so a change upstream is noticed instead of leaving
  * the code silently unpatched. `head` goes before the patched code (imports).
  */
+/** a pattern that finds every match (matchAll needs the g flag) */
+const globalPattern = (pattern: RegExp) => new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+
 const patchSource = (code: string, label: string, steps: PatchStep[], head = "") => {
   let next = code;
   for (const [from, to, count = 1] of steps) {
-    const pattern = typeof from === "string" ? null : new RegExp(from.source, from.flags.includes("g") ? from.flags : `${from.flags}g`);
+    const pattern = typeof from === "string" ? null : globalPattern(from);
     const found = pattern ? Array.from(next.matchAll(pattern)).length : next.split(from as string).length - 1;
     if (found !== count) {
       throw new Error(

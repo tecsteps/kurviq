@@ -31,7 +31,7 @@ export const senderKey = (ip: string) => {
   const [head, tail] = ip.split("::");
   const left = head ? head.split(":") : [];
   const right = tail === undefined || tail === "" ? [] : tail.split(":");
-  const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  const groups = tail === undefined ? left : [...left, ...new Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
   return `${groups
     .slice(0, 4)
     .map((group) => (Number.parseInt(group, 16) || 0).toString(16))

@@ -1272,6 +1272,17 @@ const styleTitleModel = (model: Frame | undefined, found: Map<string, ReturnType
   }
 };
 
+/** the value most of the entries have (empty ones not counted), or undefined */
+const mostCommon = (values: ReadonlyArray<string | false | undefined | null>) => {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    if (value) {
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+  }
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+};
+
 /**
  * Headline and eyebrow on the template. The slides' own ones become their
  * copies (their words stay theirs; place and style follow the template,
@@ -1291,14 +1302,7 @@ export const addTitleBlock = (elements: readonly ExcalidrawElement[]) => {
     const headline = found.get(slide.id)?.headline as any;
     return headline && `${Math.round((headline.x - slide.x) / 24)},${Math.round((headline.y - slide.y) / 24)},${headline.fontSize}`;
   };
-  const counts = new Map<string, number>();
-  for (const slide of slides) {
-    const spot = spotOf(slide);
-    if (spot) {
-      counts.set(spot, (counts.get(spot) ?? 0) + 1);
-    }
-  }
-  const common = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const common = mostCommon(slides.map(spotOf));
   // no slide has a headline: no model, the template's default place and style
   const atCommon = common === undefined ? [] : slides.filter((slide) => spotOf(slide) === common);
   const model = atCommon.find((slide) => found.get(slide.id)?.eyebrow) ?? atCommon[0];
