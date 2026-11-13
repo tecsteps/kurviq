@@ -33,8 +33,9 @@ export type TipPlacement = { left: number; top: number; above: boolean; arrow: s
  */
 export const tipPlacement = (
   rect: { left: number; width: number; top: number; bottom: number },
-  view: { width: number; height: number } = { width: window.innerWidth, height: window.innerHeight },
+  windowSize?: { width: number; height: number },
 ): TipPlacement => {
+  const view = windowSize ?? { width: window.innerWidth, height: window.innerHeight };
   const above = rect.bottom + 48 > view.height;
   const x = rect.left + rect.width / 2;
   const left = Math.min(Math.max(x, 140), view.width - 140);
