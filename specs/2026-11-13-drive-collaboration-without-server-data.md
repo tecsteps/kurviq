@@ -1,7 +1,13 @@
 # Working together on Drive scenes without keeping anything on our servers
 
 Status: proposal, 2026-11-13; decisions of 2026-11-13 included (short links
-and the sign-out record stay, one editor at a time, a memory-only relay)
+and the sign-out record stay, one editor at a time, a memory-only relay).
+Implemented 2026-11-13: one editor at a time (the pen, the memory-only relay,
+the Drive mark, offline, agents), the relay path for commenters, sign-in
+without stored tokens for it, migration steps 1-2 (live sync retired, its
+scene objects drain only); see `docs/relay/CONCEPT.md` and "Follow-up
+release" below. The public viewer, shared folders and the comments mailbox:
+see their own notes below.
 
 ## The rule
 
@@ -158,6 +164,43 @@ account (an id and a time, no data), which stays (decided).
    content is turned off.
 5. The privacy page states the rule and lists what remains (feedback and
    contact messages, statistics counters, short links if kept).
+
+### Follow-up release (after the drain is confirmed)
+
+The release that ships the relay leaves the old scene objects in a drain-only
+form (`online/worker/scene.ts`): each saves what it still holds to Drive and
+deletes everything, when an editor next opens its scene, when its owner's tab
+calls `/live/drain` (once per account after sign-in), or with its own alarm.
+Once that is confirmed in production:
+
+- [ ] Confirm the drain: Fabian opens kurviq.com signed in (the app calls
+      `/live/drain`); in the browser console
+      `fetch("/live/drain", { method: "POST" }).then((r) => r.json())` answers
+      `results: []` (nothing left the account guard knows) or only
+      `state: "empty" | "drained"` with `left: 0`. Open each scene that was live
+      once (an editor's ticket drains a file still marked `kurviqSync`).
+- [ ] Remove `SceneRoom` (`scene.ts`), `drain.ts`, the `/live/drain` and
+      `/drive/notify` routes and the client's drain call, with a wrangler
+      migration `{ "tag": "v5", "deleted_classes": ["SceneRoom"] }` (deletes
+      every remaining object's storage) and the `SCENE` binding.
+- [ ] Then `TOKEN_KEY` (and `TOKEN_KEY_PREVIOUS`) is no longer read: remove it
+      from the Worker, `online/secrets.mjs`, `dev-vars.mjs` and the Cloudflare
+      secrets (`wrangler secret delete TOKEN_KEY`); `PSEUDONYM_KEY` is already
+      unread (delete the secret). The sign-out-everywhere retry of a Google
+      revocation then needs another seal (`COOKIE_KEY`) or goes (criterion 3).
+- [ ] The account guard drops its `scenes` / `connected` tables (only the
+      epoch stays) and `AccountGuard` no longer needs `SCENE`.
+
+### To check with the real Google
+
+- Does an `appProperties` update (the pen's mark) change the file's
+  `modifiedTime`? The fake Google doesn't move it (`pen.mjs` checks md5 and
+  modifiedTime stay); the design doesn't depend on it (tabs compare md5).
+  Check: open a scene, note `modifiedTime` in Drive's file details (or
+  `files.get?fields=modifiedTime`), wait a minute with the scene open (the
+  holder renews the mark), compare.
+- A Drive rate limit on the ticket's `files.get` answers 503 (try again), as
+  the fake does with a 429 fault.
 
 ## Decided (2026-11-13)
 

@@ -1,3 +1,5 @@
+> **Superseded (2026-11-13)**: live sync was retired. Drive scenes now have one editor at a time, decided by a memory-only relay: see `docs/relay/CONCEPT.md` and `specs/2026-11-13-drive-collaboration-without-server-data.md`. This document describes the old design and stays for reference until the drain is confirmed.
+
 <!-- Exported from the Claude Doc https://claude.ai/artifact/Px93qyvQSvVFpK93MNYw5K on 2026-10-31. The doc is the working copy; this file is the snapshot the implementation follows. -->
 
 # Kurviq: event store and Drive saves

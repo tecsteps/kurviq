@@ -41,10 +41,17 @@
 //     multipart; checked first, then applied as a whole, like Drive),
 //     files.delete, files.watch, channels.stop, revisions list/get
 //     (alt=media)/update/delete, permissions list/get/create/update/delete.
+//     comments list/create/get/delete and replies.create (action "resolve"):
+//     Drive's own comments, the commenters' mailbox (fields required, as at
+//     Google; the author comes without an address, as at Google).
 //   drive.file: a user sees a file only if the app may open it for them (they
 //     created it through the API, or it was granted: /admin/grant is the
-//     Picker / "Open with") AND they have a role on it (own permission, or
-//     "anyone with the link"). Otherwise 404 notFound.
+//     Picker / "Open with"; with the setting folderPickGrantsChildren a
+//     granted folder grants its files too) AND they have a role on it (own
+//     permission, one of a folder it is in, or "anyone with the link").
+//     Otherwise 404 notFound.
+//   POST /fake-google/picker (the app's Picker in a fake build): the next pick
+//     a test queued for that user (/admin/picker), granted; none: cancelled.
 //   key=fake-api-key without a token: files.get of files shared with anyone
 //     (not trashed), never appProperties.
 //   Errors in Google's shape {error:{code,message,errors:[{reason,…}]}}:
@@ -77,6 +84,10 @@
 //   POST /admin/reset               everything forgotten (test users stay)
 //   GET  /admin/file?fileId=        one file: metadata, permissions, app access, revisions, channels
 //   POST /admin/grant {email,fileId}     the Picker: the app may open the file for that user
+//   POST /admin/picker {email,ids}       the user's next pick in the app's Picker (files or folders)
+//   POST /admin/config {folderPickGrantsChildren?,commentDeleteByAuthorOnly?}
+//                                   how Google behaves where it isn't verified yet
+//   GET  /admin/comments?fileId=    Drive comments on a file
 //   POST /admin/write {email,fileId?,content,name?,mimeType?,appProperties?,parents?}
 //                                   a change "from outside Kurviq" (Drive's web UI): new
 //                                   revision, watch notifications; without fileId a new
@@ -169,6 +180,8 @@ type FileRow = {
 
 type Caller = { kind: "user"; email: string; scope: string[] } | { kind: "anonymous" };
 type User = Extract<Caller, { kind: "user" }>;
+/** what a comments call works with */
+type CommentCall = { request: Request; caller: User; file: FileRow; role: string; fields: FieldTree; origin: string };
 /** what a permissions call works with */
 type PermissionCall = { file: FileRow; canShare: boolean; caller: User; origin: string; fields: FieldTree; one: (id: string) => Row | null };
 
@@ -505,8 +518,11 @@ CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, resource_id TEXT, file
 CREATE TABLE IF NOT EXISTS faults (id INTEGER PRIMARY KEY AUTOINCREMENT, remaining INTEGER, status INTEGER, reason TEXT, delay_ms INTEGER,
   email TEXT, path TEXT, method TEXT, target TEXT, used INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, kind TEXT, data TEXT);
+CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY, file_id TEXT, email TEXT, content TEXT, created TEXT, modified TEXT, resolved INTEGER, seq INTEGER);
+CREATE TABLE IF NOT EXISTS picks (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, ids TEXT);
+CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);
 `;
-const TABLES = ["users", "grants", "codes", "tokens", "files", "revisions", "blobs", "perms", "app_access", "channels", "faults", "log"];
+const TABLES = ["users", "grants", "codes", "tokens", "files", "revisions", "blobs", "perms", "app_access", "channels", "faults", "log", "comments", "picks", "config"];
 
 const titleCase = (email: string) =>
   email
@@ -652,6 +668,9 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     }
     if (path.startsWith("/admin/")) {
       return this.admin(request, url, path.slice("/admin".length));
+    }
+    if (path === "/picker" && request.method === "POST") {
+      return this.picker(request, url);
     }
     const drive = /^\/(upload\/)?drive\/v3(\/.*)$/.exec(path);
     if (drive) {
@@ -1027,18 +1046,52 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return this.all<Row>("SELECT * FROM perms WHERE file_id = ? ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, rowid", fileId);
   }
 
-  /** the caller's role on a file (null: can't see it) */
+  /** the folders a file is in, its parents first (a few levels: Kurviq's folders are flat) */
+  private ancestors(file: FileRow): FileRow[] {
+    const out: FileRow[] = [];
+    let level = (JSON.parse(file.parents || "[]") as string[]).map((id) => this.file(id)).filter((row): row is FileRow => !!row);
+    for (let depth = 0; depth < 5 && level.length; depth++) {
+      out.push(...level);
+      level = level.flatMap((row) => (JSON.parse(row.parents || "[]") as string[]).map((id) => this.file(id))).filter((row): row is FileRow => !!row);
+    }
+    return out;
+  }
+
+  private setting(key: string) {
+    return this.one<{ value: string }>("SELECT value FROM config WHERE key = ?", key)?.value ?? null;
+  }
+
+  /**
+   * drive.file: the app may open the file for this user (created through the
+   * API, or granted: the Picker, "Open with"). With the setting
+   * folderPickGrantsChildren, a granted folder grants the files in it too
+   * (whether Google does is to verify; the tests run both ways).
+   */
+  private appCanOpen(email: string, file: FileRow) {
+    if (this.one("SELECT 1 AS x FROM app_access WHERE email = ? AND file_id = ?", email, file.id)) {
+      return true;
+    }
+    return (
+      this.setting("folderPickGrantsChildren") === "1" &&
+      this.ancestors(file).some((folder) => !!this.one("SELECT 1 AS x FROM app_access WHERE email = ? AND file_id = ?", email, folder.id))
+    );
+  }
+
+  /** the caller's role on a file (null: can't see it); the folders it is in pass theirs on, as in Drive */
   private roleOf(file: FileRow, caller: Caller, appOnly = true): string | null {
-    const perms = this.perms(file.id);
+    const perms = [...this.perms(file.id), ...this.ancestors(file).flatMap((folder) => this.perms(folder.id))];
     const anyone = perms.find((perm) => perm.type === "anyone");
     if (caller.kind === "anonymous") {
       return anyone && !file.trashed ? "reader" : null;
     }
-    if (appOnly && !this.one("SELECT 1 AS x FROM app_access WHERE email = ? AND file_id = ?", caller.email, file.id)) {
+    if (appOnly && !this.appCanOpen(caller.email, file)) {
       return null;
     }
-    const own = perms.find((perm) => perm.type === "user" && perm.email === caller.email);
-    const roles = [own?.role, anyone?.role].filter(Boolean) as string[];
+    const own = perms
+      .filter((perm) => perm.type === "user" && perm.email === caller.email)
+      // a folder's owner may edit what others put in it
+      .map((perm) => (perm.role === "owner" && perm.file_id !== file.id ? "writer" : perm.role));
+    const roles = [...own, anyone?.role].filter(Boolean) as string[];
     if (!roles.length) {
       return null;
     }
@@ -1429,6 +1482,11 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (permissionMatch) {
       return this.permissions(request, url, requireUser(caller), fileId, permissionMatch[1] ? decodeURIComponent(permissionMatch[1]) : null, origin);
     }
+    const commentMatch = /^\/comments(?:\/([^/]+)(\/replies)?)?$/.exec(rest);
+    if (commentMatch) {
+      const commentId = commentMatch[1] ? decodeURIComponent(commentMatch[1]) : null;
+      return this.comments(request, url, requireUser(caller), { fileId, commentId, replies: !!commentMatch[2], origin });
+    }
     return googleError(404, `Not Found: ${method} ${path}`, "notFound");
   }
 
@@ -1493,10 +1551,8 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const filesTree = fields.get("files");
     checkKeys(filesTree, FILE_KEYS);
 
-    const visible = this.all<FileRow>(
-      "SELECT f.* FROM files f JOIN app_access a ON a.file_id = f.id AND a.email = ? ORDER BY f.created, f.id",
-      caller.email,
-    )
+    const visible = this.all<FileRow>("SELECT * FROM files ORDER BY created, id")
+      .filter((file) => this.appCanOpen(caller.email, file))
       .map((file) => ({ file, role: this.roleOf(file, caller, false) }))
       .filter((entry): entry is { file: FileRow; role: string } => !!entry.role && predicate(entry.file, { email: caller.email, root: rootOf(caller.email) }));
     const orderBy = (url.searchParams.get("orderBy") || "").split(",").map((part) => part.trim()).filter(Boolean);
@@ -1971,6 +2027,135 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
   }
 
   // ---------------------------------------------------------------------------
+  // comments (Drive's own, on the file: the commenters' mailbox)
+  // ---------------------------------------------------------------------------
+
+  private commentResource(row: Row, caller: User, origin: string) {
+    const author = this.driveUser(row.email, caller.email, origin);
+    return {
+      kind: "drive#comment",
+      id: row.id,
+      createdTime: row.created,
+      modifiedTime: row.modified,
+      // Google leaves out the author's address and permission id
+      author: { kind: "drive#user", displayName: author.displayName, photoLink: author.photoLink, me: author.me },
+      htmlContent: escapeHtml(row.content),
+      content: row.content,
+      deleted: false,
+      resolved: !!row.resolved,
+      replies: [],
+    };
+  }
+
+  /** comments.list / create / get / delete and replies.create (a "resolve" action resolves the comment) */
+  private async comments(request: Request, url: URL, caller: User, { fileId, commentId, replies, origin }: { fileId: string; commentId: string | null; replies: boolean; origin: string }) {
+    const { file, role } = this.access(fileId, caller);
+    // like Google: comments and replies need a fields parameter
+    if (!url.searchParams.get("fields") && request.method !== "DELETE") {
+      return invalid("The 'fields' parameter is required for this method.", "fields");
+    }
+    const call: CommentCall = { request, caller, file, role, fields: fieldsOf(url, "*"), origin };
+    if (!commentId) {
+      return this.fileComments(call);
+    }
+    const row = this.one<Row>("SELECT * FROM comments WHERE id = ? AND file_id = ?", commentId, file.id);
+    if (!row) {
+      return googleError(404, `Comment not found: ${commentId}.`, "notFound", { location: "commentId" });
+    }
+    return replies ? this.commentReply(call, row) : this.oneComment(call, row);
+  }
+
+  /** comments.list, comments.create (commenters and up) */
+  private async fileComments({ request, caller, file, role, fields, origin }: CommentCall) {
+    if (request.method === "GET") {
+      const rows = this.all<Row>("SELECT * FROM comments WHERE file_id = ? ORDER BY seq", file.id);
+      return json(200, select({ kind: "drive#commentList", comments: rows.map((row) => this.commentResource(row, caller, origin)) }, fields));
+    }
+    if (request.method !== "POST") {
+      return googleError(405, "Method not allowed", "methodNotAllowed");
+    }
+    if (ROLE_RANK[role] < 2) {
+      return noFilePermission();
+    }
+    const body = await parseJson(request);
+    const content = typeof body.content === "string" ? body.content : "";
+    if (!content.trim()) {
+      return invalid("Comment content is required.", "content");
+    }
+    const id = `AAAA${randomId(12)}`;
+    const at = now();
+    const seq = (this.one<{ seq: number }>("SELECT MAX(seq) AS seq FROM comments")?.seq ?? 0) + 1;
+    this.run("INSERT INTO comments (id, file_id, email, content, created, modified, resolved, seq) VALUES (?, ?, ?, ?, ?, ?, 0, ?)", id, file.id, caller.email, content, at, at, seq);
+    return json(200, select(this.commentResource(this.one<Row>("SELECT * FROM comments WHERE id = ?", id)!, caller, origin), fields));
+  }
+
+  /** comments.get, comments.delete (the author; editors too unless the setting commentDeleteByAuthorOnly says Google doesn't let them) */
+  private oneComment({ request, caller, role, fields, origin }: CommentCall, row: Row) {
+    if (request.method === "GET") {
+      return json(200, select(this.commentResource(row, caller, origin), fields));
+    }
+    if (request.method !== "DELETE") {
+      return googleError(405, "Method not allowed", "methodNotAllowed");
+    }
+    const editor = ROLE_RANK[role] >= 3 && this.setting("commentDeleteByAuthorOnly") !== "1";
+    if (row.email !== caller.email && !editor) {
+      return noFilePermission();
+    }
+    this.run("DELETE FROM comments WHERE id = ?", row.id);
+    return new Response(null, { status: 204 });
+  }
+
+  /** replies.create: an action "resolve" / "reopen" changes the comment */
+  private async commentReply({ request, role, fields }: CommentCall, row: Row) {
+    if (request.method !== "POST") {
+      return googleError(405, "Method not allowed", "methodNotAllowed");
+    }
+    if (ROLE_RANK[role] < 2) {
+      return noFilePermission();
+    }
+    const body = await parseJson(request);
+    if (body.action === "resolve" || body.action === "reopen") {
+      this.run("UPDATE comments SET resolved = ?, modified = ? WHERE id = ?", body.action === "resolve" ? 1 : 0, now(), row.id);
+    }
+    return json(200, select({ kind: "drive#reply", id: `AAAB${randomId(12)}`, action: body.action, content: String(body.content ?? "") }, fields));
+  }
+
+  // ---------------------------------------------------------------------------
+  // the Picker: what the user picks next is queued by a test (POST /admin/picker)
+  // ---------------------------------------------------------------------------
+
+  /** the app's picker in a fake build: the next queued pick of this user (none: cancelled); the picked files are granted */
+  private picker(request: Request, url: URL) {
+    const who = this.caller(request, url);
+    if (!who || typeof who !== "object" || who.kind !== "user") {
+      return googleError(401, "Login Required.", "required");
+    }
+    const next = this.one<Row>("SELECT * FROM picks WHERE email = ? ORDER BY id LIMIT 1", who.email);
+    if (!next) {
+      return json(200, { ids: [] });
+    }
+    this.run("DELETE FROM picks WHERE id = ?", next.id);
+    const ids = (JSON.parse(next.ids) as string[]).filter((id) => {
+      const file = this.file(id);
+      return !!file && !!this.roleOf(file, who, false);
+    });
+    for (const id of ids) {
+      this.run("INSERT OR IGNORE INTO app_access (email, file_id) VALUES (?, ?)", who.email, id);
+    }
+    this.log("request", { method: "PICK", path: "/picker", email: who.email, status: 200, ids });
+    return json(200, { ids });
+  }
+
+  private adminConfig(body: Row) {
+    for (const key of ["folderPickGrantsChildren", "commentDeleteByAuthorOnly"]) {
+      if (body[key] !== undefined) {
+        this.run("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", key, body[key] ? "1" : "0");
+      }
+    }
+    return json(200, { config: Object.fromEntries(this.all<Row>("SELECT key, value FROM config").map((row) => [row.key, row.value === "1"])) });
+  }
+
+  // ---------------------------------------------------------------------------
   // admin
   // ---------------------------------------------------------------------------
 
@@ -2127,6 +2312,16 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         });
       }
       case "POST /grant": return this.adminGrant(origin, need, fileOf);
+      case "POST /picker": {
+        const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
+        this.run("INSERT INTO picks (email, ids) VALUES (?, ?)", this.user(need("email")), JSON.stringify(ids));
+        return json(200, { ok: true, queued: this.all<Row>("SELECT email, ids FROM picks ORDER BY id") });
+      }
+      case "POST /config": return this.adminConfig(body);
+      case "GET /comments": {
+        const file = fileOf();
+        return json(200, { comments: this.all<Row>("SELECT * FROM comments WHERE file_id = ? ORDER BY seq", file.id) });
+      }
       case "POST /write": return this.adminWrite(body, origin, need, fileOf);
       case "POST /share": return this.adminShare(body, origin, need, fileOf);
       case "POST /unshare": return this.adminUnshare(body, origin, need, fileOf);

@@ -8,6 +8,7 @@ import { leanScene } from "../leanFiles";
 import { scenesController } from "../controller";
 
 import { connection, driveScenes } from "./drive";
+import { penRefusal } from "./pen";
 
 export type TabRequest = {
   method: string;
@@ -48,9 +49,13 @@ const afterAgentWrite = (source?: string) => {
   }
 };
 
-/** a scene that saves through live sync (known here, or marked on its Drive file) */
-const liveFileOf = async (name: string) =>
-  scenesController.liveFileId(name) ?? (await driveScenes.liveFileOf(name).catch(() => null));
+/** someone else holds the scene's pen (online/pen.ts): agents edit only through the holder's tab */
+const refuseWithoutPen = async (name: string) => {
+  const refusal = await penRefusal(name);
+  if (refusal) {
+    throw Object.assign(new Error(refusal), { status: 409, editing: true });
+  }
+};
 
 /** ?md5= (?sha=: pre-rename MCP servers; remove after 2027-02) */
 const versionParam = (url: URL) => url.searchParams.get("md5") ?? url.searchParams.get("sha");
@@ -66,62 +71,19 @@ const parseRequestBody = (body: string) => {
 const renameScene = async (renameMatch: RegExpExecArray, body: string, source: () => string | undefined) => {
   const from = decodeURIComponent(renameMatch[1]);
   const { to } = parseRequestBody(body || "{}");
-  if (scenesController.liveFileId(from)) {
-    // live: a name event through the scene's Durable Object
-    await scenesController.rename(from, String(to ?? "").trim());
-    return json(200, withOldNames({ from, to, md5: "", driveRevision: null }));
-  }
+  await refuseWithoutPen(from);
   const result = await driveScenes.rename(from, String(to ?? "").trim());
   afterAgentWrite(source());
   return json(200, withOldNames({ from, to, ...result }));
 };
 
-const readLiveScene = async (name: string, liveFile: string, url: URL) => {
-  // live: the scene as its Durable Object has it now (Drive is up to a minute behind)
-  const wanted = versionParam(url);
-  let text: string | null;
-  let revision: string;
-  if (wanted?.startsWith("live-")) {
-    text = await scenesController.liveRevision(liveFile, wanted);
-    revision = wanted;
-  } else if (wanted) {
-    const scene = await driveScenes.load(name, wanted);
-    text = scene.json;
-    revision = scene.md5;
-  } else {
-    const live = await scenesController.liveSessionFor(name);
-    if (!live) {
-      return json(404, { error: `Scene not found: ${name}` });
-    }
-    await live.flushNow();
-    const snapshot = live.snapshot();
-    text = snapshot.json;
-    revision = snapshot.revision;
-    await scenesController.rememberLiveRevision(liveFile, revision, text);
-  }
-  if (text === null) {
-    return json(404, { error: `Revision ${wanted} of "${name}" is not kept in this browser any more` });
-  }
-  const body = url.searchParams.has("lean") ? JSON.stringify(leanScene(JSON.parse(text))) : text;
-  return { status: 200, headers: versionHeaders(revision), body };
-};
-
 const routeScene = async (match: RegExpExecArray, method: string, body: string, url: URL, header: (name: string) => string | undefined, baseHeader: () => string | undefined): Promise<TabResponse> => {
   const name = decodeURIComponent(match[1]);
-  const liveFile = await liveFileOf(name);
   if (method === "PUT") {
     parseRequestBody(body);
   }
-  if (liveFile && method === "GET") {
-    return readLiveScene(name, liveFile, url);
-  }
-  if (liveFile && method === "PUT") {
-    const result = await scenesController.liveWrite(liveFile, name, body, baseHeader(), header("X-Scenes-Source"));
-    return json(200, withOldNames({ name, ...result }));
-  }
-  if (liveFile && method === "DELETE") {
-    await scenesController.remove(name);
-    return json(200, withOldNames({ name, md5: null }));
+  if (method === "PUT" || method === "DELETE") {
+    await refuseWithoutPen(name);
   }
   if (method === "GET") {
     const scene = await driveScenes.load(name, versionParam(url) || undefined);
@@ -172,9 +134,7 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
   const agentMatch = /^\/api\/scenes\/(.+)\/agent-version$/.exec(url.pathname);
   if (agentMatch && method === "GET") {
     const name = decodeURIComponent(agentMatch[1]);
-    const liveFile = await liveFileOf(name);
-    // live: the agent's last edit as this browser keeps it, until Drive has a newer agent version
-    const version = (liveFile ? await scenesController.liveAgentVersion(liveFile) : null) ?? (await driveScenes.agentVersion(name));
+    const version = await driveScenes.agentVersion(name);
     return json(200, { name, version: version && withOldNames(version) });
   }
   const match = /^\/api\/scenes\/(.+)$/.exec(url.pathname);

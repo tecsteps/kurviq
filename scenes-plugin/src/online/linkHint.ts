@@ -1,8 +1,9 @@
 // A scene link (kurviq.com/<name>) that created a new scene may have meant
 // one shared with the user that Kurviq can't see yet: Drive shows Kurviq a
 // shared file only once it was opened with Kurviq. The hint (LinkHint in
-// ui.tsx) offers the Picker, searched for that name. Its own module: the
-// router sets it, the UI shows it.
+// ui.tsx) offers the Picker, searched for that name, where the scene or the
+// shared folder it is in can be picked (nothing about it is kept on Kurviq's
+// server). Its own module: the router sets it, the UI shows it.
 
 import { connection, pickerAvailable, sharedFileId } from "./drive";
 

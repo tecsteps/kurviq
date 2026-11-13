@@ -85,3 +85,102 @@ export const audienceText = ({ count, editors, anyone }: ReturnType<typeof folde
   }
   return { whom, what };
 };
+
+// -----------------------------------------------------------------------------
+// the person a folder is shared with: what their Kurviq lists (nothing about
+// the folder is kept on Kurviq's server; see drive.ts sharedFolders)
+// -----------------------------------------------------------------------------
+
+/** the owner's Kurviq notes its folder's number of scenes here (appProperties: private to Kurviq, no new version) */
+export const FOLDER_COUNT_PROPERTY = "kurviqScenes";
+
+/** the noted number of scenes (null: none noted) */
+export const folderCountOf = (appProperties: Record<string, string> | undefined) => {
+  const value = Number(appProperties?.[FOLDER_COUNT_PROPERTY]);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+};
+
+/** a folder this person picked: its noted scene count (null: not noted) */
+export type PickedFolder = { id: string; name: string; owner: string; ownerEmail: string | null; canEdit: boolean; count: number | null };
+/** a scene of someone else's that Kurviq may open for this person */
+export type VisibleScene = {
+  fileId: string;
+  name: string;
+  parents: string[];
+  owner: string;
+  ownerEmail: string | null;
+  canEdit: boolean;
+  modifiedTime: string | null;
+};
+
+export type FolderGroup = {
+  folderId: string;
+  name: string;
+  owner: string;
+  ownerEmail: string | null;
+  role: "writer" | "reader";
+  scenes: { name: string; fileId: string; modifiedTime: string | null }[];
+  /** the folder itself was picked (else only some of its scenes were) */
+  picked: boolean;
+  /** scenes in it that need a pick before Kurviq can open them (0: none, or not known) */
+  unseen: number;
+};
+
+const sceneEntry = (scene: VisibleScene) => ({ name: scene.name, fileId: scene.fileId, modifiedTime: scene.modifiedTime });
+const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+
+/**
+ * The groups of the scene list for folders shared with this person: each
+ * folder they picked, with the scenes Kurviq may open in it (all of them if
+ * picking the folder grants its files, else those picked too) and how many
+ * still need a pick (the owner's noted count minus those seen); then the
+ * folders of scenes picked out of a folder that wasn't picked ("<owner>'s
+ * folder"). Scenes shared one by one (`single`: Drive's "Shared with me")
+ * stay out of the folder groups unless their folder was picked.
+ */
+export const groupSharedFolders = (folders: PickedFolder[], scenes: VisibleScene[], single: Set<string> = new Set()): FolderGroup[] => {
+  const picked = new Map(folders.map((folder) => [folder.id, folder]));
+  const groups = new Map<string, FolderGroup>();
+  for (const folder of folders) {
+    groups.set(folder.id, {
+      folderId: folder.id,
+      name: folder.name,
+      owner: folder.owner,
+      ownerEmail: folder.ownerEmail,
+      role: folder.canEdit ? "writer" : "reader",
+      scenes: [],
+      picked: true,
+      unseen: 0,
+    });
+  }
+  for (const scene of scenes) {
+    const parent = scene.parents.find((id) => picked.has(id)) ?? (single.has(scene.fileId) ? undefined : scene.parents[0]);
+    if (!parent) {
+      continue;
+    }
+    let group = groups.get(parent);
+    if (!group) {
+      group = { folderId: parent, name: `${scene.owner}'s folder`, owner: scene.owner, ownerEmail: scene.ownerEmail, role: "reader", scenes: [], picked: false, unseen: 0 };
+      groups.set(parent, group);
+    }
+    group.scenes.push(sceneEntry(scene));
+    // without the folder: they may edit in it if they may edit a scene of it
+    if (!group.picked && scene.canEdit) {
+      group.role = "writer";
+    }
+  }
+  for (const group of groups.values()) {
+    group.scenes.sort(byName);
+    const count = picked.get(group.folderId)?.count ?? null;
+    group.unseen = count === null ? 0 : Math.max(0, count - group.scenes.length);
+  }
+  return [...groups.values()].sort((a, b) => Number(b.picked) - Number(a.picked) || a.owner.localeCompare(b.owner) || a.name.localeCompare(b.name));
+};
+
+/** the folder group's notice: "3 new scenes in this folder" (null: nothing waits) */
+export const unseenText = (unseen: number) => {
+  if (unseen <= 0) {
+    return null;
+  }
+  return unseen === 1 ? "1 new scene in this folder" : `${unseen} new scenes in this folder`;
+};

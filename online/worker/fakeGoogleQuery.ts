@@ -6,6 +6,7 @@
 //   trashed = true|false, trashed != …
 //   name = '…', mimeType = '…' (and !=)
 //   sharedWithMe                 (files the caller doesn't own)
+//   not 'me' in owners           (the same here)
 //   appProperties has { key='k' and value='v' }
 
 /** the file columns a query reads */
@@ -39,6 +40,7 @@ const TERMS: Array<[RegExp, (match: RegExpExecArray) => Predicate]> = [
     },
   ],
   [/^sharedWithMe$/, () => (file, me) => file.owner !== me.email],
+  [/^not\s+'me'\s+in\s+owners$/, () => (file, me) => file.owner !== me.email],
   [
     new RegExp(String.raw`^appProperties\s+has\s*\{\s*key\s*=\s*${QUOTED}\s+and\s+value\s*=\s*${QUOTED}\s*\}$`),
     (m) => {

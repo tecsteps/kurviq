@@ -103,10 +103,7 @@ export type SceneMeta = {
   keptLocal?: boolean;
   /** renamed locally, the rename in Drive is still pending (old name) */
   renamedFrom?: string;
-  /**
-   * saves through its Durable Object (live sync, the ticket said so): the
-   * controller never pushes, pulls or merges it; its Drive file
-   */
+  /** the retired live sync's mark (metadata of older versions; ignored) */
   live?: { fileId: string };
   /** legacy field */
   inRepo?: boolean;

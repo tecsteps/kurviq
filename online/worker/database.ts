@@ -7,8 +7,9 @@
 // running twice), so every module and the retention job can rely on the
 // tables being there.
 //
-// Shared folders (./folders.ts) still create their own tables: that code goes
-// with the move to no customer data on the server.
+// Kurviq keeps no customer data and no Google tokens here
+// (specs/2026-11-13-drive-collaboration-without-server-data.md): only feedback,
+// contact messages, short links and the statistics' counters.
 
 /** a prepared statement, as far as Kurviq uses it */
 export type D1Statement = {
@@ -60,6 +61,10 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS stats_daily (day TEXT NOT NULL, metric TEXT NOT NULL, dim TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (day, metric, dim)) WITHOUT ROWID`,
   // the statistics' writes that D1 committed: a write is never applied twice (./stats.ts flush)
   `CREATE TABLE IF NOT EXISTS stats_flushes (id TEXT PRIMARY KEY, at TEXT NOT NULL) WITHOUT ROWID`,
+  // migration: shared folders no longer go through the server; their registrations (with the
+  // owners' sealed sign-ins) and member lists are deleted (a no-op once they are gone)
+  `DROP TABLE IF EXISTS shared_folder_members`,
+  `DROP TABLE IF EXISTS shared_folders`,
 ];
 
 let ready: Promise<void> | null = null;

@@ -43,14 +43,14 @@ export type AuthEnv = GoogleEnv & {
   /** wrangler dev only (.dev.vars): this server's real address; wrangler dev gives the Worker the first route's (kurviq.com) */
   DEV_ORIGIN?: string;
   /**
-   * live sync: base64 of 32 random bytes, seals refresh tokens handed to a
-   * scene's Durable Object (outside the database); TOKEN_KEY_PREVIOUS: the
-   * one before a rotation, still accepted
+   * the retired live sync: base64 of 32 random bytes, unseals the refresh
+   * tokens its scene objects still hold while they are drained (./scene.ts),
+   * and seals a sign-out-everywhere revocation to retry; TOKEN_KEY_PREVIOUS:
+   * the one before a rotation. Unread once the follow-up release removed the
+   * scene objects (docs/relay/CONCEPT.md)
    */
   TOKEN_KEY?: string;
   TOKEN_KEY_PREVIOUS?: string;
-  /** base64 of 32 random bytes: derives the per-scene pseudonyms (required for live sync) */
-  PSEUDONYM_KEY?: string;
   /** "sign out everywhere" epochs (./account.ts), checked when a session's account is known */
   ACCOUNT?: DurableObjectNamespace;
 };
@@ -304,7 +304,7 @@ const tokenAnswer = (session: Session) => ({
 });
 
 // -----------------------------------------------------------------------------
-// live sync: refresh tokens sealed for one scene's Durable Object
+// the retired live sync: refresh tokens sealed for one scene's Durable Object
 // -----------------------------------------------------------------------------
 
 const tokenKeys = new Map<string, { id: string; key: CryptoKey }>();
@@ -351,9 +351,7 @@ export const sealSceneToken = async (env: AuthEnv, fileId: string, sub: string, 
   return `${current.id}.${exp}.${b64url(iv)}.${b64url(sealed)}`;
 };
 
-/** the expiry of a sealed scene token, readable without the key (0: not one) */
-export const sceneTokenExpiry = (sealed: string | null | undefined) => Number(String(sealed || "").split(".")[1]) || 0;
-
+/** a sealed scene token's content, or null (another file or account, run out, or not sealed with our keys) */
 export const unsealSceneToken = async (env: AuthEnv, sealed: string, fileId: string, sub: string): Promise<SceneToken | null> => {
   try {
     const [keyId, expText, iv, data] = sealed.split(".");
@@ -390,32 +388,6 @@ export const revokeAtGoogle = async (env: AuthEnv, refreshToken: string) => {
   } catch {
     return false;
   }
-};
-
-/**
- * A Drive watch channel's secret: derived from the file and channel id with a
- * server key, so the Worker checks a notification before any scene object is woken
- */
-export const watchSecret = async (env: AuthEnv, fileId: string, channelId: string) => {
-  const raw = bytesFromBase64(env.COOKIE_KEY);
-  const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-watch:${fileId}|${channelId}`)));
-  return b64url(mac).slice(0, 32);
-};
-
-/**
- * A person's name in one scene's file: derived from the account id, the
- * file id and a server secret, so it can't be linked across scenes (not even
- * by someone who holds both scenes' keys)
- */
-export const pseudonymOf = async (env: AuthEnv, sub: string, fileId: string) => {
-  if (!env.PSEUDONYM_KEY) {
-    throw new Error("PSEUDONYM_KEY is not set");
-  }
-  const secret = bytesFromBase64(env.PSEUDONYM_KEY);
-  const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`kurviq-pseudonym:${sub}:${fileId}`)));
-  return `p${b64url(mac).slice(0, 11)}`;
 };
 
 // -----------------------------------------------------------------------------

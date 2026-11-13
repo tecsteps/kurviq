@@ -186,8 +186,11 @@ decision or something only I can do (such as logging in).
    settings). Leave the ports as they are unless 3001 or 3101 is taken.
    For SCENES_APP_URL:
    - If Laravel Herd is installed (`which herd`): run `npm run setup:domain`
-     and keep SCENES_APP_URL=http://draw.test
+     and keep SCENES_APP_URL=https://draw.test
    - Otherwise set SCENES_APP_URL=http://localhost:3001
+   The app must run on a secure page (https, or localhost): live features
+   and encryption need the browser's Web Crypto, which plain-http pages
+   other than localhost don't have.
 
 4. Install: `npm run setup`. It clones excalidraw and excalidraw-mcp at
    pinned commits and builds them; this takes several minutes. Do not modify
@@ -225,7 +228,7 @@ decision or something only I can do (such as logging in).
    d. delete_scene {"name": "zz-install-check"} → removes it again
 
 8. Report back:
-   - the app URL (http://draw.test or http://localhost:3001), which I should
+   - the app URL (https://draw.test or http://localhost:3001), which I should
      open in my browser, and that I can sign in with Google there (scene list
      → Sign in with Google) to sync my scenes with Google Drive
    - which agent clients you registered the MCP server with, and that I have
@@ -240,7 +243,7 @@ decision or something only I can do (such as logging in).
 git clone https://github.com/tecsteps/kurviq.git && cd kurviq
 cp .env.example .env   # the defaults work
 npm run setup     # clone (if missing) + install + build upstream repos, link node_modules
-npm start         # scenes server (:3101) + app (http://draw.test)
+npm start         # scenes server (:3101) + app (https://draw.test)
 ```
 
 Config lives in `.env` (template: `.env.example`, `.env.local` overrides):
@@ -258,12 +261,21 @@ exactly as on kurviq.com. Signing in and refreshing the token need
 kurviq.com to be reachable; drawing offline keeps working.
 
 **Hostname `draw.test`:** the app runs on port 3001. Laravel Herd's nginx
-forwards http://draw.test to it, live reload included. This is set up once with
-`npm run setup:domain` (`herd proxy draw http://localhost:3001`) and undone with
-`herd unproxy draw`. Without Herd, use http://draw.localhost:3001, which
-works with no setup, and set `SCENES_APP_URL` to match. Browsers keep separate
-storage per hostname, so local scenes on http://localhost:3001 don't show up
-on draw.test. Everything synced to Google Drive does.
+forwards https://draw.test to it (with a certificate Herd trusts in the macOS
+keychain), live reload included. This is set up once with
+`npm run setup:domain` (`herd proxy draw http://localhost:3001 --secure`) and
+undone with `herd unproxy draw`. Without Herd, use http://localhost:3001 (or
+http://draw.localhost:3001), which browsers treat as secure, and set
+`SCENES_APP_URL` to match. A plain http://draw.test works for drawing, but
+without live features.
+
+**Moving browser scenes to another address:** browsers keep separate storage
+per address, so scenes kept only in the browser at http://draw.test don't show
+up on https://draw.test (scenes in Google Drive do, after signing in). To take
+them along: on the old address, main menu → "Move browser scenes…" → "Save to a
+file"; on the new one, the same dialog → "Read a file…". The file holds the
+scenes (pictures, comments), fonts and settings, never sign-ins; scenes whose
+name is taken on the new address are kept under a free name.
 
 ## Using it
 
@@ -294,7 +306,7 @@ click a scene to switch). Two panels open from there:
   it locally (then it's kept and pushed again).
 - **Discard local changes**: reload the scene from Drive
 
-Scenes have URLs: `http://draw.test/<scene name>`. Agent edits arrive
+Scenes have URLs: `https://draw.test/<scene name>`. Agent edits arrive
 within seconds through the sync (see README-AGENTS.md). The
 "Try Excalidraw+" banner is hidden via `scenes-plugin/src/scenes.scss`.
 

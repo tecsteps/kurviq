@@ -51,7 +51,7 @@ import {
 } from "./slides";
 import { scenesController, withSceneName } from "./controller";
 import { getAgentBaseline, getCheckpoint, setAgentBaseline, setCheckpoint } from "./storage";
-import { liveDifference } from "./online/liveMerge";
+import { editDifference } from "./editDiff";
 import { MAX_UPLOADS } from "./uploads";
 
 import type { ApiError } from "./api";
@@ -76,14 +76,6 @@ type BaselineOptions = {
 
 const presentationSettings = (command: EditOptions & { add?: any[]; update?: any[] }, appState: any, existing: readonly any[]) =>
   ({ ...appState, ...presentationEdit(command, appState, existing) });
-
-const livePresentationSettings = (command: EditOptions & { add?: any[]; update?: any[] }, live: LivePresentation, existing: readonly any[]) => {
-  const current = live.settings();
-  const change = presentationEdit(command, current, existing);
-  return change ? { ...current, ...change } : null;
-};
-
-type LivePresentation = { settings(): any };
 
 /** does the edit set the position of an existing slide frame (then the agent, not the grid, lays out the slides) */
 export const movesFrames = (before: readonly ExcalidrawElement[], updates: readonly any[] | undefined) => {
@@ -854,21 +846,6 @@ const moveLayers = (
   return { elements: list, problems };
 };
 
-/** Ordinary edits cannot claim changes on unrelated elements repaired by restore. */
-const editScope = (command: EditCommand | SceneEditCommand, elements: readonly any[], addedIds: readonly string[]) => {
-  if (command.restyle || command.reset || command.addTitleBlock) return undefined;
-  const ids = new Set([
-    ...addedIds,
-    ...(command.update ?? []).map((el) => el.id),
-    ...(command.add ?? []).map((el) => el.id),
-    ...(command.delete ?? []),
-  ].filter((id): id is string => typeof id === "string"));
-  for (const el of elements) {
-    if (ids.has(el.containerId) || ids.has(el.frameId) || ids.has(el.startBinding?.elementId) || ids.has(el.endBinding?.elementId)) ids.add(el.id);
-  }
-  return ids;
-};
-
 /** "name" in quotes, or Untitled */
 const sceneLabel = (name: string | null | undefined) => (name ? `"${name}"` : "Untitled");
 
@@ -878,7 +855,7 @@ const switchedScenes = (now: string | null, expected: string | null | undefined,
 const commentsReadOnly = () => new Error("Comments can't be changed in this scene now (it is read only here)");
 
 /** the edit is refused when the user changed the same elements meanwhile (unless onConflict is "overwrite") */
-const refuseClashes = (changes: ReturnType<typeof liveDifference>) => {
+const refuseClashes = (changes: ReturnType<typeof editDifference>) => {
   if (changes.clashes.length) {
     const conflicts = conflictList(changes.clashes.map((id) => ({ id, properties: changes.conflictFields[id] })));
     throw new Error(`The user changed ${conflicts} while your edit was applied: read the scene again and redo the edit, or retry with onConflict: "overwrite" (nothing was changed)`);
@@ -913,7 +890,7 @@ export const keepUserChanges = (
   if (sameVersions(base, current)) {
     return [...next];
   }
-  const changes = liveDifference(current as any, next as any, base as any, overwrite);
+  const changes = editDifference(current as any, next as any, base as any, overwrite);
   refuseClashes(changes);
   const changed = new Map(changes.map((el) => [el.id, el]));
   const now = new Map(current.map((el) => [el.id, el]));
@@ -934,22 +911,7 @@ export const keepUserChanges = (
   return merged;
 };
 
-type LiveSession = NonNullable<ReturnType<typeof scenesController.liveCurrent>>;
-
-/** the open scene is live: the agent's change goes out as its own batch (via "agent", with its id) */
-const applyToLiveScene = (
-  live: LiveSession,
-  command: EditCommand,
-  readState: readonly ExcalidrawElement[],
-  next: readonly ExcalidrawElement[],
-  addedIds: readonly string[],
-) => {
-  const changes = liveDifference(live.elements(), next.filter((el) => !el.isDeleted) as any, readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...next], addedIds));
-  refuseClashes(changes);
-  return live.agentEdit(changes, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
-};
-
-/** the open scene, not live: the edit goes onto the canvas as it is now (what the user did meanwhile stays) */
+/** the open scene: the edit goes onto the canvas as it is now (what the user did meanwhile stays) */
 const applyToCanvas = (
   api: ReturnType<typeof requireApi>,
   command: EditCommand,
@@ -962,11 +924,11 @@ const applyToCanvas = (
     appState: presentationSettings(command, api.getAppState(), readState) as any,
     captureUpdate: CaptureUpdateAction.NEVER, // agent changes do not enter the user history
   });
-  // the user sees what the agent changed (live scenes: liveSync shows it)
+  // the user sees what the agent changed
   showAgentChange(api, new Map(readState.map((el) => [el.id, el as any])), elements as any);
 };
 
-/** an agent's comments on the open scene: where it saves them (live sync, or its own save) */
+/** an agent's comments on the open scene: saved with it */
 const saveEditorComments = (changed: readonly SceneComment[]) => {
   for (const comment of changed) {
     if (!commentStore.change(comment, "editor")) {
@@ -984,7 +946,6 @@ export const editOpenScene = async (
   if (command.expectScene !== undefined && command.expectScene !== scene) {
     throw switchedScenes(scene, command.expectScene);
   }
-  const live = scenesController.liveCurrent();
   // what the edit is made on, as copies: the user may go on drawing while it is converted, and the
   // editor changes its element objects in place (the comparison base must not move with them)
   const readState = api.getSceneElementsIncludingDeleted().map((el) => structuredClone(el));
@@ -999,25 +960,16 @@ export const editOpenScene = async (
   const images = repairImages(elements, files);
   // comments checked before anything is applied: a bad operation changes nothing
   const commented = await agentComments(command, commentStore.editorList(), images.elements);
-  if (commented.changed.length && live && !live.commentsAllowed()) {
-    throw commentsReadOnly();
-  }
   // the edit belongs to the scene it was made on: the user may have switched meanwhile
   const now = sceneInfo().scene;
-  if (now !== scene || scenesController.liveCurrent() !== live) {
+  if (now !== scene) {
     throw switchedScenes(now, scene, " (nothing was changed)");
   }
   const target = requireApi();
   if (command.files && Object.keys(command.files).length) {
     target.addFiles(Object.values(command.files));
   }
-  /** applied, not confirmed by Kurviq's server yet (it goes out by itself) */
-  let pending: string | null = null;
-  if (live) {
-    pending = await applyToLiveScene(live, command, readState, images.elements, edit.addedIds);
-  } else {
-    applyToCanvas(target, command, readState, images.elements);
-  }
+  applyToCanvas(target, command, readState, images.elements);
 
   saveEditorComments(commented.changed);
   await editorYield();
@@ -1029,7 +981,6 @@ export const editOpenScene = async (
     ...edit,
     ...images.info,
     ...commented.info,
-    ...(pending ? { pending } : {}),
     elements: after,
   };
 };
@@ -1039,7 +990,7 @@ type DetachedEdit = SceneEditCommand | Extract<LocalSceneCommand, { type: "local
 
 /**
  * An agent's edit of a scene that is not (or not only) the open canvas
- * (Drive, live and local-only scenes): its fonts registered, the edit applied
+ * (Drive and local-only scenes): its fonts registered, the edit applied
  * to its elements (`base`), pictures checked and repaired, the template copies
  * on the slides. Where it is read from and written to is the caller's part.
  */
@@ -1098,15 +1049,6 @@ export const editSceneOnDrive = async (
   command: SceneEditCommand,
   convert: (elements: any[]) => Promise<any[]>,
 ) => {
-  const live = await scenesController.liveSessionFor(command.name).catch((error) => {
-    if (error?.notLive) {
-      return null;
-    }
-    throw error;
-  });
-  if (live) {
-    return editLiveScene(live, command, convert);
-  }
   for (let attempt = 1; ; attempt++) {
     const latest = await scenesApi.load(command.name);
     const data = JSON.parse(latest.json);
@@ -1155,39 +1097,6 @@ const agentComments = async (command: EditOptions, comments: unknown, elements: 
  * sha / commit as well for pre-rename MCP servers (remove after 2027-02).
  */
 const versionNames = (md5: string, driveRevision: string | null) => ({ md5, driveRevision, sha: md5, commit: driveRevision });
-
-/**
- * A live scene (saved through its Durable Object): the edit is applied to
- * its live state in this tab (the canvas if it is open) and sent as the
- * agent's change; it never writes Drive directly.
- */
-const editLiveScene = async (
-  live: NonNullable<Awaited<ReturnType<typeof scenesController.liveSessionFor>>>,
-  command: SceneEditCommand,
-  convert: (elements: any[]) => Promise<any[]>,
-) => {
-  const data = JSON.parse(live.sceneJson());
-  const readState = structuredClone(live.elements());
-  const result = await editSceneData(command, data, readState, convert);
-  const { elements } = result;
-  // comments checked before anything is sent: a bad operation changes nothing
-  const commented = await agentComments(command, live.commentList(), elements);
-  if (commented.changed.length && !live.commentsAllowed()) {
-    throw commentsReadOnly();
-  }
-  // against what the edit was made on: what the user did meanwhile stays
-  const changed = liveDifference(live.elements(), elements, readState as any, command.onConflict === "overwrite", editScope(command, [...readState, ...elements], result.edit.addedIds));
-  refuseClashes(changed);
-  const pending = await live.agentEdit(changed, Object.values(command.files || {}), command.requestId, livePresentationSettings(command, live, readState));
-  for (const comment of commented.changed) {
-    if (!live.changeComment(comment)) {
-      throw commentsReadOnly();
-    }
-  }
-  const json = sceneFileJson(command, data, elements, result.files, commented.comments);
-  const revision = await scenesController.rememberLiveSnapshot(live, { agent: true });
-  return { ...result.edit, ...result.info, ...commented.info, ...sceneSize(json, elements), elements, ...versionNames(revision, revision), changed: changed.length > 0 || commented.changed.length > 0, ...(pending ? { pending } : {}) };
-};
 
 // -----------------------------------------------------------------------------
 // local-only scenes: they exist only in the user's browser (never in Drive),

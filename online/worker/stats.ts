@@ -8,7 +8,7 @@
 //   page loads        navigations to the app's HTML (/, /<scene>, /s/…, /pub/…,
 //                     /features) and the plain pages (imprint, privacy,
 //                     terms, contact): by entry, country, device class
-//   server events     live sync tickets and renewals, agent tool calls,
+//   server events     relay tickets, agent tool calls,
 //                     public scene reads, feedback and contact messages,
 //                     sign-ins
 //
@@ -201,11 +201,17 @@ export const pageStats = (request: Request, response: Response, env: StatsEnv, c
   });
 };
 
-/** a public scene read through the Worker (/api/public/<fileId>: the viewer and link previews; version polls not counted) */
+/**
+ * A public scene's link opened (/s/… or /pub/… of a scene shared "anyone with
+ * the link": the Worker looks up its name) or its name asked for
+ * (/api/public/<fileId>); version polls not counted. The viewer reads the
+ * content from Drive in the browser: that never reaches the Worker.
+ */
 export const publicReadStats = (request: Request, env: StatsEnv, ctx: ExecutionContext) => {
   const url = new URL(request.url);
-  const fileId = /^\/api\/public\/([^/]+)$/.exec(url.pathname)?.[1] ?? "";
-  if (request.method === "GET" && FILE_ID_RE.test(fileId) && !isBot(request.headers.get("User-Agent") ?? "")) {
+  const fileId = /^\/api\/public\/([^/]+)$/.exec(url.pathname)?.[1];
+  const pageOrName = fileId === undefined ? !url.pathname.startsWith("/api/") : FILE_ID_RE.test(fileId);
+  if (request.method === "GET" && pageOrName && !isBot(request.headers.get("User-Agent") ?? "")) {
     countStat(env, ctx, "public_reads");
   }
 };
@@ -241,10 +247,10 @@ export const mcpStats = (env: StatsEnv, ctx: ExecutionContext, names: string[]) 
 export const feedbackStats = (env: StatsEnv, ctx: ExecutionContext, source: "app" | "agent") => countStat(env, ctx, "feedback", source);
 
 /**
- * Responses of the Worker's own routes worth counting: live sync tickets
- * (a tab connects to a live scene) and renewals (every 10 minutes while
- * connected), and completed sign-ins. Only for kurviq.com's own pages (the
- * local install is not counted).
+ * Responses of the Worker's own routes worth counting: relay tickets (a tab
+ * joins a Drive scene's relay to work on it together, docs/relay/CONCEPT.md;
+ * reconnects ask again) and completed sign-ins. Only for kurviq.com's own
+ * pages (the local install is not counted).
  */
 export const routeStats = (request: Request, response: Response, env: StatsEnv, ctx: ExecutionContext) => {
   if (!statsEnabled(env) || response.status >= 400) {
@@ -259,26 +265,10 @@ export const routeStats = (request: Request, response: Response, env: StatsEnv, 
     }
     return;
   }
-  const scene = /^\/scene\/([^/]+)\/(ticket|renew)$/.exec(url.pathname);
-  if (!scene || request.method !== "POST" || response.status !== 200 || !FILE_ID_RE.test(scene[1]) || request.headers.get("Origin") !== url.origin) {
-    return;
+  const relay = /^\/relay\/([^/]+)\/ticket$/.exec(url.pathname);
+  if (relay && request.method === "POST" && response.status === 200 && FILE_ID_RE.test(relay[1]) && request.headers.get("Origin") === url.origin) {
+    recordStats(env, ctx, { c: [["live_sessions", "all", 1]], s: [relay[1]] });
   }
-  if (scene[2] === "renew") {
-    recordStats(env, ctx, { c: [["live_minutes", "all", 10]], s: [scene[1]] });
-    return;
-  }
-  // a ticket only counts when live sync is on for the scene
-  const copy = response.clone();
-  ctx.waitUntil(
-    copy
-      .json()
-      .then((body: any) => {
-        if (body?.enabled === true) {
-          recordStats(env, ctx, { c: [["live_sessions", "all", 1]], s: [scene[1]] });
-        }
-      })
-      .catch(() => {}),
-  );
 };
 
 // -----------------------------------------------------------------------------

@@ -27,10 +27,10 @@ agent ──MCP──> scenes-mcp ──HTTP──> scenes-server ──relay─
 
 ```bash
 cd /path/to/kurviq
-npm start            # scenes server on :3101 + app on http://draw.test
+npm start            # scenes server on :3101 + app on https://draw.test
 ```
 
-Open **http://draw.test** in your browser and keep it open: agents work
+Open **https://draw.test** in your browser and keep it open: agents work
 through that tab. **Sign in with Google** there (scene list) to sync your
 scenes with Google Drive; sign-in goes through kurviq.com
 (`KURVIQ_AUTH_URL`). PDFs, and pictures when no tab is open, are rendered
@@ -98,7 +98,7 @@ sessions.
 
 ## Scene URLs
 
-`http://draw.test/<scene name>` opens that scene, e.g. `/Madsack` or
+`https://draw.test/<scene name>` opens that scene, e.g. `/Madsack` or
 `/Agent%20-%20House`. If the scene doesn't exist yet, an empty local scene with
 that name is created, and it fills in once an agent saves it. The
 URL follows whenever you switch scenes, and back/forward work.
@@ -182,7 +182,7 @@ Your browser is the source of truth for your own edits and works offline. Each s
 | Message | Fix |
 |---|---|
 | `Scenes server not reachable at http://localhost:3101` | Run `npm start` (or `npm run start:server`). |
-| Kurviq is not open | Open the app (`SCENES_APP_URL`, e.g. http://draw.test) in your browser and keep the tab open. |
+| Kurviq is not open | Open the app (`SCENES_APP_URL`, e.g. https://draw.test) in your browser and keep the tab open. |
 | `No browser tab is open and no Chrome found` | Pictures without an open tab (and PDFs) need Chrome or another Chromium browser. Set `CHROME_PATH` in `.env`, or open the app. |
 | `Checkpoint "…" not found` | Drafts live in the open tab and are gone when it reloads. Call `create_view` again. |
 | Scenes don't sync / Google Drive is not connected | Sign in with Google in the app (scene list). Sign-in goes through kurviq.com (`KURVIQ_AUTH_URL`), which must be reachable. |

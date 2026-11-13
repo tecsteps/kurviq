@@ -298,7 +298,9 @@ const readBody = (req) =>
 /** browser origins allowed to use this server: the app (any name it runs under locally) */
 const allowedOrigins = () => {
   const port = env.VITE_APP_PORT || 3001;
-  return new Set([APP_URL, `http://localhost:${port}`, `http://127.0.0.1:${port}`, ...ALLOWED_ORIGINS_EXTRA]);
+  // the app's address over http and https (while moving from http://draw.test to https://draw.test, both are used)
+  const otherScheme = APP_URL.startsWith("https://") ? APP_URL.replace(/^https:/, "http:") : APP_URL.replace(/^http:/, "https:");
+  return new Set([APP_URL, otherScheme, `http://localhost:${port}`, `http://127.0.0.1:${port}`, ...ALLOWED_ORIGINS_EXTRA]);
 };
 
 /** host names this server answers to (anything else: DNS rebinding) */

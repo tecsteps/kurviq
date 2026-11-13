@@ -5,8 +5,8 @@ description: Draw, co-edit, look at and save diagrams in the user's local Kurviq
 
 # Kurviq (local): how to work with the user's drawings
 
-The user runs Kurviq, a local Excalidraw app (http://draw.test), with **scenes**
-(named drawings, URL `http://draw.test/<scene>`) kept in their browser and,
+The user runs Kurviq, a local Excalidraw app (https://draw.test), with **scenes**
+(named drawings, URL `https://draw.test/<scene>`) kept in their browser and,
 if they signed in with Google, synced with their Google Drive. The MCP
 server `kurviq-local` gives you tools for it. The user is often **looking at
 the app while you work** and edits by hand in between.
@@ -197,7 +197,7 @@ push now.
   after about 2 minutes.
 - "Scenes server not reachable": the user runs `npm start` in the project
   folder (kurviq).
-- "Kurviq is not open": ask the user to open the app (http://draw.test) in
+- "Kurviq is not open": ask the user to open the app (https://draw.test) in
   their browser and keep the tab open, then try again.
 - "Google Drive is not connected": the user can sign in with Google in the
   app (scene list → Sign in with Google); until then, work with local-only

@@ -1,0 +1,69 @@
+// the pen bar (penUI.tsx): who edits the open Drive scene, and what this
+// person can do about it. A small card under the toolbar, wrapping on phones.
+.excalidraw .kq-pen {
+  position: fixed;
+  left: 50%;
+  top: 4.25rem;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: max-content;
+  max-width: calc(100% - 2rem);
+  font-size: 0.8rem;
+
+  &__card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.6rem;
+    padding: 0.4rem 0.5rem 0.4rem 0.75rem;
+    border: 1px solid var(--default-border-color);
+    border-radius: var(--border-radius-lg, 0.5rem);
+    background: var(--island-bg-color);
+    box-shadow: var(--shadow-island);
+    color: var(--text-primary-color);
+  }
+
+  &__who {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  &__dot {
+    flex: none;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+  }
+
+  &__muted {
+    color: var(--color-gray-60, #6b6b75);
+  }
+
+  &__actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  // ghost: a quiet action (Stop editing, Keep, OK)
+  .scenes-btn.kq-pen__ghost {
+    border-color: transparent;
+    background: transparent;
+  }
+
+  &__notice {
+    align-self: center;
+  }
+}
+
+@media (max-width: 600px) {
+  .excalidraw .kq-pen {
+    top: auto;
+    bottom: 4.5rem;
+  }
+}

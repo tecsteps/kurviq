@@ -4,8 +4,9 @@
 // Deploy: `npm run deploy:online` in the project root. Secrets (set once with
 // `npm run secrets -- <NAME>`, online/secrets.mjs says what each one seals):
 // GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY, COOKIE_KEY (COOKIE_KEY_PREVIOUS while
-// rotating it), and for live sync TOKEN_KEY, PSEUDONYM_KEY. The Google client
-// id and other public values: ./google.json.
+// rotating it), and until the retired live sync is drained TOKEN_KEY
+// (PSEUDONYM_KEY is no longer read). The Google client id and other public
+// values: ./google.json.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kurviq",
@@ -26,8 +27,13 @@
   "durable_objects": {
     "bindings": [
       { "name": "PAIRING", "class_name": "Pairing" },
-      // live sync (docs/live-sync): one per Drive scene, one per account
+      // working together on a Drive scene (docs/relay/CONCEPT.md): one memory-only relay per Drive file
+      // (no storage, no hibernation)
+      { "name": "RELAY", "class_name": "SceneRelay" },
+      // the retired live sync's scene objects: drain only (worker/scene.ts); removed by the follow-up
+      // release with a deleted_classes migration once the drain is confirmed
       { "name": "SCENE", "class_name": "SceneRoom" },
+      // per account: the sign-out-everywhere epoch (and, until drained, the old scene objects' ids)
       { "name": "ACCOUNT", "class_name": "AccountGuard" },
       // the fake Google for local tests (only used with FAKE_GOOGLE=1; a stub in production bundles)
       { "name": "FAKE_GOOGLE_STORE", "class_name": "FakeGoogle" },
@@ -38,7 +44,10 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Pairing"] },
     { "tag": "v2", "new_sqlite_classes": ["SceneRoom", "AccountGuard", "FakeGoogle"] },
-    { "tag": "v3", "new_sqlite_classes": ["Stats"] }
+    { "tag": "v3", "new_sqlite_classes": ["Stats"] },
+    // the relay keeps nothing: its code never calls storage (relay.test.ts runs it with a storage that
+    // throws). Declared as a SQLite class only because Cloudflare's free plan allows no other kind.
+    { "tag": "v4", "new_sqlite_classes": ["SceneRelay"] }
   ],
   // bug reports and change requests (worker/feedback.ts), usage statistics (stats_hourly, stats_daily: worker/stats.ts)
   "d1_databases": [
@@ -46,9 +55,6 @@
   ],
   "vars": {
     "CANONICAL_HOST": "kurviq.com",
-    // live sync: "off", "all", or the accounts (emails) that pilot it; scenes
-    // already marked kurviqSync stay live for everyone (docs/live-sync/PROTOCOL.md)
-    "LIVE_SYNC": "fabian.wesner@gmail.com",
     // usage statistics (worker/stats.ts): "on", anything else = off; off in wrangler dev unless STATS_DEV=1
     "STATS_ENABLED": "on"
   },

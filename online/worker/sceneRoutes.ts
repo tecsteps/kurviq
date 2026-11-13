@@ -1,41 +1,28 @@
-// Live sync: the Worker's routes in front of the scene Durable Objects
-// (./scene.ts) and the account guards (./account.ts). docs/live-sync/PROTOCOL.md §3.
+// Working together on a Drive scene (docs/relay/CONCEPT.md): the Worker's
+// routes in front of the scenes' memory-only relays (./relay.ts), the drain
+// of the retired live sync (./scene.ts) and the account guards (./account.ts).
 //
-//   POST /scene/<fileId>/ticket     connect ticket (60 s, single use) + access proof (15 min)
-//   GET  /scene/<fileId>/live       the tab's WebSocket (?ticket=…)
-//   POST /scene/<fileId>/renew      a new access proof (every 10 minutes, and on renew-now)
-//   POST /scene/<fileId>/reconcile  a one-time access token for an outside-change merge (need-token)
-//   POST /drive/notify              Drive's push notifications (files.watch)
-//   POST /auth/logout-all           sign out everywhere
+//   POST /relay/<fileId>/ticket  a short-lived signed ticket for the scene's relay, after
+//                                asking Drive what the person may do (edit / comment / read)
+//   GET  /relay/<fileId>/live    the tab's WebSocket to the relay (?ticket=…)
+//   POST /live/drain             the retired live sync: the signed-in account's old scene
+//                                objects save what they still hold to Drive, then delete everything
+//   POST /drive/notify           Drive's push notifications for the retired live sync: answered, ignored
+//   POST /auth/logout-all        sign out everywhere
 //
-// Who someone is and what they may do is decided here, with Google, and
-// sealed into the ticket and proof: the scene object never trusts a tab's
-// own claims. All POSTs take the sign-in cookie, or { session } from the
+// Nothing is written here: Google's token comes from the encrypted session
+// cookie (or the local install's sealed session) for the request and is
+// forgotten after it. All POSTs take the cookie, or { session } from the
 // local install (CORS for local origins, like /auth/token).
 
 import {
-  KEY_PROPERTY,
-  LIVE_MARKER,
-  LIVE_PROTOCOL,
-  PROOF_VALID_MS,
-  TICKET_VALID_MS,
-  TOKEN_LEASE_MS,
-  keyIdOf,
-  keyProperty,
-  parseKeyProperty,
-} from "../../scenes-plugin/src/online/liveProtocol";
-
-import {
   accountEpochOf,
-  b64url,
   clearSessionCookie,
   cookieSession,
   devGate,
-  watchSecret,
   freshSession,
   isLocalInstall,
   localSession,
-  pseudonymOf,
   revokeAtGoogle,
   seal,
   sealLocalSession,
@@ -44,29 +31,29 @@ import {
   unseal,
 } from "./auth";
 import type { AuthEnv, Session } from "./auth";
-import { driveCall, driveUrls, getFile, patchFile, problemOf, readLimited } from "./driveApi";
-import type { Claims } from "./scene";
-import type { Role } from "../../scenes-plugin/src/online/liveProtocol";
+import { getFile, patchFile, problemOf, readLimited } from "./driveApi";
+import type { DriveAnswer } from "./driveApi";
+import { CLAIMS_HEADER } from "./relay";
+import type { RelayClaims, RelayRole } from "./relayRoom";
 import { authorKey } from "../../scenes-mcp/sceneComments.mjs";
-import { folderFileAccess } from "./folders";
-import type { FoldersEnv } from "./folders";
+import { KEY_PROPERTY, LIVE_MARKER, keyIdOf, keyProperty, newKey, parseKeyProperty } from "../../scenes-plugin/src/online/sceneKey";
 
 export type SceneRoutesEnv = AuthEnv & {
+  /** the retired live sync's scene objects (drain only, ./scene.ts) */
   SCENE: DurableObjectNamespace;
   ACCOUNT: DurableObjectNamespace;
-  /** "off" | "all" | comma-separated emails (PROTOCOL §2) */
-  LIVE_SYNC?: string;
+  /** one memory-only relay per Drive file (./relay.ts) */
+  RELAY: DurableObjectNamespace;
 };
 
 const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
-/** route bodies: a tab id, a proof, the local install's sealed session */
+/** route bodies: a few flags, the local install's sealed session */
 const ROUTE_BODY_BYTES = 32 * 1024;
-const TICKET = "kq_scene_ticket";
-const PROOF = "kq_scene_proof";
-/** while Google is unreachable, proofs are extended at most this long after the last real check */
-const OUTAGE_GRACE_MS = 2 * 3_600_000;
-const WATCH_MS = 24 * 3_600_000;
-const FILE_FIELDS = "id,name,trashed,ownedByMe,headRevisionId,md5Checksum,modifiedTime,capabilities(canEdit,canComment),appProperties";
+const TICKET = "kq_relay_ticket";
+export const TICKET_VALID_MS = 60_000;
+const FILE_FIELDS = "id,name,trashed,capabilities(canEdit,canComment),appProperties";
+/** the people's colors (pointers, the pen bar): the same person always gets the same */
+export const PEOPLE_COLORS = ["#7048e8", "#1971c2", "#0c8599", "#2f9e44", "#e8590c", "#c2255c", "#5f3dc4", "#364fc7"];
 
 export type Ctx = {
   request: Request;
@@ -77,9 +64,10 @@ export type Ctx = {
   local: boolean;
   body: any;
   cookies: string[];
-  /** a renewal: the account's index entries of this scene are kept fresh */
-  touch?: string;
 };
+
+/** a relay ticket's content (sealed: only the Worker reads it) */
+export type RelayTicket = RelayClaims & { kind: "relay"; fileId: string; exp: number };
 
 export const answer = (ctx: Ctx, status: number, body: unknown) => {
   const headers = new Headers({ "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -96,14 +84,9 @@ export const fail = (ctx: Ctx, status: number, code: string, error: string) => a
 const sceneStub = (env: SceneRoutesEnv, fileId: string) => env.SCENE.get(env.SCENE.idFromName(fileId));
 const accountStub = (env: SceneRoutesEnv, sub: string) => env.ACCOUNT.get(env.ACCOUNT.idFromName(sub));
 
-const toScene = async (env: SceneRoutesEnv, fileId: string, path: string, body: Record<string, unknown>) => {
-  const res = await sceneStub(env, fileId).fetch(`https://scene${path}`, { method: "POST", body: JSON.stringify({ fileId, ...body }) });
-  return (await res.json().catch(() => ({}))) as any;
-};
-
 /** the account's revocation epoch; throws when the guard can't be asked (callers answer 503: fail closed) */
-const accountEpoch = async (env: SceneRoutesEnv, sub: string, touch?: string) => {
-  const epoch = await accountEpochOf(env, sub, touch ? { method: "POST", body: JSON.stringify({ fileId: touch, touch: true }) } : undefined);
+const accountEpoch = async (env: SceneRoutesEnv, sub: string) => {
+  const epoch = await accountEpochOf(env, sub);
   if (epoch === null) {
     throw Object.assign(new Error("account guard unavailable"), { status: 503 });
   }
@@ -134,9 +117,9 @@ export const signedIn = async (ctx: Ctx): Promise<{ session: Session; sealedLoca
     }
     return fail(ctx, 401, "signed-out", "The sign-in has expired");
   }
-  // live sync needs the account's id and the sign-in's time (sign out everywhere): older sessions sign in again
+  // the account's id and the sign-in's time (sign out everywhere): older sessions sign in again
   if (!fresh.session.sub || !fresh.session.iat) {
-    return fail(ctx, 401, "sign-in-again", "Sign in again to use live sync");
+    return fail(ctx, 401, "sign-in-again", "Sign in again to work together on scenes");
   }
   let sealedLocal: string | undefined;
   if (fresh.renewed) {
@@ -146,7 +129,7 @@ export const signedIn = async (ctx: Ctx): Promise<{ session: Session; sealedLoca
       ctx.cookies.push(await sessionCookie(ctx.request, ctx.env, fresh.session));
     }
   }
-  const epoch = await accountEpoch(ctx.env, fresh.session.sub, ctx.touch);
+  const epoch = await accountEpoch(ctx.env, fresh.session.sub);
   if (epoch && (fresh.session.iat ?? 0) < epoch) {
     if (!ctx.local) {
       ctx.cookies.push(clearSessionCookie(ctx.request));
@@ -156,244 +139,126 @@ export const signedIn = async (ctx: Ctx): Promise<{ session: Session; sealedLoca
   return { session: fresh.session, sealedLocal };
 };
 
-/** live sync for this person and file (PROTOCOL §2): the pilot switch, or a file already marked */
-const liveEnabled = (env: SceneRoutesEnv, email: string, appProperties: Record<string, string> | undefined) => {
-  if (appProperties?.kurviqSync === LIVE_MARKER) {
-    return true;
-  }
-  const value = (env.LIVE_SYNC || "off").trim().toLowerCase();
-  return value === "all" || value.split(",").map((item) => item.trim()).includes(email.toLowerCase());
-};
-
-const sceneName = (file: any) => String(file?.name ?? "").replace(/\.excalidraw$/, "");
-
-/**
- * A Drive watch while someone is connected: made with this person's access,
- * reserved by the scene object (one at a time), the old channel stopped.
- */
-const keepWatch = async (ctx: Ctx, fileId: string, token: string, watch: { id: string; token: string } | null | undefined) => {
-  if (!watch) {
-    return;
-  }
-  const api = driveUrls(ctx.env).api;
-  const made = await driveCall(`${api}/files/${fileId}/watch?supportsAllDrives=true`, token, {
-    method: "POST",
-    json: {
-      id: watch.id,
-      type: "web_hook",
-      address: `${ctx.env.DEV_ORIGIN || ctx.url.origin}/drive/notify`,
-      token: watch.token,
-      expiration: Date.now() + WATCH_MS,
-    },
-  });
-  if (made.status !== 200 || !made.data?.resourceId) {
-    return;
-  }
-  const set = await toScene(ctx.env, fileId, "/watch-set", {
-    id: watch.id,
-    resourceId: made.data.resourceId,
-    expiration: Number(made.data.expiration) || Date.now() + WATCH_MS,
-  });
-  if (set.stop) {
-    await driveCall(`${api}/channels/stop`, token, { method: "POST", json: set.stop });
-  }
-};
-
-/**
- * The scene's key: the property on the file, or (an editor, none yet) a new
- * one written under the scene object's lease, read again just before
- * writing. A copy's key (another file id) counts as none.
- */
-const sceneKey = async (ctx: Ctx, fileId: string, token: string, file: any, role: Role, sub: string) => {
-  const parsed = await parseKeyProperty(file.appProperties?.[KEY_PROPERTY], fileId);
-  const found = parsed && !parsed.copy ? parsed : null;
-  const prep = await toScene(ctx.env, fileId, "/prepare", { found: found?.keyId ?? null, viewer: role !== "edit", trashed: !!file.trashed, sub });
-  const watch = prep.watch;
-  switch (prep.key) {
-    case "ok":
-      return found ? { key: found.key, keyId: found.keyId, watch } : { code: "key-missing", watch };
-    case "none":
-      return { code: "no-key-yet", watch };
-    case "missing":
-    case "changed":
-      return { code: `key-${prep.key}`, watch };
-    case "held":
-      return { code: "key-busy", watch };
-    case "lease":
-      break;
-    default:
-      return { code: "scene-error", watch };
-  }
-  return finishSceneKey(ctx, fileId, token, prep, watch);
-};
-
-const finishSceneKey = async (ctx: Ctx, fileId: string, token: string, prep: any, watch: { id: string; token: string } | null | undefined) => {
-  // under the lease: maybe an earlier attempt wrote one meanwhile
-  const again = await getFile(ctx.env, token, fileId, "appProperties");
-  if (again.status !== 200) {
-    return { code: problemOf(again) === "unreachable" ? "google-unreachable" : "no-access", watch };
-  }
-  const existing = await parseKeyProperty(again.data?.appProperties?.[KEY_PROPERTY], fileId);
-  let key: string;
-  let keyId: string;
-  if (existing && !existing.copy) {
-    ({ key, keyId } = existing);
-  } else {
-    key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))); // NOSONAR S7758: base64 needs one binary character per random byte
-    keyId = await keyIdOf(key);
-    const written = await patchFile(ctx.env, token, fileId, {
-      appProperties: { [KEY_PROPERTY]: keyProperty(keyId, fileId, key), kurviqSync: LIVE_MARKER },
-    });
-    if (written.status !== 200) {
-      return { code: problemOf(written) === "unreachable" ? "google-unreachable" : "no-access", watch };
-    }
-  }
-  const done = await toScene(ctx.env, fileId, "/key-done", { lease: prep.lease, keyId });
-  return done.ok ? { key, keyId, watch } : { code: "key-busy", watch };
-};
-
-/** what the scene object gets about this person (sealed into ticket / proof) */
-/** Drive's word on a file: edit, comment (Drive's commenters: comments only) or read; a shared folder's role first */
-const roleOf = (access: { role: "edit" | "read" | null }, file: any): Role => {
-  if (access.role) {
-    return access.role;
-  }
-  if (file.capabilities?.canEdit) {
+/** Drive's word on a file: edit, comment (Drive's commenters: comments only) or read */
+export const roleOf = (file: any): RelayRole => {
+  if (file?.capabilities?.canEdit) {
     return "edit";
   }
-  return file.capabilities?.canComment ? "comment" : "read";
+  return file?.capabilities?.canComment ? "comment" : "read";
 };
 
-const claimsOf = async (ctx: Ctx, kind: Claims["kind"], fileId: string, session: Session, file: any, role: Role, keyId: string | null) => {
-  const now = Date.now();
-  const claims: Claims = {
-    kind,
-    fileId,
-    sub: session.sub!,
-    person: session.user.name ?? session.user.email.split("@")[0],
-    role,
-    pseudonym: await pseudonymOf(ctx.env, session.sub!, fileId),
-    ck: await authorKey(session.user.email),
-    head: { revision: file.headRevisionId ?? null, md5: file.md5Checksum ?? null, at: Date.parse(file.modifiedTime ?? "") || null },
-    keyId,
-    exp: now + (kind === "ticket" ? TICKET_VALID_MS : PROOF_VALID_MS),
-    checkedAt: now,
-    iat: session.iat ?? 0,
-    protocol: LIVE_PROTOCOL,
-    owner: file.ownedByMe === true,
-  };
-  if (kind === "ticket") {
-    claims.nonce = b64url(crypto.getRandomValues(new Uint8Array(16)));
-  }
-  return claims;
-};
-
-/** the refresh token the scene object saves this person's changes with: their own, or a shared folder owner's */
-const sealedToken = (ctx: Ctx, fileId: string, session: Session, refresh: string) =>
-  sealSceneToken(ctx.env, fileId, session.sub!, refresh, session.iat ?? 0, Date.now() + TOKEN_LEASE_MS);
-
-type DriveAccess = {
-  /** access token for Drive calls about the file */
-  token: string;
-  /** refresh token for the scene object's saves */
-  refresh: string;
-  /** a shared folder's scene: the role in the folder (else Drive's canEdit decides) */
-  role: "edit" | "read" | null;
-};
+/** the same person always gets the same color */
+export const colorOf = (who: string) => PEOPLE_COLORS[(Number.parseInt(who.slice(0, 8), 16) || 0) % PEOPLE_COLORS.length];
 
 /**
- * Whose access reaches the file: the person's own, or for a scene in a folder
- * shared with them (the tab names the folder) its owner's, after checking the
- * person against the folder's permissions (./folders.ts). Or the answer to give.
+ * Why Drive didn't give the file: a rate limit or an outage is "try again"
+ * (503), never "no access"; an expired token is a sign-in problem (401);
+ * only a real refusal (or drive.file not granted: "not found") is 403.
  */
-const driveAccess = async (ctx: Ctx, fileId: string, session: Session): Promise<DriveAccess | Response> => {
-  const folderId = typeof ctx.body.folderId === "string" ? ctx.body.folderId : null;
-  if (!folderId) {
-    return { token: session.a, refresh: session.r, role: null };
-  }
-  const access = await folderFileAccess(ctx, ctx.env as FoldersEnv, folderId, fileId, session);
-  if (access instanceof Response) {
-    return access;
-  }
-  return { token: access.token, refresh: access.refresh, role: access.role === "writer" ? "edit" : "read" };
-};
-
-/** the file as this person sees it: through a shared folder it is never theirs */
-const asSeen = (file: any, access: DriveAccess) => (access.role === null ? file : { ...file, ownedByMe: false });
-
-const fileProblem = (ctx: Ctx, file: { status: number; data: any; text: string }) => {
+export const fileProblem = (ctx: Ctx, file: DriveAnswer) => {
   const problem = problemOf(file);
   if (problem === "unreachable" || problem === "rate-limited") {
-    return fail(ctx, 503, "google-unreachable", "Google Drive is not reachable");
+    return fail(ctx, 503, "google-unreachable", "Google Drive is not reachable: try again in a moment");
   }
   if (problem === "token") {
     return fail(ctx, 401, "signed-out", "The sign-in has expired");
   }
-  // drive.file: a file Kurviq never opened for this person reads as "not found" (the Picker grants it)
-  return answer(ctx, 403, { enabled: false, code: "no-access", error: "No access to this file through Kurviq" });
+  return fail(ctx, 403, "no-access", "No access to this file through Kurviq");
+};
+
+/**
+ * The scene's key from the file; an editor asks for a new one (`create`)
+ * only while holding the pen, so two editors never make two keys at once.
+ * Read again after writing: what Drive has is the key.
+ */
+const sceneKeyOf = async (ctx: Ctx, fileId: string, token: string, file: any, create: boolean): Promise<{ key: string; keyId: string } | null> => {
+  const found = await parseKeyProperty(file.appProperties?.[KEY_PROPERTY], fileId);
+  if (found && !found.copy) {
+    return { key: found.key, keyId: found.keyId };
+  }
+  if (!create) {
+    return null;
+  }
+  const key = newKey();
+  const keyId = await keyIdOf(key);
+  const written = await patchFile(ctx.env, token, fileId, { appProperties: { [KEY_PROPERTY]: keyProperty(keyId, fileId, key) } });
+  if (written.status !== 200) {
+    return null;
+  }
+  const again = await getFile(ctx.env, token, fileId, "appProperties");
+  const stored = await parseKeyProperty(again.data?.appProperties?.[KEY_PROPERTY], fileId);
+  return stored && !stored.copy ? { key: stored.key, keyId: stored.keyId } : null;
+};
+
+/**
+ * A file the retired live sync saved (marked kurviqSync): its old scene
+ * object saves what it still holds and deletes everything, with the token
+ * of this request (an editor's), before anyone works on the file.
+ */
+const drainMarked = async (ctx: Ctx, fileId: string, session: Session, file: any, role: RelayRole) => {
+  if (file.appProperties?.kurviqSync !== LIVE_MARKER || role !== "edit") {
+    return;
+  }
+  const result = await drainScene(ctx.env, fileId, session.sub!, session.a).catch(() => null);
+  if (result?.state === "empty" || result?.state === "drained") {
+    await accountStub(ctx.env, session.sub!)
+      .fetch("https://account/scene-drained", { method: "POST", body: JSON.stringify({ fileId }) })
+      .catch(() => null);
+  }
+};
+
+export type DrainResult = { fileId: string; state: "empty" | "drained" | "kept"; saved?: "version" | "copy"; reason?: string };
+
+/** one old scene object: save what it holds to Drive (with this token, or one it still holds), then delete everything */
+const drainScene = async (env: SceneRoutesEnv, fileId: string, sub: string, token: string): Promise<DrainResult> => {
+  const res = await sceneStub(env, fileId).fetch("https://scene/drain", { method: "POST", body: JSON.stringify({ fileId, sub, token }) });
+  const body = (await res.json().catch(() => ({}))) as Partial<DrainResult>;
+  return { fileId, state: body.state ?? "kept", ...(body.saved ? { saved: body.saved } : {}), ...(body.reason ? { reason: body.reason } : {}) };
 };
 
 // -----------------------------------------------------------------------------
 // routes
 // -----------------------------------------------------------------------------
 
-const keyFailureStatus = (code: string | undefined) => {
-  if (code === "no-key-yet") return 200;
-  if (code === "google-unreachable") return 503;
-  if (code === "no-access") return 403;
-  return 409;
-};
-
 const ticket = async (ctx: Ctx, fileId: string) => {
-  if (!ctx.env.TOKEN_KEY || !ctx.env.PSEUDONYM_KEY) {
-    return fail(ctx, 503, "not-configured", "Live sync is not configured on this server");
-  }
   const who = await signedIn(ctx);
   if (who instanceof Response) {
     return who;
   }
   const { session } = who;
-  const access = await driveAccess(ctx, fileId, session);
-  if (access instanceof Response) {
-    return access;
-  }
-  const file = await getFile(ctx.env, access.token, fileId, FILE_FIELDS);
+  const file = await getFile(ctx.env, session.a, fileId, FILE_FIELDS);
   if (file.status !== 200) {
     return fileProblem(ctx, file);
   }
-  if (!liveEnabled(ctx.env, session.user.email, file.data.appProperties)) {
-    return answer(ctx, 200, { enabled: false });
-  }
-  const role = roleOf(access, file.data);
-  const key = await sceneKey(ctx, fileId, access.token, file.data, role, session.sub!);
-  await keepWatch(ctx, fileId, access.token, key.watch);
-  if (!("key" in key) || !key.key) {
-    const status = keyFailureStatus(key.code);
-    return answer(ctx, status, { enabled: false, code: key.code, error: `Live sync can't start yet: ${key.code}` });
-  }
-  const claims = await claimsOf(ctx, "ticket", fileId, session, asSeen(file.data, access), role, key.keyId);
-  if (role === "edit") {
-    claims.token = await sealedToken(ctx, fileId, session, access.refresh);
-  }
-  const { token: _token, nonce: _nonce, ...proofClaims } = claims;
-  const proof: Claims = { ...proofClaims, kind: "proof", exp: Date.now() + PROOF_VALID_MS };
-  return answer(ctx, 200, {
-    enabled: true,
-    protocol: LIVE_PROTOCOL,
-    ticket: await seal(ctx.env, claims, TICKET),
-    proof: await seal(ctx.env, proof, PROOF),
-    proofExpiresAt: proof.exp,
+  const role = roleOf(file.data);
+  await drainMarked(ctx, fileId, session, file.data, role);
+  const key = await sceneKeyOf(ctx, fileId, session.a, file.data, ctx.body.createKey === true && role === "edit");
+  const whoKey = await authorKey(session.user.email);
+  const claims: RelayTicket = {
+    kind: "relay",
+    fileId,
+    name: (session.user.name ?? session.user.email.split("@")[0]).slice(0, 80),
+    color: colorOf(whoKey),
     role,
-    key: key.key,
-    keyId: key.keyId,
-    pseudonym: claims.pseudonym,
-    name: sceneName(file.data),
-    head: claims.head,
-    sub: session.sub,
+    who: whoKey,
+    // a commenter's comments are recorded on their behalf by the holder's tab
+    ...(role === "comment" ? { email: session.user.email } : {}),
+    exp: Date.now() + TICKET_VALID_MS,
+  };
+  return answer(ctx, 200, {
+    ticket: await seal(ctx.env, claims, TICKET),
+    expiresAt: claims.exp,
+    role,
+    name: claims.name,
+    color: claims.color,
+    who: claims.who,
+    key: key?.key ?? null,
+    keyId: key?.keyId ?? null,
     ...(who.sealedLocal ? { session: who.sealedLocal } : {}),
   });
 };
 
+/** the tab's WebSocket: the ticket is checked here, the relay gets the checked claims */
 const connect = async (ctx: Ctx, fileId: string) => {
   if (ctx.request.headers.get("Upgrade") !== "websocket") {
     return new Response("Expected a WebSocket", { status: 426 });
@@ -402,179 +267,38 @@ const connect = async (ctx: Ctx, fileId: string) => {
   if (!sameSite(ctx) && !isLocalInstall(ctx.origin)) {
     return new Response("Forbidden", { status: 403 });
   }
-  const claims = await unseal<Claims>(ctx.env, ctx.url.searchParams.get("ticket") ?? undefined, TICKET);
-  if (claims?.kind !== "ticket" || claims.fileId !== fileId || claims.exp <= Date.now() || claims.protocol !== LIVE_PROTOCOL) {
+  const claims = await unseal<RelayTicket>(ctx.env, ctx.url.searchParams.get("ticket") ?? undefined, TICKET);
+  if (claims?.kind !== "relay" || claims.fileId !== fileId || claims.exp <= Date.now()) {
     return new Response("Invalid or expired ticket", { status: 403 });
   }
-  // a ticket issued before "sign out everywhere" opens nothing any more
-  const epoch = await accountEpoch(ctx.env, claims.sub);
-  if (epoch && claims.iat < epoch) {
-    return new Response("Signed out everywhere", { status: 403 });
-  }
+  const relayClaims: RelayClaims = { name: claims.name, color: claims.color, role: claims.role, who: claims.who, ...(claims.email ? { email: claims.email } : {}) };
   const headers = new Headers(ctx.request.headers);
-  headers.set("X-Kurviq-Claims", JSON.stringify(claims));
-  return sceneStub(ctx.env, fileId).fetch("https://scene/live", { headers });
+  headers.set(CLAIMS_HEADER, JSON.stringify(relayClaims));
+  return ctx.env.RELAY.get(ctx.env.RELAY.idFromName(fileId)).fetch("https://relay/live", { headers });
 };
 
-const renewSignInFailure = async (ctx: Ctx, fileId: string, old: Claims, tab: string, who: Response, extend: () => Promise<Response>) => {
-  if (who.status === 401) {
-    await toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab });
-  }
-  return who.status === 503 ? extend() : who;
-};
-
-/** Google down: extend the old proof at most 2 h after the last real check. */
-const extendProof = async (ctx: Ctx, fileId: string, old: Claims, tab: string) => {
-  const epoch = await accountEpoch(ctx.env, old.sub, fileId);
-  const until = Math.min(Date.now() + PROOF_VALID_MS, old.checkedAt + OUTAGE_GRACE_MS);
-  if (old.exp <= Date.now() || until <= Date.now() || (epoch && old.iat < epoch)) {
-    return fail(ctx, 503, "google-unreachable", "Google is not reachable");
-  }
-  const proof: Claims = { ...old, exp: until };
-  await toScene(ctx.env, fileId, "/renew", { tab, claims: proof, confirmed: false });
-  return answer(ctx, 200, { proof: await seal(ctx.env, proof, PROOF), expiresAt: until, role: proof.role, extended: true });
-};
-
-/**
- * A renewal's check with Drive: the person's access and the file, or the
- * answer to give (Google unreachable: the proof is extended; a refusal ends
- * the tab's access, no extension)
- */
-const renewalAccess = async (ctx: Ctx, fileId: string, session: Session, revoke: () => Promise<unknown>, extend: () => Promise<Response>) => {
-  const access = await driveAccess(ctx, fileId, session);
-  if (access instanceof Response) {
-    if (access.status === 503) {
-      return extend();
-    }
-    // the folder isn't shared with them any more
-    await revoke();
-    return access;
-  }
-  const file = await getFile(ctx.env, access.token, fileId, FILE_FIELDS);
-  if (file.status !== 200) {
-    if (problemOf(file) === "unreachable") {
-      return extend();
-    }
-    await revoke();
-    return fileProblem(ctx, file);
-  }
-  return { access, file };
-};
-
-const renew = async (ctx: Ctx, fileId: string) => {
-  const old = await unseal<Claims>(ctx.env, typeof ctx.body.proof === "string" ? ctx.body.proof : undefined, PROOF);
-  const tab = typeof ctx.body.tab === "string" ? ctx.body.tab.slice(0, 64) : "";
-  if (old?.kind !== "proof" || old.fileId !== fileId || !tab) {
-    return fail(ctx, 400, "bad-proof", "Not an access proof of this scene");
-  }
-  ctx.touch = fileId;
-  const session = ctx.local ? await localSession(ctx.env, ctx.body.session, ctx.origin) : await cookieSession(ctx.request, ctx.env);
-  if (!session || (session.sub && session.sub !== old.sub)) {
-    return fail(ctx, 401, "signed-out", "Not signed in");
-  }
-  const extend = () => extendProof(ctx, fileId, old, tab);
-  const who = await signedIn(ctx);
-  if (who instanceof Response) {
-    return renewSignInFailure(ctx, fileId, old, tab, who, extend);
-  }
-  const checked = await renewalAccess(ctx, fileId, who.session, () => toScene(ctx.env, fileId, "/revoke-tab", { sub: old.sub, tab }), extend);
-  if (checked instanceof Response) {
-    return checked;
-  }
-  const { access, file } = checked;
-  const role = roleOf(access, file.data);
-  const proof = await claimsOf(ctx, "proof", fileId, who.session, asSeen(file.data, access), role, old.keyId);
-  const forDo: Claims = { ...proof, ...(role === "edit" ? { token: await sealedToken(ctx, fileId, who.session, access.refresh) } : {}) };
-  const done = await toScene(ctx.env, fileId, "/renew", {
-    tab,
-    claims: forDo,
-    name: typeof file.data.name === "string" ? file.data.name : null,
-    trashed: !!file.data.trashed,
-    head: proof.head,
-  });
-  await keepWatch(ctx, fileId, access.token, done.watch);
-  return answer(ctx, 200, {
-    proof: await seal(ctx.env, proof, PROOF),
-    expiresAt: proof.exp,
-    role,
-    ...(who.sealedLocal ? { session: who.sealedLocal } : {}),
-  });
-};
-
-const reconcile = async (ctx: Ctx, fileId: string) => {
+/** the retired live sync: every old scene object the account guard knows drains (saves, then deletes everything) */
+const drain = async (ctx: Ctx) => {
   const who = await signedIn(ctx);
   if (who instanceof Response) {
     return who;
   }
-  const access = await driveAccess(ctx, fileId, who.session);
-  if (access instanceof Response) {
-    return access;
+  const sub = who.session.sub!;
+  const account = accountStub(ctx.env, sub);
+  const listed = await account.fetch("https://account/scenes-list", { method: "POST", body: "{}" });
+  const { scenes = [] } = (await listed.json().catch(() => ({}))) as { scenes?: string[] };
+  const results: DrainResult[] = [];
+  for (const fileId of scenes.filter((id) => FILE_ID_RE.test(id))) {
+    const result = await drainScene(ctx.env, fileId, sub, who.session.a).catch(() => ({ fileId, state: "kept" as const, reason: "unavailable" })); // NOSONAR S9382: one at a time on purpose (each may upload to Drive)
+    results.push(result);
+    if (result.state !== "kept") {
+      await account.fetch("https://account/scene-drained", { method: "POST", body: JSON.stringify({ fileId }) }); // NOSONAR S9382: one at a time on purpose (follows its drain)
+    }
   }
-  const file = await getFile(ctx.env, access.token, fileId, "id");
-  if (file.status !== 200) {
-    return fileProblem(ctx, file);
-  }
-  // the token stays on the server: the scene object merges with it
-  const done = await toScene(ctx.env, fileId, "/reconcile-token", { token: access.token, sub: who.session.sub });
-  return answer(ctx, 200, { ok: !!done.ok, ...(who.sealedLocal ? { session: who.sealedLocal } : {}) });
+  return answer(ctx, 200, { results, ...(who.sealedLocal ? { session: who.sealedLocal } : {}) });
 };
 
-/**
- * "Keep only here" needs Drive's word that the person owns the file and it is
- * shared with nobody (the scene object can't see sharing): checked here with
- * their access and handed to the object for two minutes. The tab calls this
- * before sending keep-local.
- */
-const keepLocal = async (ctx: Ctx, fileId: string) => {
-  const who = await signedIn(ctx);
-  if (who instanceof Response) {
-    return who;
-  }
-  const file = await getFile(ctx.env, who.session.a, fileId, "id,ownedByMe,capabilities(canEdit)");
-  if (file.status !== 200) {
-    return fileProblem(ctx, file);
-  }
-  const permissions = await driveCall(
-    `${driveUrls(ctx.env).api}/files/${fileId}/permissions?fields=permissions(id,type,role)&supportsAllDrives=true`,
-    who.session.a,
-  );
-  if (permissions.status !== 200) {
-    return problemOf(permissions) === "unreachable" ? fail(ctx, 503, "google-unreachable", "Google Drive is not reachable") : fileProblem(ctx, permissions);
-  }
-  const list: any[] = permissions.data?.permissions ?? [];
-  const alone = file.data.ownedByMe === true && list.every((permission) => permission.role === "owner");
-  if (!alone) {
-    return answer(ctx, 409, { ok: false, code: "shared", error: "Shared with others: keep a local copy instead" });
-  }
-  await toScene(ctx.env, fileId, "/keep-local-ok", { sub: who.session.sub });
-  return answer(ctx, 200, { ok: true, ...(who.sealedLocal ? { session: who.sealedLocal } : {}) });
-};
-
-/**
- * Drive's webhook: the channel token is "<fileId>.<secret>", the secret an
- * HMAC of file and channel id: checked here, so a forged notification never
- * wakes a scene object (which then checks its channel and resource id)
- */
-const notify = async (request: Request, env: SceneRoutesEnv) => {
-  const header = (name: string) => request.headers.get(name) || "";
-  const state = header("X-Goog-Resource-State");
-  const [fileId, secret] = header("X-Goog-Channel-Token").split(".");
-  const channelId = header("X-Goog-Channel-ID");
-  const genuine = !!fileId && FILE_ID_RE.test(fileId) && !!secret && !!channelId && secret === (await watchSecret(env, fileId, channelId));
-  if (state !== "sync" && genuine) {
-    await toScene(env, fileId, "/notify", {
-      channelId: header("X-Goog-Channel-ID"),
-      resourceId: header("X-Goog-Resource-ID"),
-      secret,
-      state,
-      changed: header("X-Goog-Changed"),
-    });
-  }
-  // always 200: Google retries otherwise, and a wrong token learns nothing
-  return new Response(null, { status: 200 });
-};
-
-/** sign out everywhere: epoch raised, Kurviq revoked at Google, every stored token copy deleted */
+/** sign out everywhere: epoch raised, Kurviq revoked at Google, the old scene objects told to drop this account's tokens */
 const logoutAll = async (ctx: Ctx) => {
   const session = ctx.local ? await localSession(ctx.env, ctx.body.session, ctx.origin) : await cookieSession(ctx.request, ctx.env);
   if (!session) {
@@ -592,47 +316,26 @@ const logoutAll = async (ctx: Ctx) => {
   if (!sub) {
     return answer(ctx, 200, { ok: revoked, scenes: 0 });
   }
-  // the account guard tells every scene (stored tokens, open connections) and retries until each confirmed;
-  // a revocation Google didn't confirm is retried there too (the refresh token sealed, for 30 days at most)
-  const retryRevoke = revoked ? null : await sealSceneToken(ctx.env, "revoke-at-google", sub, session.r, session.iat ?? 0, Date.now() + 30 * 24 * 3_600_000);
+  // the account guard tells every old scene object it knows (tokens they still hold go) and retries until each
+  // confirmed; a revocation Google didn't confirm is retried there too (the refresh token sealed, for 30 days at most)
+  const retryRevoke = revoked || !ctx.env.TOKEN_KEY ? null : await sealSceneToken(ctx.env, "revoke-at-google", sub, session.r, session.iat ?? 0, Date.now() + 30 * 24 * 3_600_000);
   const res = await accountStub(ctx.env, sub).fetch("https://account/logout-all", { method: "POST", body: JSON.stringify({ sub, retryRevoke }) });
   const { scenes = [], epoch } = (await res.json().catch(() => ({}))) as { scenes?: string[]; epoch?: number };
-  // at once as well (the guard's retries are the guarantee; telling a scene twice does no harm)
-  await Promise.all(scenes.map((fileId) => toScene(ctx.env, fileId, "/forget", { sub, epoch }).catch(() => null)));
+  await Promise.all(
+    scenes.map((fileId) => sceneStub(ctx.env, fileId).fetch("https://scene/forget", { method: "POST", body: JSON.stringify({ fileId, sub, epoch }) }).catch(() => null)),
+  );
   return answer(ctx, 200, { ok: revoked, scenes: scenes.length });
 };
 
-const handleSceneDevelopment = async (ctx: Ctx, dev: RegExpExecArray) => {
-  const { request, env } = ctx;
-    const body: any = await request.json().catch(() => ({}));
-    if (dev[2] === "dev-account-age") {
-      // the signed-in account's guard (cookie session)
-      const session = await cookieSession(request, env);
-      if (!session?.sub) {
-        return fail(ctx, 401, "signed-out", "Not signed in");
-      }
-      const res = await accountStub(env, session.sub).fetch("https://account/dev-age", { method: "POST", body: JSON.stringify({ ms: Number(body.ms) || 0 }) });
-      return answer(ctx, 200, await res.json());
-    }
-    return answer(ctx, 200, await toScene(env, dev[1], `/${dev[2]}`, body && typeof body === "object" ? body : {}));
-};
-
-const dispatchSceneAction = async (ctx: Ctx, scene: RegExpExecArray | null, isLogoutAll: boolean) => {
+const dispatch = async (ctx: Ctx, action: string, fileId: string | null) => {
   try {
-    if (isLogoutAll) {
+    if (action === "logout-all") {
       return await logoutAll(ctx);
     }
-    const [, fileId, action] = scene!;
-    if (action === "ticket") {
-      return await ticket(ctx, fileId);
+    if (action === "drain") {
+      return await drain(ctx);
     }
-    if (action === "renew") {
-      return await renew(ctx, fileId);
-    }
-    if (action === "keep-local") {
-      return await keepLocal(ctx, fileId);
-    }
-    return await reconcile(ctx, fileId);
+    return await ticket(ctx, fileId!);
   } catch (error: any) {
     // the account guard (or another of our objects) couldn't be asked: nothing is handed out
     if (error?.status === 503) {
@@ -642,19 +345,11 @@ const dispatchSceneAction = async (ctx: Ctx, scene: RegExpExecArray | null, isLo
   }
 };
 
-const handleSceneAction = async (ctx: Ctx, scene: RegExpExecArray | null, isLogoutAll: boolean) => {
-  const { request, env } = ctx;
-  if (request.method !== "POST") {
-    return fail(ctx, 405, "method", "POST only");
-  }
-  if (!sameSite(ctx) && !ctx.local) {
-    return fail(ctx, 403, "forbidden", "Forbidden");
-  }
+const readBody = async (ctx: Ctx) => {
   // Kurviq's own pages: the sign-in cookie is checked before any body is read; bodies are small
-  // (a tab id, a proof, the local install's session) and read with a limit
-  const signedOut = !ctx.local && !(await cookieSession(request, env));
+  const signedOut = !ctx.local && !(await cookieSession(ctx.request, ctx.env));
   // read at most the limit either way (nothing beyond it is buffered); without a cookie it is never parsed
-  const text = await readLimited(request.body, ROUTE_BODY_BYTES);
+  const text = await readLimited(ctx.request.body, ROUTE_BODY_BYTES);
   if (signedOut) {
     return fail(ctx, 401, "signed-out", "Not signed in");
   }
@@ -669,18 +364,38 @@ const handleSceneAction = async (ctx: Ctx, scene: RegExpExecArray | null, isLogo
   if (!ctx.body || typeof ctx.body !== "object") {
     ctx.body = {};
   }
-  return dispatchSceneAction(ctx, scene, isLogoutAll);
+  return null;
+};
+
+const handleAction = async (ctx: Ctx, action: string, fileId: string | null) => {
+  if (ctx.request.method !== "POST") {
+    return fail(ctx, 405, "method", "POST only");
+  }
+  if (!sameSite(ctx) && !ctx.local) {
+    return fail(ctx, 403, "forbidden", "Forbidden");
+  }
+  return (await readBody(ctx)) ?? dispatch(ctx, action, fileId);
+};
+
+const routeOf = (pathname: string): { action: string; fileId: string | null } | null => {
+  const relay = /^\/relay\/([^/]+)\/(ticket|live)$/.exec(pathname);
+  if (relay) {
+    return { action: relay[2], fileId: relay[1] };
+  }
+  if (pathname === "/auth/logout-all") {
+    return { action: "logout-all", fileId: null };
+  }
+  return pathname === "/live/drain" ? { action: "drain", fileId: null } : null;
 };
 
 export const handleSceneRoutes = async (request: Request, env: SceneRoutesEnv): Promise<Response | null> => {
   const url = new URL(request.url);
-  const scene = /^\/scene\/([^/]+)\/(ticket|live|renew|reconcile|keep-local)$/.exec(url.pathname);
-  const isLogoutAll = url.pathname === "/auth/logout-all";
   if (url.pathname === "/drive/notify") {
-    return request.method === "POST" ? notify(request, env) : new Response("Method not allowed", { status: 405 });
+    // channels the retired live sync opened run out within a day: answered (Google retries otherwise), never acted on
+    return new Response(null, { status: request.method === "POST" ? 200 : 405 });
   }
-  const dev = /^\/scene\/([^/]+)\/(dev-age|dev-stats|dev-crash|dev-expire|dev-drop-tabs|dev-account-age)$/.exec(url.pathname);
-  if (!scene && !isLogoutAll && !dev) {
+  const route = routeOf(url.pathname);
+  if (!route) {
     return null;
   }
   const origin = request.headers.get("Origin");
@@ -698,24 +413,11 @@ export const handleSceneRoutes = async (request: Request, env: SceneRoutesEnv): 
       },
     });
   }
-  if (scene && !FILE_ID_RE.test(scene[1])) {
+  if (route.fileId !== null && !FILE_ID_RE.test(route.fileId)) {
     return fail(ctx, 404, "not-found", "Not a Drive file id");
   }
-  // tests with the fake Google only (FAKE_GOOGLE=1 and a local DEV_ORIGIN, never in production):
-  // dev-age ages blocked authors (24 h / 7 day rules), dev-stats counts rows written, dev-crash stops an upload midway
-  if (dev && request.method === "POST" && devGate(env, request) && FILE_ID_RE.test(dev[1])) {
-    return handleSceneDevelopment(ctx, dev);
+  if (route.action === "live") {
+    return connect(ctx, route.fileId!);
   }
-  if (dev) {
-    return fail(ctx, 404, "not-found", "Not found");
-  }
-  if (scene?.[2] === "live") {
-    return connect(ctx, scene[1]).catch((error) => {
-      if (error?.status === 503) {
-        return new Response("Try again in a moment", { status: 503 });
-      }
-      throw error;
-    });
-  }
-  return handleSceneAction(ctx, scene, isLogoutAll);
+  return handleAction(ctx, route.action, route.fileId);
 };

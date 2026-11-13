@@ -12,6 +12,12 @@ person against the folder and use the owner's access, and the scene's Durable
 Object saves the person's changes with the owner's refresh token (sealed for
 that person and file, like any author's).
 
+**Superseded 2026-11-13** for shared folders: Kurviq's server keeps no tokens
+and no folder registrations any more
+(`specs/2026-11-13-drive-collaboration-without-server-data.md`, "Shared
+folders"; see "Shared folders without the server" below). The section
+"Shared folders through the owner's sign-in" describes the retired route.
+
 ## Why
 
 Scenes that belong together (one customer: "schülke - Overview", "schülke -
@@ -69,6 +75,33 @@ else shared with them, including scenes added to it later?
   each was opened once (Picker multi-select of the folder's files, or the
   share mail's links), and newly added scenes need a new pick. Weaker than the
   decision; go back to the owner before building it.
+
+## Shared folders without the server (2026-11-13)
+
+Built: `scenes-plugin/src/online/drive.ts` (`sharedFolders`, `noteFolderScenes`,
+`pickFiles`), `scenes-plugin/src/online/folderAccess.ts` (`groupSharedFolders`),
+e2e `scenes-plugin/test/e2e/shared-folder.mjs`. The server's folder routes,
+tables and the owners' stored tokens are gone (the D1 tables are dropped by
+`online/worker/database.ts`).
+
+- The guest picks the shared folder (or its scenes) once in Google's Picker
+  ("Shared with you…" in the scene list; folders can be picked there). Their
+  Kurviq lists, with their own sign-in, the folders they picked and the
+  scenes Kurviq may open in them (`'<folder>' in parents`).
+- Whether picking a folder grants `drive.file` access to the files in it is
+  not verified with the real Google: the code works either way. Without the
+  grant, the owner's Kurviq notes the folder's number of scenes on the folder
+  (`appProperties.kurviqScenes`, metadata only, while the folder is shared);
+  the guest's group shows "N new scenes in this folder: open them", which
+  opens the Picker on that folder (several at once).
+- Scenes picked out of a folder that wasn't picked are grouped as
+  "<owner>'s folder".
+- Opening a scene of a shared folder still switches the tab to the folder's
+  space (`d:<folderId>`), now with the guest's own access: reads, and writes
+  where Drive lets them edit (new scenes need the folder itself picked).
+- To verify in UAT: the folder pick's grant, `appProperties` of the owner's
+  folder being visible to the guest's Kurviq, and the `'<folder>' in parents`
+  query listing the picked scenes of a folder the guest didn't pick.
 
 ## Shared folders through the owner's sign-in (route chosen 2026-11-11)
 

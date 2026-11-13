@@ -1,4 +1,4 @@
-// e2e: kurviq.com/ opens the scene the user left, signed in with Drive (live-synced scenes), even
+// e2e: kurviq.com/ opens the scene the user left, signed in with Drive (each scene with its relay and pen), even
 // with another tab left open in the background. Every tab writes the scene metadata (its sync
 // does, now and then): a forgotten tab on Untitled or on another scene must not turn the stored
 // "current scene" into its own one.
@@ -80,9 +80,9 @@ for (const name of ["Alpha", "Bravo", "Charlie"]) {
   await draw(A); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
   for (let k = 0; k < 200 && !(await A.evaluate(() => !!window.__scenes.fileIdOf(window.__scenes.getState().current))); k++) await sleep(100); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
 }
-for (let i = 0; i < 40 && (await A.evaluate(() => window.__live?.current()?.phase)) !== "ready"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
-log("live:", await A.evaluate(() => window.__live?.current()?.phase ?? "none"));
-if ((await A.evaluate(() => window.__live?.current()?.phase)) !== "ready") failures.push("Charlie never went live");
+for (let i = 0; i < 40 && (await A.evaluate(() => window.__pen?.getView().me)) !== "holder"; i++) await sleep(500); // NOSONAR S9382: in order on purpose (polling, drawing and server operations preserve scenario order)
+log("pen:", await A.evaluate(() => window.__pen?.getView().me ?? "none"));
+if ((await A.evaluate(() => window.__pen?.getView().me)) !== "holder") failures.push("Charlie's tab never got the pen");
 
 // plain: Bravo opened and drawn on, then / (navigation, reload, new tab)
 await A.evaluate(() => window.__scenes.open("Bravo"));

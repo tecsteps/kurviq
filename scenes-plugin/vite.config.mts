@@ -148,6 +148,27 @@ const customFonts = () => ({
   },
 });
 
+const MOVE_UI_ENTRY = path.resolve(HERE, "src/browserMoveUI.tsx");
+
+/** "Move browser scenes…" in the main menu, below Help (both builds; src/browserMoveUI.tsx) */
+const moveScenesMenu = () => ({
+  name: "excalidraw-scenes-move-menu",
+  enforce: "pre" as const,
+  transform(code: string, id: string) {
+    if (!id.replaceAll("\\", "/").split("?")[0].endsWith("/excalidraw-app/components/AppMainMenu.tsx")) {
+      return null;
+    }
+    const anchor = "<MainMenu.DefaultItems.Help />";
+    if (code.split(anchor).length !== 2) {
+      throw new Error("[excalidraw-scenes] move menu: AppMainMenu.tsx changed upstream. Update scenes-plugin/vite.config.mts.");
+    }
+    return {
+      code: `import { MoveScenesMenuItem as __KurviqMoveScenes } from ${JSON.stringify(MOVE_UI_ENTRY)};\n${code.replace(anchor, `${anchor}\n<__KurviqMoveScenes />`)}`,
+      map: null,
+    };
+  },
+});
+
 /**
  * Text padding per shape (`customData.textPadding`, default 5px): Excalidraw
  * lays out a shape's text with a fixed BOUND_TEXT_PADDING. These patches make
@@ -868,6 +889,7 @@ export default async function kurviqConfig(configEnv: { mode: string; command: s
       textPadding(),
       richText(),
       customFonts(),
+      moveScenesMenu(),
       sceneUrls(),
       ...(online ? [kurviqOnline(), kurviqPwa()] : []),
       ...upstreamPlugins,
@@ -896,7 +918,8 @@ export default async function kurviqConfig(configEnv: { mode: string; command: s
       // a dev build against the fake Google of `wrangler dev` (FAKE_GOOGLE=1): "/fake-google"
       "import.meta.env.VITE_APP_GOOGLE_API_BASE": JSON.stringify(FAKE_GOOGLE ? "/fake-google" : ""),
       // the Google Picker's browser API key (restricted by website; set in .env or as a GitHub secret, not kept in the repository)
-      "import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY": JSON.stringify(env.KURVIQ_GOOGLE_BROWSER_KEY || ""),
+      // (the fake Google takes its own key: public files are read with it in the browser)
+      "import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY": JSON.stringify(FAKE_GOOGLE ? "fake-api-key" : env.KURVIQ_GOOGLE_BROWSER_KEY || ""),
       "import.meta.env.VITE_APP_SCENES_SERVER_URL": JSON.stringify(
         env.SCENES_SERVER_URL || "http://localhost:3101",
       ),

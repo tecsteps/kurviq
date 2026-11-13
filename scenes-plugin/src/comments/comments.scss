@@ -208,6 +208,18 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
   font-size: 0.7rem;
 }
 
+// a commenter's comment kept in Drive's comments until an editor takes it in
+.kq-cm-badge--waiting {
+  background: #fff3bf;
+  color: #8a5a00;
+  white-space: nowrap;
+}
+
+.excalidraw.theme--dark .kq-cm-badge--waiting {
+  background: #5c4400;
+  color: #ffe8a1;
+}
+
 .kq-cm-text {
   margin: 0.35rem 0 0;
   line-height: 1.45;

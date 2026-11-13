@@ -1,5 +1,5 @@
-// Unit tests of the scenes plugin's pure parts (live sync: merge, crypto,
-// queue; the stored scene metadata's migration; the tab API's version
+// Unit tests of the scenes plugin's pure parts (the pen and its relay, crypto,
+// the drain; the stored scene metadata's migration; the tab API's version
 // names). Run from the repo root:
 //   excalidraw/node_modules/.bin/vitest run --config scenes-plugin/test/vitest.config.mts
 import { fileURLToPath } from "node:url";

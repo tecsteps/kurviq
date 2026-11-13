@@ -1,3 +1,5 @@
+> **Superseded (2026-11-13)**: live sync was retired. Drive scenes now have one editor at a time, decided by a memory-only relay: see `docs/relay/CONCEPT.md` and `specs/2026-11-13-drive-collaboration-without-server-data.md`. This document describes the old design and stays for reference until the drain is confirmed.
+
 # Live sync: implementation contract
 
 The concept (`CONCEPT.md`, exported from the Claude Doc) says *what* and *why*.

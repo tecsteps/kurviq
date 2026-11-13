@@ -1,9 +1,10 @@
 // Kurviq (https://kurviq.com): the Cloudflare Worker.
 //
 //   /auth/*          Sign in with Google (./auth.ts): stateless, encrypted cookie
-//   /scene/<fileId>/…  live sync of a Drive scene: tickets, WebSocket, proofs (./sceneRoutes.ts, ./scene.ts)
-//   /drive/notify    Drive's push notifications for live scenes
-//   /folders, /folders/…  shared folders through the owner's sign-in (./folders.ts)
+//   /relay/<fileId>/…  working together on a Drive scene: a ticket, the WebSocket to the
+//                    scene's memory-only relay (./sceneRoutes.ts, ./relay.ts)
+//   /live/drain      the retired live sync's scene objects save what they hold, then empty (./scene.ts)
+//   /drive/notify    Drive's push notifications of the retired live sync: answered, ignored
 //   /live/<key>      WebSocket of a Kurviq tab to its agent pairing (./pairing.ts)
 //   /mcp             remote MCP for agents (scenes-mcp/tools.mjs), answered
 //                    through the pairing's open Kurviq tab; agents sign in
@@ -13,7 +14,7 @@
 //   /mcp/upload/<token>  images and big edits of a signed-in agent (curl)
 //   /oauth/*, /.well-known/oauth-*  the sign-in (./oauth.ts)
 //   /llms.txt        how agents use Kurviq
-//   /api/public/…    scenes shared "anyone with the link" on Drive, cached (./shared.ts)
+//   /api/public/…    a public scene's name and version, never its content (./shared.ts)
 //   /contact         the contact form (./contact.ts); usage statistics are
 //                    counted from page loads and server events (./stats.ts)
 //   /api/fonts/…     fonts from Google Fonts for "Add font", cached (./fonts.ts)
@@ -40,8 +41,6 @@ import { base64FromBytes, readBytes } from "./bytes";
 import { FILE_ID_RE } from "./driveApi";
 import { AGENT_KEY_RE, bearerPairing, handleOAuth, pairingName, unauthorized, uploadPairing, uploadToken } from "./oauth";
 import { handleSceneRoutes } from "./sceneRoutes";
-import { handleFolderRoutes } from "./folders";
-import type { FoldersEnv } from "./folders";
 import type { SceneRoutesEnv } from "./sceneRoutes";
 import { handlePublicApi, handleSharedPage } from "./shared";
 import { handlePubApi } from "./pubLinks";
@@ -58,6 +57,7 @@ import type { SharedEnv } from "./shared";
 
 export { Pairing } from "./pairing";
 export { SceneRoom } from "./scene";
+export { SceneRelay } from "./relay";
 export { AccountGuard } from "./account";
 export { Stats } from "./stats";
 
@@ -74,7 +74,7 @@ declare const __KURVIQ_DEV__: boolean;
  */
 export const FakeGoogle = __KURVIQ_DEV__ ? FakeGoogleStore : class extends DurableObject {};
 
-type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & FoldersEnv & StatsEnv & ContactEnv & PubEnv & {
+type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & PubEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -412,7 +412,7 @@ const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContex
   if (pubApi) {
     return pubApi;
   }
-  const publicApi = handlePublicApi(request, env, ctx);
+  const publicApi = handlePublicApi(request, env);
   if (publicApi) { // NOSONAR S6544: preserve the existing Promise short-circuit; awaiting its nullable result changes routing
     publicReadStats(request, env, ctx);
     return publicApi;
@@ -421,7 +421,7 @@ const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContex
   if (url.pathname === "/drive/open") {
     return driveOpenRedirect(url);
   }
-  const page = await handleSharedPage(request, env, env.ASSETS, ctx);
+  const page = await handleSharedPage(request, env, env.ASSETS, () => publicReadStats(request, env, ctx));
   if (page) {
     pageStats(request, page, env, ctx);
     return page;
@@ -432,9 +432,9 @@ const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContex
   return asset;
 };
 
-/** the routes whose answers count in the statistics, tried in order: live sync, shared folders, sign-in */
+/** the routes whose answers count in the statistics, tried in order: relay tickets, sign-in */
 const countedRoute = async (request: Request, env: Env): Promise<Response | null> => {
-  for (const handle of [handleSceneRoutes, handleFolderRoutes, handleAuth] as Array<(request: Request, env: Env) => Promise<Response | null>>) {
+  for (const handle of [handleSceneRoutes, handleAuth] as Array<(request: Request, env: Env) => Promise<Response | null>>) {
     const answer = await handle(request, env); // NOSONAR S9382: in order on purpose (the first route that answers wins)
     if (answer) {
       return answer;
@@ -460,7 +460,7 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
 
-    // live sync (docs/live-sync), shared folders (docs/folders/CONCEPT.md), sign-in: counted in the statistics
+    // relay tickets (docs/relay/CONCEPT.md), sign-in: counted in the statistics
     const counted = await countedRoute(request, env);
     if (counted) {
       routeStats(request, counted, env, ctx);

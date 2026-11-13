@@ -29,6 +29,7 @@ import {
   enterSpace,
   folderSharingOf,
   pickFiles,
+  pickerAvailable,
   sharedWithMe,
   getByline,
   linkAccessOf,
@@ -38,6 +39,7 @@ import {
   pubNameHolder,
   pubNameStore,
   releasePubName,
+  sceneElsewhere,
   removeAccess,
   setByline,
   setLinkAccess,
@@ -48,13 +50,12 @@ import {
   spaceAccount,
 } from "./drive";
 import { pairing } from "./pairing";
-import { liveSync } from "./liveSync";
 import { PUB_MAX, pubNameProblem, toPubName } from "./pubName";
 
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "../../../scenes-mcp/feedback.mjs";
 import type { SceneListItem } from "../controller";
-import type { FolderSharing, LinkAccess, Permission } from "./drive";
-import { audienceText, folderAudience, rowAccess } from "./folderAccess";
+import type { FolderSharing, LinkAccess, Permission, SharedFolder } from "./drive";
+import { audienceText, folderAudience, rowAccess, unseenText } from "./folderAccess";
 import type { RowAccess } from "./folderAccess";
 
 import lilitaLatin from "@excalidraw/excalidraw/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYEF8RXi4EwQ.woff2";
@@ -949,7 +950,8 @@ const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareF
     return (
       <p className="kq-share__folder">
         You have this scene through the Kurviq folder of <strong>{folder.owner}</strong>
-        {folder.ownerEmail ? ` (${folder.ownerEmail})` : ""}, shared with you (you {ROLE_TEXT[folder.role]}).
+        {folder.ownerEmail ? ` (${folder.ownerEmail})` : ""}, shared with you (you {ROLE_TEXT[folder.role]}). Who else has
+        access is decided in Google Drive.
       </p>
     );
   }
@@ -959,7 +961,8 @@ const FolderNote = ({ folder, onShareFolder }: { folder: FolderSharing; onShareF
   }
   return (
     <p className="kq-share__folder kq-share__folder--mine">
-      Your folder <strong>"{folder.name}"</strong> is shared with {text.whom}: they {text.what}.{" "}
+      Your folder <strong>"{folder.name}"</strong> is shared with {text.whom}: they {text.what} (in Kurviq they pick the
+      folder once under "Shared with you…").{" "}
       <button
         type="button"
         className="kq-share__textbtn"
@@ -995,7 +998,7 @@ const ShareDialog = ({ name }: { name: string }) => {
   const [busy, setBusy] = useState(false);
   const me = connection.getState().user?.email?.toLowerCase();
   const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
-  // a scene of a folder shared with this person: Kurviq reaches it only through its server, who has access is the owner's business
+  // a scene of a folder shared with this person: who has access is the owner's business (Drive may not show it to them)
   const inFolderSpace = !!sharedFolderId;
 
   const reload = async (id: string) => {
@@ -1200,13 +1203,26 @@ export const SceneSharing = ({ item, iconOnly }: { item: SceneListItem; disabled
   );
 };
 
-/** the hint's Picker: the scene shared with the user, then the tab goes there (the new scene goes if still empty) */
+/**
+ * The hint's Picker: the scene shared with the user (or the shared folder it
+ * is in), then the tab goes there (the new scene goes if still empty)
+ */
 const findShared = async (name: string) => {
-  const ids = await pickFiles({ shared: true, query: name });
+  const ids = await pickFiles({ shared: true, folders: true, query: name });
   if (ids.length !== 1) {
     return;
   }
-  const picked = (await sharedWithMe()).find((entry) => entry.fileId === ids[0])?.name ?? name;
+  const scene = (await sharedWithMe()).find((entry) => entry.fileId === ids[0]);
+  if (!scene) {
+    // a folder: the scene of that name is in it, if Kurviq may open it now (sceneElsewhere goes there)
+    const go = await sceneElsewhere(name);
+    if (go) {
+      await scenesController.leaveForReload();
+      go();
+    }
+    return;
+  }
+  const picked = scene.name;
   const api = scenesController.getApi();
   if (scenesController.getState().current === name && api && !api.getSceneElements().length) {
     await scenesController.remove(name).catch(() => {});
@@ -1248,6 +1264,55 @@ export const LinkHint = () => {
   );
 };
 
+/**
+ * "Shared with you…": scenes and Kurviq folders others shared in Google
+ * Drive. One scene picked: it opens; a folder (or several): their scenes are
+ * listed in the scene list from now on.
+ */
+export const pickSharedWithMe = async () => {
+  const ids = await pickFiles({ shared: true, folders: true });
+  if (ids.length !== 1) {
+    return;
+  }
+  const scene = (await sharedWithMe()).find((entry) => entry.fileId === ids[0]);
+  if (!scene) {
+    return;
+  }
+  await scenesController.leaveForReload();
+  enterSpace(ids[0], `/s/${ids[0]}/${encodeURIComponent(scene.name)}`);
+};
+
+/**
+ * Under a shared folder's group in the scene list: scenes its owner added
+ * that Kurviq can't open yet (picking the folder didn't grant them):
+ * "3 new scenes in this folder: open them" picks them in Google's Picker.
+ */
+export const FolderUnseen = ({ folder, onPicked }: { folder?: SharedFolder; onPicked: () => void }) => {
+  const [error, setError] = useState<string | null>(null);
+  const text = folder ? unseenText(folder.unseen) : null;
+  if (!folder || !text || !pickerAvailable()) {
+    return null;
+  }
+  return (
+    <div className="scenes-switcher__unseen">
+      <span>{text}: </span>
+      <button
+        type="button"
+        className="scenes-link"
+        onClick={() => {
+          setError(null);
+          pickFiles({ parent: folder.folderId })
+            .then((ids) => ids.length > 0 && onPicked())
+            .catch((err) => setError(err.message));
+        }}
+      >
+        open them
+      </button>
+      {error && <span className="scenes-error"> {error}</span>}
+    </div>
+  );
+};
+
 /** Kurviq was updated while this tab was open: the agent's commands wait for a reload */
 export const UpdateBanner = () => {
   const outdated = useSyncExternalStore(appVersion.subscribe, appVersion.isOutdated);
@@ -1277,183 +1342,6 @@ export const ReadOnlyGuard = () => {
       Read only: {readOnly}
     </div>
   ) : null;
-};
-
-/** what the engine or the scene's server reports, in words (null: nothing to show) */
-const liveProblem = (error: string | null) => {
-  if (!error) {
-    return null;
-  }
-  const known: Record<string, string> = {
-    "drive-full": "The owner's Google Drive is full: changes stay on Kurviq's server until there is room.",
-    "rate-limited": "Google Drive asked to slow down: saving continues in a moment.",
-    "google-unreachable": "Google is not reachable: changes stay on Kurviq's server and are saved later.",
-    "key-changed": "The scene's key in Drive was changed: changes can't be saved until that is sorted out.",
-    "key-missing": "The scene's key is missing in Drive: changes can't be saved until that is sorted out.",
-    "key-busy": "The scene is being set up for live saving…",
-    "key-invalid": "The scene's key could not be read: changes stay in this browser.",
-    "pins-full": "Drive's limit of kept versions is reached: no more milestones are kept.",
-    "no-key-yet": "Live changes start once an editor opens this scene.",
-    "signed-out": "Sign in again to keep saving: your changes stay in this browser.",
-    "sign-in-again": "Sign in again to keep saving: your changes stay in this browser.",
-    "signed-out-everywhere": "You were signed out everywhere: sign in again to keep saving.",
-    "access-unknown": "Kurviq can't check your access to this scene in Drive right now: saving waits until it can.",
-    "audit-failed": "A save to Drive could not be checked afterwards: Kurviq keeps the changes and tries again.",
-    "audit-pins-full": "Drive's limit of kept versions is reached: the record of who saved what can't be kept as a version.",
-    "outside-too-big": "Someone changed this scene outside Kurviq and the result is too big to merge: changes stay on Kurviq's server.",
-    "font-full": "This scene has no free font number left: text with a new font can't be saved (use a font the scene already has).",
-    "too-many-tabs": "This scene is open in too many tabs of yours: close some of them (your changes wait in this browser meanwhile).",
-    "insecure-context": `Live sync needs a secure page (https or localhost), and ${globalThis.location?.host ?? "this page"} is plain http: your changes stay in this browser. Open Kurviq on localhost, or let the browser treat this address as secure.`,
-    "too-many-connections": "Kurviq's server can't take another connection to this scene right now: close other tabs with it, it tries again shortly.",
-  };
-  if (error.startsWith("invalid:")) {
-    return "A change could not be saved (not a valid drawing): the rest keeps saving.";
-  }
-  if (error === "no-access" || error.startsWith("seed-")) {
-    return null; // shown elsewhere (the Picker), or passing
-  }
-  return known[error] ?? error;
-};
-
-const lifecycleMessage = (lifecycle: string | null) => {
-  if (lifecycle === "trashed") {
-    return "This scene is in Drive's trash: it isn't saved any more. Save as… keeps your version as a new scene.";
-  }
-  if (lifecycle === "deleted") {
-    return "This scene was deleted for good in Drive. Save as… keeps your version as a new scene.";
-  }
-  if (lifecycle === "access") {
-    return "You no longer have access to this scene in Drive: your changes stay in this browser.";
-  }
-  if (lifecycle === "local" || lifecycle === "closing") {
-    return "This scene was taken out of Drive.";
-  }
-  return null;
-};
-
-const appendBlockedAuthors = (items: ReactNode[], decidable: ReturnType<NonNullable<ReturnType<typeof scenesController.liveCurrent>>["info"]>["blocked"], scene: NonNullable<ReturnType<typeof scenesController.liveCurrent>>) => {
-  for (const author of decidable) {
-    // an author who lost access to the scene: their changes can only be discarded (or go after 7 days)
-    const acceptable = author.acceptable !== false;
-    items.push(
-      <div key={`blocked-${author.pseudonym}`} className="kq-live__item">
-        {author.name ?? "Someone"}'s changes could not be saved
-        {acceptable ? "." : " (they no longer have access): they can be discarded now, and are discarded after 7 days."}
-        {acceptable && (
-          <button type="button" className="scenes-link" onClick={() => scene.decide(author.pseudonym, "accept")}>
-            Accept them as yours
-          </button>
-        )}
-        <button
-          type="button"
-          className="scenes-link scenes-link--danger"
-          onClick={() => window.confirm(`Discard ${author.name ?? "these"} changes for good?`) && scene.decide(author.pseudonym, "discard")}
-        >
-          Discard
-        </button>
-      </div>,
-    );
-  }
-};
-
-const appendLostChanges = (items: ReactNode[], info: ReturnType<NonNullable<ReturnType<typeof scenesController.liveCurrent>>["info"]>, scene: NonNullable<ReturnType<typeof scenesController.liveCurrent>>) => {
-  for (const loser of info.losers) {
-    items.push(
-      <div key={`lost-${loser.id}`} className="kq-live__item">
-        {loser.by ?? "Someone"} changed this at the same time.
-        <button type="button" className="scenes-link" onClick={() => scene.restoreLoser(loser.id)}>
-          Restore yours?
-        </button>
-        <button type="button" className="scenes-link" onClick={() => scene.dismissLoser(loser.id)}>
-          Keep theirs
-        </button>
-      </div>,
-    );
-  }
-};
-
-/**
- * Live sync of the open scene: what the user has to see or decide: the
- * scene went to the trash or access ended, someone won a collision over
- * their change ("restore yours?"), changes of an author that can't be saved
- * as theirs, notes (offline copies, undo left something alone), and who
- * else is here.
- */
-export const LiveBanner = () => {
-  useSyncExternalStore(liveSync.subscribe, liveSync.getVersion);
-  useSyncExternalStore(scenesController.subscribe, scenesController.getState);
-  const scene = scenesController.liveCurrent();
-  if (!scene) {
-    return null;
-  }
-  const info = scene.info();
-  const others = info.presence.filter((entry) => entry.pseudonym !== scene.pseudonym());
-  const lifecycle = lifecycleMessage(info.lifecycle);
-  const decidable = info.role === "edit" ? info.blocked.filter((author) => author.decidable) : [];
-  const items: ReactNode[] = [];
-  if (lifecycle) {
-    items.push(<div key="lifecycle" className="kq-live__item kq-live__item--danger">{lifecycle}</div>);
-  }
-  if (info.stage === "unsaved") {
-    items.push(
-      <div key="unsaved" className="kq-live__item kq-live__item--danger">
-        This browser could not store your latest changes.
-        <button type="button" className="scenes-link" onClick={() => scenesController.exportCurrent()}>{/* NOSONAR S6772: existing button spacing is controlled by the live banner styles */}
-          Export the scene
-        </button>
-      </div>,
-    );
-  }
-  const problem = liveProblem(info.error);
-  if (problem) {
-    const signIn = info.error === "signed-out" || info.error === "sign-in-again" || info.error === "signed-out-everywhere";
-    items.push(
-      <div key="error" className="kq-live__item kq-live__item--danger">
-        {problem}
-        {signIn && (
-          <button type="button" className="scenes-link" onClick={() => connectGoogle()}>
-            Sign in again
-          </button>
-        )}
-      </div>,
-    );
-  }
-  // a queue an earlier session of this scene left (a reload, a closed tab) that can't be sent
-  for (const [i, error] of liveSync.replayProblems(info.fileId).entries()) {
-    items.push(
-      <div key={`replay-${i}`} className="kq-live__item kq-live__item--danger">
-        Changes from an earlier session of this scene wait in this browser: {liveProblem(error) ?? error}
-      </div>,
-    );
-  }
-  if (info.waitingForKey) {
-    items.push(<div key="key" className="kq-live__item">Your changes wait in this browser until the scene is ready on Kurviq's server…</div>);
-  }
-  appendLostChanges(items, info, scene);
-  appendBlockedAuthors(items, decidable, scene);
-  for (const note of info.notes) {
-    items.push(
-      <div key={`note-${note.at}`} className="kq-live__item">
-        {note.text}
-        <button type="button" className="scenes-link" aria-label="Dismiss" onClick={() => scene.dismissNote(note.at)}>
-          OK
-        </button>
-      </div>,
-    );
-  }
-  if (!items.length && !others.length) {
-    return null;
-  }
-  return (
-    <div className="kq-live" role="status">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
-      {items}
-      {others.length > 0 && (
-        <div className="kq-live__presence">
-          Also here: {[...new Set(others.map((entry) => entry.name ?? "someone"))].join(", ")}
-        </div>
-      )}
-    </div>
-  );
 };
 
 /** after signing in: which of the scenes only in this browser go to Drive (nothing goes without a tick) */

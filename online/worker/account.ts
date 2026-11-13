@@ -1,27 +1,26 @@
-// Live sync: one Durable Object per account (Google's `sub`), strongly
-// consistent where D1 is not:
+// One Durable Object per account (Google's `sub`), strongly consistent where
+// D1 is not:
 //
-//   - the revocation epoch: "sign out everywhere" ends every session, ticket,
-//     access proof and stored token issued before it
-//   - the index of scenes holding this account's stored refresh token, and
-//     of scenes it is connected to: a scene registers a connection here
-//     before accepting it (refused if the sign-in predates the epoch), so
-//     signing out everywhere finds every stored copy and every open connection
-//   - revocations to deliver: each scene is told (its tokens and connections
-//     of this account go) until it confirmed, retried with this object's alarm
+//   - the revocation epoch: "sign out everywhere" ends every session and
+//     relay ticket issued before it (kept: an account id and a time, no data)
+//   - until the retired live sync is drained (docs/relay/CONCEPT.md
+//     "Retiring live sync"): the ids of the old scene objects that may still
+//     hold this account's token or changes. The drain (/live/drain) asks for
+//     them and drops each one it emptied; no new ones are added.
+//   - revocations to deliver: each old scene object is told (its tokens of
+//     this account go) until it confirmed, retried with this object's alarm
 //
 // No content, no tokens: file ids, the account id and timestamps, each with
 // a bound (pruned by the alarm):
-//   connected-scene entries   1 hour after the last registration or renewal (renewals come every 10 minutes)
-//   stored-token entries      5 hours after the last one (a stored token's lease ends 4 hours after its last renewal)
+//   old scene entries     until drained, at most 5 hours after they were last added (the old token lease)
 //   the epoch, the account id 400 days (the longest a session from before could be presented), then all is gone
-//   revocations               until delivered (retried every minute)
+//   revocations           until delivered (retried every minute)
 //   a refresh token to revoke at Google (sealed with TOKEN_KEY), when sign out everywhere couldn't:
-//                             until Google confirmed, at most 30 days (retried every minute)
+//                         until Google confirmed, at most 30 days (retried every minute)
 
 import { DurableObject } from "cloudflare:workers";
 
-import { devGate, revokeAtGoogle, unsealSceneToken } from "./auth";
+import { revokeAtGoogle, unsealSceneToken } from "./auth";
 import type { AuthEnv } from "./auth";
 
 const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
@@ -83,16 +82,21 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     }
   }
 
+  /** the old scene objects this account may still have something in */
+  private oldScenes() {
+    return this.sql
+      .exec("SELECT id FROM scenes UNION SELECT id FROM connected")
+      .toArray()
+      .map((row) => String(row.id));
+  }
+
   private async logoutAll(body: any): Promise<Response> {
     if (typeof body.sub !== "string" || !body.sub) {
       return json({ error: "no account" }, 400);
     }
     // strictly later than every session issued so far (sessions carry their sign-in time)
     const epoch = Math.max(Date.now(), this.epoch() + 1);
-    const scenes = this.sql
-      .exec("SELECT id FROM scenes UNION SELECT id FROM connected")
-      .toArray()
-      .map((row) => String(row.id));
+    const scenes = this.oldScenes();
     this.ctx.storage.transactionSync(() => {
       this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('epoch', ?)", String(epoch));
       this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('sub', ?)", body.sub);
@@ -109,83 +113,32 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     return json({ epoch, scenes });
   }
 
-  private async connectScene(body: any, fileOk: boolean): Promise<Response> {
-    // the scene asks before it accepts a connection: refused for a sign-in older than the epoch
-    if (!fileOk) {
-      return json({ error: "bad file id" }, 400);
-    }
-    const epoch = this.epoch();
-    if (epoch && !(Number(body.iat) >= epoch)) { // NOSONAR S1940: negation also rejects NaN timestamps
-      return json({ ok: false, epoch });
-    }
-    this.sql.exec("INSERT OR REPLACE INTO connected (id, at) VALUES (?, ?)", body.fileId, Date.now());
-    await this.planPrune();
-    return json({ ok: true });
-  }
-
-  private ageForTest(body: any): Response {
-    const ms = Number(body.ms) || 0;
-    this.sql.exec("UPDATE connected SET at = at - ?", ms);
-    this.sql.exec("UPDATE scenes SET at = at - ?", ms);
-    if (this.epoch()) {
-      this.sql.exec("UPDATE meta SET v = ? WHERE k = 'epoch'", String(this.epoch() - ms));
-    }
-    this.prune();
-    return json({
-      epoch: this.epoch(),
-      connected: this.sql.exec("SELECT COUNT(*) AS n FROM connected").toArray()[0]?.n,
-      scenes: this.sql.exec("SELECT COUNT(*) AS n FROM scenes").toArray()[0]?.n,
-      sub: !!this.metaValue("sub"),
-    });
-  }
-
-  private touchScene(body: any, fileOk: boolean) {
-    if (fileOk && body.touch) {
-      this.sql.exec("UPDATE connected SET at = ? WHERE id = ?", Date.now(), body.fileId);
-      this.sql.exec("UPDATE scenes SET at = ? WHERE id = ?", Date.now(), body.fileId);
-    }
-  }
-
   async fetch(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url);
-    const body: any = request.method === "POST" ? await request.json().catch (() => ({})) : {};
+    const body: any = request.method === "POST" ? await request.json().catch(() => ({})) : {};
     const fileOk = typeof body.fileId === "string" && FILE_ID_RE.test(body.fileId);
     if (pathname === "/epoch") {
-      // a renewal of a connected tab also keeps its index entries fresh (they run out without)
-      this.touchScene(body, fileOk);
       return json({ epoch: this.epoch() });
     }
-    if (pathname === "/scene-connect") {
-      return this.connectScene(body, fileOk);
+    if (pathname === "/scenes-list") {
+      this.prune();
+      return json({ scenes: this.oldScenes() });
     }
-    const ops: Record<string, string> = {
-      "/scene-add": "INSERT OR REPLACE INTO scenes (id, at) VALUES (?, ?)",
-      "/scene-remove": "DELETE FROM scenes WHERE id = ?",
-      "/scene-disconnect": "DELETE FROM connected WHERE id = ?",
-    };
-    if (ops[pathname]) {
+    if (pathname === "/scene-drained") {
       if (!fileOk) {
         return json({ error: "bad file id" }, 400);
       }
-      if (pathname === "/scene-add") {
-        this.sql.exec(ops[pathname], body.fileId, Date.now());
-        await this.planPrune();
-      } else {
-        this.sql.exec(ops[pathname], body.fileId);
-      }
+      this.sql.exec("DELETE FROM scenes WHERE id = ?", body.fileId);
+      this.sql.exec("DELETE FROM connected WHERE id = ?", body.fileId);
       return json({ ok: true });
     }
     if (pathname === "/logout-all") {
       return this.logoutAll(body);
     }
-    // tests with the fake Google only: everything stored gets older by `ms`, then pruned
-    if (pathname === "/dev-age" && devGate(this.env)) {
-      return this.ageForTest(body);
-    }
     return json({ error: "Not found" }, 404);
   }
 
-  /** revocations, delivered until each scene confirmed; then the prune */
+  /** revocations, delivered until each old scene object confirmed; then the prune */
   async alarm() {
     const sub = this.metaValue("sub");
     for (const row of this.sql.exec("SELECT id, epoch FROM revocations").toArray()) {

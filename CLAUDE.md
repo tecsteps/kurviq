@@ -28,7 +28,7 @@ until the analysis of its push is clean.
   typecheck), the unit tests
   (`excalidraw/node_modules/.bin/vitest run --config scenes-plugin/test/vitest.config.mts`)
   and, for sync, merge or Worker changes, the e2e scripts in
-  `scenes-plugin/test/e2e` and `online/test/live-server.mjs`.
+  `scenes-plugin/test/e2e` and `online/test/relay-server.mjs`.
 - New logic comes with unit tests; never exclude files from analysis to get
   green. Upstream `excalidraw/` and `excalidraw-mcp/` stay untouched.
 
@@ -53,7 +53,7 @@ install is never counted; `wrangler dev` counts nothing unless started with
   are never counted. Per page load: entry, country (`request.cf.country`),
   device class (from the user agent, which is then dropped), and IP + user
   agent go into the daily unique-visitor estimate (see below).
-- **Server events**: live sync tickets and renewals, agent (MCP) tool calls,
+- **Server events**: relay tickets (working together on a Drive scene), agent (MCP) tool calls,
   public scene reads, feedback reports, contact messages, completed sign-ins.
 - One Durable Object (`Stats`, name "stats") adds everything up in its own
   SQLite and writes it to D1 with its alarm every 15 minutes, so **D1 is up to
@@ -101,16 +101,16 @@ An hour or day without any activity has no rows (read it as 0).
 | hourly | `views` | `app` (/ and any /<scene>), `shared` (/s/… and /pub/… viewer), `features` (Kurviq's own public scene), `about` (the indexable page for search engines), `imprint`, `privacy`, `terms`, `contact` | page loads that reached the Worker, by entry (see the service worker note) |
 | hourly | `views_country` | ISO country (`XX` unknown, `T1` Tor) | page loads (all entries) by country |
 | hourly | `views_device` | `desktop`, `mobile`, `tablet` | page loads by device class |
-| hourly | `public_reads` | `all` | public scenes read through `/api/public/<id>` (viewers and link previews; version polls not counted; cache hits included) |
-| hourly | `live_sessions` | `all` | live sync connections (tickets; reconnects count again) |
-| hourly | `live_minutes` | `all` | live sync connected minutes, 10 per proof renewal (lower bound: a session's first 10 minutes count only at its first renewal; idle open tabs count too) |
-| hourly | `scenes_active` | `all` | distinct live-synced scenes that hour (HLL, written when the hour is over) |
+| hourly | `public_reads` | `all` | links of public scenes opened (`/s/…`, `/pub/…` of a scene shared "anyone with the link": the Worker looks up its name) and name lookups through `/api/public/<id>`; the viewer reads the content from Drive in the browser, which is not counted (version polls neither) |
+| hourly | `live_sessions` | `all` | relay connections to a Drive scene (tickets; reconnects count again; before 2026-11-13: live sync tickets) |
+| hourly | `live_minutes` | `all` | retired with live sync (2026-11-13): no new rows (was: connected minutes, 10 per proof renewal) |
+| hourly | `scenes_active` | `all` | distinct Drive scenes with a relay ticket that hour (HLL, written when the hour is over) |
 | hourly | `mcp_calls` | tool name (`edit_scene`, `read_scene`, …, `other`) | agent tool calls through the remote MCP |
 | hourly | `feedback` | `app`, `agent` | bug reports / change requests stored |
 | hourly | `contact` | `all` | contact form messages stored |
 | hourly | `sign_ins` | `drive`, `nodrive` | completed Google sign-ins on kurviq.com (with / without Drive access) |
 | daily | `visitors` | `all` | estimated unique visitors (IP + browser) that UTC day, among page loads that reached the Worker; written shortly after midnight UTC |
-| daily | `scenes_active` | `all` | estimated distinct live-synced scenes that day |
+| daily | `scenes_active` | `all` | estimated distinct Drive scenes with a relay ticket that day |
 
 ### Reading the numbers
 
@@ -141,7 +141,7 @@ q "SELECT metric, dim, SUM(value) AS n FROM stats_hourly WHERE metric IN ('publi
 # agent tool calls by tool, last 30 days
 q "SELECT dim AS tool, SUM(value) AS calls FROM stats_hourly WHERE metric='mcp_calls' AND hour >= strftime('%Y-%m-%dT%H','now','-30 days') GROUP BY dim ORDER BY calls DESC"
 
-# live sync per day: sessions, connected minutes, distinct scenes
+# relay per day: sessions, distinct scenes (connected minutes: only before 2026-11-13)
 q "SELECT substr(hour,1,10) AS day, SUM(CASE WHEN metric='live_sessions' THEN value ELSE 0 END) AS sessions, SUM(CASE WHEN metric='live_minutes' THEN value ELSE 0 END) AS minutes, (SELECT value FROM stats_daily d WHERE d.day = substr(h.hour,1,10) AND d.metric='scenes_active') AS scenes FROM stats_hourly h WHERE metric IN ('live_sessions','live_minutes') AND hour >= strftime('%Y-%m-%dT%H','now','-30 days') GROUP BY day ORDER BY day"
 
 # the last 48 hours, hour by hour
@@ -170,7 +170,7 @@ q "SELECT substr(hour,12,2) AS utc_hour, SUM(value) AS page_loads FROM stats_hou
   Safari since 16.4); crawlers by user agent are excluded, but a bot that
   pretends to be a browser counts. Any unknown path a browser navigates to
   gets the app (single-page app) and counts as `app`.
-- `live_sessions` includes reconnects; live sync and sign-ins from the local
+- `live_sessions` includes reconnects; relay tickets and sign-ins from the local
   install are not counted.
 - No data before statistics were deployed.
 

@@ -1,6 +1,11 @@
 # The local install on https
 
-Status: proposal (Should), 2026-11-13
+Status: implemented 2026-11-13 (`npm run setup:domain` with `--secure`; main menu "Move browser scenes…",
+`scenes-plugin/src/browserMove.ts` + `browserMoveUI.tsx`, tests `browserMove.test.ts`, `dialogFocus.test.ts`;
+checked in Chromium with two Herd addresses, http → https: both scenes arrive, the open unsaved one included).
+For Fabian's UAT: run `npm run setup:domain`, set `SCENES_APP_URL=https://draw.test` in `.env`, restart
+`npm start`, then move the browser scenes from http://draw.test. Criterion 3 (the relay) is checked once the
+relay exists.
 
 ## Why
 

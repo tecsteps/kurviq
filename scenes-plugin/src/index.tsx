@@ -37,6 +37,8 @@ import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { installWheelZoom } from "./wheelZoom";
 import { CommentsButton, CommentsLayer } from "./comments/ui";
+import { pen } from "./online/pen";
+import { PenBar } from "./online/penUI";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar, setPresentation, usePresentation } from "./slidesUI";
 import {
   connectGoogle,
@@ -44,7 +46,6 @@ import {
   enterFolder,
   enterSpace,
   pickerAvailable,
-  pickFiles,
   sharedFileId,
   sharedFolderId,
   sharedFolders,
@@ -55,9 +56,9 @@ import {
 import {
   ConnectDriveOffer,
   DriveDialogs,
-  LiveBanner,
   DriveIcon,
   DrivePanel,
+  FolderUnseen,
   KurviqFooter,
   McpButton,
   ReadOnlyGuard,
@@ -65,6 +66,7 @@ import {
   LinkHint,
   UpdateBanner,
   openShareDialog,
+  pickSharedWithMe,
   startDrive,
 } from "./online/ui";
 
@@ -153,6 +155,7 @@ const useAttachController = () => {
       scenesController.attach(api);
       connectLive();
       if (!IS_RENDERER) {
+        pen.attach(api);
         startDrive();
         deck.attach(api);
         connectRouter().catch((error) => console.error("[scenes] Routing could not be connected", error));
@@ -191,16 +194,10 @@ const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> 
   local: { icon: "○", label: "Not in Drive yet", tone: "muted" },
   "local-only": { icon: "⌂", label: "Local only", tone: "muted" },
   untitled: { icon: "○", label: "Not saved", tone: "muted" },
-  // live sync: where the latest change is
-  "live-saving": { icon: "…", label: "Saving…", tone: "muted" },
-  "live-browser": { icon: "↑", label: "In this browser", tone: "warn" },
-  "live-server": { icon: "☁", label: "On the server", tone: "info" },
-  "live-drive": { icon: "✓", label: "In Drive", tone: "ok" },
-  "live-unsaved": { icon: "!", label: "Not saved", tone: "danger" },
 };
 
 /** states that need no badge (the place icons say it) and no words in the scene panel */
-const QUIET_STATUS = new Set<string>(["synced", "live-drive", "live-server", "live-saving", "local", "local-only", "untitled"]);
+const QUIET_STATUS = new Set<string>(["synced", "local", "local-only", "untitled"]);
 
 // where a scene is kept (this browser / Google Drive) and who can see it
 // (private / public): two small icons with tooltips, in the list and the pill
@@ -245,13 +242,6 @@ const toggleDrive = async (name: string, inDrive: boolean, signedIn: boolean) =>
       await scenesController.putInDrive(name);
     }
   } catch (error: any) {
-    // a live scene that is shared (or has others' unsaved changes) stays in Drive: a copy only here instead
-    if (error.keepLocalCopy) {
-      if (window.confirm(`${error.message}\n\nKeep a local copy?`)) {
-        scenesController.keepLocalCopy(name).catch((copyError: any) => window.alert(copyError.message));
-      }
-      return;
-    }
     window.alert(error.message);
   }
 };
@@ -557,7 +547,11 @@ const GroupHeading = ({ folder, open, total, onToggle }: { folder?: SharedFolder
 );
 
 const groupName = (folder: SharedFolder | undefined) => {
-  return folder ? folder.owner : "My scenes";
+  if (!folder) {
+    return "My scenes";
+  }
+  // a folder picked: its owner; only scenes of it picked: "<owner>'s folder"
+  return folder.picked ? folder.owner : folder.name;
 };
 
 const loadGroups = () => {
@@ -655,7 +649,7 @@ const SceneSwitcher = ({
     { key: ownGroup(null), total: (sharedFolderId ? home.length : list.length) + others.length, entries: own },
     // the shared folder this tab shows: its scenes, under its owner like the other folders (open unless folded)
     ...(sharedFolderId
-      ? [{ key: ownGroup(sharedFolderId), folder: here ?? { folderId: sharedFolderId, name: "Kurviq", owner: "Shared folder", role: "reader" as const, scenes: [] }, total: tabList.length, entries: tabScenes }]
+      ? [{ key: ownGroup(sharedFolderId), folder: here ?? { folderId: sharedFolderId, name: "Kurviq", owner: "Shared folder", role: "reader" as const, scenes: [], ownerEmail: null, picked: true, unseen: 0 }, total: tabList.length, entries: tabScenes }]
       : []),
     ...folders.map((folder) => ({
       key: folderGroup(folder.folderId),
@@ -852,6 +846,7 @@ const SceneSwitcher = ({
               {grouped && (
                 <GroupHeading folder={section.folder} open={open} total={section.total} onToggle={() => toggleGroup(section.key)} />
               )}
+              {open && <FolderUnseen folder={section.folder} onPicked={() => sharedFolders().then(setFolders, () => setFolders([]))} />}
               {open && section.entries.map((entry, offset) => renderRow(entry, first + offset))}
             </Fragment>
           );
@@ -888,21 +883,13 @@ const SceneSwitcher = ({
         )}
       </div>
       {signedIn && pickerAvailable() && (
-        <QuickTip tip="Scenes others shared with you in Google Drive: pick them once and they are listed here (no email or link needed)">
+        <QuickTip tip="Scenes and Kurviq folders others shared with you in Google Drive: pick them once and they are listed here (no email or link needed)">
           <button
             type="button"
             className="scenes-switcher__manage"
             onClick={() => {
               onClose();
-              pickFiles({ shared: true }).then(async (ids) => {
-                if (ids.length !== 1) {
-                  return;
-                }
-                // one scene picked: open it (several: they are listed from now on)
-                const name = (await sharedWithMe()).find((entry) => entry.fileId === ids[0])?.name ?? "";
-                await scenesController.leaveForReload();
-                enterSpace(ids[0], `/s/${ids[0]}/${encodeURIComponent(name)}`);
-              }, ignore);
+              pickSharedWithMe().catch(ignore);
             }}
           >
             <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Shared with you…
@@ -1064,18 +1051,6 @@ const currentStatusText = (
       return "Local only: stays in this browser, never synced to Drive. Publish puts it in Drive.";
     case "untitled":
       return empty ? "Empty: draw something, then save it" : "Not saved yet: give it a name";
-    case "live-saving":
-      return "Saving your latest change in this browser…";
-    case "live-browser":
-      return offline
-        ? "Your latest changes are in this browser. Sent to Kurviq's server once it is reachable"
-        : "Your latest changes are in this browser, on their way to Kurviq's server";
-    case "live-server":
-      return "Saved on Kurviq's server, in Drive within about a minute";
-    case "live-drive":
-      return "Saved in Drive · changes show live for everyone who has it open";
-    case "live-unsaved":
-      return "This browser could not store your latest changes. Export the scene to keep them";
   }
 };
 
@@ -1733,7 +1708,7 @@ export const ScenesSidebar = () => {
       <AddFontOverlay />
       <DriveDialogs />
       <ReadOnlyGuard />
-      <LiveBanner />
+      {!IS_RENDERER && <PenBar />}
       {IS_ONLINE && <UpdateBanner />}
       <LinkHint />
     </>

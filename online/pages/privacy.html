@@ -1,9 +1,21 @@
 <h1>Privacy <span class="muted">/ Datenschutz</span></h1>
-<p class="muted">Last updated / Stand: 11 November 2026 · <a href="#de">Deutsche Fassung unten</a></p>
+<p class="muted">Last updated / Stand: 13 November 2026 · <a href="#de">Deutsche Fassung unten</a></p>
 
 <p><strong>In short:</strong> Kurviq has no user accounts and no tracking. Your drawings are stored in your browser and, if you
-sign in with Google, in your own Google Drive; on their way there they pass through our server, encrypted. We count usage only
-as totals. Details below.</p>
+sign in with Google, in your own Google Drive. <strong>Our servers keep no drawings, no comments and no Google sign-ins</strong>, not
+even for a moment in a database; when you work on a scene together with others, your changes pass through our server's memory,
+encrypted, without being written anywhere. We count usage only as totals. Details below.</p>
+
+<h2>What our server stores</h2>
+<p>Only this, and nothing else:</p>
+<ul>
+<li><strong>Short links</strong> you make (kurviq.com/pub/&lt;name&gt;): the name, the Drive file id it leads to and when it was
+made; nothing about who made it. Kept until it is freed or given to another scene.</li>
+<li><strong>"Sign out everywhere"</strong>: your Google account id and the time you used it, so that sign-ins from before then
+stop working (400 days).</li>
+<li><strong>Usage statistics</strong>: anonymous counters per hour and day (see below).</li>
+<li><strong>Feedback and contact messages</strong> you send us on purpose (see below: deleted after 2 years and 1 year).</li>
+</ul>
 
 <h2>Controller</h2>
 <address>Tecsteps GmbH, Breitscheidstr. 42, 16321 Bernau bei Berlin, Germany<br />
@@ -29,50 +41,38 @@ email address, profile picture and account id, and access only to Drive files it
 (<code>drive.file</code>; <code>drive.install</code> adds "Open with Kurviq" in Drive). Two cookies are set, both strictly
 necessary (§25(2) No. 2 TDDDG): <code>kq_google</code>, encrypted, holds Google's sign-in so you stay signed in (400 days, renewed
 on use; the local install keeps it in its browser storage for 90 days instead), and <code>kq_oauth_state</code> protects the
-sign-in (1 hour). Our server only issues one-hour access tokens and stores none, except for live sync and shared folders (below). Legal basis: Art.
+sign-in (1 hour). Our server only issues one-hour access tokens and stores none. Legal basis: Art.
 6(1)(b) GDPR. "Sign out" ends it in this browser; <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>
 removes Kurviq's access altogether.</p>
 
-<h2>Live sync of scenes in Drive</h2>
-<p>When you edit a scene stored in Google Drive, every change goes to our server (a Cloudflare Durable Object for that scene),
-which passes it to the others who have the scene open and saves the scene to the Drive file about once a minute, with your
-Google access. Legal basis: Art. 6(1)(b) GDPR.</p>
+<h2>Working on a scene together</h2>
+<p>Only your browser saves a scene to your Google Drive, with your own sign-in. When several people have a scene stored in Drive
+open, one of them edits at a time; the others watch the changes live. For this, the browsers pass messages through our server (a
+Cloudflare Durable Object for that scene) that keeps them in memory only and writes nothing anywhere. Legal basis: Art. 6(1)(b)
+GDPR.</p>
 <ul>
-<li>Drawing content, images, fonts, settings and the scene name are encrypted in your browser with a key that is stored only on
-the Drive file; our database cannot read them. The server stores in readable form only what it needs to keep everyone's copy
-consistent: element ids, types, versions, connections, groups and frames, the ids of images and fonts, your Google account id
-and pseudonym, and times. While it saves, it decrypts the scene in memory. Your display name is kept only while you are connected
-and is shown to the others who have the scene open, as is theirs to you.</li>
-<li>So that your changes reach Drive after you close the tab, the server keeps your Google refresh token, encrypted with a key
-outside the database: until your changes are in Drive, at most 4 hours after your last connection. While you are connected, it
-checks your access every 10 minutes and Google notifies it of changes to the file. When you sign out and Google does not
-confirm right away that Kurviq's access is revoked, the server keeps the encrypted token only to retry the revocation, until
-Google confirms it, at most 30 days.</li>
-<li>Retention: unsaved changes until they are in Drive (usually within a minute; changes that cannot be saved under their
-author's name at most 90 days), the encrypted copy of the scene until 10 minutes after the last person left, technical records
-(tab ids, counters, save records) 30 days, records of "sign out everywhere" 400 days. Cloudflare can restore deleted data for up
-to 30 days.</li>
-<li>Each element in the Drive file records its last author as a pseudonym that differs from scene to scene.</li>
+<li>Drawing content is encrypted in your browser with a key that is stored only on the Drive file; our server cannot read it. It
+knows, while you are connected, that you are there, your display name (shown to the others, as theirs to you) and who is editing.
+When the last person leaves, nothing remains.</li>
+<li>Who is editing is also noted on the Drive file itself (a pseudonym and a time, in the file's metadata at Google), so that
+Kurviq tabs that can't reach our server don't edit at the same time.</li>
+<li>Comments by people who may only comment go to the editor's browser through our server in the same way, or, if nobody is
+editing, they are left as a comment on the Drive file (stored by Google) until an editor's Kurviq takes them into the scene and
+deletes that Drive comment.</li>
 </ul>
 
 <h2>Shared and public scenes (optional)</h2>
 <p>Sharing uses Google Drive's permissions; Google stores who has access and emails the link (kurviq.com/s/&lt;file id&gt;/&lt;name&gt;).
-People you share with load the scene from Google with their own sign-in and, for live-synced scenes, connect to our server as
-above. To open a file shared with you, Kurviq may show Google's Picker (a script from Google LLC, USA). For scenes shared with
-"Anyone with the link", our server reads the file for viewers and Cloudflare caches it for one minute.</p>
+People you share with load the scene from Google with their own sign-in. To open a file shared with you, Kurviq may show
+Google's Picker (a script from Google LLC, USA). Scenes shared with "Anyone with the link" are read by the viewer's browser
+directly from Google, with Kurviq's API key; our server only asks Google for the scene's name and author (if you chose to show
+it) so that link previews show its title, and keeps nothing of it. A short link (above) only maps its name to the file.</p>
 
 <h2>Shared folders (optional)</h2>
-<p>If you share your Kurviq folder in Google Drive, Kurviq can't open its files for the people you share it with by their own
-sign-in (it only reaches files it made for them). So our server opens the folder for them with your Google access: your Kurviq
-tells the server that the folder is shared; the server then keeps your Google refresh token, encrypted with a key outside the
-database, and a list of the people and domains the folder is shared with, as keyed hashes of their email addresses, plus your
-display name and the folder's name, which they see. For each request of someone you shared with, it checks with Google that the
-folder is still shared with them, and reads only that folder and its scenes for them; for those who may edit it, it also saves
-their changes, new scenes, renames and deletions there, with your Google access (so Drive shows you as the one who changed the
-file). For live-synced scenes, a copy of your encrypted refresh token is kept for their changes as described under live sync
-(at most 4 hours after their last connection). Retention: as long as the folder is shared,
-renewed while you use Kurviq, at most 90 days after your Kurviq last checked it; deleted when you stop sharing, sign out
-everywhere or remove Kurviq's access at Google. Legal basis: Art. 6(1)(b) GDPR.</p>
+<p>If you share your Kurviq folder in Google Drive, the people you share it with pick the folder (or its scenes) once in Google's
+Picker; their Kurviq then opens the scenes with their own sign-in. Nothing about the folder, its owner or the people it is shared
+with is stored on our server. While the folder is shared, your Kurviq notes its number of scenes on the folder in Google Drive, so
+their Kurviq can tell them when there are new scenes to pick.</p>
 
 <h2>Fonts from Google Fonts (optional)</h2>
 <p>When you add a Google font, our server fetches it from Google (cached by Cloudflare for a day), so Google doesn't see you.</p>
@@ -92,7 +92,7 @@ personal data into reports.</p>
 
 <h2>Usage statistics</h2>
 <p>From the page requests your browser makes anyway, our server counts totals per hour: page views by page type, country (from
-Cloudflare) and device class, and how often features are used (sign-ins, live connections, public scene views, agent tool calls
+Cloudflare) and device class, and how often features are used (sign-ins, live connections, public scene links opened, agent tool calls
 by name, feedback and contact messages). Nothing is stored in or read from your browser for this. To estimate unique visitors per
 day, your IP address and browser string are turned into a one-way hash with a key that exists for one day only and added to a
 counter that cannot be reversed; at the end of the day only the estimated number remains. We store no IP addresses, identifiers or
@@ -113,8 +113,21 @@ the Drive features are unavailable. There is no automated decision-making.</p>
 <h1>Datenschutz</h1>
 
 <p><strong>Kurz gesagt:</strong> Kurviq hat keine Benutzerkonten und kein Tracking. Deine Zeichnungen liegen in deinem Browser und,
-wenn du dich mit Google anmeldest, in deinem eigenen Google Drive; auf dem Weg dorthin laufen sie verschlüsselt über unseren Server.
-Nutzung zählen wir nur als Summen. Einzelheiten unten.</p>
+wenn du dich mit Google anmeldest, in deinem eigenen Google Drive. <strong>Unsere Server speichern keine Zeichnungen, keine Kommentare
+und keine Google-Anmeldungen</strong>, auch nicht kurz in einer Datenbank; arbeitest du mit anderen an einer Szene, laufen deine
+Änderungen verschlüsselt durch den Arbeitsspeicher unseres Servers, ohne irgendwo gespeichert zu werden. Nutzung zählen wir nur als
+Summen. Einzelheiten unten.</p>
+
+<h2>Was unser Server speichert</h2>
+<p>Nur das, sonst nichts:</p>
+<ul>
+<li><strong>Kurzlinks</strong>, die du anlegst (kurviq.com/pub/&lt;name&gt;): der Name, die ID der Drive-Datei, zu der er führt, und
+wann er angelegt wurde; nichts darüber, wer ihn angelegt hat. Bis er freigegeben oder einer anderen Szene gegeben wird.</li>
+<li><strong>„Sign out everywhere"</strong>: deine Google-Konto-ID und der Zeitpunkt, damit Anmeldungen von davor nicht mehr gelten
+(400 Tage).</li>
+<li><strong>Nutzungsstatistik</strong>: anonyme Zähler pro Stunde und Tag (siehe unten).</li>
+<li><strong>Feedback und Kontaktnachrichten</strong>, die du uns bewusst schickst (siehe unten: gelöscht nach 2 Jahren bzw. 1 Jahr).</li>
+</ul>
 
 <h2>Verantwortlicher</h2>
 <address>Tecsteps GmbH, Breitscheidstr. 42, 16321 Bernau bei Berlin<br />
@@ -142,52 +155,39 @@ du damit öffnest (<code>drive.file</code>; <code>drive.install</code> ergänzt 
 gesetzt, beide unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG): <code>kq_google</code>, verschlüsselt, enthält die Anmeldung bei
 Google, damit du angemeldet bleibst (400 Tage, bei Nutzung verlängert; die lokale Installation bewahrt sie stattdessen 90 Tage im
 Browserspeicher auf), und <code>kq_oauth_state</code> sichert die Anmeldung ab (1 Stunde). Unser Server stellt nur einstündige
-Zugangstokens aus und speichert keine, außer für die Live-Synchronisierung und geteilte Ordner (unten). Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.
+Zugangstokens aus und speichert keine. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.
 „Sign out" beendet die Anmeldung in diesem Browser; unter
 <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> entfernst du Kurviqs Zugriff ganz.</p>
 
-<h2>Live-Synchronisierung von Szenen in Drive</h2>
-<p>Wenn du eine Szene in Google Drive bearbeitest, geht jede Änderung an unseren Server (ein Cloudflare Durable Object für diese
-Szene); er gibt sie an die anderen weiter, die die Szene geöffnet haben, und speichert die Szene etwa einmal pro Minute mit deinem
-Google-Zugriff in die Drive-Datei. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.</p>
+<h2>Gemeinsam an einer Szene arbeiten</h2>
+<p>Nur dein Browser speichert eine Szene in dein Google Drive, mit deiner eigenen Anmeldung. Haben mehrere Personen eine Szene aus
+Drive geöffnet, bearbeitet sie jeweils eine; die anderen sehen die Änderungen live. Dafür reichen die Browser Nachrichten über unseren
+Server weiter (ein Cloudflare Durable Object für diese Szene), der sie nur im Arbeitsspeicher hält und nichts irgendwo speichert.
+Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.</p>
 <ul>
-<li>Inhalt, Bilder, Schriften, Einstellungen und der Name der Szene werden in deinem Browser mit einem Schlüssel verschlüsselt, der
-nur an der Drive-Datei liegt; unsere Datenbank kann sie nicht lesen. Lesbar speichert der Server nur, was er braucht, damit alle
-Kopien übereinstimmen: Element-IDs, -Arten, Versionen, Verbindungen, Gruppen und Rahmen, die IDs von Bildern und Schriften, deine
-Google-Konto-ID und dein Pseudonym sowie Zeitpunkte. Beim Speichern entschlüsselt er die Szene im Arbeitsspeicher. Deinen
-Anzeigenamen behält er nur, solange du verbunden bist, und zeigt ihn den anderen, die die Szene geöffnet haben, so wie ihre dir.</li>
-<li>Damit deine Änderungen auch nach dem Schließen des Tabs in Drive ankommen, bewahrt der Server dein Google-Refresh-Token auf,
-verschlüsselt mit einem Schlüssel außerhalb der Datenbank: bis deine Änderungen in Drive sind, höchstens 4 Stunden nach deiner
-letzten Verbindung. Solange du verbunden bist, prüft er alle 10 Minuten deinen Zugriff, und Google meldet ihm Änderungen an der
-Datei. Wenn du dich abmeldest und Google den Widerruf von Kurviqs Zugriff nicht sofort bestätigt, behält der Server das
-verschlüsselte Token nur, um den Widerruf zu wiederholen, bis Google ihn bestätigt, höchstens 30 Tage.</li>
-<li>Speicherdauer: ungespeicherte Änderungen, bis sie in Drive sind (meist innerhalb einer Minute; Änderungen, die nicht unter dem
-Namen ihres Urhebers gespeichert werden können, höchstens 90 Tage), die verschlüsselte Kopie der Szene bis 10 Minuten nachdem die
-letzte Person gegangen ist, technische Daten (Tab-IDs, Zähler, Speicherprotokolle) 30 Tage, Vermerke zu „Sign out everywhere" 400
-Tage. Cloudflare kann gelöschte Daten bis zu 30 Tage lang wiederherstellen.</li>
-<li>Jedes Element in der Drive-Datei vermerkt seinen letzten Bearbeiter als Pseudonym, das in jeder Szene anders ist.</li>
+<li>Zeichnungsinhalte werden in deinem Browser mit einem Schlüssel verschlüsselt, der nur an der Drive-Datei liegt; unser Server kann
+sie nicht lesen. Er weiß, solange du verbunden bist, dass du da bist, deinen Anzeigenamen (den die anderen sehen, so wie du ihren) und
+wer gerade bearbeitet. Geht die letzte Person, bleibt nichts übrig.</li>
+<li>Wer gerade bearbeitet, wird auch an der Drive-Datei selbst vermerkt (ein Pseudonym und ein Zeitpunkt, in den Metadaten der Datei
+bei Google), damit Kurviq-Tabs, die unseren Server nicht erreichen, nicht gleichzeitig bearbeiten.</li>
+<li>Kommentare von Personen, die nur kommentieren dürfen, gehen auf dieselbe Weise über unseren Server an den Browser der
+bearbeitenden Person, oder, wenn gerade niemand bearbeitet, werden sie als Kommentar an der Drive-Datei hinterlegt (bei Google
+gespeichert), bis das Kurviq einer bearbeitenden Person sie in die Szene übernimmt und diesen Drive-Kommentar löscht.</li>
 </ul>
 
 <h2>Geteilte und öffentliche Szenen (optional)</h2>
 <p>Geteilt wird mit den Berechtigungen von Google Drive; Google speichert, wer Zugriff hat, und verschickt den Link
-(kurviq.com/s/&lt;datei-id&gt;/&lt;name&gt;). Personen, mit denen du teilst, laden die Szene mit ihrer eigenen Anmeldung von Google
-und verbinden sich bei live synchronisierten Szenen wie oben mit unserem Server. Um eine mit dir geteilte Datei zu öffnen, zeigt
-Kurviq eventuell Googles Picker (ein Skript der Google LLC, USA). Bei Szenen für „Anyone with the link" liest unser Server die Datei
-für Betrachter, und Cloudflare hält sie eine Minute im Cache.</p>
+(kurviq.com/s/&lt;datei-id&gt;/&lt;name&gt;). Personen, mit denen du teilst, laden die Szene mit ihrer eigenen Anmeldung von Google.
+Um eine mit dir geteilte Datei zu öffnen, zeigt Kurviq eventuell Googles Picker (ein Skript der Google LLC, USA). Szenen für „Anyone
+with the link" liest der Browser der betrachtenden Person direkt bei Google, mit Kurviqs API-Schlüssel; unser Server fragt Google nur
+nach dem Namen der Szene und ihrem Urheber (falls du ihn zeigen lässt), damit Linkvorschauen den Titel zeigen, und behält davon
+nichts. Ein Kurzlink (oben) ordnet nur seinen Namen der Datei zu.</p>
 
 <h2>Geteilte Ordner (optional)</h2>
-<p>Wenn du deinen Kurviq-Ordner in Google Drive teilst, kann Kurviq dessen Dateien für die Personen, mit denen du teilst, nicht mit
-deren eigener Anmeldung öffnen (es erreicht nur Dateien, die es für sie angelegt hat). Deshalb öffnet unser Server den Ordner für
-sie mit deinem Google-Zugriff: Dein Kurviq meldet dem Server, dass der Ordner geteilt ist; der Server bewahrt dann dein
-Google-Refresh-Token auf, verschlüsselt mit einem Schlüssel außerhalb der Datenbank, und eine Liste der Personen und Domains, mit
-denen der Ordner geteilt ist, als mit einem geheimen Schlüssel gebildete Hashwerte ihrer E-Mail-Adressen, außerdem deinen Anzeigenamen und den Namen des
-Ordners, die sie sehen. Bei jeder Anfrage einer dieser Personen prüft er bei Google, dass der Ordner noch mit ihr geteilt ist, und
-liest für sie nur diesen Ordner und seine Szenen; für Personen, die ihn bearbeiten dürfen, speichert er dort auch ihre Änderungen,
-neuen Szenen, Umbenennungen und Löschungen, mit deinem Google-Zugriff (Drive zeigt deshalb dich als denjenigen, der die Datei
-geändert hat). Bei live synchronisierten Szenen wird für ihre Änderungen eine Kopie deines verschlüsselten Refresh-Tokens
-aufbewahrt, wie unter Live-Synchronisierung beschrieben (höchstens 4 Stunden nach ihrer letzten Verbindung). Speicherdauer: solange der Ordner geteilt ist, verlängert, solange du Kurviq
-nutzt, höchstens 90 Tage nach der letzten Prüfung durch dein Kurviq; gelöscht, wenn du das Teilen beendest, „Sign out everywhere"
-nutzt oder Kurviqs Zugriff bei Google entfernst. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.</p>
+<p>Wenn du deinen Kurviq-Ordner in Google Drive teilst, wählen die Personen, mit denen du ihn teilst, den Ordner (oder seine Szenen)
+einmal in Googles Picker aus; ihr Kurviq öffnet die Szenen dann mit ihrer eigenen Anmeldung. Über den Ordner, seinen Eigentümer oder
+die Personen, mit denen er geteilt ist, wird auf unserem Server nichts gespeichert. Solange der Ordner geteilt ist, vermerkt dein
+Kurviq die Zahl seiner Szenen am Ordner in Google Drive, damit ihr Kurviq ihnen neue Szenen zum Auswählen anzeigen kann.</p>
 
 <h2>Schriften von Google Fonts (optional)</h2>
 <p>Fügst du eine Google-Schrift hinzu, holt unser Server sie bei Google (Cloudflare hält sie einen Tag im Cache); Google sieht dich
@@ -209,7 +209,7 @@ personenbezogenen Daten in Berichte.</p>
 
 <h2>Nutzungsstatistik</h2>
 <p>Aus den Seitenanfragen, die dein Browser ohnehin stellt, zählt unser Server Summen pro Stunde: Seitenaufrufe nach Seitenart, Land
-(von Cloudflare) und Geräteart sowie wie oft Funktionen genutzt werden (Anmeldungen, Live-Verbindungen, Aufrufe öffentlicher Szenen,
+(von Cloudflare) und Geräteart sowie wie oft Funktionen genutzt werden (Anmeldungen, Live-Verbindungen, Aufrufe öffentlicher Szenenlinks,
 Agenten-Aufrufe nach Werkzeugname, Feedback und Kontaktnachrichten). Dafür wird nichts in deinem Browser gespeichert oder ausgelesen.
 Um eindeutige Besucher pro Tag zu schätzen, werden deine IP-Adresse und Browserkennung mit einem Schlüssel, der nur einen Tag
 existiert, zu einem Einweg-Hash verrechnet und in einen nicht umkehrbaren Zähler eingetragen; am Tagesende bleibt nur die geschätzte

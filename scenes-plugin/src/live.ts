@@ -21,7 +21,7 @@ import { measureText, refreshTextDimensions, syncInvalidIndices, wrapText } from
 
 import { BASE_URL, IS_ONLINE, TAB_ID, scenesApi } from "./api";
 import { IDLE_PUSH_MS, scenesController } from "./controller";
-import { liveSync } from "./online/liveSync";
+import { penRefusal } from "./online/pen";
 import {
   connection,
   claimPubName,
@@ -592,6 +592,10 @@ const sceneRow = ({ name, status, pendingRename, localOnly }: ReturnType<typeof 
   return { name: name!, status, localOnly: !!localOnly, ...(notes.length ? { note: notes.join("; ") } : {}) };
 };
 
+/** someone else holds the open scene's pen (or nobody, and this tab hasn't taken it) */
+const penNote = (holder: string) =>
+  holder ? `${holder} is editing the open scene: it is read only here, their tab saves it` : "Nobody is editing the open scene: it is read only here until the user clicks Edit";
+
 const status = () => {
   const { current, dirty, list, sync, autoSync } = scenesController.getState();
   return {
@@ -610,16 +614,14 @@ const status = () => {
     editsRunning: editsRunning(),
     // a task of this tab that runs longer is given up, so it can't block the ones after it
     queueWatchdog: `${QUEUE_WATCHDOG_MS / 1000} s`,
-    // the open live scene's send queue: what is not on Kurviq's server yet, and why
-    ...(scenesController.liveCurrent() ? { liveQueue: scenesController.liveCurrent()!.queueReport() } : {}),
-    // queues closed tabs (or a reload) left, sent from this tab under their own tab ids
-    ...(liveSync.replayReport().length ? { liveReplays: liveSync.replayReport() } : {}),
+    // someone else holds the pen of the open scene: it is read only here (their tab saves it)
+    ...(scenesController.penLock() === null ? {} : { editing: penNote(scenesController.penLock()!) }),
     visible: document.visibilityState === "visible",
     // one row per scene: status synced / ahead (not pushed) / behind / diverged / conflict / local-only
     scenes: list.filter((item) => item.name !== null).map(sceneRow),
     autoSyncInfo:
       `The app pushes local changes of a scene to Drive by itself (about ${IDLE_PUSH_MS / 1000} s after the last edit) and pulls/merges Drive changes within about a minute (agent edits at once), unless auto-sync is off for that scene. Local-only scenes are never synced. Agents don't need to push. ` +
-      "Scenes with a live-… status save live through Kurviq's server (live-browser: the latest change is still in the user's browser; live-server: on the server; live-drive: in Drive): everyone who has them open sees changes within a second, and your edits reach them the same way.",
+      "One person edits a Drive scene at a time (the pen): everyone else who has it open sees it read only and follows the changes live. Agent edits go only through the tab that holds the pen; otherwise the tool says who is editing.",
   };
 };
 
@@ -700,10 +702,15 @@ const exclusive = <T,>(task: () => Promise<T>) => {
 };
 
 /** online: Drive lets the user read this space, not change it; agents can't either */
-const refuseIfReadOnly = (name: string | null | undefined) => {
+const refuseIfReadOnly = async (name: string | null | undefined) => {
   const { readOnly } = scenesController.getState().sync;
   if (readOnly && !(name && scenesController.isLocalOnly(name))) {
     throw new Error(`Read only: ${readOnly}. The user can view these scenes but not change them.`);
+  }
+  // one editor at a time: an agent edits only through the tab that holds the scene's pen
+  const editing = name ? await penRefusal(name) : null;
+  if (editing) {
+    throw new Error(editing);
   }
 };
 
@@ -910,7 +917,7 @@ const runCommand = async (command: Command) => {
     case "scene-edit": {
       // comments alone: also where the user may only comment (live sync checks that)
       if (!commentsOnly(command)) {
-        refuseIfReadOnly(command.name);
+        await refuseIfReadOnly(command.name);
       }
       const run = onceForRequest(
         command.requestId,
@@ -975,7 +982,7 @@ const runCommand = async (command: Command) => {
       return readOpenScene(command);
     case "edit":
       if (!commentsOnly(command)) {
-        refuseIfReadOnly(scenesController.getState().current);
+        await refuseIfReadOnly(scenesController.getState().current);
       }
       // like the other edits: one at a time, and a request sent again is not applied twice
       return onceForRequest(

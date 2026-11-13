@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { presentationOf, mergePresentation, editedPresentation, presentationEdit, presentationChange, presentationSave, restorePresentation } from "../../scenes-mcp/presentation.mjs";
-import { buildSceneFile, subjectsOfFile } from "../../online/worker/serverMerge";
+import { buildSceneFile } from "../../online/worker/drain";
 
 const frames = Array.from({ length: 3 }, (_, i) => ({ id: `f${i}`, type: "frame", x: i * 200, y: 0, width: 180, height: 100 }));
-const meta = { op: "test", receipts: {}, authors: {}, onBehalf: [] };
 
 describe("saved presentation setting", () => {
   it("uses the last explicit writer for local merge, including false", () => {
@@ -24,18 +23,12 @@ describe("saved presentation setting", () => {
       expect(presentationOf({ elements: [{ ...elements[0], isDeleted: true }] })).toBe(false);
     }
   });
-  it.each([false, true])("round trips %s through live subjects and Drive JSON", async (flag) => {
-    const subjects = await subjectsOfFile(JSON.stringify({ elements: frames, appState: { kurviqPresentation: flag, kurviqPresentationAt: 42 } }), "test", async () => "hash");
-    const saved = JSON.parse(buildSceneFile(subjects, meta).json);
+  it.each([false, true])("round trips %s through a drained scene file", (flag) => {
+    const plain = [...frames.map((value) => ({ k: "el" as const, value })), { k: "set" as const, value: { kurviqPresentation: flag, kurviqPresentationAt: 42 } }];
+    const saved = JSON.parse(buildSceneFile(plain).json);
     expect(saved.appState.kurviqPresentation).toBe(flag);
     expect(saved.appState.kurviqPresentationAt).toBe(42);
     expect(saved.elements).toHaveLength(3);
-  });
-  it("writes migration into the saved file so later content cannot reclassify it", async () => {
-    const subjects = await subjectsOfFile(JSON.stringify({ elements: frames }), "test", async () => "hash");
-    const saved = JSON.parse(buildSceneFile(subjects, meta).json);
-    saved.elements[0].customData = { slides: { notes: "later" } };
-    expect(presentationOf(saved)).toBe(false);
   });
 });
 

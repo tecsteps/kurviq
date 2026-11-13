@@ -79,17 +79,3 @@ describe("presentation reload recovery", () => {
     expect(reload.api.getAppState().kurviqPresentation).toBe(false);
   });
 });
-
-describe("stale detached whole-scene saves", () => {
-  const on = { kurviqPresentation: true, kurviqPresentationAt: 10 };
-  const off = { kurviqPresentation: false, kurviqPresentationAt: 20 };
-  it("sends no settings when the agent did not change presentation fields", () => {
-    const f = fixture("Drive", off);
-    expect(f.instance.liveWriteSettings({ appState: on }, { appState: on }, { settings: () => off })).toBeNull();
-  });
-  it("rebases an unrelated background change on current false", () => {
-    const f = fixture("Drive", off);
-    const settings = f.instance.liveWriteSettings({ appState: { ...on, viewBackgroundColor: "blue" } }, { appState: on }, { settings: () => off });
-    expect(settings).toMatchObject({ ...off, viewBackgroundColor: "blue" });
-  });
-});

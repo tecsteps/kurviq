@@ -38,6 +38,11 @@ describe("fake Google queries", () => {
     expect(shared(file({ owner: "bob@example.test" }), me)).toBe(true);
     expect(shared(file(), me)).toBe(false);
 
+    // others' files Kurviq may open (the shared folders' listing)
+    const others = parseQuery("mimeType='application/vnd.google-apps.folder' and not 'me' in owners and trashed=false");
+    expect(others(file({ owner: "bob@example.test", mime: "application/vnd.google-apps.folder" }), me)).toBe(true);
+    expect(others(file({ mime: "application/vnd.google-apps.folder" }), me)).toBe(false);
+
     expect(parseQuery("'root' in parents")(file({ parents: JSON.stringify(["rootA"]) }), me)).toBe(true);
     expect(parseQuery(String.raw`name = 'Bob\'s plan'`)(file({ name: "Bob's plan" }), me)).toBe(true);
   });

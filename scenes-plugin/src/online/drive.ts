@@ -24,11 +24,12 @@ import { createStore, del, get, set } from "idb-keyval";
 import { isSceneName } from "../../../scenes-mcp/sceneName.mjs";
 import { accountKey, spaceAccountOf } from "../spaces";
 import { currentSpace, ownSceneList, SPACE_KEY } from "../storage";
+import { FOLDER_COUNT_PROPERTY, folderCountOf, groupSharedFolders } from "./folderAccess";
+import type { FolderGroup } from "./folderAccess";
 import { linkTargetOf } from "./linkTarget";
 
 import google from "../../../online/google.json";
 
-import { LIVE_MARKER } from "./liveProtocol";
 import { md5 } from "./md5";
 
 import type { ApiError, RemoteInfo, RemoteScene, SceneVersion } from "../api";
@@ -41,7 +42,7 @@ export const SCENE_MIME = "application/vnd.excalidraw+json";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const EXTENSION = ".excalidraw";
 export const FOLDER_NAME = "Kurviq";
-const FILE_FIELDS = "id,name,md5Checksum,modifiedTime,headRevisionId,permissionIds,capabilities(canEdit,canShare),appProperties,owners(displayName,emailAddress),ownedByMe";
+const FILE_FIELDS = "id,name,md5Checksum,modifiedTime,headRevisionId,permissionIds,capabilities(canEdit,canShare,canComment),appProperties,owners(displayName,emailAddress),ownedByMe";
 
 /** where sign-in lives: this site (online), or kurviq.com (the local install) */
 const AUTH_BASE = (import.meta.env.VITE_APP_KURVIQ_AUTH_URL || "").replace(/\/$/, "");
@@ -51,20 +52,15 @@ const IS_LOCAL_INSTALL = AUTH_BASE !== "";
 export const fileSpace = (fileId: string) => `f:${fileId}`;
 export const sharedFileId = currentSpace.startsWith("f:") ? currentSpace.slice(2) : null;
 /**
- * The space of a folder someone shared ("d:<folderId>"): Kurviq can't reach
- * its files with this person's own Drive access (drive.file), so every Drive
- * call goes through Kurviq's server, made with the owner's sign-in
- * (online/worker/folders.ts): reads for everyone it is shared with, Kurviq's
- * own writes for those who may edit.
+ * The space of a folder someone shared ("d:<folderId>"): its scenes, with
+ * this person's own Drive access, which reaches only the scenes they picked
+ * in Google's Picker (drive.file), or all of them if picking the folder
+ * grants its files (see sharedFolders). Nothing goes through Kurviq's server.
  */
 export const folderSpace = (folderId: string) => `d:${folderId}`;
 export const sharedFolderId = currentSpace.startsWith("d:") ? currentSpace.slice(2) : null;
 
-/**
- * The shared folder a scene's file is in, as far as this browser knows: live
- * sync names it to Kurviq's server (which then uses the folder owner's access),
- * also for queues sent from another space after the tab was closed.
- */
+/** the shared folder a scene's file is in, as far as this browser knows (the share panel names it) */
 const FOLDER_FILES_KEY = "kurviq-folder-files";
 const FOLDER_FILES_MAX = 2000;
 
@@ -374,10 +370,10 @@ export const authPost = async (path: string, body: Record<string, unknown> = {})
   return answer;
 };
 
-/** the WebSocket of a scene's Durable Object (on kurviq.com also for the local install) */
-export const liveSocketUrl = (fileId: string, ticket: string) => {
+/** the WebSocket of a scene's relay (online/pen.ts; on kurviq.com also for the local install) */
+export const relaySocketUrl = (fileId: string, ticket: string) => {
   const base = IS_LOCAL_INSTALL ? AUTH_BASE : window.location.origin;
-  return `${base.replace(/^http/, "ws")}/scene/${encodeURIComponent(fileId)}/live?ticket=${encodeURIComponent(ticket)}`;
+  return `${base.replace(/^http/, "ws")}/relay/${encodeURIComponent(fileId)}/live?ticket=${encodeURIComponent(ticket)}`;
 };
 
 // -----------------------------------------------------------------------------
@@ -459,9 +455,6 @@ const drive = async (
     return body as BodyInit;
   };
 
-  if (sharedFolderId) {
-    return folderDrive(sharedFolderId, url, { method, raw, body, contentType });
-  }
   for (let attempt = 0; ; attempt++) {
     const value = await getToken();
     if (!value || otherAccount()) {
@@ -490,87 +483,6 @@ const drive = async (
     checkDriveResponse(res, data);
     return { status: res.status, data, text };
   }
-};
-
-/** why a shared folder can't be reached, as the user reads it */
-const folderLost = (code: string | undefined) =>
-  code === "no-access" ? "This folder is not shared with you any more" : "This folder is not shared any more (its owner stopped sharing it)";
-
-/** what this user may do in the shared folder this tab shows (the server says with every answer) */
-let folderRole: "writer" | "reader" | null = null;
-
-/** a request body as the folder route takes it: text, or JSON */
-const folderBody = async (body: BodyInit | object | undefined): Promise<{ text?: string; json?: unknown }> => {
-  if (body === undefined) {
-    return {};
-  }
-  if (typeof body === "string") {
-    return { text: body };
-  }
-  if (body instanceof Blob) {
-    return { text: await body.text() };
-  }
-  if (body instanceof Uint8Array) {
-    return { text: new TextDecoder().decode(body) };
-  }
-  return { json: body };
-};
-
-/** the server's refusal of a folder call, as the app reads it */
-const folderError = (error: any) => {
-  if (error.code === "not-shared" || error.code === "no-access") {
-    setConnection({ lost: folderLost(error.code) });
-    return notConnectedError();
-  }
-  if (error.code === "read-only") {
-    return readOnlyError("this folder is shared with you to view");
-  }
-  if (error.code === "live") {
-    return httpError(423, error.message);
-  }
-  return error;
-};
-
-/**
- * A Drive call in a shared folder's space: through Kurviq's server, which
- * makes it with the owner's access after checking it (this folder and its
- * scenes only; writes for those who may edit).
- */
-const folderDrive = async (
-  folderId: string,
-  url: string,
-  { method, raw, body, contentType }: { method: string; raw: boolean; body?: BodyInit | object; contentType?: string },
-): Promise<DriveResponse> => {
-  if (!(await getToken())) {
-    throw notConnectedError();
-  }
-  let target = "api";
-  let path = url;
-  if (url.startsWith(UPLOAD)) {
-    target = "upload";
-    path = url.slice(UPLOAD.length);
-  } else if (url.startsWith(API)) {
-    path = url.slice(API.length);
-  } else if (url.startsWith("https://")) {
-    throw httpError(400, "Not available in a shared folder");
-  }
-  let answer: { status: number; text: string; role?: "writer" | "reader" };
-  try {
-    answer = await authPost(`/folders/${folderId}/drive`, { method, target, path, ...(await folderBody(body)), ...(contentType ? { contentType } : {}) });
-  } catch (error: any) {
-    throw folderError(error);
-  }
-  setConnection({ lost: null });
-  folderRole = answer.role ?? folderRole;
-  let data: any = null;
-  if (!raw || answer.status !== 200) {
-    try {
-      data = answer.text ? JSON.parse(answer.text) : null;
-    } catch {
-      data = null;
-    }
-  }
-  return { status: answer.status, data, text: answer.text };
 };
 
 const fail = (res: DriveResponse, what: string): never => {
@@ -638,7 +550,7 @@ type DriveFile = {
   modifiedTime?: string;
   headRevisionId?: string;
   permissionIds?: string[];
-  capabilities?: { canEdit?: boolean; canShare?: boolean };
+  capabilities?: { canEdit?: boolean; canShare?: boolean; canComment?: boolean };
   appProperties?: Record<string, string>;
   owners?: { displayName?: string; emailAddress?: string }[];
   ownedByMe?: boolean;
@@ -783,16 +695,31 @@ const fetchSharedSpace = async (fileId: string, files: Map<string, DriveFile>) =
   }
 };
 
-/** the user's own Kurviq folder, or a shared folder (read-only for now) */
+/**
+ * A shared folder's space: may this person edit in it? The folder says so
+ * when it was picked; else the scenes picked from it do.
+ */
+const sharedFolderReadOnly = async (folder: string, files: Map<string, DriveFile>) => {
+  const res = await drive(`/files/${folder}?fields=id,capabilities(canEdit,canAddChildren),owners(displayName,emailAddress)&supportsAllDrives=true`);
+  const first = [...files.values()][0];
+  if (res.status !== 200 && !first) {
+    setConnection({ lost: "This folder is not shared with you (any more), or you haven't picked it in Google Drive yet" });
+    throw notConnectedError();
+  }
+  setConnection({ lost: null });
+  const owner = res.status === 200 ? ownerName(res.data) : ownerName(first);
+  const canEdit = res.status === 200 ? res.data.capabilities?.canEdit !== false : first.capabilities?.canEdit !== false;
+  return canEdit ? null : `${owner} shared this folder with you to view`;
+};
+
+/** the user's own Kurviq folder, or a shared folder (with the person's own access) */
 const fetchFolderSpace = async (files: Map<string, DriveFile>) => {
   await fetchFolderScenes(files);
   if (sharedFolderId) {
     rememberFolderFiles(sharedFolderId, [...files.values()].map((file) => file.id));
-    const first = [...files.values()][0];
-    const owner = first ? ownerName(first) : "Its owner";
-    readOnly = folderRole === "reader" ? `${owner} shared this folder with you to view` : null;
+    readOnly = await sharedFolderReadOnly(sharedFolderId, files);
   } else {
-    registerShare().catch(() => {});
+    noteFolderScenes(files.size).catch(() => {});
   }
 };
 
@@ -946,25 +873,27 @@ const markAgentVersion = async (file: DriveFile, revision: string) => {
 };
 
 // -----------------------------------------------------------------------------
-// live sync: scenes marked appProperties.kurviqSync are written only through
-// their Durable Object (online/liveSync.ts registers these)
+// the pen's mark on a scene's file (online/pen.ts): appProperties.kurviqPen,
+// metadata only (no new version, the content's checksum stays)
 // -----------------------------------------------------------------------------
 
-export const isLiveFile = (file: { appProperties?: Record<string, string> }) => file.appProperties?.kurviqSync === LIVE_MARKER;
+export const PEN_PROPERTY = "kurviqPen";
 
-export type LiveWrite = { fileId: string; name: string; json: string; baseMd5?: string; source?: string };
-let liveWriter: ((write: LiveWrite) => Promise<{ md5: string; driveRevision: string | null; changed: boolean }>) | null = null;
-let liveRenamer: ((rename: { fileId: string; from: string; to: string }) => Promise<void>) | null = null;
-let liveRemover: ((remove: { fileId: string; name: string }) => Promise<void>) | null = null;
+/** the file's pen mark as stored (null: none) and its modifiedTime */
+export const readPenMark = async (fileId: string): Promise<{ mark: string | null; modifiedTime: string | null }> => {
+  const res = await drive(`/files/${fileId}?fields=appProperties,modifiedTime&supportsAllDrives=true`);
+  if (res.status !== 200) {
+    fail(res, "The scene's file could not be read");
+  }
+  return { mark: res.data?.appProperties?.[PEN_PROPERTY] ?? null, modifiedTime: res.data?.modifiedTime ?? null };
+};
 
-export const setLiveWriters = (writers: {
-  write: NonNullable<typeof liveWriter>;
-  rename: NonNullable<typeof liveRenamer>;
-  remove: NonNullable<typeof liveRemover>;
-}) => {
-  liveWriter = writers.write;
-  liveRenamer = writers.rename;
-  liveRemover = writers.remove;
+/** sets (or with null removes) the file's pen mark */
+export const writePenMark = async (fileId: string, mark: string | null) => {
+  const res = await drive(`/files/${fileId}?fields=id&supportsAllDrives=true`, { method: "PATCH", body: { appProperties: { [PEN_PROPERTY]: mark } } });
+  if (res.status !== 200) {
+    fail(res, "The scene's pen mark could not be written");
+  }
 };
 
 export const driveScenes = {
@@ -986,7 +915,6 @@ export const driveScenes = {
               updatedAt: file.modifiedTime ?? null,
               public: !!file.permissionIds?.includes("anyoneWithLink"),
               fileId: file.id,
-              ...(isLiveFile(file) ? { live: true } : {}),
             }))
             .sort((a, b) => a.name.localeCompare(b.name))
         : [];
@@ -1030,14 +958,6 @@ export const driveScenes = {
     requireWritable();
     const checksum = md5(encodeBytes(json));
     const file = await locate(name);
-    if (file && isLiveFile(file)) {
-      // the scene saves through its Durable Object: never a second writer
-      // (CONCEPT "Old app versions"); agents' writes go through live sync
-      if (!liveWriter) {
-        throw httpError(409, `"${name}" is saved through live sync: it can't be written to Drive directly`);
-      }
-      return liveWriter({ fileId: file.id, name, json, baseMd5, source });
-    }
     checkBase(name, file?.md5Checksum, baseMd5);
     if (file?.md5Checksum === checksum) {
       return { md5: checksum, driveRevision: null, changed: false };
@@ -1095,15 +1015,6 @@ export const driveScenes = {
     if (sharedFileId) {
       throw httpError(403, `"${name}" belongs to ${ownerName(file)}: only they can delete it`);
     }
-    if (isLiveFile(file)) {
-      // its Durable Object stops saving first (and confirms), then the file goes to the trash
-      if (!liveRemover) {
-        throw httpError(409, `"${name}" is saved through live sync: delete it in Kurviq`);
-      }
-      await liveRemover({ fileId: file.id, name });
-      forgetListing();
-      return { md5: null };
-    }
     checkBase(name, file.md5Checksum, baseMd5 ?? undefined);
     const res = await drive(`/files/${file.id}?fields=id`, { method: "PATCH", body: { trashed: true } });
     if (res.status !== 200) {
@@ -1128,15 +1039,6 @@ export const driveScenes = {
     }
     if (current.files.has(to)) {
       throw httpError(409, `A scene named "${to}" already exists in Google Drive`, { exists: true });
-    }
-    if (isLiveFile(file)) {
-      // a rename of a live scene is an event like any other (the DO renames the file)
-      if (!liveRenamer) {
-        throw httpError(409, `"${from}" is saved through live sync: rename it in Kurviq`);
-      }
-      await liveRenamer({ fileId: file.id, from, to });
-      forgetListing();
-      return { md5: file.md5Checksum ?? "", driveRevision: null };
     }
     const res = await drive(`/files/${file.id}?fields=id&supportsAllDrives=true`, {
       method: "PATCH",
@@ -1196,12 +1098,6 @@ export const driveScenes = {
       return null;
     }
     return { md5: res.data.md5Checksum as string, driveRevision: revision, at: res.data.modifiedTime ?? file.appProperties?.agentAt ?? null };
-  },
-
-  /** a scene that saves through live sync: its file id (null: Drive is written directly, or unknown) */
-  liveFileOf: async (name: string) => {
-    const file = await locate(name, false).catch(() => null);
-    return file && isLiveFile(file) ? file.id : null;
   },
 
   /** a version of a file by its MD5: kept in this browser, else the current one if it is that version */
@@ -1494,71 +1390,123 @@ export const sharedWithMe = (): Promise<SharedWithMe[]> => {
 
 // -----------------------------------------------------------------------------
 // shared folders (docs/folders/CONCEPT.md): a Kurviq folder its owner shared in
-// Google Drive. The owner's Kurviq tells Kurviq's server (registerShare);
-// everyone it is shared with finds it (sharedFolders) and opens it in its own
-// space, read through the server with the owner's sign-in.
+// Google Drive. Nothing about it is kept on Kurviq's server: the person it is
+// shared with picks the folder (or its scenes) once in Google's Picker, and
+// their Kurviq lists what that lets it see, with their own access.
 // -----------------------------------------------------------------------------
 
-/** the owner's Kurviq asks Drive whether its folder is shared this often (and renews the server's copy of its sign-in) */
-const SHARE_CHECK_MS = 30 * 60_000;
-const shareKey = () => `kurviq-folder-share:${state.user?.email ?? ""}`;
+/** the owner's Kurviq notes its scene count on its folder (a private property of Kurviq's) this often at most */
+const COUNT_CHECK_MS = 10 * 60_000;
+const countKey = () => `kurviq-folder-count:${state.user?.email ?? ""}`;
 
 /**
- * The owner's side: when the Kurviq folder is shared in Drive (or was, and
- * isn't any more), Kurviq's server is told; it reads the folder's sharing
- * itself and keeps (or forgets) the owner's sign-in for it.
+ * The owner's side: while the Kurviq folder is shared, its number of scenes
+ * is noted on it (appProperties.kurviqScenes, Drive metadata: no new version
+ * of anything). A guest who sees fewer knows that new scenes wait for a pick
+ * ("3 new scenes in this folder: open them").
  */
-const registerShare = async () => {
+const noteFolderScenes = async (count: number) => {
   if (sharedFileId || sharedFolderId || !state.user || !state.drive) {
     return;
   }
-  let known: { at: number; shared: boolean } | null = null;
+  let known: { at: number; count: number } | null = null;
   try {
-    known = JSON.parse(localStorage.getItem(shareKey()) || "null");
+    known = JSON.parse(localStorage.getItem(countKey()) || "null");
   } catch {}
-  if (known && Date.now() - known.at < SHARE_CHECK_MS) {
+  if (known?.count === count && Date.now() - known.at < COUNT_CHECK_MS) {
     return;
   }
   const folder = await folderId();
-  const res = await drive(`/files/${folder}?fields=id,shared`);
+  const res = await drive(`/files/${folder}?fields=id,shared,appProperties`);
   if (res.status !== 200) {
     return;
   }
-  let shared = res.data?.shared === true;
-  // not shared and known not to be: nothing to tell (a browser that doesn't know asks once,
-  // so a share that ended while it was registered from another browser is forgotten too)
-  if (shared || known?.shared !== false) {
-    shared = (await authPost("/folders/register", { folderId: folder })).shared === true;
+  const noted = res.data.appProperties?.[FOLDER_COUNT_PROPERTY];
+  if (res.data.shared === true && noted !== String(count)) {
+    await drive(`/files/${folder}?fields=id`, { method: "PATCH", body: { appProperties: { [FOLDER_COUNT_PROPERTY]: String(count) } } });
   }
   try {
-    localStorage.setItem(shareKey(), JSON.stringify({ at: Date.now(), shared }));
+    localStorage.setItem(countKey(), JSON.stringify({ at: Date.now(), count }));
   } catch {}
 };
 
-export type SharedFolderScene = { name: string; fileId: string; modifiedTime: string | null };
-export type SharedFolder = {
-  folderId: string;
-  name: string;
-  owner: string;
-  /** the owner's address (null: not known) */
-  ownerEmail?: string | null;
-  role: "writer" | "reader";
-  scenes: SharedFolderScene[];
-};
+export type SharedFolderScene = FolderGroup["scenes"][number];
+export type SharedFolder = FolderGroup;
 
 let folderList: { at: number; value: Promise<SharedFolder[]> } | null = null;
 
-/** the folders others shared with this user, with their scenes (asked again after a minute) */
+/** every page of a files.list query, with the given fields per file */
+const listAll = async (query: string, fields: string): Promise<DriveFile[]> => {
+  const all: DriveFile[] = [];
+  let pageToken = "";
+  do {
+    const res = await drive( // NOSONAR S9382: each page needs the preceding page token
+      `/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(${fields})&pageSize=1000&includeItemsFromAllDrives=true&supportsAllDrives=true${
+        pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""
+      }`,
+    );
+    if (res.status !== 200) {
+      fail(res, "The shared folders could not be listed");
+    }
+    all.push(...(res.data.files as DriveFile[]));
+    pageToken = res.data.nextPageToken || "";
+  } while (pageToken);
+  return all;
+};
+
+/**
+ * The folders others shared with this user, as far as Kurviq may see them:
+ * folders they picked (with every scene Kurviq may open in them), and scenes
+ * they picked out of a folder they didn't pick (grouped by that folder).
+ * Asked again after a minute.
+ */
 export const sharedFolders = (): Promise<SharedFolder[]> => {
   if (folderList && Date.now() - folderList.at < 60_000) {
     return folderList.value;
   }
-  const value = authPost("/folders").then((answer) => (Array.isArray(answer.folders) ? (answer.folders as SharedFolder[]) : []));
+  const value = (async () => {
+    // others' folders and scenes Kurviq may open for this person (drive.file: those they picked, and
+    // the files in a picked folder if picking it grants them)
+    const [folders, scenes, single] = await Promise.all([
+      listAll(`mimeType=${q(FOLDER_MIME)} and not 'me' in owners and trashed=false`, "id,name,owners(displayName,emailAddress),capabilities(canEdit),appProperties"),
+      listAll(`mimeType=${q(SCENE_MIME)} and not 'me' in owners and trashed=false`, `${FILE_FIELDS},parents`),
+      sharedWithMe(),
+    ]);
+    return groupSharedFolders(
+      folders.map((folder) => ({
+        id: folder.id,
+        name: folder.name,
+        owner: ownerName(folder),
+        ownerEmail: folder.owners?.[0]?.emailAddress ?? null,
+        canEdit: folder.capabilities?.canEdit === true,
+        count: folderCountOf(folder.appProperties),
+      })),
+      scenes
+        .map((file) => ({ file, name: sceneNameOf(file) }))
+        .filter((entry): entry is { file: DriveFile & { parents?: string[] }; name: string } => !!entry.name && isSceneName(entry.name))
+        .map(({ file, name }) => ({
+          fileId: file.id,
+          name,
+          parents: (file as { parents?: string[] }).parents ?? [],
+          owner: ownerName(file),
+          ownerEmail: file.owners?.[0]?.emailAddress ?? null,
+          canEdit: file.capabilities?.canEdit === true,
+          modifiedTime: file.modifiedTime ?? null,
+        })),
+      new Set(single.map((entry) => entry.fileId)),
+    );
+  })();
   value.catch(() => {
     folderList = null;
   });
   folderList = { at: Date.now(), value };
   return value;
+};
+
+/** the folder list is asked again (after a pick) */
+export const forgetSharedFolders = () => {
+  folderList = null;
+  sharedList = null;
 };
 
 /**
@@ -1654,18 +1602,26 @@ export const sceneElsewhere = async (name: string): Promise<(() => void) | null>
 };
 
 // -----------------------------------------------------------------------------
-// a shared link (kurviq.com/s/<fileId>): public without sign-in, else with
-// the visitor's own Drive access
+// a shared link (kurviq.com/s/<fileId>): public without sign-in (read from
+// Drive in the browser with Kurviq's browser API key: the content never
+// passes through Kurviq's servers), else with the visitor's own Drive access
 // -----------------------------------------------------------------------------
+
+/** Kurviq's browser API key (Picker, and public files without sign-in); set at build time */
+const BROWSER_KEY: string = import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY || "";
 
 export type SharedScene = {
   json: string;
   name: string;
+  /** the version of exactly this content (the MD5 of its bytes, as Drive names it) */
+  version: string;
   /** the author, if they chose to be named on the public page */
   by?: string;
   public: boolean;
   /** Drive lets this user change it */
   canEdit: boolean;
+  /** Drive lets this user comment on it */
+  canComment: boolean;
 };
 
 export type SharedSceneAnswer =
@@ -1677,17 +1633,55 @@ export type SharedSceneAnswer =
   /** no such file, or no access */
   | { missing: true };
 
-/**
- * A shared scene's current version (Drive's MD5 of it): for public ones from
- * Kurviq's Worker, else from Drive with the visitor's sign-in; null: unknown
- */
-export const sharedSceneVersion = async (fileId: string): Promise<string | null> => {
+type PublicFile = { name?: string; mimeType?: string; md5Checksum?: string; properties?: Record<string, string> };
+
+const isSceneFile = (file: { name?: string; mimeType?: string }) => file.mimeType === SCENE_MIME || String(file.name).endsWith(EXTENSION);
+
+/** a Drive URL with Kurviq's browser key: works for files shared "anyone with the link" only */
+const keyUrl = (fileId: string, query: string) =>
+  `${API}/files/${encodeURIComponent(fileId)}?${query}&supportsAllDrives=true&key=${encodeURIComponent(BROWSER_KEY)}`;
+
+/** a public scene's metadata, without sign-in; null: not public (or no key in this build, or offline) */
+const publicFile = async (fileId: string): Promise<PublicFile | null> => {
+  if (!BROWSER_KEY) {
+    return null;
+  }
   try {
-    const res = await fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}/version`);
-    if (res.ok) {
-      return (await res.json()).version ?? null;
+    const res = await fetch(keyUrl(fileId, "fields=name,mimeType,md5Checksum,properties"), { cache: "no-store" });
+    const file: PublicFile | null = res.ok ? await res.json() : null;
+    return file && isSceneFile(file) ? file : null;
+  } catch {
+    return null;
+  }
+};
+
+/** a public scene's content and the MD5 of its bytes (the version loaded); null: not readable */
+const publicContent = async (fileId: string): Promise<{ json: string; version: string } | null> => {
+  try {
+    const res = await fetch(keyUrl(fileId, "alt=media"), { cache: "no-store" });
+    if (!res.ok) {
+      return null;
     }
-  } catch {}
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return { json: new TextDecoder().decode(bytes), version: md5(bytes) };
+  } catch {
+    return null;
+  }
+};
+
+/** the author's name as the owner chose to show it (a public property: anyone may write anything there) */
+const cleanByline = (value: unknown) =>
+  String(value ?? "")
+    .replaceAll(/[\u0000-\u001f\u007f]/g, "")
+    .trim()
+    .slice(0, 80);
+
+/** a shared scene's current version (Drive's MD5 of it): public ones without sign-in, else with it; null: unknown */
+export const sharedSceneVersion = async (fileId: string): Promise<string | null> => {
+  const pub = await publicFile(fileId);
+  if (pub?.md5Checksum) {
+    return pub.md5Checksum;
+  }
   if (!(await getToken().catch(() => null))) {
     return null;
   }
@@ -1695,37 +1689,56 @@ export const sharedSceneVersion = async (fileId: string): Promise<string | null>
   return file?.md5Checksum ?? null;
 };
 
-/** `version`: that version of a public scene (past the edge cache's copy) */
-export const readSharedScene = async (fileId: string, { version }: { version?: string } = {}): Promise<SharedSceneAnswer> => {
-  // public scenes: through Kurviq's edge cache (the page preloads this very URL), no sign-in needed
-  const versionQuery = version ? `?v=${version}` : "";
-  const publicCopy = fetch(`${AUTH_BASE}/api/public/${encodeURIComponent(fileId)}${versionQuery}`)
-    .then(async (res) =>
-      res.ok
-        ? { json: await res.text(), name: decodeURIComponent(res.headers.get("X-Kurviq-Name") || ""), by: decodeURIComponent(res.headers.get("X-Kurviq-By") || "") }
-        : null,
-    )
-    .catch(() => null);
-  const signedIn = getToken().catch(() => null);
-  const fetchAccessibleFile = async (value: string | null) => {
-    if (!value) return null;
-    try {
-      return await fetchSharedFile(fileId);
-    } catch {
-      return null;
-    }
-  };
-  const access = signedIn.then(fetchAccessibleFile);
-  const pub = await publicCopy;
-  if (pub) {
-    // don't wait for the access check longer than a moment
-    const file = await Promise.race([access, new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500))]);
-    return { scene: { json: pub.json, name: pub.name || (file ? sceneNameOf(file) ?? "" : ""), ...(pub.by ? { by: pub.by } : {}), public: true, canEdit: !!file?.capabilities?.canEdit } };
+/** the file as the signed-in visitor may open it (null: not signed in, or no access) */
+const accessibleFile = async (fileId: string) => {
+  if (!(await getToken().catch(() => null))) {
+    return { signedIn: false, file: null };
   }
-  if (!(await signedIn)) {
+  try {
+    return { signedIn: true, file: await fetchSharedFile(fileId) };
+  } catch {
+    return { signedIn: true, file: null };
+  }
+};
+
+/** a public scene, with what the signed-in visitor may do with it (asked for a moment at most) */
+const readPublicScene = async (fileId: string, pub: PublicFile, access: Promise<{ file: DriveFile | null }>): Promise<SharedSceneAnswer | null> => {
+  const content = await publicContent(fileId);
+  if (!content) {
+    return null;
+  }
+  const { file } = await Promise.race([access, new Promise<{ file: null }>((resolve) => setTimeout(() => resolve({ file: null }), 1500))]);
+  const by = cleanByline(pub.properties?.[BYLINE_PROPERTY]);
+  const name = String(pub.name ?? "").replace(/\.excalidraw$/, "");
+  return {
+    scene: {
+      json: content.json,
+      version: content.version,
+      name: name || (file ? sceneNameOf(file) ?? "" : ""),
+      ...(by ? { by } : {}),
+      public: true,
+      canEdit: !!file?.capabilities?.canEdit,
+      canComment: !!file?.capabilities?.canComment,
+    },
+  };
+};
+
+/**
+ * A shared scene: a public one straight from Drive (no sign-in), else with the
+ * visitor's own access. The answer's version is the one of the content read,
+ * so a viewer compares Drive's version with what it actually shows.
+ */
+export const readSharedScene = async (fileId: string): Promise<SharedSceneAnswer> => {
+  const access = accessibleFile(fileId);
+  const pub = await publicFile(fileId);
+  const shown = pub ? await readPublicScene(fileId, pub, access) : null;
+  if (shown) {
+    return shown;
+  }
+  const { signedIn, file } = await access;
+  if (!signedIn) {
     return { signIn: true };
   }
-  const file = await access;
   if (!file) {
     return { needsAccess: true };
   }
@@ -1737,7 +1750,16 @@ export const readSharedScene = async (fileId: string, { version }: { version?: s
   if (res.status !== 200) {
     return { missing: true };
   }
-  return { scene: { json: res.text, name, public: !!file.permissionIds?.includes("anyoneWithLink"), canEdit: !!file.capabilities?.canEdit } };
+  return {
+    scene: {
+      json: res.text,
+      version: md5(encodeBytes(res.text)),
+      name,
+      public: !!file.permissionIds?.includes("anyoneWithLink"),
+      canEdit: !!file.capabilities?.canEdit,
+      canComment: !!file.capabilities?.canComment,
+    },
+  };
 };
 
 // -----------------------------------------------------------------------------
@@ -1777,57 +1799,102 @@ const loadGapi = (module: string, what: string) => {
 
 const loadPicker = () => loadGapi("picker", "Google Picker");
 
-export const pickerAvailable = () => !!import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY && !!google.projectNumber;
+/** a dev build against the fake Google: its Picker answers with what a test queued (online/worker/fakeGoogle.ts) */
+const IS_FAKE_GOOGLE = GOOGLE_BASE !== "";
+
+export const pickerAvailable = () => (!!BROWSER_KEY && !!google.projectNumber) || IS_FAKE_GOOGLE;
+
+const fakePick = async (token: string): Promise<string[]> => {
+  const res = await fetch(`${GOOGLE_BASE}/picker`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+  const answer = res.ok ? await res.json() : { ids: [] };
+  return Array.isArray(answer.ids) ? answer.ids.map(String) : [];
+};
+
+export type PickOptions = {
+  /** just this file ("Allow Kurviq to open it") */
+  fileId?: string;
+  /** Drive's "Shared with me", several at once */
+  shared?: boolean;
+  /** searched for already (a scene link's name) */
+  query?: string;
+  /** shared folders can be picked too (a folder someone shared: Kurviq then lists its scenes) */
+  folders?: boolean;
+  /** the scenes in this folder, several at once ("open the new scenes in this folder") */
+  parent?: string;
+};
+
+const pickerTitle = ({ fileId, shared, folders, parent }: PickOptions) => {
+  if (fileId) {
+    return "Allow Kurviq to open this scene";
+  }
+  if (parent) {
+    return "Pick the scenes of this folder";
+  }
+  if (folders) {
+    return "Scenes and Kurviq folders shared with you";
+  }
+  return shared ? "Scenes shared with you" : "Open a scene from Google Drive";
+};
+
+/** the Picker's view for these options (Google's picker API) */
+const pickerView = (pickerApi: any, { fileId, shared, query, folders, parent }: PickOptions) => {
+  const view = new pickerApi.DocsView(pickerApi.ViewId.DOCS);
+  if (folders) {
+    view.setMimeTypes(`${SCENE_MIME},${FOLDER_MIME}`).setIncludeFolders(true).setSelectFolderEnabled(true);
+  } else {
+    view.setMimeTypes(SCENE_MIME).setIncludeFolders(false);
+  }
+  if (fileId) {
+    view.setFileIds(fileId);
+  }
+  if (parent) {
+    view.setParent(parent);
+  }
+  if (shared && !parent) {
+    view.setOwnedByMe(false);
+  }
+  if (query) {
+    view.setQuery(query);
+  }
+  return view;
+};
 
 /**
- * the picked file ids (empty: cancelled). shared: Drive's "Shared with me",
- * several at once (no email or link needed: picking lets Kurviq open them)
+ * the picked file (and folder) ids (empty: cancelled). Picking lets Kurviq
+ * open them (drive.file): no email or link needed.
  */
-export const pickFiles = async ({ fileId, shared, query }: { fileId?: string; shared?: boolean; query?: string } = {}): Promise<string[]> => {
+export const pickFiles = async (options: PickOptions = {}): Promise<string[]> => {
   const value = await getToken();
   if (!value) {
     throw notConnectedError();
   }
+  const picked = (ids: string[]) => {
+    // Kurviq may open them now: list them right away
+    if (ids.length) {
+      forgetSharedFolders();
+    }
+    return ids;
+  };
+  if (IS_FAKE_GOOGLE) {
+    return picked(await fakePick(value));
+  }
   await loadPicker();
   const pickerApi = (window as any).google.picker;
-  const view = new pickerApi.DocsView(pickerApi.ViewId.DOCS).setMimeTypes(SCENE_MIME).setIncludeFolders(false);
-  if (fileId) {
-    view.setFileIds(fileId);
-  }
-  if (shared) {
-    view.setOwnedByMe(false);
-  }
-  if (query) {
-    // searched for already (a scene link's name)
-    view.setQuery(query);
-  }
   return new Promise<string[]>((resolve) => {
-    const pickerTitle = () => {
-      if (fileId) {
-        return "Allow Kurviq to open this scene";
-      }
-      if (shared) {
-        return "Scenes shared with you";
-      }
-      return "Open a scene from Google Drive";
-    };
-
     const builder = new pickerApi.PickerBuilder();
-    if (shared) {
+    if (options.shared || options.folders || options.parent) {
       builder.enableFeature(pickerApi.Feature.MULTISELECT_ENABLED);
     }
     const picker = builder
-      .addView(view)
+      .addView(pickerView(pickerApi, options))
       .setOAuthToken(value)
-      .setDeveloperKey(import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY)
+      .setDeveloperKey(BROWSER_KEY)
       .setAppId(google.projectNumber)
-      .setTitle(pickerTitle())
+      .setTitle(pickerTitle(options))
       .setCallback((data: any) => {
         const action = data[pickerApi.Response.ACTION];
         if (action === pickerApi.Action.PICKED) {
-          // Kurviq may open them now: list them right away
-          sharedList = null;
-          resolve((data[pickerApi.Response.DOCUMENTS] || []).map((doc: any) => String(doc[pickerApi.Document.ID])));
+          resolve(picked((data[pickerApi.Response.DOCUMENTS] || []).map((doc: any) => String(doc[pickerApi.Document.ID]))));
         } else if (action === pickerApi.Action.CANCEL) {
           resolve([]);
         }
@@ -1835,4 +1902,65 @@ export const pickFiles = async ({ fileId, shared, query }: { fileId?: string; sh
       .build();
     picker.setVisible(true);
   });
+};
+
+// -----------------------------------------------------------------------------
+// Drive's own comments on a file: the mailbox of Drive's commenters while no
+// editor is there to take their comments into the scene (../comments/mailbox.ts)
+// -----------------------------------------------------------------------------
+
+export type DriveComment = {
+  id: string;
+  content: string;
+  /** Google gives the address only sometimes (not documented): the name always */
+  author: { displayName?: string; emailAddress?: string; me?: boolean };
+  resolved?: boolean;
+  deleted?: boolean;
+};
+
+const COMMENT_FIELDS = "id,content,author(displayName,emailAddress,me),resolved,deleted";
+
+/** the file's Drive comments (not the deleted ones), oldest first */
+export const listDriveComments = async (fileId: string): Promise<DriveComment[]> => {
+  const all: DriveComment[] = [];
+  let pageToken = "";
+  do {
+    const res = await drive( // NOSONAR S9382: each page needs the preceding page token
+      `/files/${encodeURIComponent(fileId)}/comments?fields=nextPageToken,comments(${COMMENT_FIELDS})&pageSize=100${
+        pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""
+      }`,
+    );
+    if (res.status !== 200) {
+      fail(res, "The comments in Google Drive could not be read");
+    }
+    all.push(...((res.data.comments ?? []) as DriveComment[]).filter((comment) => !comment.deleted));
+    pageToken = res.data.nextPageToken || "";
+  } while (pageToken);
+  return all;
+};
+
+/** a new Drive comment on the file (Drive's commenters may) */
+export const createDriveComment = async (fileId: string, content: string): Promise<string> => {
+  const res = await drive(`/files/${encodeURIComponent(fileId)}/comments?fields=id`, { method: "POST", body: { content } });
+  if (res.status !== 200) {
+    fail(res, "The comment could not be left in Google Drive");
+  }
+  return String(res.data.id);
+};
+
+/**
+ * A Drive comment taken care of: deleted, or (where Drive lets only its
+ * author delete it) resolved, so nobody takes it in again
+ */
+export const removeDriveComment = async (fileId: string, commentId: string): Promise<"deleted" | "resolved"> => {
+  const path = `/files/${encodeURIComponent(fileId)}/comments/${encodeURIComponent(commentId)}`;
+  const res = await drive(path, { method: "DELETE" });
+  if (res.status === 204 || res.status === 200 || res.status === 404) {
+    return "deleted";
+  }
+  const reply = await drive(`${path}/replies?fields=id`, { method: "POST", body: { action: "resolve", content: "Taken into the scene by Kurviq." } });
+  if (reply.status !== 200) {
+    fail(reply, "The comment in Google Drive could not be closed");
+  }
+  return "resolved";
 };

@@ -34,7 +34,7 @@ await page.mouse.up();
 await page.keyboard.press("Escape");
 let fileId = null;
 for (let i = 0; i < 30; i++) {
-  fileId = await page.evaluate(() => window.__live?.current()?.fileId ?? null); // NOSONAR S9382: polling, one check after the other
+  fileId = await page.evaluate(() => window.__scenes?.fileIdOf(window.__scenes.getState().current) ?? null); // NOSONAR S9382: polling, one check after the other
   if (fileId) break;
   await sleep(1000); // NOSONAR S9382: polling, one check after the other
 }
@@ -57,9 +57,10 @@ const file = await admin(`file?fileId=${fileId}`);
 const props = file.properties ?? file.file?.properties;
 ok(!!props?.kurviqBy, "the file names the author", props);
 
-// the public deck carries it (no cache: a new version)
-const res = await fetch(`${BASE}/api/public/${fileId}?v=${"0".repeat(31)}1`);
-ok(res.ok && !!res.headers.get("X-Kurviq-By"), "the public deck carries the author", res.headers.get("X-Kurviq-By"));
+// the public scene's metadata names the author (the viewer reads the content from Drive itself)
+const res = await fetch(`${BASE}/api/public/${fileId}`);
+const publicMeta = res.ok ? await res.json() : null;
+ok(!!publicMeta?.by && res.headers.get("Cache-Control")?.includes("no-store"), "the public scene's metadata carries the author (uncached)", publicMeta);
 
 // a visitor (no sign-in) sees "by …"
 const visitorCtx = await browser.createIncognitoBrowserContext();

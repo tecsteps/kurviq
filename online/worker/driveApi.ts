@@ -1,5 +1,6 @@
-// Google Drive calls of live sync (the Worker's scene routes and the scene's
-// Durable Object), with the user's or the author's own access token.
+// Google Drive calls of the Worker (the relay's ticket route, the drain of the
+// retired live sync's scene objects, the public scenes' names), with the
+// user's own access token.
 //
 // Every answer is sorted into what it means for saving: a refusal (the
 // author can't be saved as), Drive full or rate-limited (wait, it is not the

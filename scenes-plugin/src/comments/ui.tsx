@@ -3,8 +3,9 @@
 // resolve, copy a link, edit or remove), a "Comments" button at the top right
 // with the list of threads, and a placing mode for a new comment (click an
 // element or a free spot). Who may do what is Google Drive's: editors
-// everything, Drive's commenters their own comments and resolving, viewers
-// read. Pins never show in presentations, exports or the public viewer.
+// everything, Drive's commenters their own comments and resolving (an
+// editor's Kurviq writes them: ./mailbox.ts), viewers read. Pins never show in
+// presentations, exports or the public viewer.
 // Data: ../../../scenes-mcp/sceneComments.mjs, the open scene's list: ./store.ts.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -16,9 +17,10 @@ import { authorKey, changeStamp, commentId, pinFor, pinPosition, threadsOf, with
 import { scenesController } from "../controller";
 import { deck } from "../deck";
 import { createStore } from "../externalStore";
-import { liveSync } from "../online/liveSync";
 import { connection, listPermissions } from "../online/drive";
+import { onPenChange, penState } from "../online/pen";
 import { usePresenter } from "../present";
+import { commenterWriter, editorCommenterFile, startCommentMailbox } from "./mailbox";
 import { commentStore } from "./store";
 
 import type { CommentPin, CommentThread, SceneComment } from "../../../scenes-mcp/sceneComments.mjs";
@@ -85,18 +87,26 @@ const useMe = (): Me | null => {
 /** the shared viewer is on screen (comments there are the viewer's: see store.ts) */
 const useViewer = () => useSyncExternalStore(commentStore.subscribe, () => commentStore.slot() === "viewer");
 
-/** what this person may do with the comments on screen (Google Drive decides: see the controller and live sync) */
+const subscribePen = (listener: () => void) => onPenChange(() => listener());
+
+/** what this person may do with the comments on screen (Google Drive decides: see the controller, the pen and ./mailbox.ts) */
 const usePermissions = () => {
   const state = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
   const viewer = useViewer();
-  const live = useSyncExternalStore(liveSync.subscribe, () => (viewer ? liveSync.viewer() : scenesController.liveCurrent()));
+  const canWrite = useSyncExternalStore(commentStore.subscribe, () => commentStore.canWrite());
+  // a primitive snapshot: penState() is a new object every time
+  const me = useSyncExternalStore(subscribePen, () => penState().me);
   if (viewer) {
-    // the viewer: only Drive's commenters may write (live); nobody removes others' comments there
-    return { canComment: !!live?.commentsAllowed(), canModerate: false };
+    // the viewer: those Drive lets comment (their comments go to an editor); nobody removes others' comments there
+    return { canComment: canWrite, canModerate: false };
+  }
+  if (me === "commenter") {
+    // another tab holds the pen and this one may only comment: their own comments and resolving
+    return { canComment: !!editorCommenterFile(), canModerate: false };
   }
   const canComment = scenesController.canComment();
   // editors (not Drive's commenters) may also remove others' comments
-  const canModerate = canComment && !live?.commentOnly && (!state.sync.readOnly || scenesController.isLocalOnly(state.current));
+  const canModerate = canComment && (!state.sync.readOnly || scenesController.isLocalOnly(state.current));
   return { canComment, canModerate };
 };
 
@@ -343,10 +353,15 @@ const Composer = ({
 // -----------------------------------------------------------------------------
 
 const save = (comment: SceneComment, setError: (error: string | null) => void) => {
-  const ok = commentStore.change(comment);
-  setError(ok ? null : "Comments can't be saved in this scene now (it is read only here, or still loading).");
+  // a commenter in the editor (another tab holds the pen): the comment goes to the editor
+  const commenterFile = commentStore.slot() === "editor" ? editorCommenterFile() : null;
+  const ok = commentStore.change(comment, commentStore.slot(), commenterFile ? commenterWriter(commenterFile) : undefined);
+  setError(ok ? null : commentStore.problem() ?? "Comments can't be saved in this scene now (it is read only here, or still loading).");
   return ok;
 };
+
+/** why a commenter's last comment didn't go out (it goes out after the click) */
+const useProblem = () => useSyncExternalStore(commentStore.subscribe, commentStore.problem);
 
 const now = () => Date.now();
 
@@ -376,6 +391,7 @@ const CommentItem = ({
   const [menu, setMenu] = useState<{ right: number; top: number } | null>(null);
   const [editing, setEditing] = useState(false);
   const mine = !!me && comment.by.key === me.key;
+  const waiting = useSyncExternalStore(commentStore.subscribe, () => commentStore.isPending(comment));
   if (comment.gone) {
     return <li className="kq-cm-item kq-cm-item--gone">{isFirst ? "The first comment was deleted." : "Deleted."}</li>;
   }
@@ -385,6 +401,11 @@ const CommentItem = ({
         <Avatar name={comment.by.name} keyId={comment.by.key} agent={comment.by.agent} />
         <strong>{comment.by.name}</strong>
         {comment.by.agent && <span className="kq-cm-badge">agent</span>}
+        {waiting && (
+          <span className="kq-cm-badge kq-cm-badge--waiting" title="Saved in Google Drive's comments: the next editor who opens this scene takes it in">
+            waiting for an editor
+          </span>
+        )}
         <span className="kq-cm-time" title={new Date(comment.at).toLocaleString()}>
           · {ago(comment.at)}
           {comment.edited ? " (edited)" : ""}
@@ -503,6 +524,7 @@ const ThreadView = ({
   people: string[];
 }) => {
   const [error, setError] = useState<string | null>(null);
+  const problem = useProblem();
   const index = threads.findIndex((entry) => entry.id === thread.id);
   const go = (step: number) => {
     const next = threads[(index + step + threads.length) % threads.length];
@@ -548,7 +570,7 @@ const ThreadView = ({
           <CommentItem key={comment.id} comment={comment} me={me} canModerate={canModerate} people={people} isFirst={position === 0} onError={setError} />
         ))}
       </ul>
-      {error && <p className="kq-cm-error">{error}</p>}
+      {(error ?? problem) && <p className="kq-cm-error">{error ?? problem}</p>}
       {canComment && me ? (
         <div className="kq-cm-reply">
           <Avatar name={me.name} keyId={me.key} />
@@ -736,6 +758,9 @@ export const CommentsLayer = () => {
   useEffect(() => {
     setUi({ open: null, draft: null, placing: false });
   }, [current]);
+
+  // the editor's side of commenters' comments (Drive's comments, and the relay while this tab holds the pen)
+  useEffect(() => startCommentMailbox(), []);
 
   // a link to a thread (#comment=…): open it once the scene's comments are there
   useEffect(() => {

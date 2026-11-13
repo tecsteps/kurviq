@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const A = "0123456789abcdef0123456789abcdef";
 const B = "fedcba9876543210fedcba9876543210";
 
-const mode = vi.hoisted(() => ({ active: true, live: false }));
+const mode = vi.hoisted(() => ({ active: true, editing: null as string | null }));
 const calls: { load: unknown[][]; save: unknown[][]; remove: unknown[][] } = {
   load: [],
   save: [],
@@ -17,27 +17,19 @@ const calls: { load: unknown[][]; save: unknown[][]; remove: unknown[][] } = {
 vi.mock("../src/leanFiles", () => ({ leanScene: (scene: unknown) => scene }));
 vi.mock("../src/controller", () => ({
   scenesController: {
-    liveFileId: () => (mode.live ? "live-file" : null),
-    liveSessionFor: async () => ({
-      flushNow: async () => {},
-      snapshot: () => ({ json: '{"elements":[]}', revision: "live-1" }),
-    }),
-    rememberLiveRevision: async () => {},
-    liveWrite: async (...args: unknown[]) => {
-      calls.save.push(args);
-      return { md5: A };
-    },
     remove: async (...args: unknown[]) => {
       calls.remove.push(args);
     },
     syncNow: () => {},
-    liveAgentVersion: async () => null,
   },
+}));
+// someone else holds the scene's pen (online/pen.ts): agents' writes are refused
+vi.mock("../src/online/pen", () => ({
+  penRefusal: async () => mode.editing,
 }));
 vi.mock("../src/online/drive", () => ({
   connection: { isActive: () => mode.active },
   driveScenes: {
-    liveFileOf: async () => null,
     load: async (...args: unknown[]) => {
       calls.load.push(args);
       return { json: '{"elements":[]}', md5: (args[1] as string) || A };
@@ -71,7 +63,7 @@ const mcp = { "x-scenes-client": "mcp", "x-scenes-source": "agent" };
 
 beforeEach(() => {
   mode.active = true;
-  mode.live = false;
+  mode.editing = null;
   calls.load = [];
   calls.save = [];
   calls.remove = [];
@@ -195,6 +187,16 @@ describe("tab request boundaries", () => {
     expect(calls.load[0][1]).toBe(A);
     expect(calls.save[0][2]).toBe(A);
   });
+  it("refuses an agent's write while someone else holds the scene's pen (reading still works)", async () => {
+    mode.editing = "Anna is editing this scene right now";
+    const write = await serveRequest({ method: "PUT", path: "/api/scenes/plan", headers: { "X-Scenes-Client": "mcp", "X-Base-Md5": A }, body: "{}" });
+    expect(write.status).toBe(409);
+    expect(JSON.parse(write.body).error).toMatch(/Anna is editing/);
+    const rename = await serveRequest({ method: "POST", path: "/api/scenes/plan/rename", headers: { "X-Scenes-Client": "mcp" }, body: '{"to":"other"}' });
+    expect(rename.status).toBe(409);
+    expect(calls.save).toEqual([]);
+    expect((await serveRequest({ method: "GET", path: "/api/scenes/plan" })).status).toBe(200);
+  });
   it("rejects disconnected and direct writes", async () => {
     mode.active = false;
     expect(
@@ -223,42 +225,10 @@ describe("tab request boundaries", () => {
     expect(response.status).toBe(400);
     expect(JSON.parse(response.body).error).toMatch(/valid JSON/);
   });
-  it("routes live writes and deletion through the controller", async () => {
-    mode.live = true;
-    const read = await serveRequest({
-      method: "GET",
-      path: "/api/scenes/plan",
-    });
-    expect(read.status).toBe(200);
-    expect(read.headers?.["X-Scene-Md5"]).toBe("live-1");
-    expect(calls.load).toEqual([]);
-    expect(
-      (
-        await serveRequest({
-          method: "PUT",
-          path: "/api/scenes/plan",
-          headers: mcp,
-          body: "{}",
-        })
-      ).status
-    ).toBe(200);
-    expect(calls.save[0].slice(0, 3)).toEqual(["live-file", "plan", "{}"]);
-    expect(
-      (
-        await serveRequest({
-          method: "DELETE",
-          path: "/api/scenes/plan",
-          headers: mcp,
-        })
-      ).status
-    ).toBe(200);
-    expect(calls.remove).toEqual([["plan"]]);
-  });
 });
 
 describe("malformed scene write bodies", () => {
-  it.each([false, true])("refuses malformed JSON before writing (live=%s)", async (live) => {
-    mode.live = live;
+  it("refuses malformed JSON before writing", async () => {
     for (const body of ["{", "", '{"elements":]']) {
       const response = await serveRequest({ method: "PUT", path: "/api/scenes/plan", headers: mcp, body });
       expect(response.status).toBe(400);

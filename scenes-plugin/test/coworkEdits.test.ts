@@ -53,7 +53,7 @@ const dependencies: Record<string, any> = {
   "./api": { scenesApi: {} },
   "./controller": { scenesController: {} as Record<string, any>, withSceneName: vi.fn((json: string) => json) },
   "./storage": { getAgentBaseline: vi.fn(), getCheckpoint: vi.fn(), setAgentBaseline: vi.fn(), setCheckpoint: vi.fn() },
-  "./online/liveMerge": await import("../src/online/liveMerge"),
+  "./editDiff": await import("../src/editDiff"),
   "../../scenes-mcp/editConflicts.mjs": await import("../../scenes-mcp/editConflicts.mjs"),
   "../../scenes-mcp/agentEdits.mjs": await import("../../scenes-mcp/agentEdits.mjs"),
   "./uploads": { MAX_UPLOADS: 100 },
@@ -420,14 +420,13 @@ describe("agent edits of the open scene and of local-only scenes", () => {
       },
     };
   };
-  const openScene = (api: ReturnType<typeof fakeApi>, live: any = null) => {
+  const openScene = (api: ReturnType<typeof fakeApi>) => {
     const state = { current: "A", dirty: false };
     Object.assign(controller, {
       getApi: () => api,
       getState: () => state,
       autoSyncFor: () => true,
       statusOf: () => "synced",
-      liveCurrent: () => live,
     });
     return state;
   };
@@ -462,20 +461,6 @@ describe("agent edits of the open scene and of local-only scenes", () => {
     await expect(loaded.editOpenScene({ type: "edit", update: [{ id: "a", x: 5 }], comments: badComment }, convert)).rejects.toThrow(/no thread "nope"/);
     expect(api.updateScene).not.toHaveBeenCalled();
     expect(commentStore.change).not.toHaveBeenCalled();
-  });
-
-  it("sends nothing to a live scene when a comment operation is bad", async () => {
-    const live = {
-      sceneJson: () => JSON.stringify({ elements: [el("a")] }),
-      elements: () => [el("a")],
-      commentList: () => [],
-      commentsAllowed: () => true,
-      agentEdit: vi.fn(async () => null),
-      changeComment: vi.fn(() => true),
-    };
-    controller.liveSessionFor = async () => live;
-    await expect(loaded.editSceneOnDrive({ type: "scene-edit", name: "A", update: [{ id: "a", x: 5 }], comments: badComment }, convert)).rejects.toThrow(/no thread "nope"/);
-    expect(live.agentEdit).not.toHaveBeenCalled();
   });
 
   it("keeps what the user drew in a local-only scene while the edit was converted", async () => {

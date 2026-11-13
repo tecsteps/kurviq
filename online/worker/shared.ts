@@ -2,17 +2,18 @@
 // Google Drive file (unique, and it stays when the scene is renamed), the
 // slug only makes the link readable; nothing is stored here.
 //
-//   /api/public/<fileId>   a scene shared "anyone with the link" on Drive,
-//                          read with Kurviq's API key, kept in Cloudflare's
-//                          cache for a minute (?v=<version>: that version)
-//   /api/public/<fileId>/version   its current version (Drive's MD5), cached
-//                          for 5 s: open viewers poll it and reload on change
 //   /s/<fileId>/<slug>     the app, with the scene's title for link previews
-//                          (Slack, Teams, …) and the scene preloaded
+//                          (Slack, Teams, …)
 //   /pub/<name>            the same for a short link (./pubLinks.ts)
+//   /api/public/<fileId>   a public scene's name, author and version (metadata
+//                          only, never its content; not cached)
+//   /api/public/<fileId>/version   its version alone (Drive's MD5)
 //
-// Scenes shared only with people are never fetched here: the visitor's
-// browser reads them from Drive with the visitor's own sign-in.
+// The scene's content never passes through Kurviq's servers: the viewer reads
+// a scene shared "anyone with the link" from Drive in the browser (with
+// Kurviq's browser API key), and any other with the visitor's own sign-in
+// (scenes-plugin/src/online/drive.ts readSharedScene). The Worker only asks
+// Drive for the name, uncached, so a link preview shows the scene's title.
 
 import { pubNameFromPath } from "../../scenes-plugin/src/online/pubName";
 
@@ -29,86 +30,39 @@ export type SharedEnv = GoogleEnv & {
 const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
 const SCENE_MIME = "application/vnd.excalidraw+json";
 const EXTENSION = ".excalidraw";
-/** bigger scenes are opened in the browser (signed in), not through the Worker */
-const MAX_BYTES = 25 * 1024 * 1024;
-
-const apiPath = (fileId: string) => `/api/public/${fileId}`;
 
 /** the author's name on the public page, set only when they choose (scenes-plugin/src/online/drive.ts setByline) */
 const BYLINE_PROPERTY = "kurviqBy";
 
-const notPublic = () =>
-  new Response("Not a public scene", {
-    status: 404,
-    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=30" },
+export type PublicMeta = { name: string; by: string; version: string | null };
+
+/** a public scene's name, author (if they chose to be named) and version; null: not a public scene (or Drive didn't answer) */
+export const publicMeta = async (fileId: string, env: SharedEnv): Promise<PublicMeta | null> => {
+  if (!env.GOOGLE_API_KEY || !FILE_ID_RE.test(fileId)) {
+    return null;
+  }
+  const res = await fetch(
+    `${googleUrls(env).api}/files/${fileId}?fields=name,mimeType,md5Checksum,properties&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`,
+  ).catch(() => null);
+  const info: any = res?.ok ? await res.json().catch(() => null) : null;
+  if (!info || !(info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION))) {
+    return null;
+  }
+  return {
+    name: String(info.name).replace(/\.excalidraw$/, ""),
+    by: String(info.properties?.[BYLINE_PROPERTY] ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80),
+    version: typeof info.md5Checksum === "string" ? info.md5Checksum : null,
+  };
+};
+
+const metaAnswer = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });
 
-/** a public scene, through the edge cache (stale copies are fine for a minute) */
-const publicScene = async (origin: string, fileId: string, env: SharedEnv, ctx: ExecutionContext, version?: string) => {
-  const cache = caches.default;
-  const query = version ? `?v=${encodeURIComponent(version)}` : "";
-  const key = new Request(`${origin}${apiPath(fileId)}${query}`);
-  const hit = await cache.match(key);
-  if (hit) {
-    return hit;
-  }
-  if (!env.GOOGLE_API_KEY) {
-    return notPublic();
-  }
-  const drive = `${googleUrls(env).api}/files/${fileId}`;
-  const meta = await fetch(`${drive}?fields=name,mimeType,size,properties&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`);
-  const info: any = meta.ok ? await meta.json() : null;
-  const isScene = !!info && (info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION)) && Number(info.size || 0) <= MAX_BYTES;
-  const upstream = isScene ? await fetch(`${drive}?alt=media&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`) : null;
-  const name = isScene ? String(info.name).replace(/\.excalidraw$/, "") : "";
-  // the author, only if they chose to be named (Share…: "Show my name"): a public property of the file
-  const by = isScene ? String(info.properties?.[BYLINE_PROPERTY] ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80) : "";
-  const response = upstream?.ok
-    ? new Response(upstream.body, {
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          // a minute, no stale copies: changes and turning off public sharing show within about 2 minutes
-          "Cache-Control": "public, max-age=60",
-          // someone else's content: data only, never a page
-          "X-Content-Type-Options": "nosniff",
-          "Content-Security-Policy": "default-src 'none'; sandbox",
-          "X-Kurviq-Name": encodeURIComponent(name),
-          ...(by ? { "X-Kurviq-By": encodeURIComponent(by) } : {}),
-          "Access-Control-Expose-Headers": "X-Kurviq-Name, X-Kurviq-By",
-        },
-      })
-    : notPublic();
-  ctx.waitUntil(cache.put(key, response.clone()));
-  return response;
-};
-
-/** a public scene's current version (MD5 of its content), for viewers to notice changes */
-const publicVersion = async (origin: string, fileId: string, env: SharedEnv, ctx: ExecutionContext) => {
-  const cache = caches.default;
-  const key = new Request(`${origin}${apiPath(fileId)}/version`);
-  const hit = await cache.match(key);
-  if (hit) {
-    return hit;
-  }
-  if (!env.GOOGLE_API_KEY) {
-    return notPublic();
-  }
-  const meta = await fetch(
-    `${googleUrls(env).api}/files/${fileId}?fields=md5Checksum,mimeType,name&supportsAllDrives=true&key=${env.GOOGLE_API_KEY}`,
-  );
-  const info: any = meta.ok ? await meta.json() : null;
-  const isScene = !!info?.md5Checksum && (info.mimeType === SCENE_MIME || String(info.name).endsWith(EXTENSION));
-  const response = isScene
-    ? new Response(JSON.stringify({ version: info.md5Checksum }), {
-        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=5" },
-      })
-    : notPublic();
-  ctx.waitUntil(cache.put(key, response.clone()));
-  return response;
-};
-
-/** /api/public/<fileId>, /api/public/<fileId>/version */
-export const handlePublicApi = (request: Request, env: SharedEnv, ctx: ExecutionContext): Promise<Response> | null => {
+/** /api/public/<fileId>, /api/public/<fileId>/version: metadata only (null: not a request for it) */
+export const handlePublicApi = (request: Request, env: SharedEnv): Promise<Response> | null => {
   const url = new URL(request.url);
   const match = /^\/api\/public\/([^/]+)(\/version)?$/.exec(url.pathname);
   if (!match) {
@@ -117,11 +71,12 @@ export const handlePublicApi = (request: Request, env: SharedEnv, ctx: Execution
   if (!FILE_ID_RE.test(match[1]) || request.method !== "GET") {
     return Promise.resolve(new Response("Not found", { status: 404 }));
   }
-  if (match[2]) {
-    return publicVersion(url.origin, match[1], env, ctx);
-  }
-  const version = url.searchParams.get("v");
-  return publicScene(url.origin, match[1], env, ctx, version && /^[a-f0-9]{32}$/.test(version) ? version : undefined);
+  return publicMeta(match[1], env).then((meta) => {
+    if (!meta) {
+      return metaAnswer({ error: "Not a public scene" }, 404);
+    }
+    return metaAnswer(match[2] ? { version: meta.version } : meta);
+  });
 };
 
 const escapeHtml = (text: string) =>
@@ -142,14 +97,15 @@ const uncached = (page: Response) => {
 
 /**
  * /s/<fileId>/<slug> and the short link /pub/<name> (./pubLinks.ts): the app
- * page, titled after the scene (if it is public). A short link's page names
- * its file (meta kurviq-pub), so the app needs no lookup of its own.
+ * page, titled after the scene (if it is public: onPublic is called then). A
+ * short link's page names its file (meta kurviq-pub), so the app needs no
+ * lookup of its own.
  */
 export const handleSharedPage = async (
   request: Request,
   env: SharedEnv & PubEnv,
   assets: Fetcher,
-  ctx: ExecutionContext,
+  onPublic: () => void,
 ): Promise<Response | null> => {
   const url = new URL(request.url);
   const match = /^\/s\/([^/]+)(?:\/[^/]*)?\/?$/.exec(url.pathname);
@@ -172,9 +128,12 @@ export const handleSharedPage = async (
     }
     return page;
   }
-  const scene = await publicScene(url.origin, fileId, env, ctx);
-  const name = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-Name") || "") : "";
-  const by = scene.ok ? decodeURIComponent(scene.headers.get("X-Kurviq-By") || "") : "";
+  const meta = await publicMeta(fileId, env);
+  if (meta) {
+    onPublic();
+  }
+  const name = meta?.name ?? "";
+  const by = meta?.by ?? "";
   const title = name ? `${name} · Kurviq` : `A shared scene on Kurviq`;
   const byline = by ? `By ${by}. ` : "";
   const description = name
@@ -193,9 +152,7 @@ export const handleSharedPage = async (
       element: (el) =>
         el.append(
           (pubName ? `<meta name="kurviq-pub" content="${escapeHtml(publicName)}">` : "") +
-            (name
-              ? `<link rel="preload" href="${escapeHtml(apiPath(fileId))}" as="fetch" crossorigin="anonymous">`
-              : `<meta name="robots" content="noindex">`),
+            (name ? "" : `<meta name="robots" content="noindex">`),
           { html: true },
         ),
     })

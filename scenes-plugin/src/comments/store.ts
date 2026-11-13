@@ -4,7 +4,9 @@
 // viewer's (publicScene.tsx, for people who may view or comment but not
 // edit). Each slot is filled when its scene is loaded and kept current by its
 // live session; the user's changes go to the slot's writer (the controller:
-// live sync or its own save; the viewer: its live session).
+// live sync or its own save; the viewer: a commenter's way to the editor,
+// ./mailbox.ts). A commenter's comments that wait in Drive's comments for an
+// editor are marked pending ("waiting for an editor").
 
 import { commentsKey, commentsOf } from "../../../scenes-mcp/sceneComments.mjs";
 
@@ -20,6 +22,11 @@ const slots: Record<CommentSlot, Slot> = {
   editor: { comments: [], key: "", writer: null },
   viewer: { comments: [], key: "", writer: null },
 };
+/** comments (id:u) waiting in Drive's comments for an editor to take them in */
+let pending = new Set<string>();
+/** why the last change could not be sent (a commenter's: it goes out after the click) */
+let problem: string | null = null;
+const pendingKey = (comment: Pick<SceneComment, "id" | "u">) => `${comment.id}:${comment.u}`;
 /** the shared viewer is on screen (its slot is the one shown) */
 let viewerActive = false;
 const listeners = new Set<() => void>();
@@ -63,24 +70,49 @@ export const commentStore = {
     slots[slot] = { ...slots[slot], writer: next };
     notify();
   },
+  /** someone may change the comments in this slot (it has a writer) */
+  canWrite: (slot: CommentSlot = shown()) => !!slots[slot].writer,
   /** the shared viewer shows a scene (or not any more) */
   setViewerActive: (active: boolean) => {
     if (viewerActive !== active) {
       viewerActive = active;
       if (!active) {
         slots.viewer = { comments: [], key: "", writer: null };
+        pending = new Set();
       }
+      notify();
+    }
+  },
+  /** this version of the comment waits for an editor (in Drive's comments) */
+  isPending: (comment: SceneComment) => pending.has(pendingKey(comment)),
+  /** mark comments as waiting for an editor (or not any more) */
+  setPending: (comments: SceneComment[], waiting: boolean) => {
+    const next = new Set(pending);
+    comments.forEach((comment) => (waiting ? next.add(pendingKey(comment)) : next.delete(pendingKey(comment))));
+    pending = next;
+    notify();
+  },
+  /** the comments waiting for an editor: exactly these */
+  replacePending: (comments: SceneComment[]) => {
+    pending = new Set(comments.map(pendingKey));
+    notify();
+  },
+  problem: () => problem,
+  setProblem: (next: string | null) => {
+    if (problem !== next) {
+      problem = next;
       notify();
     }
   },
   /**
    * The user changed or added a comment on screen (or an agent in the
    * editor's scene: slot "editor"): in the list at once, then saved. False if
-   * it can't be saved there now (nothing changed then).
+   * it can't be saved there now (nothing changed then). via: another way out
+   * than the slot's writer (a commenter's, ./mailbox.ts).
    */
-  change: (comment: SceneComment, slot: CommentSlot = shown()) => {
+  change: (comment: SceneComment, slot: CommentSlot = shown(), via?: Writer) => {
     const clean = commentsOf([comment])[0];
-    const writer = slots[slot].writer;
+    const writer = via ?? slots[slot].writer;
     if (!clean || !writer) {
       return false;
     }

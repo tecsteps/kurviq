@@ -4,9 +4,10 @@ import { presentationOf } from "./presentation";
 // scenes; "Make a copy" does that on purpose.
 //  - Kurviq's own (kurviq.com/features): online/scenes/<name>.excalidraw,
 //    served at /scenes/<name>.excalidraw
-//  - shared ones (kurviq.com/s/<fileId>/…): a Google Drive file, "anyone
-//    with the link" without sign-in, else with the visitor's own Drive
-//    access (see readSharedScene)
+//  - shared ones (kurviq.com/s/<fileId>/…): a Google Drive file, read from
+//    Drive in the browser: "anyone with the link" without sign-in, else with
+//    the visitor's own Drive access (see readSharedScene). The content never
+//    passes through Kurviq's servers.
 
 import { CaptureUpdateAction, Excalidraw, Footer, MainMenu, getCommonBounds, restoreElements } from "@excalidraw/excalidraw";
 import clsx from "clsx";
@@ -19,13 +20,13 @@ import { OPENING_KEY, scenesController } from "./controller";
 import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId, sharedSceneVersion } from "./online/drive";
 import type { SharedSceneAnswer } from "./online/drive";
 import { registerSceneFonts } from "./fonts";
+import { commenterWriter, loadWithWaiting } from "./comments/mailbox";
 import { commentStore } from "./comments/store";
 import { CommentsButton } from "./comments/ui";
 import { getSlides, getTemplate } from "./slides";
 import { deck } from "./deck";
 import { fitView, viewTarget } from "./viewTarget";
 import { presenter, usePresenter } from "./present";
-import { liveSync } from "./online/liveSync";
 import { KurviqLegalLinks, KurviqSocials } from "./online/ui";
 
 export const PUBLIC_SCENES: Record<string, { title: string; copyName: string }> = IS_ONLINE
@@ -102,6 +103,8 @@ const makeCopy = async (base: string, json: string) => {
 
 type Scene = {
   json: string;
+  /** the version of exactly this content (null: a bundled scene) */
+  version: string | null;
   elements: any[];
   files: BinaryFiles;
   background: string;
@@ -112,9 +115,12 @@ type Scene = {
   numbers: number[];
   public?: boolean;
   canEdit?: boolean;
+  canComment?: boolean;
   /** the author, if they chose to be named */
   by?: string;
 };
+
+type Access = { version: string | null; public?: boolean; canEdit?: boolean; canComment?: boolean; by?: string };
 
 /**
  * Edit a shared scene: one of the visitor's own scenes opens among them,
@@ -135,7 +141,7 @@ const editShared = async (fileId: string, name: string) => {
   enterSpace(fileId, /^\/(s|pub)\//.test(window.location.pathname) ? window.location.pathname : `/s/${fileId}/${encodeURIComponent(name)}`);
 };
 
-const parseScene = async (json: string, access: { public?: boolean; canEdit?: boolean; by?: string }): Promise<Scene> => {
+const parseScene = async (json: string, access: Access): Promise<Scene> => {
   const data = JSON.parse(json);
   await registerSceneFonts(data);
   let elements = restoreElements(data.elements, null).filter((el) => !el.isDeleted);
@@ -164,8 +170,8 @@ const parseScene = async (json: string, access: { public?: boolean; canEdit?: bo
  * When an open shared scene checks for changes: 10 s after opening, a change
  * or the visitor's return, then 30 s, then every minute; and only while
  * someone is there (the tab visible, the mouse or keys used in the last
- * 3 minutes). Each check is a Worker request (the free plan has 100,000 a day):
- * a tab left open doesn't use them up.
+ * 3 minutes). Each check asks Google Drive for the file's version (Kurviq's
+ * API key has a daily quota): a tab left open doesn't use it up.
  */
 const REFRESH_STEPS_MS = [10_000, 30_000, 60_000];
 const AWAY_AFTER_MS = 3 * 60_000;
@@ -175,20 +181,33 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
   const [name, setName] = useState(linkName);
   const title = bundled ? PUBLIC_SCENES[name].title : name || "A shared scene";
   const [scene, setScene] = useState<Scene | null>(null);
-  // its comments: shown over this canvas for people signed in (a commenter adds theirs through
-  // the live session; Drive decides who may): see ./comments
+  // its comments: shown over this canvas for people signed in; those Drive lets comment add
+  // theirs through an editor's Kurviq (the pen holder's tab, else Drive's comments: ./comments/mailbox.ts)
+  const mayComment = !!fileId && !!scene?.canComment;
   useEffect(() => {
     commentStore.setViewerActive(true);
-    commentStore.setWriter((comment) => liveSync.viewer()?.changeComment(comment) ?? false, "viewer");
     return () => commentStore.setViewerActive(false);
   }, []);
   useEffect(() => {
-    if (scene && !liveSync.viewerLive(fileId ?? "")) {
-      try {
-        commentStore.load(JSON.parse(scene.json).kurviqComments, "viewer");
-      } catch {}
+    commentStore.setWriter(mayComment ? commenterWriter(fileId) : null, "viewer");
+  }, [mayComment, fileId]);
+  useEffect(() => {
+    if (!scene) {
+      return;
     }
-  }, [scene?.json]);
+    let inFile: unknown;
+    try {
+      inFile = JSON.parse(scene.json).kurviqComments;
+    } catch {
+      return;
+    }
+    if (mayComment) {
+      // with the commenter's own comments that still wait for an editor
+      loadWithWaiting(fileId, inFile, "viewer").catch(() => commentStore.load(inFile, "viewer"));
+    } else {
+      commentStore.load(inFile, "viewer");
+    }
+  }, [scene?.json, mayComment]);
   /** why a shared scene can't be shown (yet) */
   const [missing, setMissing] = useState<Exclude<SharedSceneAnswer, { scene: unknown }> | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -208,9 +227,9 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
           }
           return answer.scene;
         })
-      : fetchScene(name).then((json) => ({ json, public: true, canEdit: false, by: undefined as string | undefined }));
+      : fetchScene(name).then((json) => ({ json, version: null, public: true, canEdit: false, canComment: false, by: undefined as string | undefined }));
     load
-      .then(async ({ json, public: isPublic, canEdit, by }) => setScene(await parseScene(json, { public: isPublic, canEdit, by })))
+      .then(async ({ json, ...access }) => setScene(await parseScene(json, access)))
       .catch((err) => (err.missing ? setMissing(err.missing) : setError(err.message)));
     root.current?.focus();
   }, [fileId, attempt]);
@@ -246,6 +265,8 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
       return;
     }
     const giveBack = deck.borrow(api);
+    // for the e2e tests (scenes-plugin/test/e2e/public-viewer.mjs): the viewer's canvas
+    (window as any).__publicViewer = api;
     // the whole scene in view (as big as it fits); a presentation's slides only, so stray
     // elements beside the deck don't pull it off center
     // (read after the delay: the canvas has no elements yet when the API arrives)
@@ -261,21 +282,14 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
       clearTimeout(fit);
       presenter.stop();
       giveBack();
+      delete (window as any).__publicViewer;
     };
   }, [api]);
 
-  // signed in with access: the scene's changes come live through its Durable Object (read
-  // only, nothing is ever sent); polling the saved file below is the fallback while not connected
   const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
-  useEffect(() => {
-    if (!fileId || !api || !scene || !signedIn) {
-      return;
-    }
-    liveSync.attachViewer(api, fileId, name);
-    return () => liveSync.detachViewer();
-  }, [fileId, api, !!scene, signedIn]);
 
-  // the owner (or anyone allowed) changes it: this view follows, where the visitor looks stays
+  // the owner (or anyone allowed) changes it: this view follows, where the visitor looks stays;
+  // compared with the version of what is shown (never Drive's version at another moment)
   const version = useRef<string | null>(null);
   useEffect(() => {
     if (!fileId || !api || !scene) {
@@ -288,8 +302,7 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
     let lastSeen = Date.now();
     /** nobody there: no timer runs until the visitor is back */
     let paused = false;
-    // a failed first look is harmless: the first check notes the version
-    sharedSceneVersion(fileId).then((v) => (version.current ??= v)).catch(() => {});
+    version.current ??= scene.version;
     const away = () => document.visibilityState !== "visible" || Date.now() - lastSeen > AWAY_AFTER_MS;
     const schedule = () => {
       clearTimeout(timer);
@@ -303,16 +316,6 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
         paused = true;
         return;
       }
-      if (liveSync.viewerLive(fileId)) {
-        // live: the canvas is ahead of the saved file; only its version is noted, so that after a
-        // disconnect only saves newer than the live view are applied (never an older one over it)
-        step = 0;
-        busy = true;
-        version.current = (await sharedSceneVersion(fileId).catch(() => null)) ?? version.current;
-        busy = false;
-        schedule();
-        return;
-      }
       busy = true;
       try {
         const latest = await sharedSceneVersion(fileId);
@@ -321,14 +324,16 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
           return;
         }
         step = 0;
-        const answer = await readSharedScene(fileId, { version: latest });
+        const answer = await readSharedScene(fileId);
         if (stopped || !("scene" in answer)) {
           return;
         }
-        const next = await parseScene(answer.scene.json, { public: answer.scene.public, canEdit: answer.scene.canEdit, by: answer.scene.by });
-        version.current = latest;
+        const { json, ...access } = answer.scene;
+        const next = await parseScene(json, access);
+        version.current = access.version;
         api.addFiles(Object.values(next.files));
-        api.updateScene({ elements: next.elements, captureUpdate: CaptureUpdateAction.NEVER });
+        // the scene's background follows too
+        api.updateScene({ elements: next.elements, appState: { viewBackgroundColor: next.background }, captureUpdate: CaptureUpdateAction.NEVER });
         setScene(next);
       } catch {
         // offline for a moment: the next check tries again
