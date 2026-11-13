@@ -8,6 +8,9 @@ import { presentationOf } from "./presentation";
 //    Drive in the browser: "anyone with the link" without sign-in, else with
 //    the visitor's own Drive access (see readSharedScene). The content never
 //    passes through Kurviq's servers.
+//  - public scenes of someone's own database (kurviq.com/db/<ref>/<id>, made
+//    "anyone with the link can view" by its owner): read from that database
+//    without an account, read only, without comments.
 
 import { CaptureUpdateAction, Excalidraw, Footer, MainMenu, getCommonBounds, restoreElements } from "@excalidraw/excalidraw";
 import clsx from "clsx";
@@ -29,6 +32,8 @@ import { deck } from "./deck";
 import { fitView, viewTarget } from "./viewTarget";
 import { presenter, usePresenter } from "./present";
 import { KurviqLegalLinks, KurviqSocials } from "./online/ui";
+import { databaseHome } from "./homes/database/connections";
+import { openSignInDialog } from "./homes/database/ui";
 
 export const PUBLIC_SCENES: Record<string, { title: string; copyName: string }> = IS_ONLINE
   ? { features: { title: "What Kurviq adds to Excalidraw", copyName: "Kurviq features" } }
@@ -46,12 +51,12 @@ export const isPublicScene = (name: string | null): name is string => !!name && 
  * present / slide: a presentation link (?present&slide=3) starts presenting
  * at that slide.
  */
-export type Shown = { name: string; fileId?: string; present?: boolean; slide?: number };
+export type Shown = { name: string; fileId?: string; database?: { ref: string; id: string }; present?: boolean; slide?: number };
 
 const shown = createStore<Shown | null>(null);
 
 export const publicScene = {
-  show: (name: string, start: { fileId?: string; present?: boolean; slide?: number } = {}) => shown.set({ name, ...start }),
+  show: (name: string, start: Omit<Shown, "name"> = {}) => shown.set({ name, ...start }),
   close: () => shown.set(null),
   shown: shown.get,
   subscribe: shown.subscribe,
@@ -166,8 +171,8 @@ const parseScene = async (json: string, access: Access): Promise<Scene> => {
 const REFRESH_STEPS_MS = [10_000, 30_000, 60_000];
 const AWAY_AFTER_MS = 3 * 60_000;
 
-const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: startSlide }: Shown) => {
-  const bundled = !fileId;
+const Viewer = ({ name: linkName, fileId, database, present: startPresenting, slide: startSlide }: Shown) => {
+  const bundled = !fileId && !database;
   const [name, setName] = useState(linkName);
   const title = bundled ? PUBLIC_SCENES[name].title : name || "A shared scene";
   const [scene, setScene] = useState<Scene | null>(null);
@@ -207,8 +212,15 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
 
   useEffect(() => {
     setMissing(null);
-    const load = fileId
-      ? readSharedScene(fileId).then((answer) => {
+    const fromDatabase = () =>
+      databaseHome(database!.ref)
+        .loadById(database!.id)
+        .then(({ json, name: stored }) => {
+          setName(stored);
+          return { json, version: null, public: true, canEdit: false, canComment: false, by: undefined as string | undefined };
+        });
+    const fromDrive = () =>
+      readSharedScene(fileId!).then((answer) => {
           if (!("scene" in answer)) {
             throw Object.assign(new Error("Shared scene not available"), { missing: answer });
           }
@@ -216,8 +228,15 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
             setName(answer.scene.name);
           }
           return answer.scene;
-        })
-      : fetchScene(name).then((json) => ({ json, version: null, public: true, canEdit: false, canComment: false, by: undefined as string | undefined }));
+        });
+    let load;
+    if (database) {
+      load = fromDatabase();
+    } else if (fileId) {
+      load = fromDrive();
+    } else {
+      load = fetchScene(name).then((json) => ({ json, version: null, public: true, canEdit: false, canComment: false, by: undefined as string | undefined }));
+    }
     load
       .then(async ({ json, ...access }) => setScene(await parseScene(json, access)))
       .catch((err) => (err.missing ? setMissing(err.missing) : setError(err.message)));
@@ -435,6 +454,19 @@ const Viewer = ({ name: linkName, fileId, present: startPresenting, slide: start
             ▶ Present
           </button>
         )}
+        {database && scene && (
+          <button
+            type="button"
+            className="slides-btn"
+            title="People invited to this scene sign in with their email to work on it"
+            onClick={() => {
+              publicScene.close();
+              openSignInDialog(database.ref, database.id);
+            }}
+          >
+            Sign in
+          </button>
+        )}
         {fileId && scene?.canEdit && (
           <button
             type="button"
@@ -556,8 +588,8 @@ const WhyMissing = ({
 /** rendered next to the editor (see index.tsx) */
 export const PublicSceneOverlay = () => {
   const current = useSyncExternalStore(publicScene.subscribe, publicScene.shown);
-  if (!current || (!current.fileId && !isPublicScene(current.name))) {
+  if (!current || (!current.fileId && !current.database && !isPublicScene(current.name))) {
     return null;
   }
-  return <Viewer key={current.fileId ?? current.name} {...current} />;
+  return <Viewer key={current.fileId ?? current.database?.id ?? current.name} {...current} />;
 };

@@ -77,24 +77,24 @@ against every home (`contract(...)`): a new home is added there first.
   `controller.browserHome` reads and writes local-only scenes through the
   queue, so "Move to…" can treat it like any other home.
 
-## Adding the database home (Supabase)
+## The database home (Supabase)
 
-1. `homes/database.ts`: a `SceneHome` with `kind: "database"`, capabilities
-   `sync: "realtime"`, `presence: "realtime"`, `sharing: "members"`,
-   `guests: true`, `filesInline: false` (storage bucket by content hash: `files`),
-   `commentsInline: false` (`comments` rows in `kurviqComments`' shape, the
-   same rules as `scenes-mcp/sceneComments.mjs`), `history: true` (milestones),
-   `moveMarker: true` (a "moved" row). `load` assembles the scene JSON from the
-   element rows (pictures and comments included, so agents and exports see one
-   format); `save` writes changed rows (per element, the higher `version`
-   wins: a 409 is never needed for different elements; return the new
-   revision). `version` is a revision counter of the scene.
-2. Its `live`: a session on the scene's realtime channel (broadcast + presence,
-   no table writes for pointers), changes batched every 100-200 ms, an offline
-   queue. It calls the same `LiveHost` hooks (a database home never locks:
-   `setPenLock(null)`), and applies remote changes to the editor itself.
-3. `SceneMeta.home = "database"` (+ the space's id) for its scenes;
-   `controller.homeOf` returns the database home for them; the listing of
-   `state.remote` becomes per home (today it is Drive's).
-4. Agents keep working through the tab (`localOnlyJson` / `writeLocalOnly`
-   style calls on the scene's home): nothing new in the MCP tools.
+Implemented 2026-11-13 (steps 2 to 5 of the spec), in `scenes-plugin/src/homes/database/`:
+
+| Module | What |
+|---|---|
+| `schema.sql` (`schema.ts`, `schemaVersion.ts`) | Kurviq's tables in the user's project (`kurviq_space`, `kurviq_members`, `kurviq_scenes`, `kurviq_scene_access`, `kurviq_elements`, `kurviq_scene_meta`, `kurviq_comments`, `kurviq_versions`), row-level security by the signed-in email, the storage bucket `kurviq-files`, realtime authorization on `realtime.messages`; idempotent, version 1 (`kurviq_schema_version()`) |
+| `rows.ts`, `client.ts` | `SceneRows`: the calls on the database (supabase-js, loaded only when a database home is used), errors as `HomeError` (offline, `paused`, 403 read only, 409 with the revision) |
+| `home.ts` | `databaseHomeOf(rows)`: the `SceneHome` (contract cases in `homes.test.ts`); `version` = the scene's revision; `load` assembles the file (pictures from the bucket, comments from rows), `save` is a whole save on a base revision (`kurviq_save_scene`) |
+| `live.ts`, `changes.ts` | the open database scene's live session: changed elements written every 150 ms (`kurviq_put_elements`, the newer version wins in the database too) and broadcast by editors; the database announces every write on `kurviq:<scene id>`, the others fetch rows since their revision; pointers, selections, names by broadcast / presence; offline: the canvas keeps the changes, written when back; the role checked every 30 s |
+| `write.ts` | a database scene changed outside the canvas (an agent's edit of a scene that isn't open): only what changed, element by element |
+| `connections.ts` | the connected databases (this browser + Drive's app data), their clients and sign-in (email link; a code where the template shows one), members, per-scene access, invites |
+| `oauth.ts` | "Connect with Supabase" (PKCE; the code exchange and the setup's Management API calls through `online/worker/supabase.ts`, which keeps nothing) |
+| `ui.tsx`, `shareUI.tsx` | connect, sign in, "New scenes are kept", "Move to…", the share panel, the bar over a database scene (role, paused) |
+
+In the controller a database scene is `SceneMeta.db = { ref, id, rev }` and
+also `localOnly` (never pushed to or pulled from Drive): its live session keeps
+it in step; agents read and edit it through the tab like a local-only scene
+(`flush` answers `localOnly: true, home: "database"`). `controller.moveTo`
+moves a scene between any two homes; `refreshDatabases` adds the databases'
+scenes to the list and drops those gone from them.

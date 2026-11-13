@@ -580,8 +580,13 @@ const driveStatus = (sync: ReturnType<typeof scenesController.getState>["sync"])
 };
 
 /** a scene's row in the status: its sync status, local-only as its own field, notes for agents */
-const sceneRow = ({ name, status, pendingRename, localOnly }: ReturnType<typeof scenesController.getState>["list"][number]) => {
+const sceneRow = ({ name, status, pendingRename, localOnly, home }: ReturnType<typeof scenesController.getState>["list"][number]) => {
   const notes: string[] = [];
+  if (home === "database") {
+    // read and edited through this tab like a local-only scene; the tab keeps it in step with the database
+    notes.push(`kept in the user's own database (${scenesController.homeOf(name).label}), shared in real time; read and edit it through the app`);
+    return { name: name!, status, localOnly: true, home, note: notes.join("; ") };
+  }
   if (localOnly) {
     notes.push("only in the user's browser, never synced to Drive");
   } else if (!scenesController.autoSyncFor(name!)) {

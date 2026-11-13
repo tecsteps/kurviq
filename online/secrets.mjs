@@ -5,6 +5,9 @@
 // Without names it prints this help and sets nothing. Values:
 //   GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY   from KURVIQ_GOOGLE_CLIENT_SECRET /
 //                  KURVIQ_GOOGLE_API_KEY in ../.env
+//   SUPABASE_CLIENT_SECRET   from KURVIQ_SUPABASE_CLIENT_SECRET in ../.env: the
+//                  Supabase OAuth app's secret ("Connect with Supabase"; the
+//                  Worker only adds it to the token exchange, keeps nothing)
 //   COOKIE_KEY     a new random key. It seals far more than cookies: every
 //                  browser's Google session (all are signed out: one click to
 //                  sign in again), the local installs' sessions, every agent's
@@ -39,6 +42,7 @@ const random = () => randomBytes(32).toString("base64");
 const secrets = {
   GOOGLE_CLIENT_SECRET: () => env.KURVIQ_GOOGLE_CLIENT_SECRET,
   GOOGLE_API_KEY: () => env.KURVIQ_GOOGLE_API_KEY,
+  SUPABASE_CLIENT_SECRET: () => env.KURVIQ_SUPABASE_CLIENT_SECRET,
   COOKIE_KEY: random,
   TOKEN_KEY: random,
   PSEUDONYM_KEY: random,

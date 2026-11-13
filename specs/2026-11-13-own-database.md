@@ -4,7 +4,10 @@ Status: proposal, 2026-11-13; decisions of 2026-11-13 included (OAuth from
 the start, one space per database, SMTP optional, public scenes as the
 owner's choice). Step 1 (the adapter interface, with "browser" and "Google
 Drive" behind it) done 2026-11-13: `scenes-plugin/src/homes/`, contract in
-`docs/homes/CONCEPT.md`; steps 2 to 6 open.
+`docs/homes/CONCEPT.md`. Steps 2 to 5 done 2026-11-13 (Supabase: connect, the database
+home with real time, sharing, settings and "Move to…": `scenes-plugin/src/homes/database/`,
+e2e `scenes-plugin/test/e2e/own-database.mjs`); the real "Connect with Supabase" and real
+emails wait for UAT. Step 6 open.
 
 ## Idea
 

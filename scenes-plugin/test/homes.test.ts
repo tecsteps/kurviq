@@ -180,3 +180,83 @@ describe("the Drive home", () => {
     expect(asHomeError(offline)).toBe(offline);
   });
 });
+
+// ---------------------------------------------------------------------------
+// the database home over a fake database (fakeSceneRows: schema.sql's rules)
+// ---------------------------------------------------------------------------
+
+const { databaseHomeOf } = await import("../src/homes/database/home");
+const { fakeSceneRows } = await import("./fakeSceneRows");
+
+contract("your database", () => databaseHomeOf(fakeSceneRows().rows, { ref: "abcdefghijklmnopqrst", label: "Team space" }));
+
+describe("the database home", () => {
+  const picture = "data:image/png;base64,iVBORw0KGgo=";
+  const full = JSON.stringify({
+    type: "excalidraw",
+    version: 2,
+    elements: [
+      { id: "r", type: "rectangle", version: 3, versionNonce: 7 },
+      { id: "i", type: "image", fileId: "f1", version: 1, versionNonce: 2 },
+    ],
+    appState: { name: "Deck", viewBackgroundColor: "#fafafa", kurviqPresentation: true },
+    files: { f1: { id: "f1", mimeType: "image/png", dataURL: picture, created: 1 } },
+    kurviqFonts: [{ family: "Inter" }],
+    kurviqComments: [{ id: "cmt0001", thread: "cmt0001", by: { name: "Ann", key: "0123456789abcdef" }, at: 1, u: 1, text: "Looks good", pin: { x: 1, y: 2 } }],
+  });
+
+  it("keeps everything of a scene file: elements, pictures, fonts, comments, presentation", async () => {
+    const { rows, scenes } = fakeSceneRows();
+    const home = databaseHomeOf(rows, { ref: "abcdefghijklmnopqrst", label: "Team space" });
+    await home.save("Deck", full, "none");
+    const loaded = JSON.parse((await home.load("Deck")).json);
+    expect(loaded).toEqual(JSON.parse(full));
+    const [scene] = [...scenes.values()];
+    expect(scene.files.get("f1")).toBe(picture); // the picture went to the storage bucket, not into a row
+    expect(scene.meta!.files).toEqual({ f1: { mimeType: "image/png", created: 1 } });
+    expect(home.capabilities).toMatchObject({ sync: "realtime", presence: "realtime", sharing: "members", guests: true, filesInline: false, commentsInline: false, moveMarker: true });
+  });
+
+  it("a whole save leaves out elements it doesn't list (deleted there, newer version)", async () => {
+    const { rows, scenes } = fakeSceneRows();
+    const home = databaseHomeOf(rows, { ref: "abcdefghijklmnopqrst", label: "Team space" });
+    const first = await home.save("Plan", json("Plan", ["a", "b"]), "none");
+    await home.save("Plan", json("Plan", ["a"]), first.version);
+    const [scene] = [...scenes.values()];
+    expect(scene.elements.get("b")!.data).toMatchObject({ isDeleted: true, version: 2 });
+    expect(JSON.parse((await home.load("Plan")).json).elements).toEqual([{ id: "a" }]);
+  });
+
+  it("the moved note hides the scene from the listing, its id still answers where it went", async () => {
+    const { rows } = fakeSceneRows();
+    const home = databaseHomeOf(rows, { ref: "abcdefghijklmnopqrst", label: "Team space" });
+    await home.save("Plan", json("Plan", ["a"]), "none");
+    const id = (await home.idOf("Plan"))!;
+    const mark = { home: "drive" as const, link: "https://kurviq.com/s/file1/Plan", at: "2026-11-13T12:00:00Z" };
+    await home.markMoved!("Plan", mark);
+    expect((await home.list()).scenes).toEqual([]);
+    expect(await home.movedTo!(id)).toEqual(mark);
+    await expect(home.loadById(id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("a viewer's save is refused (403, read only); list offline gives the last listing", async () => {
+    const { rows } = fakeSceneRows({ role: "viewer" });
+    const home = databaseHomeOf(rows, { ref: "abcdefghijklmnopqrst", label: "Team space" });
+    await expect(home.save("Plan", json("Plan", ["a"]), "none")).rejects.toMatchObject({ status: 403, readOnly: true });
+    const offline = databaseHomeOf({ ...rows, scenes: () => Promise.reject(new TypeError("Failed to fetch")) }, { ref: "abcdefghijklmnopqrst", label: "Team space" });
+    expect(await offline.list()).toMatchObject({ scenes: [], status: { online: false } });
+  });
+
+  it("history: milestones by revision", async () => {
+    const { rows } = fakeSceneRows();
+    const home = databaseHomeOf(rows, { ref: "abcdefghijklmnopqrst", label: "Team space" });
+    const saved = await home.save("Plan", json("Plan", ["a"]), "none");
+    const id = (await home.idOf("Plan"))!;
+    await rows.addVersion(id, Number(saved.version), json("Plan", ["a"]));
+    await home.save("Plan", json("Plan", ["a", "b"]), saved.version);
+    const [entry] = await home.history!("Plan");
+    expect(entry.version).toBe(saved.version);
+    expect((await home.loadVersion!("Plan", entry)).json).toBe(json("Plan", ["a"]));
+    expect((await home.load("Plan", saved.version)).json).toBe(json("Plan", ["a"]));
+  });
+});

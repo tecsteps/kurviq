@@ -60,7 +60,10 @@
     // Google Drive's "New → More → Kurviq" (worker/driveNew.ts): "on" once the Drive UI integration's
     // "Creating files" is set up in the Google Cloud console (specs/2026-11-13-new-scene-from-drive.md);
     // anything else: /drive/new only says it isn't enabled. wrangler dev: --var DRIVE_NEW:on
-    "DRIVE_NEW": "off"
+    "DRIVE_NEW": "off",
+    // "on": Google sign-in also asks for drive.appdata (connected databases follow the user to other
+    // browsers). Switch on only after adding the scope to the OAuth consent screen (Data access).
+    "GOOGLE_APPDATA": "off"
   },
   // hourly: retention (worker/retention.ts): feedback deleted after 2 years, contact messages after 1 year,
   // their sender hashes blanked after 1 day

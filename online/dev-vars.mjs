@@ -1,5 +1,6 @@
 // Writes .dev.vars (secrets for `wrangler dev`) from the project's .env /
-// .env.local: KURVIQ_GOOGLE_CLIENT_SECRET and KURVIQ_GOOGLE_API_KEY, plus a
+// .env.local: KURVIQ_GOOGLE_CLIENT_SECRET, KURVIQ_GOOGLE_API_KEY and
+// KURVIQ_SUPABASE_CLIENT_SECRET ("Connect with Supabase"), plus a
 // cookie key made once and this server's address (DEV_ORIGIN).
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -26,7 +27,8 @@ writeFileSync(
     (fakeGoogle ? "FAKE_GOOGLE=1\nGOOGLE_API_KEY=fake-api-key\n" : "") +
     // the redirect URI registered at Google for wrangler dev (port 8787; another one only for the fake Google: KURVIQ_DEV_PORT)
     `DEV_ORIGIN=http://localhost:${process.env.KURVIQ_DEV_PORT || 8787}\n` +
-    (!fakeGoogle && env.KURVIQ_GOOGLE_API_KEY ? `GOOGLE_API_KEY=${env.KURVIQ_GOOGLE_API_KEY}\n` : ""),
+    (!fakeGoogle && env.KURVIQ_GOOGLE_API_KEY ? `GOOGLE_API_KEY=${env.KURVIQ_GOOGLE_API_KEY}\n` : "") +
+    (env.KURVIQ_SUPABASE_CLIENT_SECRET ? `SUPABASE_CLIENT_SECRET=${env.KURVIQ_SUPABASE_CLIENT_SECRET}\n` : ""),
   { mode: 0o600 },
 );
 console.log("[dev-vars] wrote online/.dev.vars");

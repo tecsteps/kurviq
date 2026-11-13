@@ -47,6 +47,8 @@ import { handlePublicApi, handleSharedPage } from "./shared";
 import { handlePubApi } from "./pubLinks";
 import type { PubEnv } from "./pubLinks";
 import { kurviqReference, kurviqSkill } from "./skill";
+import { handleSupabase } from "./supabase";
+import type { SupabaseEnv } from "./supabase";
 import { feedbackStats, handleStatsDev, mcpStats, pageStats, publicReadStats, routeStats } from "./stats";
 import type { StatsEnv } from "./stats";
 import { handleContact } from "./contact";
@@ -77,7 +79,7 @@ declare const __KURVIQ_DEV__: boolean;
  */
 export const FakeGoogle = __KURVIQ_DEV__ ? FakeGoogleStore : class extends DurableObject {};
 
-type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & PubEnv & DriveNewEnv & {
+type Env = AuthEnv & SupabaseEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & PubEnv & DriveNewEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -465,6 +467,12 @@ export default {
     if (env.CANONICAL_HOST && url.hostname !== env.CANONICAL_HOST && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
       url.hostname = env.CANONICAL_HOST;
       return Response.redirect(url.toString(), 301);
+    }
+
+    // "Connect with Supabase": the code exchange and the setup's Management API calls (./supabase.ts)
+    const supabase = await handleSupabase(request, env);
+    if (supabase) {
+      return supabase;
     }
 
     // relay tickets (docs/relay/CONCEPT.md), sign-in: counted in the statistics

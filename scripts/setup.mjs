@@ -37,6 +37,10 @@ for (const { dir, url, commit, install } of UPSTREAM) {
   run(install, dir);
 }
 
+// Kurviq's own dependencies (package.json: the database client, loaded only
+// when a database home is used), from the lockfile
+run("npm ci --ignore-scripts", ".");
+
 // let our sources (outside the checkouts) resolve the checkouts' deps
 run("ln -sfn ../excalidraw/node_modules scenes-plugin/node_modules");
 run("ln -sfn ../excalidraw-mcp/node_modules scenes-mcp/node_modules");

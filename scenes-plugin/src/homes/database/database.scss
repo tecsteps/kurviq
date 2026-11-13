@@ -1,0 +1,112 @@
+// The database home's dialogs and bars (./ui.tsx, ./shareUI.tsx), in the share dialog's style.
+
+.excalidraw .kq-db {
+  .kq-db__heading {
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+  }
+
+  .kq-db__projects {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+
+    legend {
+      margin-bottom: 0.25rem;
+      font-weight: 600;
+    }
+  }
+
+  .kq-db__choice {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    cursor: pointer;
+  }
+
+  .kq-db__new,
+  .kq-db__invite {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 0.5rem;
+    align-items: end;
+  }
+
+  .kq-db__manual {
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    ol {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      padding-left: 1.2rem;
+    }
+  }
+
+  .kq-db__secret {
+    font-size: 0.9rem;
+    user-select: all;
+    word-break: break-all;
+  }
+
+  .kq-notice input {
+    width: 100%;
+    margin-top: 0.4rem;
+  }
+
+  .kq-share__people input[type="date"] {
+    height: 2rem;
+    width: 9rem;
+  }
+}
+
+// Supabase's own button style: dark, with its mark
+.excalidraw button.scenes-btn.kq-supabase-btn {
+  justify-content: center;
+  height: 2.5rem;
+  gap: 0.5rem;
+  border: 1px solid #2e2e2e;
+  background: #1c1c1c;
+  color: #ededed;
+  font-weight: 500;
+
+  &:hover:not(:disabled) {
+    background: #2a2a2a;
+  }
+}
+
+.excalidraw .kq-db-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+
+  .kq-db-settings__row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+  }
+
+  .kq-db-settings__name {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+}
+
+.excalidraw .kq-db-setting select {
+  width: 100%;
+}
+
+.excalidraw .kq-db-bar {
+  display: inline-flex;
+  gap: 0.6rem;
+  align-items: center;
+}

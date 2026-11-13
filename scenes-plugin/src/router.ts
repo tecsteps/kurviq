@@ -7,7 +7,10 @@
 // storage.ts) opens in the editor, at the same URL.
 
 import { scenesController } from "./controller";
-import { pubNameHolder, sceneElsewhere, sharedFileId } from "./online/drive";
+import { databaseHome, databases, takeDatabaseLink, setDriveAppData } from "./homes/database/connections";
+import { isSupabaseCallback } from "./homes/database/oauth";
+import { openDatabaseScene, openSignInDialog, resumeSupabaseConnect } from "./homes/database/ui";
+import { connection, pubNameHolder, readAppData, sceneElsewhere, sharedFileId, writeAppData } from "./online/drive";
 import { offerSharedLookup } from "./online/linkHint";
 import { pubNameFromPath } from "./online/pubName";
 import { isPublicScene, publicScene } from "./publicScene";
@@ -72,8 +75,11 @@ const showShared = () => {
   return false;
 };
 
+/** a database link (/db/<ref>/<scene id>, ./homes/database/connections.ts) or Supabase's sign-in callback: not a scene name */
+const isDatabasePath = (path: string) => /^\/db\//.test(path) || isSupabaseCallback(path);
+
 const sceneFromPath = (): string | null => {
-  if (sharedFromPath() || pubNameFromPath(window.location.pathname)) {
+  if (sharedFromPath() || pubNameFromPath(window.location.pathname) || isDatabasePath(window.location.pathname)) {
     return null;
   }
   const path = window.location.pathname;
@@ -194,6 +200,61 @@ const openSharedSpace = async () => {
   }
 };
 
+/** the database's sign-in state once it is known (supabase-js loads first) */
+const sessionKnown = async (ref: string) => {
+  for (let tries = 0; tries < 40 && databases.session(ref).status === "unknown"; tries++) {
+    await new Promise((resolve) => setTimeout(resolve, 250)); // NOSONAR S9382: polling in order on purpose
+  }
+  return databases.session(ref);
+};
+
+/**
+ * A database link: signed in, its scene opens in the editor; not signed in,
+ * a public scene opens in the viewer (read only, no account needed), else
+ * the database asks for the email address (a sign-in link)
+ */
+const openDatabaseLink = async (link: NonNullable<Awaited<ReturnType<typeof takeDatabaseLink>>>) => {
+  if (!link.known) {
+    window.alert("This database link is incomplete (its key is missing): ask for the link again.");
+    return;
+  }
+  if (link.error) {
+    window.alert(`The sign-in link didn't work: ${link.error}`);
+  }
+  const session = await sessionKnown(link.ref);
+  if (!link.sceneId) {
+    if (session.status !== "signed-in") {
+      openSignInDialog(link.ref);
+    }
+    return;
+  }
+  if (session.status === "signed-in" && (await openDatabaseScene(link.ref, link.sceneId))) {
+    return;
+  }
+  const scene = await databaseHome(link.ref).sceneById(link.sceneId).catch(() => null);
+  if (scene?.public === "view" && !scene.moved_to) {
+    publicScene.show(scene.name, { database: { ref: link.ref, id: link.sceneId } });
+    return;
+  }
+  if (session.status !== "signed-in") {
+    openSignInDialog(link.ref, link.sceneId);
+  }
+};
+
+/** signed in with Google: the connected databases follow through Drive's app data */
+const followDriveAppData = () => {
+  let active = false;
+  const check = () => {
+    const now = connection.isActive();
+    if (now !== active) {
+      active = now;
+      setDriveAppData(now ? { read: readAppData, write: writeAppData } : null);
+    }
+  };
+  connection.subscribe(check);
+  check();
+};
+
 let connected = false;
 
 export const connectRouter = async () => {
@@ -236,6 +297,15 @@ export const connectRouter = async () => {
   scenesController.subscribe(syncTitle);
   publicScene.subscribe(syncTitle);
 
+  databases.start();
+  followDriveAppData();
+  // back from Supabase's consent page; a database link (its # part is taken and cleared at once)
+  void resumeSupabaseConnect();
+  const databaseLink = await takeDatabaseLink(window.location).catch(() => null);
+  if (databaseLink) {
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+
   await resolvePub();
   const target = sceneFromPath();
   // right away, the editor loads underneath
@@ -250,6 +320,8 @@ export const connectRouter = async () => {
     await navigateTo(target);
   } else if (sharedFileId && sharedFromPath()?.fileId === sharedFileId) {
     await openSharedSpace();
+  } else if (databaseLink) {
+    await openDatabaseLink(databaseLink).catch((error) => console.error("[scenes] could not open the database link", error));
   }
   syncUrl("replace");
   syncTitle();

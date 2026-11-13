@@ -937,6 +937,77 @@ export const writePenMark = async (fileId: string, mark: string | null) => {
 };
 
 // -----------------------------------------------------------------------------
+// app data: small settings kept in the user's Drive where only Kurviq sees
+// them (the hidden appDataFolder, Drive's drive.appdata access), e.g. the
+// databases they connected (../homes/database/connections.ts). A sign-in from
+// before Kurviq asked for that access has none: null, nothing else changes.
+// -----------------------------------------------------------------------------
+
+/** Drive's answer for app data; null: no app data access (or not signed in) */
+const appDataCall = async (url: string, init: { method?: string; body?: BodyInit; contentType?: string } = {}) => {
+  const value = await getToken();
+  if (!value || otherAccount()) {
+    return null;
+  }
+  let res: Response;
+  try {
+    res = await fetch(url.startsWith(UPLOAD) ? url : `${API}${url}`, {
+      method: init.method ?? "GET",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${value}`, ...(init.contentType ? { "Content-Type": init.contentType } : {}) },
+      body: init.body,
+    });
+  } catch {
+    throw offlineError("Google Drive not reachable");
+  }
+  if (res.status === 401 || res.status === 403) {
+    return null;
+  }
+  if (!res.ok) {
+    throw httpError(res.status, `Google Drive's app data answered ${res.status}`);
+  }
+  return res;
+};
+
+const appDataFileId = async (name: string) => {
+  const res = await appDataCall(`/files?spaces=appDataFolder&fields=files(id)&q=${encodeURIComponent(`name = ${q(name)} and trashed = false`)}`);
+  if (!res) {
+    return undefined;
+  }
+  const data = await res.json().catch(() => null);
+  return (data?.files?.[0]?.id as string | undefined) ?? null;
+};
+
+/** an app data file's text (null: none; undefined: no app data access) */
+export const readAppData = async (name: string): Promise<string | null | undefined> => {
+  const id = await appDataFileId(name);
+  if (!id) {
+    return id;
+  }
+  const res = await appDataCall(`/files/${id}?alt=media`);
+  return res ? res.text() : undefined;
+};
+
+/** write an app data file (made if new); false: no app data access */
+export const writeAppData = async (name: string, text: string) => {
+  const id = await appDataFileId(name);
+  if (id === undefined) {
+    return false;
+  }
+  if (id) {
+    return !!(await appDataCall(`${UPLOAD}/files/${id}?uploadType=media`, { method: "PATCH", body: text, contentType: "application/json" }));
+  }
+  const boundary = `kurviq${Math.random().toString(36).slice(2)}`;
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: ["appDataFolder"] })}\r\n`,
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n`,
+    text,
+    `\r\n--${boundary}--`,
+  ]);
+  return !!(await appDataCall(`${UPLOAD}/files?uploadType=multipart&fields=id`, { method: "POST", body, contentType: `multipart/related; boundary=${boundary}` }));
+};
+
+// -----------------------------------------------------------------------------
 // "moved to …": a scene moved to another home leaves this note on its old
 // file (appProperties.kurviqMoved = "<home> <link>", metadata only) before
 // the file goes to the bin, so a link to it can point to the new place

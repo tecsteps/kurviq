@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { sceneCoordsToViewportCoords, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import clsx from "clsx";
 
+import { databases } from "../homes/database/connections";
 import { authorKey, changeStamp, commentId, pinFor, pinPosition, threadsOf, withoutDone } from "../../../scenes-mcp/sceneComments.mjs";
 import { scenesController } from "../controller";
 import { deck } from "../deck";
@@ -106,8 +107,17 @@ const linkedThread = () => {
 
 type Me = Viewer;
 
+/** a database scene's comments are by the person signed in to that database (with or without Google) */
+const databaseEmail = () => {
+  const db = scenesController.databaseOf(scenesController.getState().current);
+  return db ? databases.session(db.ref).email : null;
+};
+
 const useMe = (): Me | null => {
-  const user = useSyncExternalStore(connection.subscribe, () => connection.getState().user);
+  const googleUser = useSyncExternalStore(connection.subscribe, () => connection.getState().user);
+  useSyncExternalStore(scenesController.subscribe, () => scenesController.getState().current);
+  const dbEmail = useSyncExternalStore(databases.subscribe, databaseEmail);
+  const user = dbEmail && dbEmail !== googleUser?.email ? { email: dbEmail, name: null } : googleUser;
   const [me, setMe] = useState<Me | null>(null);
   useEffect(() => {
     let alive = true;
@@ -148,7 +158,7 @@ const usePermissions = () => {
   }
   const canComment = scenesController.canComment();
   // editors (not Drive's commenters) may also remove others' comments
-  const canModerate = canComment && (!state.sync.readOnly || scenesController.isLocalOnly(state.current));
+  const canModerate = canComment && !state.homeAccess && (!state.sync.readOnly || scenesController.isLocalOnly(state.current));
   return { canComment, canModerate };
 };
 

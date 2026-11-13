@@ -102,7 +102,17 @@ export type SceneMeta = {
   renamedFrom?: string;
   /** the retired live sync's mark (metadata of older versions; ignored) */
   live?: { fileId: string };
+  /**
+   * kept in a connected database (homes/database) instead of Google Drive:
+   * the connection (its project ref), the scene's row id once it is there and
+   * the revision this copy has. Such a scene is also `localOnly` (never
+   * synced with Drive); its live session keeps it in step with the database.
+   */
+  db?: { ref: string; id?: string; rev?: number };
 };
+
+/** a home for new scenes: this browser, Google Drive, or a connected database ("db:<ref>") */
+export type NewHome = "browser" | "drive" | `db:${string}`;
 
 export type ScenesMeta = {
   /** active scene; null = untitled */
@@ -113,6 +123,8 @@ export type ScenesMeta = {
   autoSync: boolean;
   /** while signed in: new scenes start local only (default off: they go to Drive) */
   newLocalOnly?: boolean;
+  /** where new scenes are kept (the setting "New scenes are kept"; absent: as newLocalOnly says) */
+  newHome?: NewHome;
   /** same element changed on both sides: newest edit wins (default) or ask */
   clashes?: "newest" | "ask";
   scenes: Record<string, SceneMeta>;

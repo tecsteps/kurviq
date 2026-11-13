@@ -731,6 +731,8 @@ const kurviqOnline = () => ({
  *     keeps its own allowlist of what may be embedded)
  *   - esm.sh: Excalidraw's fallback for fonts it can't find on this site
  *   - connect-src data: imported fonts are read from their data URLs for export
+ *   - connect-src *.supabase.co (https, wss): the user's own database (a scene
+ *     home, src/homes/database): the browser talks to it directly
  */
 const securityHeaders = (html: string) => {
   const hashes = [...html.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/g)]
@@ -744,7 +746,7 @@ const securityHeaders = (html: string) => {
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https://esm.sh",
     // data: imported fonts are subset for SVG / PDF export from their data URLs
-    "connect-src 'self' data: https://www.googleapis.com https://content.googleapis.com https://libraries.excalidraw.com https://esm.sh",
+    "connect-src 'self' data: https://www.googleapis.com https://content.googleapis.com https://libraries.excalidraw.com https://esm.sh https://*.supabase.co wss://*.supabase.co",
     "worker-src 'self' blob: data:",
     "frame-src https:",
     "media-src 'self' data: blob:",

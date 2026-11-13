@@ -35,7 +35,8 @@
 //   files.list (q: terms joined by "and": '<id>' in parents, trashed = / !=,
 //     name = / !=, mimeType = / !=, sharedWithMe, appProperties has { key='k'
 //     and value='v' }; orderBy createdTime / name / modifiedTime [desc],
-//     pageSize, pageToken), files.get (fields, alt=media), files.create
+//     pageSize, pageToken; spaces=appDataFolder: the caller's app data, parents
+//     ["appDataFolder"] on create), files.get (fields, alt=media), files.create
 //     (metadata, uploadType=media|multipart), files.update PATCH (metadata,
 //     appProperties merge with null deleting, trashed, uploadType=media|
 //     multipart; checked first, then applied as a whole, like Drive),
@@ -254,6 +255,8 @@ const rootOf = (email: string) => {
   const value = digits(`root:${email}`, 17);
   return `0A${value}Uk9PVA`;
 };
+/** an account's hidden app data folder (spaces=appDataFolder; not a real file) */
+const appDataOf = (email: string) => `appdata:${email}`;
 
 const toHex = (buffer: ArrayBuffer) => [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 const md5Hex = async (bytes: Uint8Array) => toHex(await crypto.subtle.digest("MD5", bytes));
@@ -1586,14 +1589,18 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
         return invalid(`Invalid Value (${error.message})`, "q");
       }
     }
-    if ((url.searchParams.get("spaces") || "drive").split(",").every((space) => space !== "drive")) {
+    const spaces = (url.searchParams.get("spaces") || "drive").split(",");
+    const appData = spaces.includes("appDataFolder");
+    if (!appData && spaces.every((space) => space !== "drive")) {
       return json(200, select({ kind: "drive#fileList", incompleteSearch: false, files: [] }, fieldsOf(url, "kind,incompleteSearch,files(kind,id,name,mimeType)")));
     }
+    const inAppData = (file: FileRow) => (JSON.parse(file.parents || "[]") as string[]).some((parent) => parent.startsWith("appdata:"));
     const fields = fieldsOf(url, "kind,incompleteSearch,nextPageToken,files(kind,id,name,mimeType)");
     const filesTree = fields.get("files");
     checkKeys(filesTree, FILE_KEYS);
 
     const visible = this.all<FileRow>("SELECT * FROM files ORDER BY created, id")
+      .filter((file) => (appData ? (JSON.parse(file.parents || "[]") as string[]).includes(appDataOf(caller.email)) : !inAppData(file)))
       .filter((file) => this.appCanOpen(caller.email, file))
       .map((file) => ({ file, role: this.roleOf(file, caller, false) }))
       .filter((entry): entry is { file: FileRow; role: string } => !!entry.role && predicate(entry.file, { email: caller.email, root: rootOf(caller.email) }));
@@ -1668,6 +1675,9 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return parents.map((parent) => {
       if (parent === "root" || parent === rootOf(caller.email)) {
         return rootOf(caller.email);
+      }
+      if (parent === "appDataFolder") {
+        return appDataOf(caller.email); // the hidden app data folder (drive.appdata): only this account sees it
       }
       const folder = this.file(parent);
       const role = folder ? this.roleOf(folder, caller) : null;

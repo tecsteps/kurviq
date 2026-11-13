@@ -38,7 +38,9 @@ import { sharedFileId } from "./online/drive";
 import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
 import { randomNonce } from "./editDiff";
 import { browserHomeOf } from "./homes/browser";
+import { writeSceneChanges } from "./homes/database/write";
 import { driveHome } from "./homes/drive";
+import { databaseHome, databases } from "./homes/database/connections";
 import { changedFields, live, mergeElements, mergeSceneSettings, MERGE_VERSION, newestWins } from "./merge";
 import type { ClashChoice } from "./merge";
 import { OpQueue } from "./opQueue";
@@ -55,7 +57,7 @@ import {
 } from "./storage";
 
 import type { HomeError, HomeHistoryEntry, ListedScene, LiveHost, SceneHome } from "./homes/types";
-import type { SceneMeta, ScenesMeta } from "./storage";
+import type { NewHome, SceneMeta, ScenesMeta } from "./storage";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type {
   AppState,
@@ -77,6 +79,10 @@ export type SyncStatus =
   | "conflict"
   /** never pushed */
   | "local"
+  /** kept in a connected database, its changes there (real time) */
+  | "database"
+  /** kept in a connected database, changes made here not there yet (offline, or it is paused) */
+  | "database-pending"
   /** kept only in this browser on purpose: never synced */
   | "local-only"
   /** not named yet */
@@ -140,6 +146,11 @@ export type ScenesState = {
   checking: boolean;
   /** a scene being opened (e.g. named by the link): shown while it loads instead of "Untitled" */
   opening: string | null;
+  /**
+   * The open scene's home lets this person only view or comment (a database
+   * scene's role): why (null: they may edit), and whether they may comment
+   */
+  homeAccess: { readOnly: string | null; comment: boolean } | null;
 };
 
 /** push the active scene after this long without changes */
@@ -303,12 +314,17 @@ class ScenesController implements LiveHost {
   private readonly drive: SceneHome = driveHome;
   /** the scenes kept only in this browser, as a home (for "Move to…"; the controller keeps them itself) */
   readonly browserHome: SceneHome = browserHomeOf({
-    names: () => Object.keys(this.meta.scenes).filter((name) => name !== UNTITLED && this.isLocalOnly(name)),
-    read: (name) => (this.isLocalOnly(name) ? this.localOnlyJson(name) : Promise.resolve(null)),
-    write: (name, json) => (this.isLocalOnly(name) ? this.writeLocalOnly(name, json) : this.createLocalOnly(name, json)),
+    names: () => Object.keys(this.meta.scenes).filter((name) => name !== UNTITLED && this.isBrowserOnly(name)),
+    read: (name) => (this.isBrowserOnly(name) ? this.localOnlyJson(name) : Promise.resolve(null)),
+    write: (name, json) => (this.isBrowserOnly(name) ? this.writeLocalOnly(name, json) : this.createLocalOnly(name, json)),
     remove: (name) => this.remove(name),
     rename: (from, to) => this.rename(from, to),
   });
+
+  /** the connected databases' listings (by connection), for the scene list */
+  private readonly homeListings = new Map<string, ListedScene[]>();
+  /** database scenes with changes here that are not in the database yet (their live session says so) */
+  private readonly homePending = new Set<string>();
 
   /** one operation at a time (see the top of this file) */
   private readonly queue = new OpQueue();
@@ -336,6 +352,7 @@ class ScenesController implements LiveHost {
     conflict: null,
     checking: false,
     opening: linkedScene(this.meta.current),
+    homeAccess: null,
   };
 
   constructor() {
@@ -586,7 +603,21 @@ class ScenesController implements LiveHost {
     this.timers.push(
       window.setInterval(() => this.syncNow({ refresh: true }), POLL_MS),
       window.setInterval(() => this.maybePushCurrent(), 5_000),
+      window.setInterval(() => void this.refreshDatabases().catch(() => {}), POLL_MS),
     );
+    // a database signed in or out: its scenes are listed again
+    let signedIn = "";
+    databases.subscribe(() => {
+      const now = databases
+        .list()
+        .filter((connection) => databases.session(connection.ref).status === "signed-in")
+        .map((connection) => connection.ref)
+        .join(",");
+      if (now !== signedIn) {
+        signedIn = now;
+        void this.refreshDatabases().catch((error) => console.error("[scenes] databases not listed", error));
+      }
+    });
   }
 
   /**
@@ -729,12 +760,27 @@ class ScenesController implements LiveHost {
     return this.meta.scenes[name]?.autoSync;
   }
 
+  /** never synced with Drive: kept only in this browser, or in a connected database */
   isLocalOnly(name: string | null) {
     return name !== null && !!this.meta.scenes[name]?.localOnly;
   }
 
-  /** where a scene lives: this browser only (local only, and the untitled draft), else Google Drive */
+  /** kept in a connected database: its connection, row id (once it is there) and revision */
+  databaseOf(name: string | null) {
+    return name === null ? null : this.meta.scenes[name]?.db ?? null;
+  }
+
+  /** kept only in this browser (local only, not in a database) */
+  isBrowserOnly(name: string | null) {
+    return this.isLocalOnly(name) && !this.databaseOf(name);
+  }
+
+  /** where a scene lives: this browser only (local only, and the untitled draft), a connected database, else Google Drive */
   homeOf(name: string | null): SceneHome {
+    const db = this.databaseOf(name);
+    if (db) {
+      return databaseHome(db.ref);
+    }
     return name === null || this.isLocalOnly(name) ? this.browserHome : this.drive;
   }
 
@@ -782,6 +828,9 @@ class ScenesController implements LiveHost {
       return "untitled";
     }
     const meta = this.meta.scenes[name];
+    if (meta?.db) {
+      return this.homePending.has(name) ? "database-pending" : "database";
+    }
     if (meta?.localOnly) {
       return "local-only";
     }
@@ -814,6 +863,9 @@ class ScenesController implements LiveHost {
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const meta = this.meta.scenes[name];
+        if (meta?.db) {
+          return this.databaseItem(name, meta);
+        }
         const remote = this.listedOf(name);
         return {
           name,
@@ -821,7 +873,7 @@ class ScenesController implements LiveHost {
           dirty: this.isDirty(name),
           inDrive: remote ? true : !!meta?.remoteMd5,
           autoSync: this.autoSyncFor(name),
-          localOnly: !!meta?.localOnly,
+          localOnly: !!meta?.localOnly && !meta.db,
           updatedAt: remote?.updatedAt,
           ...(meta?.renamedFrom ? { pendingRename: meta.renamedFrom } : {}),
           ...(remote?.public ? { public: true } : {}),
@@ -843,10 +895,26 @@ class ScenesController implements LiveHost {
     return list;
   }
 
+  /** a database scene's entry in the list (its database's listing, not Drive's) */
+  private databaseItem(name: string, meta: SceneMeta): SceneListItem {
+    const listed = this.homeListings.get(meta.db!.ref)?.find((scene) => scene.name === name);
+    return {
+      name,
+      status: this.statusOf(name),
+      dirty: this.isDirty(name),
+      inDrive: false,
+      autoSync: false,
+      localOnly: false,
+      updatedAt: listed?.updatedAt ?? null,
+      ...(listed?.public ? { public: true } : {}),
+      home: "database",
+    };
+  }
+
   /** number of scenes with changes waiting to be pushed */
   pendingCount() {
     return this.state.list.filter((item) =>
-      ["ahead", "diverged", "conflict"].includes(item.status) ||
+      ["ahead", "diverged", "conflict", "database-pending"].includes(item.status) ||
       (item.status === "local" && item.name !== null && item.dirty),
     ).length;
   }
@@ -867,9 +935,62 @@ class ScenesController implements LiveHost {
     this.signedIn = on;
   };
 
+  /**
+   * Where new scenes are kept (the setting "New scenes are kept"): a
+   * connected database, this browser, or Google Drive while signed in (the
+   * default; signed out: this browser)
+   */
+  newScenesHome(): NewHome {
+    const chosen = this.meta.newHome;
+    if (chosen?.startsWith("db:")) {
+      if (databases.list().some((connection) => `db:${connection.ref}` === chosen)) {
+        return chosen;
+      }
+    } else if (chosen === "browser") {
+      return "browser";
+    } else if (chosen === "drive") {
+      return this.signedIn ? "drive" : "browser";
+    }
+    return !this.signedIn || (this.meta.newLocalOnly ?? false) ? "browser" : "drive";
+  }
+
+  setNewScenesHome = (home: NewHome) => {
+    this.meta.newHome = home;
+    this.meta.newLocalOnly = home === "browser";
+    this.persistMeta();
+    this.refresh();
+  };
+
   /** new scenes: in Drive while signed in (unless the user chose otherwise), in this browser while signed out */
   newScenesLocalOnly() {
-    return !this.signedIn || (this.meta.newLocalOnly ?? false);
+    return this.newScenesHome() === "browser";
+  }
+
+  /**
+   * A new scene's record for its home. `defaulted`: the home is the default
+   * (not the user's choice for this scene); in this browser while signed out
+   * it is offered for Drive at sign-in.
+   */
+  private newSceneRecord(home: NewHome, name: string, dirty: boolean, defaulted: boolean): SceneMeta {
+    if (home.startsWith("db:")) {
+      return { baseMd5: null, dirty, localOnly: true, db: { ref: home.slice(3) } };
+    }
+    if (home === "browser") {
+      return { baseMd5: null, dirty, localOnly: true, ...(defaulted ? this.madeSignedOut() : {}) };
+    }
+    return this.claimName(name, dirty);
+  }
+
+  /** the home a new scene goes to: ticked "local only" → this browser; else the default (Drive, or a database) */
+  private homeForNew(localOnly: boolean | undefined): NewHome {
+    const chosen = this.newScenesHome();
+    if (localOnly === undefined) {
+      return chosen;
+    }
+    if (localOnly) {
+      return "browser";
+    }
+    return chosen.startsWith("db:") ? chosen : "drive";
   }
 
   /** a scene made local only by default while signed out: offered for Drive at the next sign-in */
@@ -885,7 +1006,7 @@ class ScenesController implements LiveHost {
     await this.ready;
     const found: { name: string; ticked: boolean }[] = [];
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
-      if (name === UNTITLED || !meta.localOnly || meta.keptLocal) {
+      if (name === UNTITLED || !meta.localOnly || meta.keptLocal || meta.db) {
         continue;
       }
       const json = await this.localJson(name); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
@@ -902,6 +1023,9 @@ class ScenesController implements LiveHost {
    */
   keepOnlyHere = async (name: string) => {
     await this.ready;
+    if (this.databaseOf(name)) {
+      throw new Error(`"${name}" is kept in ${this.homeOf(name).label}: use "Move to…" to keep it elsewhere`);
+    }
     const inDrive = await this.exclusive(async () => {
       const status = this.statusOf(name);
       if (status === "behind" || status === "diverged" || status === "conflict") {
@@ -932,6 +1056,9 @@ class ScenesController implements LiveHost {
   /** the user puts a scene in Drive (the cloud icon): local only or not, it is uploaded now */
   putInDrive = async (name: string) => {
     await this.ready;
+    if (this.databaseOf(name)) {
+      throw new Error(`"${name}" is kept in ${this.homeOf(name).label}: use "Move to…" to put it in Google Drive`);
+    }
     if (this.isLocalOnly(name)) {
       await this.setLocalOnly(name, false);
       return;
@@ -964,6 +1091,7 @@ class ScenesController implements LiveHost {
 
   setNewScenesLocalOnly = (on: boolean) => {
     this.meta.newLocalOnly = on;
+    this.meta.newHome = on ? "browser" : "drive";
     this.persistMeta();
     this.refresh();
   };
@@ -1023,6 +1151,9 @@ class ScenesController implements LiveHost {
     this.exclusive(async () => {
       await this.ready;
       const meta = this.sceneMeta(name);
+      if (meta.db) {
+        throw new Error(`"${name}" is kept in ${this.homeOf(name).label}: use "Move to…" to keep it elsewhere`);
+      }
       if (on === !!meta.localOnly) {
         return;
       }
@@ -1191,6 +1322,9 @@ class ScenesController implements LiveHost {
     if (!this.api || this.state.busy === "loading" || this.penHolder !== null) {
       return false;
     }
+    if (this.state.homeAccess && !this.state.homeAccess.comment) {
+      return false; // a database scene this person may only view
+    }
     if (this.state.sync.readOnly && !this.isLocalOnly(this.meta.current)) {
       return false;
     }
@@ -1207,6 +1341,9 @@ class ScenesController implements LiveHost {
   canComment() {
     if (!this.api || this.penHolder !== null) {
       return false;
+    }
+    if (this.state.homeAccess) {
+      return this.state.homeAccess.comment;
     }
     return !this.state.sync.readOnly || this.isLocalOnly(this.meta.current);
   }
@@ -1509,6 +1646,9 @@ class ScenesController implements LiveHost {
   }
 
   private async loadFromHomeOrEmpty(name: string, meta: SceneMeta | undefined): Promise<{ json: string | null; version: string | null }> {
+    if (meta?.db) {
+      return this.loadFromDatabase(name, meta.db);
+    }
     const onlyHere = this.onlyInThisBrowser(name, meta);
     if (onlyHere && meta?.localOnly) {
       return { json: null, version: null };
@@ -1523,6 +1663,24 @@ class ScenesController implements LiveHost {
     }
   }
 
+  /** a database scene never opened here: the database's version (a new one, not there yet: empty) */
+  private async loadFromDatabase(name: string, db: NonNullable<SceneMeta["db"]>): Promise<{ json: string | null; version: string | null }> {
+    if (!db.id) {
+      return { json: null, version: null };
+    }
+    try {
+      return { json: (await databaseHome(db.ref).load(name)).json, version: null };
+    } catch (error: any) {
+      if (error?.status === 404) {
+        return { json: null, version: null };
+      }
+      if (error?.offline) {
+        throw Object.assign(new Error(`"${name}" was never opened in this browser and ${this.homeOf(name).label} is not reachable`), { status: 503 });
+      }
+      throw error;
+    }
+  }
+
   private async loadOpeningScene(name: string | null) {
       const snapshot = await getSnapshot(name);
       let json: string | null = null;
@@ -1531,7 +1689,11 @@ class ScenesController implements LiveHost {
       let checkDrive = false;
       const meta = name === null ? undefined : this.meta.scenes[name];
 
-      if (name === null || (snapshot && (snapshot.dirty || meta?.conflict))) {
+      if (meta?.db) {
+        // a database scene: the copy here (its live session catches up with the database), else the database's
+        json = snapshot?.json ?? (await this.loadFromHomeOrEmpty(name!, meta)).json;
+        baseline = snapshot?.baseline ?? null;
+      } else if (name === null || (snapshot && (snapshot.dirty || meta?.conflict))) {
         // local changes win; sync takes care of Drive
         json = snapshot?.json ?? null;
         baseline = snapshot?.baseline ?? null;
@@ -1658,7 +1820,7 @@ class ScenesController implements LiveHost {
   /** create a new, empty named scene and switch to it */
   create = (name: string, options?: { localOnly?: boolean }) =>
     this.withBusy("loading", async () => {
-      const localOnly = options?.localOnly ?? this.newScenesLocalOnly();
+      const home = this.homeForNew(options?.localOnly);
       this.validateName(name);
       if (this.exists(name)) {
         throw new Error(`A scene named "${name}" already exists`);
@@ -1668,9 +1830,7 @@ class ScenesController implements LiveHost {
       this.applyScene(null, name);
       this.meta.current = name;
       this.meta.baseline = null;
-      this.meta.scenes[name] = localOnly
-        ? { baseMd5: null, dirty: false, localOnly, ...(options?.localOnly === undefined ? this.madeSignedOut() : {}) }
-        : this.claimName(name, false);
+      this.meta.scenes[name] = this.newSceneRecord(home, name, false, options?.localOnly === undefined);
       this.persistMeta();
       await editorYield();
       this.refresh();
@@ -1756,7 +1916,7 @@ class ScenesController implements LiveHost {
     }
   }
 
-  private async saveAs(targetName: string, keepLocal: boolean, localOnly: boolean | undefined) {
+  private async saveAs(targetName: string, home: NewHome, localOnly: boolean | undefined) {
     if (this.exists(targetName)) {
       throw new Error(`A scene named "${targetName}" already exists`);
     }
@@ -1775,12 +1935,23 @@ class ScenesController implements LiveHost {
     }
     this.meta.current = targetName;
     this.meta.baseline = null;
-    this.meta.scenes[targetName] = keepLocal
-      ? { baseMd5: null, dirty: true, localOnly: true, ...(localOnly === undefined ? this.madeSignedOut() : {}) }
-      : this.claimName(targetName, true);
+    this.meta.scenes[targetName] = this.newSceneRecord(home, targetName, true, localOnly === undefined);
     api.updateScene({ appState: { name: targetName }, captureUpdate: CaptureUpdateAction.NEVER });
     this.persistMeta();
     this.setState({ dirty: true });
+  }
+
+  /** "save as": a copy stays where the open scene is (local only, its database), unless said otherwise */
+  private homeOfCopy(localOnly: boolean | undefined): NewHome {
+    const current = this.meta.current;
+    if (current === null) {
+      return this.homeForNew(localOnly);
+    }
+    const db = this.databaseOf(current);
+    if (localOnly === undefined && db) {
+      return `db:${db.ref}`;
+    }
+    return (localOnly ?? this.isLocalOnly(current)) ? "browser" : "drive";
   }
 
   /**
@@ -1790,15 +1961,12 @@ class ScenesController implements LiveHost {
   save = (name?: string, { localOnly }: { localOnly?: boolean } = {}) =>
     this.withBusy("saving", async () => {
       const targetName = name ?? this.meta.current;
-      // "save as" of a local-only scene stays local only (unless said otherwise)
-      const keepLocal =
-        localOnly ?? (this.meta.current === null ? this.newScenesLocalOnly() : this.isLocalOnly(this.meta.current));
       if (targetName === null) {
         throw new Error("Scene needs a name");
       }
       this.validateName(targetName);
       if (targetName !== this.meta.current) {
-        await this.saveAs(targetName, keepLocal, localOnly);
+        await this.saveAs(targetName, this.homeOfCopy(localOnly), localOnly);
       }
       if (this.isLocalOnly(targetName)) {
         return { name: targetName, localOnly: true }; // the browser keeps it, nothing to push
@@ -1959,14 +2127,14 @@ class ScenesController implements LiveHost {
    */
   private async adoptEmptyLocalOnly() {
     for (const [name, meta] of Object.entries(this.meta.scenes)) {
-      if (!meta.localOnly || !this.state.remote?.some((scene) => scene.name === name)) {
+      if (!meta.localOnly || meta.db || !this.state.remote?.some((scene) => scene.name === name)) {
         continue;
       }
       if (!(await this.isEmptyHere(name))) { // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
         continue;
       }
       const record = this.meta.scenes[name]; // (looked up again: the metadata may have been taken over meanwhile)
-      if (!record?.localOnly) {
+      if (!record?.localOnly || record.db) {
         continue;
       }
       delete record.localOnly;
@@ -2661,6 +2829,19 @@ class ScenesController implements LiveHost {
       if (meta?.conflict) {
         throw new Error(`"${from}" has a conflict: resolve it first`);
       }
+      if (meta?.db) {
+        // in the database first: if that fails, nothing changed here
+        if (meta.db.id) {
+          await this.homeOf(from).rename(from, to).catch((error: HomeError) => {
+            if (error.status !== 404) {
+              throw error;
+            }
+          });
+        }
+        await this.moveLocalScene(from, to, { ...meta });
+        this.log("info", `Renamed "${from}" to "${to}" (also in ${this.homeOf(to).label})`);
+        return;
+      }
       // local-only scenes are renamed here only (a copy in Drive keeps its name)
       let driveName: string | null = null;
       if (!meta?.localOnly) {
@@ -2696,6 +2877,10 @@ class ScenesController implements LiveHost {
       await this.ready;
       if (!this.meta.scenes[name] && name !== this.meta.current) {
         return { status: "unknown" as const, autoSync: true };
+      }
+      if (this.databaseOf(name)) {
+        // read and edited through this tab (as local-only scenes), which keeps it in step with the database
+        return { status: this.statusOf(name), autoSync: false, localOnly: true, home: "database" as const, empty: await this.isEmptyHere(name) };
       }
       if (this.isLocalOnly(name)) {
         return { status: "local-only" as const, autoSync: false, localOnly: true, empty: await this.isEmptyHere(name) };
@@ -2741,6 +2926,14 @@ class ScenesController implements LiveHost {
       this.requireScene(name);
       const meta = this.meta.scenes[name];
       const driveName = driveNameOf(this.meta, name);
+      if (meta?.db?.id) {
+        // in the database first (everyone loses it): if that fails, nothing changed here
+        await this.homeOf(name).remove(name).catch((error: HomeError) => {
+          if (error.status !== 404) {
+            throw error;
+          }
+        });
+      }
       // local-only scenes are deleted here only (a copy in Drive stays)
       const driveMd5 = meta?.localOnly ? null : this.remoteMd5Of(name) ?? meta?.conflict?.remoteMd5 ?? null;
       let queued = false;
@@ -2789,19 +2982,26 @@ class ScenesController implements LiveHost {
       await this.refreshListing();
       this.requireScene(name);
       this.requireFreeName(to);
-      let json = (await this.localJson(name)) ?? (await this.drive.load(driveNameOf(this.meta, name))).json;
+      let json = (await this.localJson(name)) ?? (await this.homeOf(name).load(driveNameOf(this.meta, name))).json;
       const data = JSON.parse(json);
       json = JSON.stringify({ ...data, appState: { ...data.appState, name: to } });
       await setSnapshot(to, { json, baseline: null, dirty: true });
-      const { autoSync, localOnly } = this.meta.scenes[name] ?? {};
-      this.meta.scenes[to] = localOnly
-        ? { baseMd5: null, dirty: true, localOnly: true }
-        : {
-            ...this.claimName(to, true),
-            ...(autoSync !== undefined ? { autoSync } : {}),
-          };
+      const { autoSync, localOnly, db } = this.meta.scenes[name] ?? {};
+      if (db) {
+        this.meta.scenes[to] = { baseMd5: null, dirty: true, localOnly: true, db: { ref: db.ref } };
+      } else {
+        this.meta.scenes[to] = localOnly
+          ? { baseMd5: null, dirty: true, localOnly: true }
+          : {
+              ...this.claimName(to, true),
+              ...(autoSync !== undefined ? { autoSync } : {}),
+            };
+      }
       this.persistMeta();
       this.log("info", `Duplicated "${name}" as "${to}"`);
+      if (db && !open) {
+        await this.ensureInDatabase(to).catch((error) => this.log("error", `"${to}" is not in ${this.homeOf(to).label} yet: ${error.message}`));
+      }
       if (open) {
         this.setState({ busy: "loading" });
         await this.openInner(to);
@@ -2827,6 +3027,7 @@ class ScenesController implements LiveHost {
     this.exclusive(async () => {
       await this.ready;
       this.requireLocalOnly(name);
+      await this.refreshFromDatabase(name);
       const json = await this.localJson(name);
       return withSceneName(json ?? serializeAsJSON([], { name } as any, {}, "local"), name);
     });
@@ -2836,9 +3037,15 @@ class ScenesController implements LiveHost {
     this.exclusive(async () => {
       await this.ready;
       this.requireLocalOnly(name);
+      const db = this.databaseOf(name);
+      // a database scene that isn't open: what changed goes to the database (the open one: its live session writes it)
+      const before = db && name !== this.meta.current ? ((await getSnapshot(name))?.json ?? null) : null;
       await this.writeLocal(name, withSceneName(json, name), { dirty: true });
       this.persistMeta();
       this.refresh();
+      if (db && name !== this.meta.current) {
+        await this.writeToDatabase(name, before, withSceneName(json, name));
+      }
     });
 
   /** a new local-only scene with this content (replace: an existing local-only one) */
@@ -2870,6 +3077,296 @@ class ScenesController implements LiveHost {
       this.refresh();
       this.log("info", `Agent saved "${name}" (local only)`);
     });
+
+  // ---------------------------------------------------------------------------
+  // database scenes (homes/database): kept in a connected database, never in
+  // Drive. The open one's live session (homes/database/live.ts) streams its
+  // changes; this keeps their records, lists them and writes the others.
+  // ---------------------------------------------------------------------------
+
+  /** a database scene is in its database (made there now if it isn't yet): its row id */
+  ensureInDatabase = async (name: string) => {
+    const db = this.databaseOf(name);
+    if (!db) {
+      throw new Error(`"${name}" is not kept in a database`);
+    }
+    if (db.id) {
+      return db.id;
+    }
+    const home = databaseHome(db.ref);
+    const json = (await this.localJson(name)) ?? serializeAsJSON([], { name } as any, {}, "local");
+    const saved = await home.save(name, withSceneName(json, name), "none");
+    const id = await home.idOf(name);
+    const record = this.meta.scenes[name]?.db; // (looked up again: the metadata may have been taken over meanwhile)
+    if (!id || !record || record.ref !== db.ref) {
+      throw new Error(`"${name}" could not be put in ${home.label}`);
+    }
+    record.id = id;
+    record.rev = Number(saved.version);
+    this.persistMeta();
+    this.refresh();
+    return id;
+  };
+
+  /** a database scene that isn't open: its copy here takes the database's version (best effort: offline, the copy it is) */
+  private async refreshFromDatabase(name: string) {
+    const db = this.databaseOf(name);
+    if (!db?.id || name === this.meta.current) {
+      return;
+    }
+    try {
+      const latest = await databaseHome(db.ref).load(name);
+      const snapshot = await getSnapshot(name);
+      if (snapshot?.json !== latest.json) {
+        await setSnapshot(name, { json: latest.json, baseline: hashJson(latest.json), dirty: false });
+      }
+      const record = this.meta.scenes[name]?.db;
+      if (record) {
+        record.rev = Number(latest.version);
+        this.persistMeta();
+      }
+    } catch (error: any) {
+      if (!error?.offline) {
+        throw error;
+      }
+    }
+  }
+
+  /** a change of a database scene that isn't open goes to its database (what changed since `before`) */
+  private async writeToDatabase(name: string, before: string | null, after: string) {
+    const db = this.databaseOf(name)!;
+    try {
+      const id = db.id ?? (await this.ensureInDatabase(name));
+      const revision = await writeSceneChanges(databaseHome(db.ref).rows, id, before, after);
+      const record = this.meta.scenes[name];
+      if (record?.db && revision !== null) {
+        record.db.rev = revision;
+        record.dirty = false;
+        await setSnapshot(name, { json: after, baseline: hashJson(after), dirty: false });
+        this.persistMeta();
+      }
+      this.homePending.delete(name);
+    } catch (error: any) {
+      if (!error?.offline) {
+        throw error;
+      }
+      this.homePending.add(name); // written when the open session or the next listing finds it reachable
+    }
+    this.refresh();
+  }
+
+  /** the live session: the open scene's row id is known now */
+  setDatabaseId(name: string, ref: string, id: string) {
+    const record = this.meta.scenes[name];
+    if (record?.db?.ref === ref && record.db.id !== id) {
+      record.db.id = id;
+      this.persistMeta();
+      this.refresh();
+    }
+  }
+
+  /** the live session: what this person may do on the open database scene (null: everything, or not a database scene) */
+  setHomeAccess(access: ScenesState["homeAccess"]) {
+    if (JSON.stringify(access) !== JSON.stringify(this.state.homeAccess)) {
+      this.setState({ homeAccess: access });
+    }
+  }
+
+  /** the live session: changes of the open scene wait to be written (true), or are all in the database (its revision) */
+  setHomePending(name: string, pending: boolean, revision?: number) {
+    const changed = pending !== this.homePending.has(name);
+    if (pending) {
+      this.homePending.add(name);
+    } else {
+      this.homePending.delete(name);
+    }
+    const record = this.meta.scenes[name];
+    if (!pending && record?.db && revision !== undefined && record.db.rev !== revision) {
+      record.db.rev = revision;
+      this.persistMeta();
+    }
+    if (changed) {
+      this.refresh();
+    }
+  }
+
+  /** the open scene as a scene file (the live session's settings and a moved copy) */
+  currentSceneJson() {
+    return this.serializeCurrent().json;
+  }
+
+  /** a scene's content here (the canvas if it is open, else its stored copy) */
+  sceneJsonHere = (name: string) => this.exclusive(() => this.localJson(name));
+
+  /**
+   * The connected databases' scenes: each one this person may read gets a
+   * record here (opened from the database at its first open); records of
+   * scenes gone from their database (deleted, moved, access ended) go,
+   * unless they are open or have changes here.
+   */
+  refreshDatabases = async () => {
+    await this.ready;
+    for (const connection of databases.list()) {
+      if (databases.session(connection.ref).status !== "signed-in") {
+        continue;
+      }
+      let listing;
+      try {
+        listing = await databaseHome(connection.ref).list(); // NOSONAR S9382: one database at a time on purpose
+      } catch {
+        continue;
+      }
+      if (listing.status.online === false) {
+        continue;
+      }
+      this.homeListings.set(connection.ref, listing.scenes);
+      await this.exclusive(() => this.applyDatabaseListing(connection.ref, listing.scenes)); // NOSONAR S9382: one database at a time on purpose
+    }
+    this.refresh();
+  };
+
+  private async applyDatabaseListing(ref: string, scenes: ListedScene[]) {
+    const ids = new Set(scenes.map((scene) => scene.id));
+    for (const scene of scenes) {
+      const record = this.meta.scenes[scene.name];
+      if (!record && sceneNameProblem(scene.name) === null) {
+        this.meta.scenes[scene.name] = { baseMd5: null, dirty: false, localOnly: true, db: { ref, id: scene.id } };
+      } else if (record?.db?.ref === ref && !record.db.id) {
+        record.db.id = scene.id; // made here, now there
+      }
+    }
+    for (const [name, record] of Object.entries(this.meta.scenes)) {
+      if (record.db?.ref !== ref || !record.db.id || ids.has(record.db.id) || name === this.meta.current || record.dirty || this.homePending.has(name)) {
+        continue;
+      }
+      delete this.meta.scenes[name];
+      this.persistMeta();
+      await deleteSnapshot(name); // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
+      this.log("pull", `"${name}" is not in ${databaseHome(ref).label} any more (deleted, moved, or your access ended)`);
+    }
+    this.persistMeta();
+  }
+
+  /** a database scene opened by its link (/db/<ref>/<id>): its record here (by id), made if new; its name */
+  adoptDatabaseScene = (ref: string, id: string, name: string) =>
+    this.exclusive(async () => {
+      await this.ready;
+      const known = Object.entries(this.meta.scenes).find(([, record]) => record.db?.ref === ref && record.db.id === id);
+      if (known) {
+        if (known[0] !== name && !this.exists(name)) {
+          await this.moveLocalScene(known[0], name, known[1]); // renamed in the database meanwhile
+          return name;
+        }
+        return known[0];
+      }
+      const free = this.exists(name) ? copyName(name, ` (${databaseHome(ref).label})`, (taken) => this.exists(taken)) : name;
+      this.meta.scenes[free] = { baseMd5: null, dirty: false, localOnly: true, db: { ref, id } };
+      this.persistMeta();
+      this.refresh();
+      return free;
+    });
+
+  /**
+   * "Move to…": the scene with everything in it (elements, pictures, fonts,
+   * comments, slides, presentation settings) goes to another home under the
+   * same name and is kept there from now on. The old place gets a "moved"
+   * note where it can have one (Drive, a database); deleting the old copy is
+   * offered afterwards (removeOldCopy).
+   */
+  moveTo = (name: string, target: NewHome) =>
+    this.withBusy("saving", async () => {
+      const from = this.homeOf(name);
+      const old = this.oldCopyOf(name);
+      if (old.key === target) {
+        return null;
+      }
+      if (this.meta.scenes[name]?.conflict) {
+        throw new Error(`"${name}" has a conflict: resolve it first`);
+      }
+      if (old.key === "drive" && this.statusOf(name) !== "synced") {
+        await this.pushScene(name, { manual: true }).catch(() => null);
+        old.version = this.remoteMd5Of(name) ?? old.version;
+      }
+      const json = withSceneName((await this.localJson(name)) ?? (await from.load(driveNameOf(this.meta, name))).json, name);
+      const { next, link } = await this.copyTo(name, json, target);
+      if (from.markMoved && old.key !== "browser") {
+        await from.markMoved(driveNameOf(this.meta, name), { home: next.db ? "database" : (target as "browser" | "drive"), link, at: new Date().toISOString() }).catch((error) =>
+          this.log("error", `The "moved" note on the old copy could not be written: ${error.message}`),
+        );
+      }
+      // no await from here to the stored metadata
+      const { kurviqPresentation, kurviqPresentationAt, autoSync } = this.meta.scenes[name] ?? {};
+      this.meta.scenes[name] = {
+        ...next,
+        ...(kurviqPresentation === undefined ? {} : { kurviqPresentation, kurviqPresentationAt }),
+        ...(autoSync === undefined || next.localOnly ? {} : { autoSync }),
+      };
+      this.homePending.delete(name);
+      if (old.key === "drive" && old.version) {
+        // the Drive copy stays (with its note) until the user deletes it: not this scene's any more
+        this.updateRemoteMd5(name, null);
+      }
+      this.persistMeta();
+      await setSnapshot(name, { json, baseline: hashJson(json), dirty: next.dirty });
+      if (name === this.meta.current) {
+        this.meta.baseline = hashJson(json);
+        this.persistMeta();
+      }
+      this.refresh();
+      this.log("info", `Moved "${name}" from ${from.label} to ${this.homeOf(name).label}`);
+      return old;
+    });
+
+  /** where a scene is now, as "Move to…" names it: its home, version there and id there */
+  private oldCopyOf(name: string): { home: SceneHome; key: NewHome; version: string | null; id: string | null } {
+    const db = this.databaseOf(name);
+    if (db) {
+      return { home: this.homeOf(name), key: `db:${db.ref}`, version: db.rev === undefined ? null : String(db.rev), id: db.id ?? null };
+    }
+    if (this.isLocalOnly(name)) {
+      return { home: this.browserHome, key: "browser", version: null, id: null };
+    }
+    return { home: this.drive, key: "drive", version: this.remoteMd5Of(name) ?? null, id: this.listedOf(name)?.id ?? null };
+  }
+
+  /** a scene's content into another home under the same name: its record there, and its link */
+  private async copyTo(name: string, json: string, target: NewHome): Promise<{ next: SceneMeta; link: string }> {
+    const byName = `${location.origin}/${encodeURIComponent(name)}`;
+    if (target.startsWith("db:")) {
+      const home = databaseHome(target.slice(3));
+      const saved = await home.save(name, json, "none");
+      const id = await home.idOf(name);
+      if (!id) {
+        throw new Error(`"${name}" could not be put in ${home.label}`);
+      }
+      return { next: { baseMd5: null, dirty: false, localOnly: true, db: { ref: home.ref, id, rev: Number(saved.version) } }, link: `${location.origin}/db/${home.ref}/${id}` };
+    }
+    if (target === "drive") {
+      const saved = await this.drive.save(name, json, "none");
+      await this.refreshListing();
+      const fileId = this.listedOf(name)?.id;
+      return { next: { baseMd5: saved.version, remoteMd5: saved.version, dirty: false }, link: fileId ? `${location.origin}/s/${fileId}/${encodeURIComponent(name)}` : byName };
+    }
+    return { next: { baseMd5: null, dirty: true, localOnly: true, keptLocal: true }, link: byName };
+  }
+
+  /** after "Move to…": delete the old copy (Drive: to its bin; a database: deleted). Only the version that was moved */
+  removeOldCopy = async (old: { home: SceneHome; key: NewHome; version: string | null; id: string | null }, name: string) => {
+    if (old.key === "browser") {
+      return;
+    }
+    if (old.key === "drive") {
+      await this.drive.remove(name, old.version ?? undefined);
+      await this.refreshListing();
+      this.refresh();
+      return;
+    }
+    const home = databaseHome(old.key.slice(3));
+    const scene = old.id ? await home.sceneById(old.id) : null;
+    if (scene) {
+      await home.rows.deleteScene(scene.id);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // conflict resolution (user decides)

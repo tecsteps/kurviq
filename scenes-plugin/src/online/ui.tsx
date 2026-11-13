@@ -634,7 +634,7 @@ const copyLabel = (copied: string, label: string) => {
 /** a scene is shared through Drive: it must be synced there (signed in, not local only) */
 const isShareable = (item: SceneListItem) => {
   const { user, drive } = connection.getState();
-  return !!user && drive && item.name !== null && !item.localOnly;
+  return !!user && drive && item.name !== null && !item.localOnly && item.home === "drive";
 };
 
 const LINK_ICON = (

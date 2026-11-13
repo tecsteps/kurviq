@@ -75,6 +75,8 @@ import {
   startDrive,
 } from "./online/ui";
 
+import { DatabaseBar, DatabaseDialogs, DatabaseSettings, NewScenesHome, openDatabaseShare, openMoveDialog } from "./homes/database/ui";
+
 import type { Activity, SceneListItem, ScenesState, SyncStatus } from "./controller";
 import type { HomeHistoryEntry } from "./homes/types";
 
@@ -198,11 +200,13 @@ const STATUS: Record<SyncStatus, { icon: string; label: string; tone: string }> 
   conflict: { icon: "!", label: "Conflict", tone: "danger" },
   local: { icon: "○", label: "Not in Drive yet", tone: "muted" },
   "local-only": { icon: "⌂", label: "Local only", tone: "muted" },
+  database: { icon: "✓", label: "In the database", tone: "ok" },
+  "database-pending": { icon: "↑", label: "Not in the database yet", tone: "warn" },
   untitled: { icon: "○", label: "Not saved", tone: "muted" },
 };
 
 /** states that need no badge (the place icons say it) and no words in the scene panel */
-const QUIET_STATUS = new Set<string>(["synced", "local", "local-only", "untitled"]);
+const QUIET_STATUS = new Set<string>(["synced", "local", "local-only", "database", "untitled"]);
 
 // where a scene is kept (this browser / Google Drive) and who can see it
 // (private / public): two small icons with tooltips, in the list and the pill
@@ -251,17 +255,19 @@ const toggleDrive = async (name: string, inDrive: boolean, signedIn: boolean) =>
   }
 };
 
-const ScenePlace = ({
-  item,
-  owner,
-  actions,
-}: {
-  item: Pick<SceneListItem, "name" | "inDrive" | "localOnly" | "public" | "status">;
+type PlaceProps = {
+  item: Pick<SceneListItem, "name" | "inDrive" | "localOnly" | "public" | "status"> & { home?: SceneListItem["home"] };
   /** a scene someone shared: whose */
   owner?: string;
   /** clickable: the cloud / laptop moves it in or out of Drive, the lock shares it */
   actions?: boolean;
-}) => {
+};
+
+/** where a scene is kept and who can see it: a database's icons, or this browser's / Drive's */
+const ScenePlace = (props: PlaceProps) =>
+  props.item.home === "database" && props.item.name !== null ? <DatabasePlace item={props.item as SceneListItem} actions={props.actions} /> : <LocalOrDrivePlace {...props} />;
+
+const LocalOrDrivePlace = ({ item, owner, actions }: PlaceProps) => {
   const browserLocationTitle = () => {
     if (item.name === null) {
       return "Only in this browser: not saved yet";
@@ -343,6 +349,24 @@ const ScenePlace = ({
   );
 };
 
+/** a database scene's place: the database icon (click: "Move to…"), private or public (click: share) */
+const DatabasePlace = ({ item, actions }: { item: SceneListItem; actions?: boolean }) => {
+  const label = scenesController.homeOf(item.name).label;
+  const pending = item.status === "database-pending" ? " (changes not there yet)" : "";
+  const name = item.name!;
+  const audience = item.public ? "Anyone with the link can view it" : `Only the people of ${label} it is shared with`;
+  return (
+    <span className="scenes-places">
+      <PlaceIcon kind="database" title={`In ${label}${pending}${actions ? ". Click to move it elsewhere" : ""}`} {...(actions ? { onClick: () => openMoveDialog(name) } : {})} />
+      <PlaceIcon
+        kind={item.public ? "public" : "private"}
+        title={actions ? `${audience}. Click to share it` : audience}
+        {...(actions ? { onClick: () => openDatabaseShare(name) } : {})}
+      />
+    </span>
+  );
+};
+
 const isOffline = (state: ScenesState) => !state.sync.notConnected && state.sync.driveOnline === false;
 
 const StatusBadge = ({ status, compact }: { status: SyncStatus; compact?: boolean }) => {
@@ -390,7 +414,7 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
   const currentItem = list.find((item) => item.name === current);
   const status = currentItem?.status ?? "untitled";
   const offline = isOffline(state);
-  const [panel, setPanel] = useState<null | "switch" | "scene" | "drive">(null);
+  const [panel, setPanel] = useState<null | "switch" | "scene" | "drive" | "databases">(null);
   const open = panel === "switch";
   const toggleSwitcher = () => setPanel((value) => (value ? null : "switch"));
 
@@ -428,10 +452,16 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
         </button>
       </div>
       {panel === "switch" && (
-        <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onDrive={() => setPanel("drive")} />
+        <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onDrive={() => setPanel("drive")} onDatabases={() => setPanel("databases")} />
       )}
       {panel === "scene" && <SceneFlyover onClose={() => setPanel(null)} />}
       {panel === "drive" && <DriveFlyover onClose={() => setPanel(null)} />}
+      {panel === "databases" && (
+        <Flyover title="Databases" onClose={() => setPanel(null)}>
+          <p className="kq-muted scenes-flyover__intro">Your own databases: real-time work on scenes with anyone you invite, also without a Google account.</p>
+          <DatabaseSettings />
+        </Flyover>
+      )}
       {isMobile && <MobileSlidesButton />}
     </div>
   );
@@ -580,7 +610,9 @@ const SceneSwitcher = ({
   onClose,
   onManageScene,
   onDrive,
+  onDatabases,
 }: {
+  onDatabases?: () => void;
   onClose: () => void;
   onManageScene: () => void;
   onDrive: () => void;
@@ -922,6 +954,14 @@ const SceneSwitcher = ({
       <button type="button" className="scenes-switcher__manage" onClick={onDrive}>
         <span className="scenes-switcher__manage-icon">{DriveIcon}</span> Google Drive…
       </button>
+      {IS_ONLINE && onDatabases && (
+        <button type="button" className="scenes-switcher__manage" onClick={onDatabases}>
+          <span className="scenes-switcher__manage-icon">
+            <PlaceSvg kind="database" size={14} />
+          </span>{" "}
+          Databases…
+        </button>
+      )}
       <ConnectDriveOffer />
     </div>
   );
@@ -993,22 +1033,7 @@ const SyncBar = ({ state, now }: { state: ScenesState; now: number }) => {
           </span>
         </span>
       </label>
-      <label className="scenes-switch">
-        <input
-          type="checkbox"
-          checked={scenesController.newScenesLocalOnly()}
-          onChange={(event) => scenesController.setNewScenesLocalOnly(event.target.checked)}
-        />
-        <span className="scenes-switch__track" />
-        <span className="scenes-switch__label">
-          {"New scenes local only"}
-          <span className="scenes-switch__hint">
-            {scenesController.newScenesLocalOnly()
-              ? "stay in this browser until you publish them"
-              : "go to Drive with auto-sync"}
-          </span>
-        </span>
-      </label>
+      <NewScenesHome />
       <label className="scenes-switch">
         <input
           type="checkbox"
@@ -1069,6 +1094,10 @@ const currentStatusText = (
       return localStatusText();
     case "local-only":
       return "Local only: stays in this browser, never synced to Drive. Publish puts it in Drive.";
+    case "database":
+      return "In the database: everyone on it sees changes as they happen";
+    case "database-pending":
+      return offline ? "Changes not in the database yet: written when it is reachable" : "Writing changes to the database…";
     case "untitled":
       return empty ? "Empty: draw something, then save it" : "Not saved yet: give it a name";
   }
@@ -1250,6 +1279,9 @@ const ScenePresentationSwitch = () => {
 /** confirm text for deleting a scene: says exactly what will be lost */
 const confirmDelete = (item: SceneListItem) => {
   const deleteDescription = () => {
+    if (item.home === "database") {
+      return `It is deleted in ${scenesController.homeOf(item.name).label}, for everyone it is shared with.`;
+    }
     if (item.localOnly) {
       if (item.inDrive) {
         return "It is local only: it is deleted in this browser. The older copy in Drive is not touched.";
@@ -1613,7 +1645,22 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
               {DuplicateIcon}
             </button>
           </QuickTip>
-          <SceneSharing item={currentItem} iconOnly />
+          {currentItem.home === "database" ? (
+            <QuickTip tip="Share: invite people by email, the link" label={false}>
+              <button type="button" className="scenes-icon-btn" aria-label="Share" disabled={isBusy} onClick={() => openDatabaseShare(current)}>
+                <PlaceSvg kind="private" size={14} />
+              </button>
+            </QuickTip>
+          ) : (
+            <SceneSharing item={currentItem} iconOnly />
+          )}
+          {IS_ONLINE && (
+            <QuickTip tip="Move to… (this browser, Google Drive, a database)" label={false}>
+              <button type="button" className="scenes-icon-btn" aria-label="Move to…" disabled={isBusy || !!conflict} onClick={() => openMoveDialog(current)}>
+                <PlaceSvg kind="database" size={14} />
+              </button>
+            </QuickTip>
+          )}
           <span className="scenes-actions__spacer" />
           <QuickTip tip={currentItem.inDrive ? "Delete (also in Drive: goes to its trash)" : "Delete"} label={false}>
             <button
@@ -1698,7 +1745,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
           <div className="scenes-list-header">
             <span>History</span>
           </div>
-          {withDrive && currentItem.inDrive && !currentItem.localOnly ? (
+          {(withDrive && currentItem.inDrive && !currentItem.localOnly) || currentItem.home === "database" ? (
             <SceneHistory key={current} item={currentItem} />
           ) : (
             <div className="scenes-history__note">
@@ -1727,6 +1774,8 @@ export const ScenesSidebar = () => {
       <PublicSceneOverlay />
       <AddFontOverlay />
       <DriveDialogs />
+      {IS_ONLINE && <DatabaseDialogs />}
+      {IS_ONLINE && <DatabaseBar />}
       {IS_ONLINE && <DriveNewHost />}
       <ReadOnlyGuard />
       {!IS_RENDERER && <PenBar />}

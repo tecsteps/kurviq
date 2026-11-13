@@ -29,6 +29,8 @@ import type { GoogleEnv } from "./google";
 import { isDevOrigin, isLocalInstall } from "./origins";
 
 export type AuthEnv = GoogleEnv & {
+  /** "on": sign-in also asks for drive.appdata (see scopesOf) */
+  GOOGLE_APPDATA?: string;
   /** default: online/google.json */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -99,6 +101,15 @@ const SCOPES = [
   "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/drive.install",
 ];
+/**
+ * The hidden app data folder: Kurviq's own settings that follow the user
+ * (connected databases). Asked for only with GOOGLE_APPDATA = "on", once the
+ * scope is on the OAuth consent screen (else every sign-in would ask again
+ * for a permission the console doesn't list); without it the connections
+ * stay in the browser.
+ */
+const APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+export const scopesOf = (env: { GOOGLE_APPDATA?: string }) => (env.GOOGLE_APPDATA === "on" ? [...SCOPES, APPDATA_SCOPE] : SCOPES);
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 export type GoogleUser = { email: string; name: string | null; avatarUrl: string | null };
@@ -464,7 +475,7 @@ const startFlow = async (
   target.searchParams.set("client_id", clientId(env));
   target.searchParams.set("redirect_uri", callback);
   target.searchParams.set("response_type", "code");
-  target.searchParams.set("scope", SCOPES.join(" "));
+  target.searchParams.set("scope", scopesOf(env).join(" "));
   target.searchParams.set("access_type", "offline");
   target.searchParams.set("include_granted_scopes", "true");
   target.searchParams.set("state", state);

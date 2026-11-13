@@ -9,6 +9,10 @@ import * as sceneName from "../../scenes-mcp/sceneName.mjs";
 import * as elementContent from "../../scenes-mcp/elementContent.mjs";
 import { randomNonce } from "../src/editDiff";
 import { browserHomeOf } from "../src/homes/browser";
+import { databaseHomeOf } from "../src/homes/database/home";
+import { writeSceneChanges } from "../src/homes/database/write";
+
+import { fakeSceneRows } from "./fakeSceneRows";
 import { OpQueue } from "../src/opQueue";
 import { freeName, UNTITLED } from "../src/spaces";
 
@@ -238,6 +242,10 @@ export type Harness = Awaited<ReturnType<typeof controllerHarness>>;
 /** a controller on a fresh editor, storage and Drive; `setup` fills them before it starts */
 export const controllerHarness = async ({ online = false, setup }: { online?: boolean; setup?: (parts: { drive: FakeDrive; storage: FakeStorage; editor: FakeEditor }) => void } = {}) => {
   const drive = new FakeDrive();
+  // one connected database (signed in), over the fake database of schema.sql's rules
+  const database = fakeSceneRows();
+  const databaseHome = databaseHomeOf(database.rows, { ref: "abcdefghijklmnopqrst", label: "Team space" });
+  const connections = [{ ref: "abcdefghijklmnopqrst", url: "https://abcdefghijklmnopqrst.supabase.co", key: "sb_publishable_x", name: "Team space", addedAt: "" }];
   const storage = new FakeStorage();
   const editor = new FakeEditor();
   const window = new FakeWindow();
@@ -275,16 +283,21 @@ export const controllerHarness = async ({ online = false, setup }: { online?: bo
     "./editDiff": { randomNonce },
     "./homes/browser": { browserHomeOf },
     "./homes/drive": { driveHome: drive.home },
+    "./homes/database/connections": {
+      databaseHome: () => databaseHome,
+      databases: { list: () => connections, session: () => ({ status: "signed-in", email: "me@example.com" }), subscribe: () => () => {} },
+    },
+    "./homes/database/write": { writeSceneChanges },
     "./merge": mergeModule,
     "./opQueue": { OpQueue },
     "./spaces": { freeName, UNTITLED },
     "./storage": storage.module,
-  }, { window, document, sessionStorage: { getItem: () => null, removeItem: () => {} } });
+  }, { window, document, location: { origin: "https://kurviq.com" }, sessionStorage: { getItem: () => null, removeItem: () => {} } });
 
   const controller = new (loaded.scenesController.constructor as any)();
   controller.attach(editor);
   await controller.ready;
-  return { controller, drive, storage, editor, window, exports: loaded };
+  return { controller, drive, storage, editor, window, exports: loaded, database, databaseHome };
 };
 
 /** a synced scene: in Drive and stored here with Drive's version as its base */

@@ -1,0 +1,5 @@
+{
+  "//": "Public values of Kurviq's Supabase OAuth app \"Kurviq\" (\"Connect with Supabase\", scenes-plugin/src/homes/database/oauth.ts, online/worker/supabase.ts). Not secret. The client secret is the Worker secret SUPABASE_CLIENT_SECRET (online/secrets.mjs).",
+  "clientId": "c1e84319-0be9-44e0-8967-88ac83fc4c20",
+  "callbackPath": "/auth/supabase/callback"
+}

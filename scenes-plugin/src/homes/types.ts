@@ -98,6 +98,8 @@ export type HomeError = Error & {
   notConnected?: boolean;
   /** this user may only read: nothing can be saved */
   readOnly?: boolean;
+  /** the home's server is asleep (a free database pauses when unused): offline, with a way to wake it */
+  paused?: boolean;
 };
 
 /** where a scene went ("Move to…"): shown at its old place */

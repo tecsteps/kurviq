@@ -16,5 +16,8 @@
     "dev:online": "npm run build:online && cd online && npm run dev",
     "build:online:fake": "KURVIQ_FAKE_GOOGLE=1 npm run build:online",
     "deploy:online": "npm run build:online && cd online && npm run deploy"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.118.0"
   }
 }
