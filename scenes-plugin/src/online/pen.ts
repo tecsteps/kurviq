@@ -173,6 +173,10 @@ const meOf = (s: Session | null, readOnly: boolean): PenState["me"] => {
   return s.relay === "offline" ? "holder" : "none";
 };
 
+/** the session goes on for this target: the same file, and not put to sleep a while ago */
+const keepsSession = (s: Session, target: { fileId: string }) =>
+  s.fileId === target.fileId && (!s.dormantUntil || Date.now() < s.dormantUntil);
+
 class Pen {
   private api: ExcalidrawImperativeAPI | null = null;
   session: Session | null = null;
@@ -246,7 +250,7 @@ class Pen {
 
   private switchTo(target: { fileId: string; scene: string } | null) {
     const s = this.session;
-    if (target && s?.fileId === target.fileId && (!s.dormantUntil || Date.now() < s.dormantUntil)) {
+    if (s && target && keepsSession(s, target)) {
       s.scene = target.scene; // renamed: the same file
       return;
     }

@@ -65,7 +65,8 @@ const doneText = (result: MoveResult) => {
   }
   let text = `${parts.join(", ")}.`;
   if (result.renamed.length > 0) {
-    text += ` Kept both where names were taken: ${result.renamed.map(([from, to]) => `"${from}" is now "${to}"`).join(", ")}.`;
+    const renamed = result.renamed.map(([from, to]) => '"' + from + '" is now "' + to + '"').join(", ");
+    text += ` Kept both where names were taken: ${renamed}.`;
   }
   return `${text} Reloading…`;
 };
