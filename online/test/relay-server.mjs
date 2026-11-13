@@ -90,7 +90,7 @@ const connect = async (fileId, ticket) => {
   const next = async (test, ms = 5000) => {
     const end = Date.now() + ms;
     for (;;) {
-      const i = inbox.findIndex(test);
+      const i = inbox.findIndex((message) => test(message));
       if (i >= 0) return inbox.splice(i, 1)[0];
       if (closed || Date.now() > end) return null;
       await new Promise((resolve) => { // NOSONAR S9382: waits for the next message in order on purpose

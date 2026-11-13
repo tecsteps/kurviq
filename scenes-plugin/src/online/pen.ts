@@ -246,7 +246,7 @@ class Pen {
 
   private switchTo(target: { fileId: string; scene: string } | null) {
     const s = this.session;
-    if (s && target?.fileId === s.fileId && (!s.dormantUntil || Date.now() < s.dormantUntil)) {
+    if (target && s?.fileId === target.fileId && (!s.dormantUntil || Date.now() < s.dormantUntil)) {
       s.scene = target.scene; // renamed: the same file
       return;
     }
@@ -768,7 +768,7 @@ class Pen {
   /** a viewer pulled Drive's newer version: the holder's unsaved changes come again */
   private onPulled(name: string) {
     const s = this.session;
-    if (s && s.scene === name && s.holder && !s.holderIsMe()) {
+    if (s?.scene === name && s.holder && !s.holderIsMe()) {
       this.askCatchUp(s);
     }
   }
@@ -945,7 +945,7 @@ class Pen {
 
   sendOps(ops: unknown[]): Promise<"sent" | "no-editor"> {
     const s = this.session;
-    if (!s || s.relay !== "connected" || !s.key || !s.holder || s.holderIsMe()) {
+    if (s?.relay !== "connected" || !s.key || !s.holder || s.holderIsMe()) {
       return Promise.resolve("no-editor");
     }
     const req = this.nextReq();
@@ -1040,7 +1040,7 @@ class Pen {
   /** an agent's edit of `name` through this tab: null if allowed, else who is editing */
   async refusal(name: string): Promise<string | null> {
     const s = this.session;
-    if (s && s.scene === name) {
+    if (s?.scene === name) {
       return this.openSceneRefusal(s);
     }
     const fileId = scenesController.fileIdOf(name);

@@ -137,8 +137,8 @@ const ownerView = await until(owner, (v) => v.me === "holder");
 ok(ownerView?.me === "holder" && ownerView.relay === "connected", "5: the first person opening the scene holds the pen", ownerView);
 ok(!(await viewMode(owner)), "5: the holder's canvas is editable");
 for (const [email, role] of [[EDITOR, "writer"], [VIEWER, "reader"]]) {
-  await admin("share", { fileId, email, role });
-  await admin("grant", { fileId, email });
+  await admin("share", { fileId, email, role }); // NOSONAR S9382: one person after the other on purpose (test setup)
+  await admin("grant", { fileId, email }); // NOSONAR S9382: one person after the other on purpose (test setup)
 }
 
 const editor = await open(EDITOR, "editor", { space: `f:${fileId}` });

@@ -84,7 +84,7 @@ const metaBody = await meta.text();
 ok(meta.ok && meta.headers.get("cache-control") === "no-store" && !metaBody.includes("elements"), "/api/public/<id>: metadata only, uncached", metaBody);
 ok(JSON.parse(metaBody).name === NAME, "…with the scene's name", JSON.parse(metaBody));
 const pageHtml = await (await fetch(`${BASE}/s/${fileId}/public`)).text();
-ok(pageHtml.includes(`<title>${NAME} · Kurviq</title>`) && !pageHtml.includes(`/api/public/${fileId}"`), "the shared page: titled, no content preloaded", pageHtml.match(/<title>[^<]*<\/title>/)?.[0]);
+ok(pageHtml.includes(`<title>${NAME} · Kurviq</title>`) && !pageHtml.includes(`/api/public/${fileId}"`), "the shared page: titled, no content preloaded", /<title>[^<]*<\/title>/.exec(pageHtml)?.[0]);
 
 // 3. a visitor without sign-in: the viewer reads the scene from Drive in the browser
 const visitorCtx = await browser.createIncognitoBrowserContext();

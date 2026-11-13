@@ -70,10 +70,12 @@ const portable = (meta: ScenesMeta, snapshots: Map<string, Snapshot>) => {
   const untitled = snapshots.get(UNTITLED);
   if (untitled) {
     let name = "Untitled";
-    for (let n = 2; name in scenes; n++) {
+    let n = 1;
+    while (name in scenes) {
+      n++;
       name = `Untitled ${n}`;
     }
-    scenes[name] = { ...(scenes[UNTITLED] ?? {}), baseMd5: null, localOnly: true, dirty: true } as ScenesMeta["scenes"][string];
+    scenes[name] = { ...scenes[UNTITLED], baseMd5: null, localOnly: true, dirty: true } as ScenesMeta["scenes"][string];
     snapshots.set(name, { ...untitled, baseline: null, dirty: true });
     snapshots.delete(UNTITLED);
   }
@@ -192,12 +194,12 @@ export const importBrowserScenes = async (storage: MoveStorage, file: MoveFile):
 const toBase64 = (bytes: Uint8Array) => {
   let text = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
-    text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    text += String.fromCodePoint(...bytes.subarray(i, i + 0x8000));
   }
   return btoa(text);
 };
 
-const fromBase64 = (text: string) => Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
+const fromBase64 = (text: string) => Uint8Array.from(atob(text), (char) => char.codePointAt(0) ?? 0);
 
 /** a stored value as plain JSON: bytes, Blobs and dates tagged with "$kq" */
 export const encodeValue = async (value: unknown): Promise<unknown> => {

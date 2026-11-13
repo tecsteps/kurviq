@@ -1671,7 +1671,7 @@ const publicContent = async (fileId: string): Promise<{ json: string; version: s
 
 /** the author's name as the owner chose to show it (a public property: anyone may write anything there) */
 const cleanByline = (value: unknown) =>
-  String(value ?? "")
+  (typeof value === "string" ? value : "")
     .replaceAll(/[\u0000-\u001f\u007f]/g, "")
     .trim()
     .slice(0, 80);

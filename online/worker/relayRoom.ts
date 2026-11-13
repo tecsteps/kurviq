@@ -193,7 +193,7 @@ export class RelayRoom {
   /** the holder saved (its tab did, before sending this) and hands the pen to someone who may edit */
   private handover(person: Person, to: unknown, now: number): Out[] {
     const next = typeof to === "string" ? this.people.get(to) : undefined;
-    if (this.holder !== person.id || !next || next.role !== "edit" || next.id === person.id) {
+    if (this.holder !== person.id || next?.role !== "edit" || next.id === person.id) {
       return this.refuse(person, "handover", "not-possible");
     }
     return [{ to: next.id, msg: { t: "granted", from: person.name } }, ...this.give(next, now)];

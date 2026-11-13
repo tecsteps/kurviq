@@ -50,7 +50,7 @@ const HolderCard = ({ view }: { view: PenView }) => (
     {view.others > 0 && view.relay === "connected" && (
       <div className="kq-pen__card">
         <span className="kq-pen__who">
-          You're editing
+          You're editing{" "}
           <span className="kq-pen__muted">· {view.others === 1 ? "1 person watching" : `${view.others} people watching`}</span>
         </span>
         <Button label={view.busy ? "Saving…" : "Stop editing"} ghost disabled={view.busy} onClick={() => ignore(pen.stopEditing())} />
@@ -64,14 +64,14 @@ const ViewerCard = ({ view }: { view: PenView }) => {
   const mayEdit = view.role === "edit" && view.relay === "connected";
   if (!view.holder) {
     return mayEdit ? (
-      <div className="kq-pen__card" role="status">
+      <output className="kq-pen__card">
         <span className="kq-pen__who kq-pen__muted">Nobody is editing</span>
         <Button label="Edit" primary onClick={() => pen.claim()} />
-      </div>
+      </output>
     ) : null;
   }
   return (
-    <div className="kq-pen__card" role="status">
+    <output className="kq-pen__card">
       <span className="kq-pen__who">
         <Dot color={view.holder.color} />
         <span>
@@ -85,7 +85,7 @@ const ViewerCard = ({ view }: { view: PenView }) => {
           {view.canTakeOver && <Button label="Take over" onClick={() => pen.takeOver()} />}
         </span>
       )}
-    </div>
+    </output>
   );
 };
 
@@ -98,10 +98,10 @@ export const PenBar = () => {
     <div className="kq-pen">
       {view.me === "holder" ? <HolderCard view={view} /> : <ViewerCard view={view} />}
       {view.notice && (
-        <div className="kq-pen__card kq-pen__notice" role="status">
+        <output className="kq-pen__card kq-pen__notice">
           <span>{view.notice}</span>
           <Button label="OK" ghost onClick={() => pen.dismissNotice()} />
-        </div>
+        </output>
       )}
     </div>
   );

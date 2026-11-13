@@ -97,6 +97,14 @@
     pointer-events: all;
   }
 
+  // a <dialog open> sits in the overlay like a div (no browser positioning, frame or size limit)
+  dialog.kq-dialog {
+    position: static;
+    margin: 0;
+    border: 0;
+    max-width: none;
+  }
+
   .kq-dialog {
     display: flex;
     flex-direction: column;

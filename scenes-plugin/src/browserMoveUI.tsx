@@ -56,15 +56,24 @@ const readFile = async (picked: File) => {
   return importBrowserScenes(browserStorage, file);
 };
 
+const counted = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 const doneText = (result: MoveResult) => {
-  const renamed = result.renamed.map(([from, to]) => `"${from}" is now "${to}"`).join(", ");
-  return `${result.scenes} scene${result.scenes === 1 ? "" : "s"} read in${result.fonts ? `, ${result.fonts} font${result.fonts === 1 ? "" : "s"}` : ""}.${renamed ? ` Kept both where names were taken: ${renamed}.` : ""} Reloading…`;
+  const parts = [`${counted(result.scenes, "scene")} read in`];
+  if (result.fonts) {
+    parts.push(counted(result.fonts, "font"));
+  }
+  let text = `${parts.join(", ")}.`;
+  if (result.renamed.length > 0) {
+    text += ` Kept both where names were taken: ${result.renamed.map(([from, to]) => `"${from}" is now "${to}"`).join(", ")}.`;
+  }
+  return `${text} Reloading…`;
 };
 
 const MoveDialog = () => {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
-  const dialog = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const close = useCallback(() => openStore.set(false), []);
   useDialogFocus(dialog, close);
@@ -80,7 +89,7 @@ const MoveDialog = () => {
 
   return (
     <div className="kq-overlay" onPointerDown={(event) => event.target === event.currentTarget && close()}>
-      <div className="kq-dialog kq-dialog--narrow" role="dialog" aria-modal="true" aria-labelledby="kq-move-title" ref={dialog}>
+      <dialog open className="kq-dialog kq-dialog--narrow" aria-modal="true" aria-labelledby="kq-move-title" ref={dialog}>
         <div className="kq-dialog__head">
           <h2 id="kq-move-title">Move browser scenes</h2>
           <button type="button" className="kq-close" aria-label="Close" onClick={close}>
@@ -131,11 +140,9 @@ const MoveDialog = () => {
           />
         </div>
         {message && (
-          <p className={message.error ? "scenes-error" : "kq-muted"} role="status">
-            {message.text}
-          </p>
+          <output className={message.error ? "scenes-error" : "kq-muted"}>{message.text}</output>
         )}
-      </div>
+      </dialog>
     </div>
   );
 };

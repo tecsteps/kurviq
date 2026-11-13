@@ -106,7 +106,7 @@ export class Assembler {
       return null;
     }
     let entry = this.open.get(key);
-    if (!entry || entry.parts.length !== parts) {
+    if (entry?.parts.length !== parts) {
       entry = { parts: new Array<string>(parts), count: 0, size: 0, at: now };
       this.open.set(key, entry);
     }

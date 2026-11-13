@@ -162,10 +162,8 @@ const moveScenesMenu = () => ({
     if (code.split(anchor).length !== 2) {
       throw new Error("[excalidraw-scenes] move menu: AppMainMenu.tsx changed upstream. Update scenes-plugin/vite.config.mts.");
     }
-    return {
-      code: `import { MoveScenesMenuItem as __KurviqMoveScenes } from ${JSON.stringify(MOVE_UI_ENTRY)};\n${code.replace(anchor, `${anchor}\n<__KurviqMoveScenes />`)}`,
-      map: null,
-    };
+    const imported = `import { MoveScenesMenuItem as __KurviqMoveScenes } from ${JSON.stringify(MOVE_UI_ENTRY)};\n`;
+    return { code: imported + code.replace(anchor, anchor + "\n<__KurviqMoveScenes />"), map: null };
   },
 });
 

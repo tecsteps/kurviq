@@ -138,6 +138,16 @@ const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompar
  * folder"). Scenes shared one by one (`single`: Drive's "Shared with me")
  * stay out of the folder groups unless their folder was picked.
  */
+/** the group of a scene's folder; a folder that wasn't picked gets one ("<owner>'s folder") */
+const groupOf = (groups: Map<string, FolderGroup>, parent: string, scene: VisibleScene) => {
+  let group = groups.get(parent);
+  if (!group) {
+    group = { folderId: parent, name: `${scene.owner}'s folder`, owner: scene.owner, ownerEmail: scene.ownerEmail, role: "reader", scenes: [], picked: false, unseen: 0 };
+    groups.set(parent, group);
+  }
+  return group;
+};
+
 export const groupSharedFolders = (folders: PickedFolder[], scenes: VisibleScene[], single: Set<string> = new Set()): FolderGroup[] => {
   const picked = new Map(folders.map((folder) => [folder.id, folder]));
   const groups = new Map<string, FolderGroup>();
@@ -158,11 +168,7 @@ export const groupSharedFolders = (folders: PickedFolder[], scenes: VisibleScene
     if (!parent) {
       continue;
     }
-    let group = groups.get(parent);
-    if (!group) {
-      group = { folderId: parent, name: `${scene.owner}'s folder`, owner: scene.owner, ownerEmail: scene.ownerEmail, role: "reader", scenes: [], picked: false, unseen: 0 };
-      groups.set(parent, group);
-    }
+    const group = groupOf(groups, parent, scene);
     group.scenes.push(sceneEntry(scene));
     // without the folder: they may edit in it if they may edit a scene of it
     if (!group.picked && scene.canEdit) {
