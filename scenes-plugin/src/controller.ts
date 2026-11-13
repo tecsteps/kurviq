@@ -1933,10 +1933,11 @@ class ScenesController {
     try {
       await this.open(name, { missingIsFine: true });
     } catch (error: any) {
-      if (error.status !== 404) {
+      // not in Drive, or no Drive to look in (signed out, or not known yet at the first navigation): a new scene
+      if (error.status !== 404 && !error.notConnected) {
         throw error;
       }
-      const go = elsewhere ? await elsewhere(name).catch(() => null) : null;
+      const go = elsewhere && !error.notConnected ? await elsewhere(name).catch(() => null) : null;
       if (go) {
         return go;
       }
