@@ -1,14 +1,16 @@
 // Comments on the canvas: pins (the people of a thread as small avatars)
 // next to the element a thread is about, a popover with the thread (reply,
 // resolve, copy a link, edit or remove), a "Comments" button at the top right
-// with the list of threads, and a placing mode for a new comment (click an
-// element or a free spot). Who may do what is Google Drive's: editors
-// everything, Drive's commenters their own comments and resolving (an
-// editor's Kurviq writes them: ./mailbox.ts), viewers read. Pins never show in
-// presentations, exports or the public viewer.
-// Data: ../../../scenes-mcp/sceneComments.mjs, the open scene's list: ./store.ts.
+// with the list of threads (filters: open, resolved, mine, mentioning me; an
+// unread dot per browser), and a placing mode for a new comment (Shift+C or
+// "New comment", then click an element or a free spot; Esc cancels). Who may
+// do what is Google Drive's: editors everything, Drive's commenters their
+// own comments and resolving (an editor's Kurviq writes them: ./mailbox.ts),
+// viewers read. Pins never show in presentations, exports or the public viewer.
+// Data: ../../../scenes-mcp/sceneComments.mjs, the open scene's list: ./store.ts,
+// the list's rules: ./listRules.ts, this browser's settings and marks: ./local.ts.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { sceneCoordsToViewportCoords, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import clsx from "clsx";
@@ -20,10 +22,15 @@ import { createStore } from "../externalStore";
 import { connection, listPermissions } from "../online/drive";
 import { onPenChange, penState } from "../online/pen";
 import { usePresenter } from "../present";
+import { copyText, useCopy } from "../useCopy";
+import { MENTION_RE, THREAD_FILTERS, filterCounts, filterThreads, isThreadFilter, isUnread, markSeen, readSeen } from "./listRules";
+import { readLocal, writeLocal } from "./local";
 import { commenterWriter, editorCommenterFile, startCommentMailbox } from "./mailbox";
+import { NEW_COMMENT_KEY, isNewCommentKey, typingIn } from "./shortcut";
 import { commentStore } from "./store";
 
 import type { CommentPin, CommentThread, SceneComment } from "../../../scenes-mcp/sceneComments.mjs";
+import type { Seen, ThreadFilter, Viewer } from "./listRules";
 
 import "./comments.scss";
 
@@ -38,15 +45,50 @@ type UiState = {
   open: string | null;
   /** a new thread being written: where it goes */
   draft: CommentPin | null;
-  /** resolved threads show as pins too */
-  showResolved: boolean;
+  /** the threads listed and pinned (this browser's choice) */
+  filter: ThreadFilter;
+  /** resolved threads older than 7 days are hidden (this browser's choice) */
+  hideOld: boolean;
   /** the list of threads (top right) is open */
   list: boolean;
 };
 
-const uiStore = createStore<UiState>({ placing: false, open: null, draft: null, showResolved: false, list: false });
-const setUi = (patch: Partial<UiState>) => uiStore.set({ ...uiStore.get(), ...patch });
+/** this browser's list settings (localStorage) */
+const LIST_KEY = "kurviq-comments-list";
+/** this browser's unread marks (localStorage): see listRules.ts Seen */
+const SEEN_KEY = "kurviq-comments-seen";
+
+const listSettings = () => {
+  const stored = readLocal(LIST_KEY) as { filter?: unknown; hideOld?: unknown } | null;
+  return { filter: isThreadFilter(stored?.filter) ? stored.filter : "open", hideOld: stored?.hideOld === true };
+};
+
+const uiStore = createStore<UiState>({ placing: false, open: null, draft: null, list: false, ...listSettings() });
+const setUi = (patch: Partial<UiState>) => {
+  const next = { ...uiStore.get(), ...patch };
+  if ("filter" in patch || "hideOld" in patch) {
+    writeLocal(LIST_KEY, { filter: next.filter, hideOld: next.hideOld });
+  }
+  uiStore.set(next);
+};
 const useUi = uiStore.use;
+
+const seenStore = createStore<Seen>(readSeen(readLocal(SEEN_KEY), Date.now()));
+// kept from the first time: what came before it doesn't count as unread
+writeLocal(SEEN_KEY, seenStore.get());
+
+/** the thread was opened here: no unread dot any more */
+const markThreadSeen = (thread: CommentThread) => {
+  const before = seenStore.get();
+  const next = markSeen(before, thread);
+  if (next !== before) {
+    writeLocal(SEEN_KEY, next);
+    seenStore.set(next);
+  }
+};
+
+/** a thread's dot: someone else wrote in it since it was opened here (nothing before the person is known) */
+const unread = (thread: CommentThread, me: Me | null, seen: Seen) => !!me && isUnread(thread, me, seen);
 
 const useComments = () => useSyncExternalStore(commentStore.subscribe, commentStore.list);
 
@@ -62,7 +104,7 @@ const linkedThread = () => {
 // who is writing: name and key of the signed-in person (or "You" without sign-in)
 // -----------------------------------------------------------------------------
 
-type Me = { name: string; key: string; email: string | null };
+type Me = Viewer;
 
 const useMe = (): Me | null => {
   const user = useSyncExternalStore(connection.subscribe, () => connection.getState().user);
@@ -138,8 +180,6 @@ const ago = (at: number) => {
   if (days < 30) return days === 1 ? "a day ago" : `${days} days ago`;
   return new Date(at).toLocaleDateString();
 };
-
-const MENTION_RE = /@[\p{L}\p{N}][\p{L}\p{M}\p{N}._'-]*/gu;
 
 /** text with @mentions highlighted */
 const CommentText = ({ text }: { text: string }) => {
@@ -418,8 +458,10 @@ const CommentItem = ({
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard?.writeText(threadLink(comment.thread)).catch(() => {});
                   setMenu(null);
+                  copyText(threadLink(comment.thread))
+                    .then((copied) => onError(copied ? null : "The link could not be copied (the browser refused)."))
+                    .catch((error) => onError(String(error)));
                 }}
               >
                 <Icon name="link" /> Copy link
@@ -486,20 +528,14 @@ const Popover = ({ at, children, onClose }: { at: { x: number; y: number }; chil
     const top = Math.min(Math.max(8, at.y - 12), Math.max(8, window.innerHeight - height - 8));
     setPlace({ left, top });
   }, [at.x, at.y]);
+  // (Esc: useCommentKeys)
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
     const onDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement;
       if (!box.current?.contains(target) && !target.closest?.(".kq-cm-pin")) onClose();
     };
-    window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onDown, true);
-    };
+    return () => window.removeEventListener("pointerdown", onDown, true);
   }, [onClose]);
   return (
     <dialog open ref={box} className="kq-cm-popover" style={place} aria-label="Comment">
@@ -525,6 +561,12 @@ const ThreadView = ({
 }) => {
   const [error, setError] = useState<string | null>(null);
   const problem = useProblem();
+  const [copied, copy] = useCopy();
+  const copyLink = () => {
+    copy(threadLink(thread.id))
+      .then((ok) => setError(ok ? null : "The link could not be copied (the browser refused)."))
+      .catch((failure) => setError(String(failure)));
+  };
   const index = threads.findIndex((entry) => entry.id === thread.id);
   const go = (step: number) => {
     const next = threads[(index + step + threads.length) % threads.length];
@@ -540,11 +582,8 @@ const ThreadView = ({
     save(thread.resolved ? { ...withoutDone(thread.root), u } : { ...thread.root, done: { name: me?.name ?? "Someone", at: now() }, u }, setError);
   };
   const removeThread = () => {
-    // closed only when everything was removed: else the popover stays and shows why
-    let ok = true;
-    for (const comment of all.filter((entry) => !entry.gone)) {
-      ok = save({ ...comment, gone: true, text: "", u: stamp(comment) }, setError) && ok;
-    }
+    // closed only when everything was removed: else the popover stays and shows why (and the rest stays too)
+    const ok = all.filter((entry) => !entry.gone).every((comment) => save({ ...comment, gone: true, text: "", u: stamp(comment) }, setError));
     if (ok) {
       setUi({ open: null });
     }
@@ -556,7 +595,7 @@ const ThreadView = ({
         <IconButton icon="next" label="Next thread" onClick={() => go(1)} disabled={threads.length < 2} />
         <span className="kq-cm-spacer" />
         {canComment && <IconButton icon={thread.resolved ? "reopen" : "resolve"} label={thread.resolved ? "Reopen" : "Resolve"} onClick={resolve} active={thread.resolved} />}
-        <IconButton icon="link" label="Copy link to this thread" onClick={() => navigator.clipboard?.writeText(threadLink(thread.id)).catch(() => {})} />
+        <IconButton icon="link" label={copied === "copied" ? "Link copied" : "Copy link to this thread"} onClick={copyLink} active={copied === "copied"} />
         {(canModerate || (mineRoot && !thread.replies.length)) && <IconButton icon="trash" label="Delete thread" onClick={removeThread} />}
         <IconButton icon="close" label="Close" onClick={() => setUi({ open: null })} />
       </div>
@@ -699,7 +738,7 @@ const usePinSpots = (threads: CommentThread[], draft: CommentPin | null) => {
   return spots;
 };
 
-const Pin = ({ thread, spot, open }: { thread: CommentThread; spot: PinSpot; open: boolean }) => {
+const Pin = ({ thread, spot, open, isNew }: { thread: CommentThread; spot: PinSpot; open: boolean; isNew: boolean }) => {
   const authors = [...new Map([thread.root, ...thread.replies].filter((c) => !c.gone).map((c) => [c.by.key, c.by])).values()];
   const count = 1 + thread.replies.length;
   return (
@@ -707,14 +746,15 @@ const Pin = ({ thread, spot, open }: { thread: CommentThread; spot: PinSpot; ope
       type="button"
       className={clsx("kq-cm-pin", { "kq-cm-pin--open": open, "kq-cm-pin--resolved": thread.resolved })}
       style={{ left: spot.x, top: spot.y }}
-      title={`${count} comment${count === 1 ? "" : "s"}${thread.resolved ? " (resolved)" : ""}`}
-      aria-label={`Comment thread by ${authors.map((a) => a.name).join(", ")}`}
+      title={`${count} comment${count === 1 ? "" : "s"}${thread.resolved ? " (resolved)" : ""}${isNew ? ", new since you last opened it" : ""}`}
+      aria-label={`Comment thread by ${authors.map((a) => a.name).join(", ")}${isNew ? " (unread)" : ""}`}
       onClick={() => setUi({ open: open ? null : thread.id, draft: null, placing: false })}
     >
       {authors.slice(0, 3).map((author) => (
         <Avatar key={author.key} name={author.name} keyId={author.key} agent={author.agent} />
       ))}
       {authors.length > 3 && <span className="kq-cm-more">+{authors.length - 3}</span>}
+      {isNew && <span className="kq-cm-dot" aria-hidden />}
     </button>
   );
 };
@@ -736,23 +776,81 @@ const PlacingLayer = () => (
       setUi({ placing: false, draft: pin, open: null });
     }}
   >
-    <div className="kq-cm-placing__hint">Click where your comment goes · Esc to cancel</div>
+    <div className="kq-cm-placing__hint">Click where your comment goes · Esc cancels</div>
   </div>
 );
+
+/** start placing a new comment (the next click on the canvas) */
+const startPlacing = () => {
+  setUi({ placing: true, open: null, draft: null, list: false });
+  return true;
+};
+
+const CLOSED = { placing: { placing: false }, draft: { draft: null }, open: { open: null }, list: { list: false } } as const;
+
+/** Esc: the topmost of placing, a new comment, the open thread and the list closes; false if none is open */
+const closeTopmost = () => {
+  const ui = uiStore.get();
+  const top = (Object.keys(CLOSED) as Array<keyof typeof CLOSED>).find((name) => !!ui[name]);
+  if (!top) {
+    return false;
+  }
+  setUi(CLOSED[top]);
+  return true;
+};
+
+/**
+ * The comments' keys, before anything else on the page sees them (the shared
+ * viewer and Excalidraw stop or use keys): Shift+C starts placing, Esc closes.
+ * Never while typing: a comment box handles its own Esc.
+ */
+const useCommentKeys = (enabled: boolean, canComment: boolean) => {
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (typingIn(event.target as HTMLElement | null)) {
+        return;
+      }
+      const handled = event.key === "Escape" ? closeTopmost() : canComment && isNewCommentKey(event) && startPlacing();
+      if (handled) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [enabled, canComment]);
+};
+
+/** the threads listed and pinned: the filter's, and the open one in any case */
+const useShownThreads = (allThreads: CommentThread[], me: Me | null) => {
+  const { filter, hideOld, open } = useUi();
+  return useMemo(() => {
+    const listed = filterThreads(allThreads, filter, { me, hideOldResolved: hideOld, now: Date.now() });
+    const extra = open && !listed.some((thread) => thread.id === open) ? allThreads.find((thread) => thread.id === open) : undefined;
+    return extra ? [...listed, extra] : listed;
+  }, [allThreads, filter, hideOld, open, me]);
+};
 
 export const CommentsLayer = () => {
   const state = useUi();
   const comments = useComments();
   const me = useMe();
+  const seen = seenStore.use();
   const { canComment, canModerate } = usePermissions();
   const presenter = usePresenter();
   const viewer = useViewer();
   const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
   const allThreads = useMemo(() => threadsOf(comments), [comments]);
-  const shown = useMemo(() => allThreads.filter((thread) => !thread.resolved || state.showResolved || thread.id === state.open), [allThreads, state.showResolved, state.open]);
+  const shown = useShownThreads(allThreads, me);
   const spots = usePinSpots(shown, state.draft);
   const people = usePeople(comments, viewer);
   const current = useSyncExternalStore(scenesController.subscribe, () => scenesController.getState().current);
+  // not in presentations; in the shared viewer only for people signed in (comments carry names)
+  const hidden = presenter.active || (viewer && !signedIn);
+  const openThread = state.open ? allThreads.find((thread) => thread.id === state.open) : null;
 
   // another scene: nothing of the last one stays open
   useEffect(() => {
@@ -767,34 +865,32 @@ export const CommentsLayer = () => {
     const wanted = linkedThread();
     const thread = wanted ? allThreads.find((entry) => entry.id === wanted) : null;
     if (thread) {
-      setUi({ open: thread.id, showResolved: state.showResolved || thread.resolved });
+      setUi({ open: thread.id });
       focusThread(thread);
       history.replaceState(null, "", window.location.pathname + window.location.search);
     }
   }, [allThreads]);
 
+  // an open thread is read (again when someone writes in it while it is open)
   useEffect(() => {
-    if (!state.placing) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setUi({ placing: false });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [state.placing]);
+    if (openThread && !hidden) {
+      markThreadSeen(openThread);
+    }
+  }, [openThread, hidden]);
 
-  // not in presentations; in the shared viewer only for people signed in (comments carry names)
-  if (presenter.active || (viewer && !signedIn)) {
+  useCommentKeys(!hidden, canComment && !!me);
+
+  if (hidden) {
     return null;
   }
   const spotOf = (id: string) => spots.find((spot) => spot.id === id);
-  const openThread = state.open ? allThreads.find((thread) => thread.id === state.open) : null;
   const openSpot = openThread ? spotOf(openThread.id) : null;
   const draftSpot = state.draft ? spotOf("draft") : null;
   return createPortal(
     <div className={clsx("kq-cm-layer", { "kq-cm-layer--viewer": viewer })}>
       {shown.map((thread) => {
         const spot = spotOf(thread.id);
-        return spot ? <Pin key={thread.id} thread={thread} spot={spot} open={thread.id === state.open} /> : null;
+        return spot ? <Pin key={thread.id} thread={thread} spot={spot} open={thread.id === state.open} isNew={unread(thread, me, seen)} /> : null;
       })}
       {draftSpot && <span className="kq-cm-pin kq-cm-pin--draft" style={{ left: draftSpot.x, top: draftSpot.y }} aria-hidden />}
       {openThread && openSpot && (
@@ -817,12 +913,78 @@ export const CommentsLayer = () => {
 // the top right: "Comments" with the number of open threads, and their list
 // -----------------------------------------------------------------------------
 
+const FILTER_LABELS: Record<ThreadFilter, string> = { open: "Open", resolved: "Resolved", mine: "Mine", mentions: "@Me" };
+
+const FILTER_TIPS: Record<ThreadFilter, string> = {
+  open: "Threads not resolved yet",
+  resolved: "Resolved threads",
+  mine: "Threads you started or wrote in",
+  mentions: "Threads that mention you",
+};
+
+const EMPTY: Record<ThreadFilter, string> = {
+  open: "No open comments.",
+  resolved: "No resolved comments.",
+  mine: "No comments of yours.",
+  mentions: "Nobody mentioned you.",
+};
+
+/** the list's filters, each with how many threads it shows */
+const Filters = ({ filter, counts }: { filter: ThreadFilter; counts: Record<ThreadFilter, number> }) => {
+  const name = useId();
+  return (
+    <fieldset className="kq-cm-filters">
+      <legend className="kq-cm-hidden">Show</legend>
+      {THREAD_FILTERS.map((entry) => (
+        <label key={entry} className={clsx("kq-cm-filter", { "kq-cm-filter--on": entry === filter })} title={FILTER_TIPS[entry]}>
+          <input type="radio" name={name} value={entry} checked={entry === filter} onChange={() => setUi({ filter: entry })} />
+          {FILTER_LABELS[entry]}
+          <span className="kq-cm-filter__count">{counts[entry]}</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+};
+
+const ThreadEntry = ({ thread, isNew }: { thread: CommentThread; isNew: boolean }) => (
+  <li>
+    <button
+      type="button"
+      className={clsx("kq-cm-thread", { "kq-cm-thread--resolved": thread.resolved, "kq-cm-thread--new": isNew })}
+      onClick={() => {
+        setUi({ list: false, open: thread.id, draft: null });
+        focusThread(thread);
+      }}
+    >
+      <Avatar name={thread.root.by.name} keyId={thread.root.by.key} agent={thread.root.by.agent} />
+      <span className="kq-cm-thread__body">
+        <span className="kq-cm-thread__meta">
+          {isNew && <span className="kq-cm-dot kq-cm-dot--inline" title="New since you last opened it" />}
+          <strong>{thread.root.by.name}</strong> · {ago(thread.last)}
+          {thread.replies.length > 0 && ` · ${thread.replies.length} ${thread.replies.length === 1 ? "reply" : "replies"}`}
+          {thread.resolved && " · resolved"}
+          {isNew && <span className="kq-cm-hidden"> · unread</span>}
+        </span>
+        <span className="kq-cm-thread__text">{thread.root.gone ? "(deleted)" : thread.root.text}</span>
+      </span>
+    </button>
+  </li>
+);
+
 export const CommentsButton = () => {
   const state = useUi();
   const comments = useComments();
+  const me = useMe();
+  const seen = seenStore.use();
   const { canComment } = usePermissions();
   const threads = useMemo(() => threadsOf(comments), [comments]);
+  const { listed, counts } = useMemo(() => {
+    const options = { me, hideOldResolved: state.hideOld, now: Date.now() };
+    return { listed: filterThreads(threads, state.filter, options), counts: filterCounts(threads, options) };
+  }, [threads, state.filter, state.hideOld, me]);
   const open = threads.filter((thread) => !thread.resolved);
+  const anyNew = open.some((thread) => unread(thread, me, seen));
+  const tip = ["Comments: notes on the scene that are not drawn", canComment ? `New comment: ${NEW_COMMENT_KEY}` : "", anyNew ? "new replies" : ""].filter(Boolean).join(" · ");
   const wrap = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!state.list) return;
@@ -832,65 +994,57 @@ export const CommentsButton = () => {
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [state.list]);
-  const listed = state.showResolved ? threads : open;
   return (
     <div className="kq-cm-top" ref={wrap}>
       <button
         type="button"
         className={clsx("scenes-pill kq-cm-button", { "scenes-pill--open": state.list })}
-        title="Comments: notes on the scene that are not drawn"
+        title={tip}
         aria-expanded={state.list}
+        aria-keyshortcuts={canComment ? NEW_COMMENT_KEY : undefined}
         onClick={() => setUi({ list: !state.list })}
       >
         <Icon name="comment" />
         Comments
-        {open.length > 0 && <span className="kq-cm-count">{open.length}</span>}
+        {open.length > 0 && <span className={clsx("kq-cm-count", { "kq-cm-count--new": anyNew })}>{open.length}</span>}
       </button>
       {state.list && (
         <dialog open className="kq-cm-panel" aria-label="Comments">
           <div className="kq-cm-panel__head">
             {canComment ? (
-              <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => setUi({ list: false, placing: true, open: null, draft: null })}>
+              <button type="button" className="scenes-btn scenes-btn--primary" title={`New comment (${NEW_COMMENT_KEY})`} aria-keyshortcuts={NEW_COMMENT_KEY} onClick={startPlacing}>
                 New comment
               </button>
             ) : (
               <span className="kq-cm-note">You can read the comments here, not add any.</span>
             )}
-            <label className="kq-cm-switch">
-              <input type="checkbox" checked={state.showResolved} onChange={(event) => setUi({ showResolved: event.target.checked })} />
-              <span>Show resolved</span>
+            <label className="kq-cm-switch" title="Resolved threads older than 7 days are not listed or pinned">
+              <input type="checkbox" checked={state.hideOld} onChange={(event) => setUi({ hideOld: event.target.checked })} />
+              <span>Hide resolved after 7 days</span>
             </label>
           </div>
+          <Filters filter={state.filter} counts={counts} />
           {listed.length ? (
             <ul className="kq-cm-threads">
               {[...listed].reverse().map((thread) => (
-                <li key={thread.id}>
-                  <button
-                    type="button"
-                    className={clsx("kq-cm-thread", { "kq-cm-thread--resolved": thread.resolved })}
-                    onClick={() => {
-                      setUi({ list: false, open: thread.id, draft: null });
-                      focusThread(thread);
-                    }}
-                  >
-                    <Avatar name={thread.root.by.name} keyId={thread.root.by.key} agent={thread.root.by.agent} />
-                    <span className="kq-cm-thread__body">
-                      <span className="kq-cm-thread__meta">
-                        <strong>{thread.root.by.name}</strong> · {ago(thread.last)}
-                        {thread.replies.length > 0 && ` · ${thread.replies.length} ${thread.replies.length === 1 ? "reply" : "replies"}`}
-                        {thread.resolved && " · resolved"}
-                      </span>
-                      <span className="kq-cm-thread__text">{thread.root.gone ? "(deleted)" : thread.root.text}</span>
-                    </span>
-                  </button>
-                </li>
+                <ThreadEntry key={thread.id} thread={thread} isNew={unread(thread, me, seen)} />
               ))}
             </ul>
           ) : (
-            <p className="kq-cm-empty">{threads.length ? "No open comments." : "No comments yet."}</p>
+            <p className="kq-cm-empty">{threads.length ? EMPTY[state.filter] : "No comments yet."}</p>
           )}
         </dialog>
       )}
     </div>
   );
 };
+
+/** a scene's open comment threads in the scene list (none: nothing) */
+export const SceneCommentCount = ({ count }: { count: number }) =>
+  count > 0 ? (
+    <span className="kq-cm-scene-count" title={count === 1 ? "1 open comment thread" : `${count} open comment threads`}>
+      <Icon name="comment" />
+      {count}
+      <span className="kq-cm-hidden"> open comment threads</span>
+    </span>
+  ) : null;

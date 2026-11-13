@@ -15,6 +15,7 @@
 // (scenes-plugin/src/online/drive.ts readSharedScene). The Worker only asks
 // Drive for the name, uncached, so a link preview shows the scene's title.
 
+import { BYLINE_PROPERTY, SCENE_MIME, cleanByline } from "../../scenes-plugin/src/online/driveNames";
 import { pubNameFromPath } from "../../scenes-plugin/src/online/pubName";
 
 import { googleUrls } from "./google";
@@ -28,11 +29,7 @@ export type SharedEnv = GoogleEnv & {
 };
 
 const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
-const SCENE_MIME = "application/vnd.excalidraw+json";
 const EXTENSION = ".excalidraw";
-
-/** the author's name on the public page, set only when they choose (scenes-plugin/src/online/drive.ts setByline) */
-const BYLINE_PROPERTY = "kurviqBy";
 
 export type PublicMeta = { name: string; by: string; version: string | null };
 
@@ -50,7 +47,7 @@ export const publicMeta = async (fileId: string, env: SharedEnv): Promise<Public
   }
   return {
     name: String(info.name).replace(/\.excalidraw$/, ""),
-    by: String(info.properties?.[BYLINE_PROPERTY] ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80),
+    by: cleanByline(info.properties?.[BYLINE_PROPERTY]),
     version: typeof info.md5Checksum === "string" ? info.md5Checksum : null,
   };
 };

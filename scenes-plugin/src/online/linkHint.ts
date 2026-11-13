@@ -5,24 +5,12 @@
 // shared folder it is in can be picked (nothing about it is kept on Kurviq's
 // server). Its own module: the router sets it, the UI shows it.
 
+import { createStore } from "../externalStore";
+
 import { connection, pickerAvailable, sharedFileId } from "./drive";
 
-let name: string | null = null;
-const listeners = new Set<() => void>();
-
-export const linkHint = {
-  get: () => name,
-  set: (next: string | null) => {
-    name = next;
-    listeners.forEach((listener) => listener());
-  },
-  subscribe: (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  },
-};
+/** the scene name the hint is about (null: no hint) */
+export const linkHint = createStore<string | null>(null);
 
 /** after a scene link created a new scene (router.ts): offer to look for it among the scenes shared with the user */
 export const offerSharedLookup = (scene: string) => {

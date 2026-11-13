@@ -1,6 +1,10 @@
 # Comment polish
 
-Status: proposal (Should), 2026-11-13
+Status: implemented (Should), 2026-11-13: Shift+C (`comments/shortcut.ts`), filters with counts,
+"hide resolved after 7 days", unread dots and the scene list's counts (`comments/listRules.ts`,
+`comments/sceneCounts.ts`, per browser in localStorage: `comments/local.ts`); "waiting for an editor" ends
+when a load of the file has the comment (`comments/store.ts`); one copy helper (`src/useCopy.ts`). Tests:
+`scenes-plugin/test/commentList.test.ts`, e2e `scenes-plugin/test/e2e/comments-polish.mjs`.
 
 ## Why
 
@@ -45,3 +49,23 @@ since 2026-11-13 (`scenes-plugin/src/comments`).
 6. A commenter's comment that waits for an editor shows "waiting for an editor" until the file has it.
 7. S38: a failed thread delete keeps the popover open with the error; S39: mentions in the shared viewer offer the
    thread's people, not the editor's scene's; U21: one copy-to-clipboard helper (code review).
+
+## Decisions (implementation)
+
+- **Shift+C**: free in Excalidraw (its tools are plain letters and Shift+X; Alt+Shift+C copies as PNG,
+  Ctrl+Alt+C copies styles). Handled in the capture phase so it works over the shared viewer too; never
+  while focus is in a text field, text area, select or contenteditable (Excalidraw's text editor, the rich
+  text editor, a comment box). Esc closes the topmost of: placing, a new comment, the open thread, the list.
+- **Filters** are one choice (Open is the default); the pins on the canvas follow it (the open thread always
+  shows). "Mine" = threads you started or wrote in; "@Me" = a comment mentions your full name as the
+  suggestions write it, your first name or your address's local part. The old "Show resolved" switch is
+  the "Resolved" filter now.
+- **Unread**: a thread is unread when someone else wrote in it after it was last opened in this browser; a
+  thread never opened counts from when this browser started keeping track (so old threads don't all light
+  up). At most 3000 threads are remembered.
+- **Scene list counts**: the open scene's live; the others' from the browser's stored copy, counted again
+  only when that copy changed (length, baseline, dirty), cached in localStorage.
+- **Waiting for an editor**: the mark ends when a load of the file (or the live session) has the comment
+  in that version or a newer one.
+- **U21**: `scenes-plugin/src/useCopy.ts` (`copyText`, `useCopy`); the comments use it. `online/ui.tsx`
+  (`CopyLink`, `CopyButton`) still to switch to it.

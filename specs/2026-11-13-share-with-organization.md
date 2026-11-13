@@ -1,6 +1,12 @@
 # Share with your organization
 
-Status: proposal (Should), 2026-11-13
+Status: implemented 2026-11-13 (with the fake Google; real Google Workspace not yet checked). Share panel
+(`scenes-plugin/src/online/ui.tsx` GeneralAccessField), rules in `scenes-plugin/src/online/shareAccess.ts`
+(organization from the signed-in address: gmail.com / googlemail.com have none), Drive calls in `drive.ts`
+`setLinkAccess`; the fake Google has `domain` permissions. Choosing an option makes it the only link
+permission (anyone or the organization); a link made in Drive besides it is listed under the field
+("Also: …", with Remove). Tests: `scenes-plugin/test/shareAccess.test.ts`, e2e
+`scenes-plugin/test/e2e/share-panel.mjs`.
 
 ## Why
 

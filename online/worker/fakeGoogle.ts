@@ -40,15 +40,23 @@
 //     appProperties merge with null deleting, trashed, uploadType=media|
 //     multipart; checked first, then applied as a whole, like Drive),
 //     files.delete, files.watch, channels.stop, revisions list/get
-//     (alt=media)/update/delete, permissions list/get/create/update/delete.
+//     (alt=media)/update/delete, permissions list/get/create/update/delete
+//     (types user, domain and anyone; expirationTime on user permissions,
+//     update with removeExpiration=true drops it; an expired permission gives
+//     no access and is no longer listed, as Drive removes it).
 //     comments list/create/get/delete and replies.create (action "resolve"):
 //     Drive's own comments, the commenters' mailbox (fields required, as at
 //     Google; the author comes without an address, as at Google).
+//     contentHints (thumbnail, indexableText) on files.create / update, with
+//     Drive's limits (thumbnail 2 MB, URL-safe base64; text 128 KB; else 400);
+//     new content without a thumbnail drops the old one, as at Drive; never in
+//     answers, only hasThumbnail and thumbnailLink (GET /fake-google/thumbnail/<id>).
 //   drive.file: a user sees a file only if the app may open it for them (they
 //     created it through the API, or it was granted: /admin/grant is the
 //     Picker / "Open with"; with the setting folderPickGrantsChildren a
 //     granted folder grants its files too) AND they have a role on it (own
-//     permission, one of a folder it is in, or "anyone with the link").
+//     permission, one of a folder it is in, a domain permission of their
+//     email's domain, or "anyone with the link").
 //     Otherwise 404 notFound.
 //   POST /fake-google/picker (the app's Picker in a fake build): the next pick
 //     a test queued for that user (/admin/picker), granted; none: cancelled.
@@ -82,7 +90,7 @@
 // Admin (/fake-google/admin/…, JSON; GET with query, POST with a JSON body)
 //   GET  /admin                     this list
 //   POST /admin/reset               everything forgotten (test users stay)
-//   GET  /admin/file?fileId=        one file: metadata, permissions, app access, revisions, channels
+//   GET  /admin/file?fileId=        one file: metadata, permissions, app access, contentHints, revisions, channels
 //   POST /admin/grant {email,fileId}     the Picker: the app may open the file for that user
 //   POST /admin/picker {email,ids}       the user's next pick in the app's Picker (files or folders)
 //   POST /admin/config {folderPickGrantsChildren?,commentDeleteByAuthorOnly?}
@@ -92,7 +100,8 @@
 //                                   a change "from outside Kurviq" (Drive's web UI): new
 //                                   revision, watch notifications; without fileId a new
 //                                   file of that user (not visible to the app until granted)
-//   POST /admin/share {fileId,email|anyone:true,role}   (reader|commenter|writer)
+//   POST /admin/share {fileId,email|domain|anyone:true,role,expirationTime?}   (reader|commenter|writer;
+//                                   expirationTime may lie in the past here: an expired permission)
 //   POST /admin/unshare {fileId,email|anyone:true}
 //   POST /admin/trash|untrash|delete {fileId}
 //   GET  /admin/revisions?fileId=[&content=1]
@@ -115,6 +124,8 @@ import { DurableObject } from "cloudflare:workers";
 import { parseQuery } from "./fakeGoogleQuery";
 import type { Predicate } from "./fakeGoogleQuery";
 import { isDevOrigin } from "./origins";
+import { HintsError, adminHints, parseHints, thumbnailBytes } from "./fakeGoogleHints";
+import type { StoredHints } from "./fakeGoogleHints";
 
 type FakeEnv = {
   FAKE_GOOGLE?: string;
@@ -233,6 +244,11 @@ const subOf = (email: string) => {
 const permIdOf = (email: string) => {
   const value = digits(`perm:${email}`, 19);
   return `0${value}`;
+};
+/** a domain permission's id (Drive's are numbers, too) */
+const domainPermId = (domain: string) => {
+  const value = digits(`domain:${domain}`, 19);
+  return `1${value}`;
 };
 const rootOf = (email: string) => {
   const value = digits(`root:${email}`, 17);
@@ -512,7 +528,7 @@ CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, name TEXT, mime TEXT, par
 CREATE TABLE IF NOT EXISTS revisions (file_id TEXT, id TEXT, seq INTEGER, md5 TEXT, size INTEGER, mime TEXT, modified TEXT, user TEXT, keep INTEGER,
   PRIMARY KEY (file_id, id));
 CREATE TABLE IF NOT EXISTS blobs (md5 TEXT, idx INTEGER, data BLOB, PRIMARY KEY (md5, idx));
-CREATE TABLE IF NOT EXISTS perms (file_id TEXT, id TEXT, type TEXT, role TEXT, email TEXT, discover INTEGER, PRIMARY KEY (file_id, id));
+CREATE TABLE IF NOT EXISTS perms (file_id TEXT, id TEXT, type TEXT, role TEXT, email TEXT, discover INTEGER, domain TEXT, expires INTEGER, PRIMARY KEY (file_id, id));
 CREATE TABLE IF NOT EXISTS app_access (email TEXT, file_id TEXT, PRIMARY KEY (email, file_id));
 CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, resource_id TEXT, file_id TEXT, token TEXT, address TEXT, expiration INTEGER, email TEXT, msg INTEGER);
 CREATE TABLE IF NOT EXISTS faults (id INTEGER PRIMARY KEY AUTOINCREMENT, remaining INTEGER, status INTEGER, reason TEXT, delay_ms INTEGER,
@@ -521,8 +537,9 @@ CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, k
 CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY, file_id TEXT, email TEXT, content TEXT, created TEXT, modified TEXT, resolved INTEGER, seq INTEGER);
 CREATE TABLE IF NOT EXISTS picks (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, ids TEXT);
 CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS hints (file_id TEXT PRIMARY KEY, thumb TEXT, thumb_mime TEXT, text TEXT);
 `;
-const TABLES = ["users", "grants", "codes", "tokens", "files", "revisions", "blobs", "perms", "app_access", "channels", "faults", "log", "comments", "picks", "config"];
+const TABLES = ["users", "grants", "codes", "tokens", "files", "revisions", "blobs", "perms", "app_access", "channels", "faults", "log", "comments", "picks", "config", "hints"];
 
 const titleCase = (email: string) =>
   email
@@ -547,6 +564,7 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     for (const statement of SCHEMA.split(";").map((part) => part.trim()).filter(Boolean)) {
       this.sql.exec(statement);
     }
+    this.migrate();
     this.seed();
   }
 
@@ -560,6 +578,16 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
 
   private run(query: string, ...bindings: unknown[]) {
     this.sql.exec(query, ...bindings);
+  }
+
+  /** columns added later to a store kept by `wrangler dev --persist-to` */
+  private migrate() {
+    const columns = new Set(this.all<{ name: string }>("PRAGMA table_info(perms)").map((row) => row.name));
+    for (const [column, type] of [["domain", "TEXT"], ["expires", "INTEGER"]]) {
+      if (!columns.has(column)) {
+        this.run(`ALTER TABLE perms ADD COLUMN ${column} ${type}`);
+      }
+    }
   }
 
   private seed() {
@@ -668,6 +696,10 @@ export class FakeGoogle extends DurableObject<FakeEnv> {
     }
     if (path.startsWith("/admin/")) {
       return this.admin(request, url, path.slice("/admin".length));
+    }
+    const thumbnail = /^\/thumbnail\/([^/]+)$/.exec(path);
+    if (thumbnail) {
+      return this.thumbnail(decodeURIComponent(thumbnail[1]));
     }
     if (path === "/picker" && request.method === "POST") {
       return this.picker(request, url);
@@ -1042,8 +1074,13 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return this.one<FileRow>("SELECT * FROM files WHERE id = ?", id);
   }
 
+  /** a file's permissions; expired ones are gone, as Drive removes them */
   private perms(fileId: string) {
-    return this.all<Row>("SELECT * FROM perms WHERE file_id = ? ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, rowid", fileId);
+    return this.all<Row>(
+      "SELECT * FROM perms WHERE file_id = ? AND (expires IS NULL OR expires > ?) ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, rowid",
+      fileId,
+      Date.now(),
+    );
   }
 
   /** the folders a file is in, its parents first (a few levels: Kurviq's folders are flat) */
@@ -1087,8 +1124,9 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (appOnly && !this.appCanOpen(caller.email, file)) {
       return null;
     }
+    const domain = caller.email.split("@")[1];
     const own = perms
-      .filter((perm) => perm.type === "user" && perm.email === caller.email)
+      .filter((perm) => (perm.type === "user" && perm.email === caller.email) || (perm.type === "domain" && perm.domain === domain))
       // a folder's owner may edit what others put in it
       .map((perm) => (perm.role === "owner" && perm.file_id !== file.id ? "writer" : perm.role));
     const roles = [...own, anyone?.role].filter(Boolean) as string[];
@@ -1171,7 +1209,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       webViewLink: folder ? `https://drive.google.com/drive/folders/${file.id}` : `https://drive.google.com/file/d/${file.id}/view?usp=drivesdk`,
       webContentLink: folder ? undefined : `https://drive.google.com/uc?id=${file.id}&export=download`,
       iconLink: `https://drive-thirdparty.googleusercontent.com/16/type/${file.mime}`,
-      hasThumbnail: false,
+      ...this.thumbnailResource(file.id, origin),
       viewedByMe: !!me,
       createdTime: file.created,
       modifiedTime: file.modified,
@@ -1210,6 +1248,9 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (perm.type === "anyone") {
       return { kind: "drive#permission", id: perm.id, type: "anyone", role: perm.role, allowFileDiscovery: !!perm.discover, deleted: false };
     }
+    if (perm.type === "domain") {
+      return { kind: "drive#permission", id: perm.id, type: "domain", role: perm.role, domain: perm.domain, displayName: perm.domain, allowFileDiscovery: !!perm.discover, deleted: false };
+    }
     const info = this.userInfo(perm.email, origin);
     return {
       kind: "drive#permission",
@@ -1219,6 +1260,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       emailAddress: perm.email,
       displayName: info.name,
       photoLink: info.picture,
+      ...(perm.expires ? { expirationTime: new Date(perm.expires).toISOString() } : {}),
       deleted: false,
       pendingOwner: false,
     };
@@ -1670,6 +1712,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const parents = this.checkParents(Array.isArray(metadata.parents) && metadata.parents.length ? metadata.parents.map(String) : ["root"], caller);
     const appProps = Object.fromEntries(Object.entries(this.stringMap(metadata.appProperties, "appProperties")).filter(([, value]) => value !== null));
     const props = Object.fromEntries(Object.entries(this.stringMap(metadata.properties, "properties")).filter(([, value]) => value !== null));
+    const hints = this.checkedHints(metadata.contentHints);
     const file = this.insertFile({
       email: caller.email,
       name: String(metadata.name ?? "Untitled"),
@@ -1683,6 +1726,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (mime !== FOLDER_MIME) {
       await this.writeContent(file, content ?? new Uint8Array(), mime, caller.email);
     }
+    this.storeHints(file.id, hints, true);
     const saved = this.file(file.id)!;
     return json(200, select(this.resource(saved, "owner", caller, origin), fields));
   }
@@ -1708,8 +1752,53 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return this.file(id)!;
   }
 
+  // contentHints (fakeGoogleHints.ts): never in Drive's answers (as at Google),
+  // only hasThumbnail / thumbnailLink and GET /admin/file
+
+  private hints(fileId: string) {
+    return this.one<StoredHints>("SELECT thumb, thumb_mime, text FROM hints WHERE file_id = ?", fileId);
+  }
+
+  private checkedHints(value: unknown) {
+    try {
+      return parseHints(value);
+    } catch (error) {
+      if (error instanceof HintsError) {
+        return fail(invalid(error.message, "contentHints"));
+      }
+      throw error;
+    }
+  }
+
+  /** given hints are kept; new content without a thumbnail drops the old one, as at Drive */
+  private storeHints(fileId: string, hints: ReturnType<typeof parseHints>, newContent: boolean) {
+    const row = this.hints(fileId);
+    const keepThumb = !newContent && row?.thumb;
+    const thumb = hints?.thumbnail ?? (keepThumb ? { image: row.thumb!, mimeType: row.thumb_mime! } : null);
+    const text = hints?.indexableText ?? row?.text ?? null;
+    this.run("INSERT OR REPLACE INTO hints (file_id, thumb, thumb_mime, text) VALUES (?, ?, ?, ?)", fileId, thumb?.image ?? null, thumb?.mimeType ?? null, text);
+  }
+
+  private thumbnailResource(fileId: string, origin: string) {
+    const row = this.hints(fileId);
+    if (!row?.thumb) {
+      return { hasThumbnail: false };
+    }
+    return { hasThumbnail: true, thumbnailLink: `${origin}${PREFIX}/thumbnail/${fileId}?v=${row.thumb.length}` };
+  }
+
+  /** a file's thumbnail (thumbnailLink; Google's are short-lived links without sign-in) */
+  private thumbnail(fileId: string) {
+    const row = this.hints(fileId);
+    if (!row?.thumb) {
+      return new Response("Not found", { status: 404 });
+    }
+    return new Response(thumbnailBytes(row.thumb), { headers: { "Content-Type": row.thumb_mime ?? "image/png", "Cache-Control": "no-store" } });
+  }
+
   private deleteFile(id: string) {
     this.run("DELETE FROM files WHERE id = ?", id);
+    this.run("DELETE FROM hints WHERE file_id = ?", id);
     for (const table of ["revisions", "perms", "app_access", "channels"]) {
       this.run(`DELETE FROM ${table} WHERE file_id = ?`, id);
     }
@@ -1729,7 +1818,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       }
       trashState = metadata.trashed ? "trash" : "untrash";
     }
-    const editsOther = content !== null || ["name", "mimeType", "description", "appProperties", "properties"].some((key) => metadata[key] !== undefined);
+    const editsOther = content !== null || ["name", "mimeType", "description", "appProperties", "properties", "contentHints"].some((key) => metadata[key] !== undefined);
     if (editsOther && (rank < 3 || (file.trashed && !trashState))) {
       return noFilePermission();
     }
@@ -1811,6 +1900,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (permission instanceof Response) return permission;
     const trashState = permission;
     const { sets, changed, mime } = this.updatePlan(file, metadata, content);
+    const hints = this.checkedHints(metadata.contentHints);
     // everything checked: now it is written
     if (trashState) {
       this.setTrashed(file, trashState === "trash");
@@ -1824,6 +1914,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     } else if (changed.size) {
       this.run("UPDATE files SET version = version + 1 WHERE id = ?", file.id);
     }
+    this.storeHints(file.id, hints, content !== null);
     if (changed.size) {
       this.notify(file.id, "update", [...changed]);
     }
@@ -1931,17 +2022,60 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     return null;
   }
 
+  /**
+   * An expirationTime as Drive takes it: user permissions only, in the future,
+   * at most a year ahead (the number, null: none given, or the error)
+   */
+  private expiration(value: unknown, type: string): number | null | Response {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    const at = Date.parse(String(value));
+    if (type !== "user") {
+      return googleError(400, "Expiration dates can only be set on user and group permissions.", "invalidSharingRequest", { location: "expirationTime" });
+    }
+    if (!Number.isFinite(at) || at <= Date.now()) {
+      return googleError(400, "Expiration dates must be in the future.", "expirationDatesMustBeInTheFuture", { location: "expirationTime" });
+    }
+    if (at > Date.now() + 366 * 24 * 3600 * 1000) {
+      return googleError(400, "Expiration dates cannot be more than a year in the future.", "expirationDateTooFarInTheFuture", { location: "expirationTime" });
+    }
+    return at;
+  }
+
   private insertUserPermission(body: Row, newRole: string, file: FileRow, url: URL, caller: User) {
     const email = String(body.emailAddress || "").trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
       return googleError(400, "A valid email address is required for user permissions.", "invalidSharingRequest", { location: "permission.emailAddress" });
     }
+    const expires = this.expiration(body.expirationTime, "user");
+    if (expires instanceof Response) return expires;
     this.user(email);
     const id = permIdOf(email);
-    this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, id, newRole, email);
+    this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover, expires) VALUES (?, ?, 'user', ?, ?, 0, ?)", file.id, id, newRole, email, expires);
     if (url.searchParams.get("sendNotificationEmail") !== "false") {
       this.log("mail", { to: email, from: caller.email, fileId: file.id, name: file.name, role: newRole, message: url.searchParams.get("emailMessage") || "" });
     }
+    return id;
+  }
+
+  /** "anyone at <domain> with the link" (one per domain) */
+  private insertDomainPermission(body: Row, newRole: string, file: FileRow) {
+    const domain = String(body.domain || "").trim().toLowerCase();
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain)) {
+      return googleError(400, "A valid domain is required for domain permissions.", "invalidSharingRequest", { location: "permission.domain" });
+    }
+    const expires = this.expiration(body.expirationTime, "domain");
+    if (expires instanceof Response) return expires;
+    const id = domainPermId(domain);
+    this.run(
+      "INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover, domain) VALUES (?, ?, 'domain', ?, NULL, ?, ?)",
+      file.id,
+      id,
+      newRole,
+      body.allowFileDiscovery ? 1 : 0,
+      domain,
+    );
     return id;
   }
 
@@ -1963,14 +2097,18 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       const result = this.insertUserPermission(body, newRole, file, url, caller);
       if (result instanceof Response) return result;
       id = result;
+    } else if (type === "domain") {
+      const result = this.insertDomainPermission(body, newRole, file);
+      if (result instanceof Response) return result;
+      id = result;
     } else {
-      return googleError(400, `The fake Google supports permission types user and anyone, not '${type}'.`, "invalidSharingRequest", { location: "type" });
+      return googleError(400, `The fake Google supports permission types user, domain and anyone, not '${type}'.`, "invalidSharingRequest", { location: "type" });
     }
     this.permissionsChanged(file.id);
     return json(200, select(this.permission(one(id)!, origin), fields));
   }
 
-  private async patchPermission(request: Request, { file, canShare, origin, fields, one }: PermissionCall, perm: Row) {
+  private async patchPermission(request: Request, url: URL, { file, canShare, origin, fields, one }: PermissionCall, perm: Row) {
     if (!canShare) {
       return noFilePermission();
     }
@@ -1981,7 +2119,11 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const error = this.permissionRequestError(newRole);
     if (error) return error;
-    this.run("UPDATE perms SET role = ? WHERE file_id = ? AND id = ?", newRole, file.id, perm.id);
+    const expires = this.expiration(body.expirationTime, String(perm.type));
+    if (expires instanceof Response) return expires;
+    // removeExpiration=true drops the end date; without either the end date stays
+    const keep = url.searchParams.get("removeExpiration") === "true" ? null : perm.expires ?? null;
+    this.run("UPDATE perms SET role = ?, expires = ? WHERE file_id = ? AND id = ?", newRole, expires ?? keep, file.id, perm.id);
     this.permissionsChanged(file.id);
     return json(200, select(this.permission(one(perm.id)!, origin), fields));
   }
@@ -1990,7 +2132,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const { file, role } = this.access(fileId, caller);
     const method = request.method;
     const canShare = this.capabilities(file, role, caller).canShare;
-    const one = (id: string) => this.one<Row>("SELECT * FROM perms WHERE file_id = ? AND id = ?", file.id, id);
+    const one = (id: string) => this.perms(file.id).find((perm) => perm.id === id) ?? null;
     if (!permissionId && method === "GET") {
       const fields = fieldsOf(url, "kind,nextPageToken,permissions(kind,id,type,role)");
       checkKeys(fields.get("permissions"), PERMISSION_KEYS);
@@ -2010,7 +2152,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     }
     const self = perm.type === "user" && perm.email === caller.email;
     if (method === "PATCH") {
-      return this.patchPermission(request, { file, canShare, caller, origin, fields, one }, perm);
+      return this.patchPermission(request, url, { file, canShare, caller, origin, fields, one }, perm);
     }
     if (method === "DELETE") {
       if (!canShare && !self) {
@@ -2178,6 +2320,7 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
       properties: JSON.parse(file.props || "{}"),
       permissions: this.perms(file.id).map((perm) => this.permission(perm, origin)),
       appAccess: this.all<{ email: string }>("SELECT email FROM app_access WHERE file_id = ? ORDER BY email", file.id).map((row) => row.email),
+      contentHints: adminHints(this.hints(file.id)),
     };
   }
 
@@ -2221,15 +2364,22 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     if (!["reader", "commenter", "writer"].includes(role)) {
       return json(400, { error: "role: reader, commenter or writer" });
     }
+    const expires = body.expirationTime ? Date.parse(String(body.expirationTime)) : null;
+    if (expires !== null && !Number.isFinite(expires)) {
+      return json(400, { error: "expirationTime: an ISO date" });
+    }
     if (body.anyone) {
       this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
       this.run("INSERT INTO perms (file_id, id, type, role, email, discover) VALUES (?, 'anyoneWithLink', 'anyone', ?, NULL, 0)", file.id, role);
+    } else if (body.domain) {
+      const domain = String(body.domain).toLowerCase();
+      this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover, domain) VALUES (?, ?, 'domain', ?, NULL, 0, ?)", file.id, domainPermId(domain), role, domain);
     } else {
       const email = this.user(need("email"));
       if (email === file.owner) {
         return json(400, { error: "that's the owner" });
       }
-      this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover) VALUES (?, ?, 'user', ?, ?, 0)", file.id, permIdOf(email), role, email);
+      this.run("INSERT OR REPLACE INTO perms (file_id, id, type, role, email, discover, expires) VALUES (?, ?, 'user', ?, ?, 0, ?)", file.id, permIdOf(email), role, email, expires);
     }
     this.permissionsChanged(file.id);
     return json(200, this.adminFile(file, origin));
@@ -2239,6 +2389,8 @@ ${wantsDrive ? `<label><input type="checkbox" name="drive" value="1" checked> Se
     const file = fileOf();
     if (body.anyone) {
       this.run("DELETE FROM perms WHERE file_id = ? AND type = 'anyone'", file.id);
+    } else if (body.domain) {
+      this.run("DELETE FROM perms WHERE file_id = ? AND type = 'domain' AND domain = ?", file.id, String(body.domain).toLowerCase());
     } else {
       this.run("DELETE FROM perms WHERE file_id = ? AND email = ? AND role != 'owner'", file.id, need("email").toLowerCase());
     }

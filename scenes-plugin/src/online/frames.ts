@@ -57,9 +57,9 @@ export const createReceiver = () => {
     ) {
       throw new Error("malformed part");
     }
-    // drop leftovers of messages that never completed
+    // drop leftovers of messages that stopped arriving (no part for 2 minutes; a slow but steady one stays)
     for (const [key, entry] of partial) {
-      if (Date.now() - entry.at > 120_000) {
+      if (key !== id && Date.now() - entry.at > 120_000) {
         partial.delete(key);
       }
     }
@@ -74,6 +74,7 @@ export const createReceiver = () => {
       entry.parts[i] = data;
       entry.count++;
     }
+    entry.at = Date.now();
     partial.set(id, entry);
     if (entry.count < total) {
       return null;

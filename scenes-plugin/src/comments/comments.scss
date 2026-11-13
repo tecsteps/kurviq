@@ -87,6 +87,41 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
   }
 }
 
+// unread: someone wrote in the thread since it was last opened in this browser
+.kq-cm-dot {
+  position: absolute;
+  top: -0.15rem;
+  right: -0.15rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 2px solid var(--kq-cm-bg, #fff);
+  border-radius: 50%;
+  background: #e8590c;
+
+  &--inline {
+    position: static;
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-right: 0.35rem;
+    border: 0;
+    vertical-align: 0.05rem;
+  }
+}
+
+// for screen readers only
+.kq-cm-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .kq-cm-more {
   margin-left: 0.15rem;
   color: var(--kq-cm-muted);
@@ -402,6 +437,26 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
   gap: 0.4rem;
 }
 
+.kq-cm-count--new {
+  box-shadow: 0 0 0 2px #e8590c;
+}
+
+// the scene list (index.tsx): a scene's open comment threads
+.kq-cm-scene-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.2rem;
+  color: var(--color-gray-60, #6b6b76);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+
+  svg {
+    width: 0.85rem;
+    height: 0.85rem;
+  }
+}
+
 .kq-cm-count {
   min-width: 1.2rem;
   padding: 0 0.35rem;
@@ -439,6 +494,7 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
 .excalidraw .kq-cm-panel__head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.6rem 0.7rem;
@@ -457,6 +513,61 @@ body:has(.excalidraw.theme--dark) .kq-cm-layer {
   font-size: 0.8rem;
   white-space: nowrap;
   cursor: pointer;
+}
+
+// the list's filters: a segmented row of radio buttons, each with its count
+.excalidraw .kq-cm-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-bottom: 1px solid var(--default-border-color);
+}
+
+.excalidraw .kq-cm-filter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--default-border-color);
+  border-radius: 1rem;
+  color: var(--text-primary-color);
+  font-size: 0.78rem;
+  cursor: pointer;
+
+  input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  &:hover {
+    background: var(--button-hover-bg, var(--color-surface-high));
+  }
+
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--color-primary, #6965db);
+    outline-offset: 1px;
+  }
+
+  &--on {
+    border-color: var(--color-primary, #6965db);
+    background: var(--color-primary, #6965db);
+    color: #fff;
+
+    &:hover {
+      background: var(--color-primary-darker, #5b57d1);
+    }
+  }
+}
+
+.excalidraw .kq-cm-filter__count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .excalidraw .kq-cm-threads {

@@ -16,6 +16,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI, NormalizedZoomValue } from "@excalidraw/excalidraw/types";
 
 import { IS_ONLINE } from "./api";
+import { createStore } from "./externalStore";
 import { OPENING_KEY, scenesController } from "./controller";
 import { connectGoogle, connection, enterSpace, pickFiles, readSharedScene, sharedFileId, sharedSceneVersion } from "./online/drive";
 import type { SharedSceneAnswer } from "./online/drive";
@@ -47,24 +48,13 @@ export const isPublicScene = (name: string | null): name is string => !!name && 
  */
 export type Shown = { name: string; fileId?: string; present?: boolean; slide?: number };
 
-let shown: Shown | null = null;
-const listeners = new Set<() => void>();
-const setShown = (next: Shown | null) => {
-  shown = next;
-  listeners.forEach((listener) => listener());
-};
+const shown = createStore<Shown | null>(null);
 
 export const publicScene = {
-  show: (name: string, start: { fileId?: string; present?: boolean; slide?: number } = {}) =>
-    setShown({ name, ...start }),
-  close: () => setShown(null),
-  shown: () => shown,
-  subscribe: (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  },
+  show: (name: string, start: { fileId?: string; present?: boolean; slide?: number } = {}) => shown.set({ name, ...start }),
+  close: () => shown.set(null),
+  shown: shown.get,
+  subscribe: shown.subscribe,
 };
 
 const fetchScene = (name: string) =>

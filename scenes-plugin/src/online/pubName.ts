@@ -33,16 +33,29 @@ export const pubNameProblem = (name: string): string | null => {
   return null;
 };
 
-/** a scene name as a short name: "Öredev 2026!" → "oredev-2026" */
-export const toPubName = (text: string) =>
-  text
+/** letters that don't fall apart into a base letter and a mark */
+const FOLDED: Record<string, string> = { ß: "ss", ø: "o", æ: "ae", œ: "oe", ł: "l", đ: "d", þ: "th" };
+
+/**
+ * A text as lowercase letters a to z, digits and single hyphens, at most
+ * `max` characters: "Öredev 2026!" → "oredev-2026". While typing, a hyphen at
+ * the end stays (the next word starts there). Scene links, short names and
+ * the short-name field use it.
+ */
+export const slugify = (text: string, max: number, { keepTrailingHyphen = false } = {}) => {
+  const slug = text
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replaceAll(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replaceAll(/[ßøæœłđþ]/g, (letter) => FOLDED[letter])
+    .replaceAll(/[^a-z0-9]+/g, "-")
     .replace(/^-+/, "")
-    .slice(0, PUB_MAX)
-    .replace(/-+$/, ""); // NOSONAR S8786: input is bounded to PUB_MAX (40) characters by the preceding slice
+    .slice(0, max);
+  return keepTrailingHyphen ? slug : slug.replace(/-+$/, ""); // NOSONAR S8786: input is bounded to `max` characters by the preceding slice
+};
+
+/** a scene name as a short name: "Öredev 2026!" → "oredev-2026" */
+export const toPubName = (text: string) => slugify(text, PUB_MAX);
 
 /** /pub/<name> (any case; the name is lowercased) */
 export const pubNameFromPath = (pathname: string) => {

@@ -32,6 +32,10 @@ describe("where a person's access comes from", () => {
     expect(rowAccess({ type: "domain", role: "reader" }, [{ type: "domain", role: "reader" }])).toEqual({ kind: "direct" });
   });
 
+  it("is this scene's own when the scene lets someone comment and the folder only view", () => {
+    expect(rowAccess({ type: "user", role: "commenter", emailAddress: "vi@c.com" }, [owner, viewer])).toEqual({ kind: "more", folderRole: "reader" });
+  });
+
   it("takes the best of several folder grants", () => {
     const twice = [{ ...editor, role: "reader" }, editor];
     expect(rowAccess({ type: "user", role: "writer", emailAddress: "ed@b.com" }, twice)).toEqual({ kind: "folder" });
@@ -39,10 +43,10 @@ describe("where a person's access comes from", () => {
 
   it("ranks roles", () => {
     expect(roleRank("reader")).toBe(1);
-    expect(roleRank("commenter")).toBe(1);
-    expect(roleRank("writer")).toBe(2);
-    expect(roleRank("organizer")).toBe(2);
-    expect(roleRank("owner")).toBe(3);
+    expect(roleRank("commenter")).toBe(2);
+    expect(roleRank("writer")).toBe(3);
+    expect(roleRank("organizer")).toBe(3);
+    expect(roleRank("owner")).toBe(4);
   });
 });
 

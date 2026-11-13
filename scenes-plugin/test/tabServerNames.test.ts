@@ -197,6 +197,16 @@ describe("tab request boundaries", () => {
     expect(calls.save).toEqual([]);
     expect((await serveRequest({ method: "GET", path: "/api/scenes/plan" })).status).toBe(200);
   });
+  it("answers malformed requests with 400 (not 500), and the rename with the trimmed name", async () => {
+    expect((await serveRequest({ method: "GET", path: "/api/scenes/%E0%A4%A" })).status).toBe(400);
+    expect((await serveRequest({ method: "GET", path: "/api/scenes/%E0%A4%A/agent-version" })).status).toBe(400);
+    for (const body of ["null", "3", "nope"]) {
+      const answer = await serveRequest({ method: "POST", path: "/api/scenes/plan/rename", headers: mcp, body });
+      expect(answer.status).toBe(400);
+    }
+    const renamed = await serveRequest({ method: "POST", path: "/api/scenes/plan/rename", headers: mcp, body: '{"to":"  other  "}' });
+    expect(JSON.parse(renamed.body)).toMatchObject({ from: "plan", to: "other" });
+  });
   it("rejects disconnected and direct writes", async () => {
     mode.active = false;
     expect(
@@ -220,7 +230,7 @@ describe("tab request boundaries", () => {
     ).toBe(404);
     expect(
       (await serveRequest({ method: "GET", path: "/api/scenes/%ZZ" })).status
-    ).toBe(500);
+    ).toBe(400);
     const response = await serveRequest({ method: "POST", path: "/api/scenes/plan/rename", headers: mcp, body: "{" });
     expect(response.status).toBe(400);
     expect(JSON.parse(response.body).error).toMatch(/valid JSON/);

@@ -10,19 +10,24 @@ export type Grant = {
   domain?: string;
 };
 
-/** how much a role allows (viewing < editing < owning) */
+/** how much a role allows (viewing < commenting < editing < owning) */
 export const roleRank = (role: string) => {
   switch (role) {
     case "owner":
-      return 3;
+      return 4;
     case "writer":
     case "fileOrganizer":
     case "organizer":
+      return 3;
+    case "commenter":
       return 2;
     default:
       return 1;
   }
 };
+
+/** editing or more */
+const EDITOR_RANK = 3;
 
 const sameGrantee = (a: Grant, b: Grant) => {
   if (a.type !== b.type) {
@@ -67,7 +72,7 @@ export const folderAudience = (folder: Grant[]) => {
   const others = folder.filter((entry) => entry.role !== "owner" && entry.type !== "anyone");
   return {
     count: others.length,
-    editors: others.filter((entry) => roleRank(entry.role) >= 2).length,
+    editors: others.filter((entry) => roleRank(entry.role) >= EDITOR_RANK).length,
     anyone: folder.some((entry) => entry.type === "anyone"),
   };
 };

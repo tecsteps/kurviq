@@ -1,6 +1,6 @@
 # Scene text searchable in Google Drive
 
-Status: proposal (Must), 2026-11-13
+Status: implemented (Must), 2026-11-13; Drive's search not yet checked with real Google (criterion 4)
 
 ## Why
 
@@ -21,6 +21,18 @@ Drive's search finds a scene only by its file name. With its words indexed,
   `withComments`. Agents' saves (`cowork.ts`) too.
 - Cut at 128 KB (whole words).
 
+## Implementation
+
+- `scenes-plugin/src/online/indexText.ts` (`sceneIndexText`): the scene's
+  name, then every distinct text of the scene in element order, one per line:
+  text elements and labels (`originalText`, the plain text of formatted text
+  too), frame (slide) titles. Left out: deleted elements, labels of deleted
+  shapes, comments, speaker notes, tooltips. Cut at 128 KB (UTF-8 bytes) at a
+  word boundary.
+- Sent as `contentHints.indexableText` with every save
+  (`online/contentHints.ts`, see the thumbnail spec), together with the
+  preview.
+
 ## Checks
 
 - Unit: the text is built from elements (formatted text, labels, deleted
@@ -29,7 +41,9 @@ Drive's search finds a scene only by its file name. With its words indexed,
 
 ## Open
 
-- Speaker notes in the index or not?
+- Speaker notes: decided to leave them out (2026-11-13). They can hold
+  private remarks, and a file's indexed words are searchable by everyone it is
+  shared with. Revisit if users ask to find decks by their notes.
 
 ## Acceptance criteria
 

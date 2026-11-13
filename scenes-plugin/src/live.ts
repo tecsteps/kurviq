@@ -25,7 +25,6 @@ import { penRefusal } from "./online/pen";
 import {
   connection,
   claimPubName,
-  linkAccessOf,
   spaceAccount,
   listPermissions,
   loadPubName,
@@ -37,6 +36,7 @@ import {
   sharedFolders,
   shareLink,
 } from "./online/drive";
+import { linkAccessOf } from "./online/shareAccess";
 import {
   editLocalScene,
   editOpenScene,
@@ -821,7 +821,8 @@ const commandShortLink = async (command: Extract<Command, { type: "short-link" }
     await claimPubName(fileId, command.shortName);
   }
   const short = command.shortName === undefined ? before : command.shortName; // NOSONAR S6606: null releases the short link; only undefined keeps the previous name
-  const access = linkAccessOf(await listPermissions(fileId));
+  const grants = linkAccessOf(await listPermissions(fileId));
+  const access = grants.anyone;
   const link = short ? pubLink(short) : shareLink(fileId, command.name);
   return {
     scene: command.name,
@@ -829,6 +830,8 @@ const commandShortLink = async (command: Extract<Command, { type: "short-link" }
     longLink: shareLink(fileId, command.name),
     presentLink: `${link}?present`,
     generalAccess: access,
+    // "anyone at <domain> with the link" (Google Workspace), set in Kurviq's share panel or in Drive
+    ...(grants.domains.length ? { domainAccess: grants.domains.map(({ domain, role }) => ({ domain, role })) } : {}),
     ...(access === "restricted"
       ? { note: "Only people the scene is shared with can open these links (signed in with Google). For everyone: generalAccess \"reader\", only if the user wants it public." }
       : {}),

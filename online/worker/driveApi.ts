@@ -7,6 +7,8 @@
 // author's fault), or Google not reachable (5xx, timeouts: retry). Only
 // refusals ever end someone's access or block an author.
 
+import { SCENE_MIME } from "../../scenes-plugin/src/online/driveNames";
+
 import { readText } from "./bytes";
 import { googleUrls } from "./google";
 import type { GoogleEnv } from "./google";
@@ -29,7 +31,7 @@ export { readText as readLimited } from "./bytes";
 export const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
 
 /** a scene file: its MIME type and name extension in Drive */
-export const SCENE_MIME = "application/vnd.excalidraw+json";
+export { SCENE_MIME };
 export const SCENE_EXTENSION = ".excalidraw";
 
 /**

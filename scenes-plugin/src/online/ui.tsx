@@ -6,12 +6,15 @@
 import { MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
 import { ExternalLinkIcon, GithubIcon } from "@excalidraw/excalidraw/components/icons";
 import clsx from "clsx";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 
 import { scenesController } from "../controller";
+import { useDialogFocus } from "../dialogFocus";
+import { createStore } from "../externalStore";
 import { QuickTip } from "../quickTip";
+import { useCopy } from "../useCopy";
 import { LEGACY_ACCOUNT_KEY, OWN_SPACE_KEY, ownSpaceTarget, spaceMoves } from "../spaces";
 import { currentSpace, moveSpaceData } from "../storage";
 
@@ -25,6 +28,7 @@ import {
   connectGoogle,
   connection,
   disconnectGoogle,
+  driveScenes,
   driveWebLink,
   enterSpace,
   folderSharingOf,
@@ -32,15 +36,16 @@ import {
   pickerAvailable,
   sharedWithMe,
   getByline,
-  linkAccessOf,
   listPermissions,
   loadPubName,
+  ownFolderLink,
   pubLink,
   pubNameHolder,
   pubNameStore,
   releasePubName,
   sceneElsewhere,
   removeAccess,
+  setAccessEnd,
   setByline,
   setLinkAccess,
   shareLink,
@@ -48,13 +53,28 @@ import {
   sharedFolderId,
   signOutListeners,
   spaceAccount,
+  userOrganization,
 } from "./drive";
 import { pairing } from "./pairing";
-import { PUB_MAX, pubNameProblem, toPubName } from "./pubName";
+import { PUB_MAX, PUB_MIN, pubNameProblem, slugify, toPubName } from "./pubName";
+import {
+  canHaveEndDate,
+  dateFieldValue,
+  domainLabel,
+  endDateRange,
+  generalAccessHint,
+  generalAccessLabel,
+  generalAccessOf,
+  generalAccessOptions,
+  linkAccessOf,
+  otherDomainGrants,
+  untilText,
+} from "./shareAccess";
+import type { GeneralAccess, SharingRole } from "./shareAccess";
 
 import { TEXT_MAX, TITLE_MAX, cleanFeedback } from "../../../scenes-mcp/feedback.mjs";
 import type { SceneListItem } from "../controller";
-import type { FolderSharing, LinkAccess, Permission, SharedFolder } from "./drive";
+import type { FolderSharing, Permission, SharedFolder } from "./drive";
 import { audienceText, folderAudience, rowAccess, unseenText } from "./folderAccess";
 import type { RowAccess } from "./folderAccess";
 
@@ -70,7 +90,7 @@ import "./online.scss";
 const useConnection = () => useSyncExternalStore(connection.subscribe, connection.getState);
 const usePairingKey = () => useSyncExternalStore(pairing.subscribe, pairing.getKey);
 
-export const GoogleIcon = (
+const GoogleIcon = (
   <svg viewBox="0 0 48 48" width="16" height="16" aria-hidden>
     <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" />
     <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
@@ -110,22 +130,8 @@ let settledInSpace = false;
 // after signing in: a short dialog (sync is on / Drive access missing)
 type Setup = null | { step: "done"; candidates: { name: string; ticked: boolean }[] } | { step: "nodrive" };
 
-let setup: Setup = null;
-const setupListeners = new Set<() => void>();
-const setSetup = (next: Setup) => {
-  setup = next;
-  setupListeners.forEach((listener) => listener());
-};
-const useSetup = () =>
-  useSyncExternalStore(
-    (listener) => {
-      setupListeners.add(listener);
-      return () => {
-        setupListeners.delete(listener);
-      };
-    },
-    () => setup,
-  );
+const setup = createStore<Setup>(null);
+const setSetup = setup.set;
 
 /** signed in just now: the scenes only in this browser the user hasn't decided on (the dialog asks) */
 const activateSync = async () => {
@@ -177,6 +183,16 @@ const switchOwnSpace = async (target: string, signIn: string | null) => {
     return;
   }
   switching = true;
+  try {
+    await moveToSpace(target, signIn);
+  } catch (error) {
+    // the tab stays (and may try again): it didn't leave
+    switching = false;
+    throw error;
+  }
+};
+
+const moveToSpace = async (target: string, signIn: string | null) => {
   const oldScenes = new Set(scenesController.getState().list.flatMap((item) => (item.name ? [item.name] : [])));
   await scenesController.leaveForReload();
   const legacy = legacyAccount();
@@ -217,7 +233,7 @@ const switchOwnSpace = async (target: string, signIn: string | null) => {
 };
 
 /** back to the user's own scenes, from a shared scene's space */
-export const leaveSharedScene = async () => {
+const leaveSharedScene = async () => {
   await scenesController.leaveForReload();
   enterSpace(null);
 };
@@ -305,15 +321,6 @@ export const startDrive = () => {
 // sidebar: Google Drive
 // -----------------------------------------------------------------------------
 
-const folderUrl = () => {
-  const email = connection.getState().user?.email ?? "";
-  let id: string | null = null;
-  try {
-    id = localStorage.getItem(`kurviq-drive-folder:${email}`);
-  } catch {}
-  return id ? `https://drive.google.com/drive/folders/${id}` : "https://drive.google.com/drive/my-drive";
-};
-
 const SignInButton = ({ label = "Sign in with Google" }: { label?: string }) => (
   <>
     <button type="button" className="scenes-btn kq-google-btn" onClick={() => connectGoogle()}>
@@ -350,7 +357,6 @@ const LinkedInIcon = (
   </svg>
 );
 
-/** the welcome screen's text (injected by ../../vite.config.mts instead of upstream's) */
 // the wordmark's font: Lilita One, which Excalidraw ships for the canvas
 try {
   document.fonts.add(new FontFace("Kurviq Wordmark", `url(${lilitaLatin})`, { display: "block" }));
@@ -456,7 +462,12 @@ export const DrivePanel = () => {
   const { remote } = useSyncExternalStore(scenesController.subscribe, scenesController.getState);
 
   if (user === undefined) {
-    return <section className="kq-card kq-muted">Checking Google sign-in…</section>;
+    return (
+      <section className="kq-card kq-muted">
+        Checking Google sign-in…
+        {error && <div className="scenes-error">{error}</div>}
+      </section>
+    );
   }
   if (!user && spaceAccount) {
     // the sign-in expired (not signed out on purpose): the account's scenes stay on screen
@@ -535,7 +546,7 @@ export const DrivePanel = () => {
   return (
     <section className="kq-card kq-card--folder">
       {sharedFolderId && lost && <div className="kq-notice">{lost}</div>}
-      <a className="scenes-folder" href={folderUrl()} target="_blank" rel="noopener noreferrer" title="Open the folder in Google Drive">
+      <a className="scenes-folder" href={ownFolderLink()} target="_blank" rel="noopener noreferrer" title="Open the folder in Google Drive">
         <span className="scenes-folder__logo">{DriveIcon}</span>
         <span className="scenes-folder__text">
           <span className="scenes-folder__caption">Synced with Google Drive</span>
@@ -588,39 +599,42 @@ const CopyLink = ({
   icon?: ReactNode;
   className?: string;
 }) => {
-  const [copied, setCopied] = useState(false);
+  const [copied, copy] = useCopy();
   return (
-    <QuickTip tip={tip} label={false}>
+    <QuickTip tip={copied === "failed" ? "Could not copy: your browser refused the clipboard" : tip} label={false}>
       <button
         type="button"
         className={className}
         // not `disabled`: a disabled button gets no hover, so no tooltip saying why
         aria-disabled={!link || undefined}
-        onClick={() =>
-          link &&
-          navigator.clipboard.writeText(link).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          })
-        }
+        onClick={() => link && copy(link)}
       >
-        {copied && !label ? "✓" : icon}
-        {label && (copied ? "Copied ✓" : label)}
+        {copiedIcon(copied, label, icon)}
+        {label && copyLabel(copied, label)}
       </button>
     </QuickTip>
   );
 };
 
-/** why a scene can't be shared (yet), or null */
-const notShareable = (item: SceneListItem | undefined, what: string) => {
+/** an icon-only copy button says how it went with its icon */
+const copiedIcon = (copied: string, label: string, icon: ReactNode) => {
+  if (label || copied === "idle") {
+    return icon;
+  }
+  return copied === "copied" ? "✓" : "✗";
+};
+
+const copyLabel = (copied: string, label: string) => {
+  if (copied === "copied") {
+    return "Copied ✓";
+  }
+  return copied === "failed" ? "Could not copy" : label;
+};
+
+/** a scene is shared through Drive: it must be synced there (signed in, not local only) */
+const isShareable = (item: SceneListItem) => {
   const { user, drive } = connection.getState();
-  if (!user || !drive) {
-    return `Nothing to share yet: this ${what} is only in this browser. Sign in with Google to save it to your Drive, then share it.`;
-  }
-  if (item?.name === null || item?.localOnly || !item) {
-    return `Nothing to share: this ${what} is local only (only in this browser). Turn sync on for it to share it.`;
-  }
-  return null;
+  return !!user && drive && item.name !== null && !item.localOnly;
 };
 
 const LINK_ICON = (
@@ -636,44 +650,15 @@ const LINK_ICON = (
 );
 
 // the share dialog: one at a time, for a scene by name
-let sharing: string | null = null;
-const sharingListeners = new Set<() => void>();
-export const openShareDialog = (name: string) => {
-  sharing = name;
-  sharingListeners.forEach((listener) => listener());
-};
-const closeShareDialog = () => openShareDialog(null as unknown as string);
+const sharing = createStore<string | null>(null);
+export const openShareDialog = (name: string) => sharing.set(name);
+const closeShareDialog = () => sharing.set(null);
 
 if (import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE) {
   // end-to-end tests (dev, and builds for the fake Google): the share dialog without the menus
   (window as any).__openShareDialog = openShareDialog;
 }
-const useSharing = () =>
-  useSyncExternalStore(
-    (listener) => {
-      sharingListeners.add(listener);
-      return () => {
-        sharingListeners.delete(listener);
-      };
-    },
-    () => sharing,
-  );
-
 const ROLE_LABEL: Record<string, string> = { reader: "Can view", commenter: "Can comment", writer: "Can edit", owner: "Owner" };
-
-const LINK_LABEL: Record<LinkAccess, string> = {
-  restricted: "Only people added here",
-  reader: "Anyone with the link can view",
-  commenter: "Anyone with the link can comment",
-  writer: "Anyone with the link can edit",
-};
-
-const LINK_HINT: Record<LinkAccess, string> = {
-  restricted: "The link only works for the people above, signed in with Google.",
-  reader: "Anyone who has the link can view and present it, no account needed.",
-  commenter: "Anyone who has the link can view it; with a Google account they can also comment.",
-  writer: "Anyone who has the link can view it; with a Google account they can also change it.",
-};
 
 const shortLinkState = (holder: string | null, fileId: string) => {
   if (holder === null) {
@@ -720,6 +705,8 @@ const ShortLinkDialog = ({
   const [check, setCheck] = useState<{ name: string; state: "free" | "taken" | "own" | "checking" | "unknown" } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useDialogFocus(dialog, onClose);
   // a hyphen at the end is where the next word starts while typing: left out
   let end = value.length;
   while (end > 0 && value[end - 1] === "-") {
@@ -734,25 +721,18 @@ const ShortLinkDialog = ({
       return;
     }
     setCheck({ name: wanted, state: "checking" });
+    // only the answer for the name typed last counts (an older one may arrive after it)
+    let current = true;
     const timer = window.setTimeout(() => {
       pubNameHolder(wanted)
-        .then((holder) => setCheck({ name: wanted, state: shortLinkState(holder, fileId) }))
-        .catch(() => setCheck({ name: wanted, state: "unknown" }));
+        .then((holder) => current && setCheck({ name: wanted, state: shortLinkState(holder, fileId) }))
+        .catch(() => current && setCheck({ name: wanted, state: "unknown" }));
     }, 300);
-    return () => window.clearTimeout(timer);
-  }, [wanted, problem, fileId]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopImmediatePropagation();
-        onClose();
-      }
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
     };
-    // capture: before the share dialog's own Escape
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [wanted, problem, fileId]);
 
   const state = check?.name === wanted ? check.state : null;
   const canSave = !problem && !busy && (state === "free" || state === "unknown");
@@ -779,8 +759,8 @@ const ShortLinkDialog = ({
   const status = shortLinkStatus(problem, wanted, state);
 
   return (
-    <div className="kq-overlay kq-overlay--top" onClick={(event) => event.target === event.currentTarget && onClose()}>{/* NOSONAR S6848: existing dialog layout and pointer event handling must stay unchanged; S1082: existing dialog layout and pointer event handling must stay unchanged */}
-      <div className="kq-dialog kq-dialog--narrow kq-share kq-pub" role="dialog" aria-modal="true" aria-labelledby="kq-pub-title">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
+    <div className="kq-overlay kq-overlay--top" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
+      <dialog open className="kq-dialog kq-dialog--narrow kq-share kq-pub" aria-modal="true" aria-labelledby="kq-pub-title" ref={dialog}>
         <div className="kq-dialog__head">
           <h2 id="kq-pub-title">{current ? "Change the short link" : "Make a short link"}</h2>
           <button type="button" className="kq-close" aria-label="Close" onClick={onClose}>
@@ -798,7 +778,7 @@ const ShortLinkDialog = ({
           <label className={clsx("kq-pub__field", status.tone === "bad" && "kq-pub__field--bad", status.tone === "ok" && "kq-pub__field--ok")}>
             <span className="kq-pub__prefix">{pubLink("").replace(/^https?:\/\//, "")}</span>
             <input
-              autoFocus
+              data-autofocus
               value={value}
               maxLength={PUB_MAX}
               spellCheck={false}
@@ -806,27 +786,16 @@ const ShortLinkDialog = ({
               autoComplete="off"
               aria-label="Short name"
               aria-describedby="kq-pub-status"
-              onChange={(event) =>
-                // typed as it will be: lowercase, spaces and other characters become hyphens
-                setValue(
-                  event.target.value
-                    .normalize("NFKD")
-                    .replace(/[\u0300-\u036f]/g, "")
-                    .toLowerCase()
-                    .replace(/[^a-z0-9-]+/g, "-")
-                    .replace(/-{2,}/g, "-")
-                    .replace(/^-+/, "")
-                    .slice(0, PUB_MAX),
-                )
-              }
+              // typed as it will be: lowercase, spaces and other characters become hyphens
+              onChange={(event) => setValue(slugify(event.target.value, PUB_MAX, { keepTrailingHyphen: true }))}
               onFocus={(event) => event.target.select()}
             />
           </label>
-          <div id="kq-pub-status" className={`kq-pub__status kq-pub__status--${status.tone}`} role="status">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
+          <output id="kq-pub-status" className={`kq-pub__status kq-pub__status--${status.tone}`}>
             {status.text}
-          </div>
+          </output>
           <p className="kq-muted kq-pub__rules">
-            Lowercase letters, digits and hyphens, {3} to {PUB_MAX} characters. Short links are unique on Kurviq: first
+            Lowercase letters, digits and hyphens, {PUB_MIN} to {PUB_MAX} characters. Short links are unique on Kurviq: first
             come, first served.
           </p>
           {restricted && (
@@ -845,7 +814,7 @@ const ShortLinkDialog = ({
             </button>
           </div>
         </form>
-      </div>
+      </dialog>
     </div>
   );
 };
@@ -990,23 +959,174 @@ const accessNote = (access: RowAccess, folder: FolderSharing | null) => {
   }
 };
 
+/** "Access until…" in a viewer's or commenter's row: the day their access ends (Drive's expirationTime) */
+const AccessEnd = ({ person, busy, onChange }: { person: Permission; busy: boolean; onChange: (date: string | null) => void }) => {
+  const [editing, setEditing] = useState(false);
+  const [date, setDate] = useState(() => (person.expirationTime ? dateFieldValue(new Date(person.expirationTime)) : ""));
+  const range = endDateRange();
+  if (editing) {
+    return (
+      <form
+        className="kq-share__until"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setEditing(false);
+          onChange(date);
+        }}
+      >
+        <label className="kq-share__until-field">
+          <span>Access until</span>
+          <input type="date" value={date} min={range.min} max={range.max} required onChange={(event) => setDate(event.target.value)} />
+        </label>
+        <button type="submit" className="scenes-btn scenes-btn--primary" disabled={busy || !date}>
+          Save
+        </button>
+        <button type="button" className="scenes-btn" onClick={() => setEditing(false)}>
+          Cancel
+        </button>
+      </form>
+    );
+  }
+  if (person.expirationTime) {
+    return (
+      <span className="kq-share__until">
+        <span className="kq-share__until-text">{untilText(person.expirationTime)}</span>
+        <button type="button" className="scenes-link" disabled={busy} onClick={() => setEditing(true)}>
+          Change
+        </button>
+        <button type="button" className="scenes-link" disabled={busy} onClick={() => onChange(null)}>
+          No end date
+        </button>
+      </span>
+    );
+  }
+  return (
+    <button type="button" className="scenes-link kq-share__until" disabled={busy} onClick={() => setEditing(true)}>
+      Access until…
+    </button>
+  );
+};
+
+/** one person (or group) with access, in the share dialog */
+const PersonRow = ({
+  person,
+  me,
+  folder,
+  busy,
+  run,
+  fileId,
+}: {
+  person: Permission;
+  me: string | undefined;
+  folder: FolderSharing | null;
+  busy: boolean;
+  run: (what: () => Promise<unknown>) => void;
+  fileId: string;
+}) => {
+  const isMe = person.emailAddress?.toLowerCase() === me;
+  const from = rowAccess(person, folder?.kind === "mine" ? folder.permissions : []);
+  const note = accessNote(from, folder);
+  const fixed = person.role === "owner" || isMe || from.kind === "folder";
+  const label = person.displayName || person.emailAddress || person.domain;
+  return (
+    <li>
+      <span className="kq-share__avatar" aria-hidden="true">
+        {(label || "?").charAt(0).toUpperCase()}
+      </span>
+      <span className="kq-share__who">
+        <span className="kq-share__name">
+          {label}
+          {isMe && " (you)"}
+        </span>
+        {person.displayName && person.emailAddress && <span className="kq-muted">{person.emailAddress}</span>}
+        {note && !isMe && person.role !== "owner" && <span className="kq-share__from">{note}</span>}
+        {!fixed && canHaveEndDate(person) ? (
+          <AccessEnd key={person.expirationTime ?? "none"} person={person} busy={busy} onChange={(date) => run(() => setAccessEnd(fileId, person, date))} />
+        ) : (
+          person.expirationTime && <span className="kq-share__until-text">{untilText(person.expirationTime)}</span>
+        )}
+      </span>
+      {fixed ? (
+        <span className="kq-muted kq-share__role">{ROLE_LABEL[person.role] ?? person.role}</span>
+      ) : (
+        <select
+          value={person.role === "writer" || person.role === "commenter" ? person.role : "reader"}
+          disabled={busy}
+          aria-label={`Access of ${label}`}
+          onChange={(event) =>
+            event.target.value === "remove"
+              ? run(() => removeAccess(fileId, person.id))
+              : run(() => changeRole(fileId, person.id, event.target.value as SharingRole))
+          }
+        >
+          <option value="writer">Can edit</option>
+          <option value="commenter">Can comment</option>
+          <option value="reader">Can view</option>
+          {from.kind === "direct" && <option value="remove">Remove access</option>}
+        </select>
+      )}
+    </li>
+  );
+};
+
+/** General access: only the people added, anyone with the link, or (Google Workspace) anyone at the organization with it */
+const GeneralAccessField = ({
+  permissions,
+  busy,
+  run,
+  fileId,
+}: {
+  permissions: Permission[];
+  busy: boolean;
+  run: (what: () => Promise<unknown>) => void;
+  fileId: string;
+}) => {
+  const domain = userOrganization();
+  const grants = linkAccessOf(permissions);
+  const value = generalAccessOf(grants, domain);
+  return (
+    <>
+      <label className="kq-field">
+        <span>General access</span>
+        <select value={value} disabled={busy} onChange={(event) => run(() => setLinkAccess(fileId, event.target.value as GeneralAccess))}>
+          {generalAccessOptions(domain).map((option) => (
+            <option key={option} value={option}>
+              {generalAccessLabel(option, domain)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {otherDomainGrants(grants, value, domain).map((grant) => (
+        <p key={grant.id} className="kq-muted kq-share__also">
+          Also: {domainLabel(grant.domain, grant.role)}.{" "}
+          <button type="button" className="scenes-link scenes-link--danger" disabled={busy} onClick={() => run(() => removeAccess(fileId, grant.id))}>
+            Remove
+          </button>
+        </p>
+      ))}
+      <p className="kq-muted">{generalAccessHint(value, domain)}</p>
+    </>
+  );
+};
+
 const ShareDialog = ({ name }: { name: string }) => {
   const [fileId, setFileId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<Permission[] | null>(null);
   const [folder, setFolder] = useState<FolderSharing | null>(null);
+  /** who decides on the sharing when this user may not (null: they may) */
+  const [sharer, setSharer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useDialogFocus(dialog, closeShareDialog);
   const me = connection.getState().user?.email?.toLowerCase();
   const presentation = isDeck(useSyncExternalStore(deck.subscribe, deck.getState));
   // a scene of a folder shared with this person: who has access is the owner's business (Drive may not show it to them)
   const inFolderSpace = !!sharedFolderId;
+  const listed = !inFolderSpace && !sharer;
 
-  const reload = async (id: string) => {
-    if (inFolderSpace) {
-      setPermissions([]);
-      return;
-    }
-    setPermissions(await listPermissions(id));
+  const reload = async (id: string, mayShare = listed) => {
+    setPermissions(mayShare ? await listPermissions(id) : []);
   };
   const reloadFolder = (id: string) => {
     folderSharingOf(id).then(setFolder, (err) => console.error("[drive] the scene's folder", err));
@@ -1018,7 +1138,11 @@ const ShareDialog = ({ name }: { name: string }) => {
       .then(async (id) => {
         setFileId(id);
         reloadFolder(id);
-        await reload(id);
+        // someone else's scene this user may not share: Drive's people list is not theirs to see
+        const file = await driveScenes.fileOf(name).catch(() => null);
+        const owner = file && !file.canShare ? file.owner : null;
+        setSharer(owner);
+        await reload(id, !inFolderSpace && !owner);
       })
       .catch((err) => setError(err.message));
   }, [name]);
@@ -1034,29 +1158,19 @@ const ShareDialog = ({ name }: { name: string }) => {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [fileId]);
+  }, [fileId, listed]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeShareDialog();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const run = async (what: () => Promise<unknown>) => {
+  const run = (what: () => Promise<unknown>) => {
     if (!fileId) {
       return;
     }
     setBusy(true);
     setError(null);
-    try {
-      await what();
-      await reload(fileId);
-      scenesController.syncNow({ refresh: true }).catch((error) => console.error("[drive]", error));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
+    what()
+      .then(() => reload(fileId))
+      .then(() => scenesController.syncNow({ refresh: true }).catch((err) => console.error("[drive]", err)))
+      .catch((err: any) => setError(err.message))
+      .finally(() => setBusy(false));
   };
 
   /**
@@ -1072,16 +1186,16 @@ const ShareDialog = ({ name }: { name: string }) => {
     }
   };
 
-  const people = (permissions ?? []).filter((permission) => permission.type !== "anyone");
-  const access = permissions ? linkAccessOf(permissions) : "restricted";
-  const folderPermissions = folder?.kind === "mine" ? folder.permissions : [];
+  // links (anyone, a domain) are General access, not people
+  const people = (permissions ?? []).filter((permission) => permission.type !== "anyone" && permission.type !== "domain");
+  const forAnyone = permissions ? linkAccessOf(permissions).anyone !== "restricted" : false;
   // the copy buttons give the short link once there is one
   usePubName(fileId);
   const link = fileId ? sceneLink(fileId, name) : null;
 
   return (
-    <div className="kq-overlay" onClick={(event) => event.target === event.currentTarget && closeShareDialog()}>{/* NOSONAR S6848: existing dialog layout and pointer event handling must stay unchanged; S1082: existing dialog layout and pointer event handling must stay unchanged */}
-      <div className="kq-dialog kq-dialog--narrow kq-share" role="dialog" aria-modal="true" aria-labelledby="kq-share-title">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
+    <div className="kq-overlay" onPointerDown={(event) => event.target === event.currentTarget && closeShareDialog()}>
+      <dialog open className="kq-dialog kq-dialog--narrow kq-share" aria-modal="true" aria-labelledby="kq-share-title" ref={dialog}>
         <div className="kq-dialog__head">
           <h2 id="kq-share-title">Share "{name}"</h2>
           <button type="button" className="kq-close" aria-label="Close" onClick={closeShareDialog}>
@@ -1090,78 +1204,28 @@ const ShareDialog = ({ name }: { name: string }) => {
         </div>
         {!permissions && !error && <p className="kq-muted">Saving it to Google Drive and asking who has access…</p>}
         {permissions && folder?.kind === "theirs" && <FolderNote folder={folder} />}
-        {permissions && !inFolderSpace && (
+        {permissions && sharer && !inFolderSpace && (
+          <p className="kq-share__folder">
+            <strong>{sharer}</strong> decides who has access to this scene. Its link opens it for everyone who has access.
+          </p>
+        )}
+        {permissions && fileId && listed && (
           <>
             <div className="kq-share__head">
               <span>People with access</span>
-              <button
-                type="button"
-                className="scenes-btn scenes-btn--primary"
-                title={addPeopleTip(me)}
-                onClick={() => shareInDrive(fileId!, false)}
-              >
+              <button type="button" className="scenes-btn scenes-btn--primary" title={addPeopleTip(me)} onClick={() => shareInDrive(fileId, false)}>
                 Add people
               </button>
             </div>
             <ul className="kq-share__people">
-              {people.map((person) => {
-                const isMe = person.emailAddress?.toLowerCase() === me;
-                const from = rowAccess(person, folderPermissions);
-                const note = accessNote(from, folder);
-                const fixed = person.role === "owner" || isMe || from.kind === "folder";
-                return (
-                  <li key={person.id}>
-                    <span className="kq-share__avatar" aria-hidden="true">
-                      {(person.displayName || person.emailAddress || person.domain || "?").charAt(0).toUpperCase()}
-                    </span>
-                    <span className="kq-share__who">
-                      <span className="kq-share__name">
-                        {person.displayName || person.emailAddress || person.domain}
-                        {isMe && " (you)"}
-                      </span>
-                      {person.displayName && person.emailAddress && <span className="kq-muted">{person.emailAddress}</span>}
-                      {note && !isMe && person.role !== "owner" && <span className="kq-share__from">{note}</span>}
-                    </span>
-                    {fixed ? (
-                      <span className="kq-muted kq-share__role">{ROLE_LABEL[person.role] ?? person.role}</span>
-                    ) : (
-                      <select
-                        value={person.role === "writer" || person.role === "commenter" ? person.role : "reader"}
-                        disabled={busy}
-                        onChange={(event) =>
-                          event.target.value === "remove"
-                            ? run(() => removeAccess(fileId!, person.id))
-                            : run(() => changeRole(fileId!, person.id, event.target.value as "reader" | "commenter" | "writer"))
-                        }
-                      >
-                        <option value="writer">Can edit</option>
-                        <option value="commenter">Can comment</option>
-                        <option value="reader">Can view</option>
-                        {from.kind === "direct" && <option value="remove">Remove access</option>}
-                      </select>
-                    )}
-                  </li>
-                );
-              })}
+              {people.map((person) => (
+                <PersonRow key={person.id} person={person} me={me} folder={folder} busy={busy} run={run} fileId={fileId} />
+              ))}
             </ul>
             {folder?.kind === "mine" && <FolderNote folder={folder} onShareFolder={() => shareInDrive(folder.folderId, true)} />}
-            <label className="kq-field">
-              <span>General access</span>
-              <select
-                value={access}
-                disabled={busy}
-                onChange={(event) => run(() => setLinkAccess(fileId!, event.target.value as LinkAccess))}
-              >
-                {(Object.keys(LINK_LABEL) as LinkAccess[]).map((value) => (
-                  <option key={value} value={value}>
-                    {LINK_LABEL[value]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="kq-muted">{LINK_HINT[access]}</p>
-            {fileId && access !== "restricted" && <Byline fileId={fileId} />}
-            {fileId && <ShortLink fileId={fileId} sceneName={name} restricted={access === "restricted"} />}
+            <GeneralAccessField permissions={permissions} busy={busy} run={run} fileId={fileId} />
+            {forAnyone && <Byline fileId={fileId} />}
+            <ShortLink fileId={fileId} sceneName={name} restricted={!forAnyone} />
           </>
         )}
         {permissions && (
@@ -1178,16 +1242,16 @@ const ShareDialog = ({ name }: { name: string }) => {
           </div>
         )}
         {error && <p className="scenes-error">{error}</p>}
-      </div>
+      </dialog>
     </div>
   );
 };
 
-/** in the current scene's actions: Share… and the link */
-export const SceneSharing = ({ item, iconOnly }: { item: SceneListItem; disabled?: boolean; iconOnly?: boolean }) => {
+/** in the current scene's actions: copies the scene's link */
+export const SceneSharing = ({ item, iconOnly }: { item: SceneListItem; iconOnly?: boolean }) => {
   useConnection();
   usePubName(item.name === null ? null : item.fileId);
-  if (item.name === null || notShareable(item, "scene")) {
+  if (item.name === null || !isShareable(item)) {
     return null;
   }
   const name = item.name;
@@ -1208,7 +1272,8 @@ export const SceneSharing = ({ item, iconOnly }: { item: SceneListItem; disabled
  * is in), then the tab goes there (the new scene goes if still empty)
  */
 const findShared = async (name: string) => {
-  const ids = await pickFiles({ shared: true, folders: true, query: name });
+  // one file: the scene (or its folder) to open
+  const ids = await pickFiles({ shared: true, folders: true, query: name, single: true });
   if (ids.length !== 1) {
     return;
   }
@@ -1317,12 +1382,12 @@ export const FolderUnseen = ({ folder, onPicked }: { folder?: SharedFolder; onPi
 export const UpdateBanner = () => {
   const outdated = useSyncExternalStore(appVersion.subscribe, appVersion.isOutdated);
   return outdated ? (
-    <div className="kq-update" role="status">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
+    <output className="kq-update">
       <span>{isAutoReloading() ? "Kurviq was updated: reloading in a moment (your work is saved)…" : "Kurviq was updated. Reload to continue with your agent (your work is saved)."}</span>
       <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => reloadApp()}>
         Reload
       </button>
-    </div>
+    </output>
   ) : null;
 };
 
@@ -1338,9 +1403,7 @@ export const ReadOnlyGuard = () => {
     }
   }, [readOnly, checking, current]);
   return readOnly ? (
-    <div className="kq-readonly" role="status">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
-      Read only: {readOnly}
-    </div>
+    <output className="kq-readonly">Read only: {readOnly}</output>
   ) : null;
 };
 
@@ -1400,25 +1463,21 @@ const SignInChoice = ({ candidates, onDone }: { candidates: { name: string; tick
 
 /** after signing in (rendered next to the editor, see index.tsx), and the share dialog */
 export const DriveDialogs = () => {
-  const current = useSetup();
-  const shareName = useSharing();
-  const close = () => setSetup(null);
-
-  useEffect(() => {
-    if (!current) {
-      return;
-    }
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && close();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [current]);
-
+  const current = setup.use();
+  const shareName = sharing.use();
   if (shareName) {
     return <ShareDialog key={shareName} name={shareName} />;
   }
-  if (!current) {
-    return null;
-  }
+  return current ? <SetupDialog current={current} /> : null;
+};
+
+const closeSetup = () => setSetup(null);
+
+/** after signing in: sync is on (which scenes go to Drive), or Drive access is missing */
+const SetupDialog = ({ current }: { current: Exclude<Setup, null> }) => {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useDialogFocus(dialog, closeSetup);
+  const close = closeSetup;
   const body =
     current.step === "nodrive" ? (
       <>
@@ -1444,7 +1503,7 @@ export const DriveDialogs = () => {
         <h2 id="kq-setup-title">Synced with Google Drive ✓</h2>
         <p>
           Your scenes are kept in the folder{" "}
-          <a href={folderUrl()} target="_blank" rel="noopener noreferrer">
+          <a href={ownFolderLink()} target="_blank" rel="noopener noreferrer">
             {FOLDER_NAME}
           </a>{" "}
           of your Google Drive now.
@@ -1466,9 +1525,9 @@ export const DriveDialogs = () => {
     );
   return (
     <div className="kq-overlay">
-      <div className="kq-dialog kq-dialog--narrow" role="dialog" aria-modal="true" aria-labelledby="kq-setup-title">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
+      <dialog open className="kq-dialog kq-dialog--narrow" aria-modal="true" aria-labelledby="kq-setup-title" ref={dialog}>
         {body}
-      </div>
+      </dialog>
     </div>
   );
 };
@@ -1489,38 +1548,23 @@ ${url}
 On first use my browser opens a Kurviq page where I allow you. Then read ${window.location.origin}/llms.txt to learn how to work with my drawings. The tools work while my Kurviq tab is open.`;
 
 const CopyButton = ({ text, label }: { text: string; label: string }) => {
-  const [copied, setCopied] = useState(false);
+  const [copied, copy] = useCopy();
   return (
-    <button
-      type="button"
-      className="scenes-btn scenes-btn--primary"
-      onClick={() =>
-        navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        })
-      }
-    >
-      {copied ? "Copied ✓" : label}
+    <button type="button" className="scenes-btn scenes-btn--primary" onClick={() => copy(text)}>
+      {copyLabel(copied, label)}
     </button>
   );
 };
 
 const McpDialog = ({ onClose }: { onClose: () => void }) => {
-  // the approval page reads this browser's key: made here if there is none yet
-  usePairingKey() ?? pairing.ensureKey();
   const url = pairing.mcpUrl();
   const prompt = agentPrompt(url);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useDialogFocus(dialog, onClose);
 
   return (
     <div className="kq-overlay" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="kq-dialog" role="dialog" aria-modal="true" aria-labelledby="kq-mcp-title">{/* NOSONAR S6819: existing layout and Excalidraw styles must stay unchanged */}
+      <dialog open className="kq-dialog" aria-modal="true" aria-labelledby="kq-mcp-title" ref={dialog}>
         <div className="kq-dialog__head">
           <h2 id="kq-mcp-title">Let an AI agent draw with you</h2>
           <button type="button" className="kq-close" aria-label="Close" onClick={onClose}>
@@ -1569,7 +1613,7 @@ const McpDialog = ({ onClose }: { onClose: () => void }) => {
             llms.txt
           </a>
         </p>
-      </div>
+      </dialog>
     </div>
   );
 };
@@ -1578,10 +1622,19 @@ const McpDialog = ({ onClose }: { onClose: () => void }) => {
 export const McpButton = () => {
   const [open, setOpen] = useState(false);
   const key = usePairingKey();
+  const close = useCallback(() => setOpen(false), []);
   return (
     <>
       <QuickTip tip={key ? "Connect an AI agent (MCP). Agent access is on in this browser." : "Connect an AI agent (MCP)"} label={false}>
-        <button type="button" className="scenes-pill scenes-slides-btn" onClick={() => setOpen(true)}>
+        <button
+          type="button"
+          className="scenes-pill scenes-slides-btn"
+          onClick={() => {
+            // the approval page reads this browser's key: made when the dialog opens if there is none yet
+            pairing.ensureKey();
+            setOpen(true);
+          }}
+        >
           <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden>
             <path d="M7 3v4M13 3v4M5 7h10v3a5 5 0 0 1-10 0V7zM10 15v3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -1589,7 +1642,7 @@ export const McpButton = () => {
           {key && <span className="kq-dot" />}
         </button>
       </QuickTip>
-      {open && <McpDialog onClose={() => setOpen(false)} />}
+      {open && <McpDialog onClose={close} />}
     </>
   );
 };
@@ -1598,7 +1651,6 @@ export const McpButton = () => {
 // footer
 // -----------------------------------------------------------------------------
 
-/** bottom right of the canvas (injected by ../../vite.config.mts) */
 /** main menu: Excalidraw's and Kurviq's code, and the posts about Kurviq (instead of Excalidraw's X / Discord) */
 export const KurviqSocials = () => (
   <>
@@ -1620,12 +1672,8 @@ const FeedbackDialog = ({ onClose }: { onClose: () => void }) => {
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [state, setState] = useState<{ sending?: boolean; error?: string; sent?: boolean }>({});
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useDialogFocus(dialog, onClose);
 
   const send = async () => {
     const scene = scenesController.getState().current;
@@ -1650,7 +1698,7 @@ const FeedbackDialog = ({ onClose }: { onClose: () => void }) => {
 
   return (
     <div className="kq-overlay" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="kq-dialog kq-feedback" role="dialog" aria-modal="true" aria-labelledby="kq-feedback-title" onKeyDown={(event) => event.stopPropagation()}>{/* NOSONAR S6847: existing dialog layout and pointer event handling must stay unchanged; S6819: existing dialog layout and pointer event handling must stay unchanged */}
+      <dialog open className="kq-dialog kq-feedback" aria-modal="true" aria-labelledby="kq-feedback-title" ref={dialog}>
         <div className="kq-dialog__head">
           <h2 id="kq-feedback-title">Feedback</h2>
           <button type="button" className="kq-close" aria-label="Close" onClick={onClose}>
@@ -1711,7 +1759,7 @@ const FeedbackDialog = ({ onClose }: { onClose: () => void }) => {
             </div>
           </>
         )}
-      </div>
+      </dialog>
     </div>
   );
 };
@@ -1728,6 +1776,7 @@ const FeedbackLink = () => {
   );
 };
 
+/** bottom right of the canvas (injected by ../../vite.config.mts) */
 export const KurviqLegalLinks = () => (
   <span className="kq-legal">
     <FeedbackLink />

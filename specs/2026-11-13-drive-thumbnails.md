@@ -1,6 +1,6 @@
 # Thumbnails in Google Drive
 
-Status: proposal (Must), 2026-11-13
+Status: implemented (Must), 2026-11-13; in real Google not yet checked (see Open)
 
 ## Why
 
@@ -28,6 +28,30 @@ in Kurviq's own picker dialogs.
   in the user's tab too.
 - Not for local-only scenes (they aren't in Drive).
 
+## Implementation
+
+- `scenes-plugin/src/online/contentHints.ts`: what the preview shows (a
+  presentation's first slide not skipped, else the whole scene; none for an
+  empty scene), its size (400 px wide, at most 800 px tall), URL-safe base64,
+  and the per-tab cache (`ContentHintsCache`): one render per scene and content
+  (MD5), a save waits for it at most 1.5 s (a later one follows as a
+  metadata-only PATCH if Drive still has that content), a scene whose render
+  took over 400 ms is drawn again at most every 2 minutes (saves in between
+  carry its last preview). A failed render saves without a preview.
+- `scenes-plugin/src/online/thumbnail.ts`: the drawing (Excalidraw's
+  `exportToCanvas`, the scene's fonts and background); PNG, above 2 MB JPEG,
+  then smaller until it fits.
+- `driveScenes.save` (`online/drive.ts`) sends `contentHints` in the upload:
+  multipart for new files and for updates (media only when there are no
+  hints). Every save goes through it: the app, the pen holder, agents'
+  edits (`cowork.ts`) and the local install's tab server. Local-only scenes
+  never reach it.
+- Fake Google (`online/worker/fakeGoogleHints.ts`): stores contentHints with
+  Drive's limits, drops the preview when content changes without one,
+  `hasThumbnail` / `thumbnailLink`, `GET /fake-google/admin/file` shows them.
+- Tests: `scenes-plugin/test/driveContentHints.test.ts`, e2e
+  `scenes-plugin/test/e2e/drive-previews.mjs`.
+
 ## Checks
 
 - Unit: the thumbnail field is added to the upload's metadata, URL-safe base64,
@@ -39,6 +63,9 @@ in Kurviq's own picker dialogs.
 - Does Drive show `contentHints.thumbnail` for a custom MIME type
   (`application/vnd.excalidraw+json`) in every view (grid, picker, search)?
   Test with one file first.
+- Whether Drive honours `contentHints.thumbnail` on a multipart PATCH of an
+  existing file the same way as on create (documented: yes) is checked only
+  against the fake so far.
 
 ## Acceptance criteria
 

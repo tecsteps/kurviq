@@ -5,8 +5,9 @@
 // A new key ("Sign out all agents") cuts every agent off. The old way, the key
 // in the agent's URL (https://kurviq.com/mcp/<key>), is refused.
 
+import { createStore } from "../externalStore";
+
 const KEY = "kurviq-agent-key";
-const listeners = new Set<() => void>();
 
 const makeKey = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
@@ -21,10 +22,9 @@ const read = () => {
   }
 };
 
-let key: string | null = read();
+const keyStore = createStore<string | null>(read());
 
 const write = (value: string | null) => {
-  key = value;
   try {
     if (value) {
       localStorage.setItem(KEY, value);
@@ -32,31 +32,25 @@ const write = (value: string | null) => {
       localStorage.removeItem(KEY);
     }
   } catch {}
-  listeners.forEach((listener) => listener());
+  keyStore.set(value);
 };
 
 // another tab made or replaced the key
 window.addEventListener("storage", (event) => {
   if (event.key === KEY) {
-    key = read();
-    listeners.forEach((listener) => listener());
+    keyStore.set(read());
   }
 });
 
 export const pairing = {
-  subscribe: (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  },
-  getKey: () => key,
+  subscribe: keyStore.subscribe,
+  getKey: keyStore.get,
   /** the key, made on first use */
   ensureKey: () => {
-    if (!key) {
+    if (!keyStore.get()) {
       write(makeKey());
     }
-    return key!;
+    return keyStore.get() as string;
   },
   /** a new link: agents with the old one lose access */
   reset: () => write(makeKey()),
@@ -64,6 +58,8 @@ export const pairing = {
   remove: () => write(null),
   /** what agents add: they sign in there */
   mcpUrl: () => `${window.location.origin}/mcp`,
-  liveUrl: (tab: string) =>
-    key ? `${window.location.origin.replace(/^http/, "ws")}/live/${key}?tab=${encodeURIComponent(tab)}` : null,
+  liveUrl: (tab: string) => {
+    const key = keyStore.get();
+    return key ? `${window.location.origin.replace(/^http/, "ws")}/live/${key}?tab=${encodeURIComponent(tab)}` : null;
+  },
 };

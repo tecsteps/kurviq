@@ -21,6 +21,7 @@
 //   /s/<fileId>/…    a shared scene: the app, titled for link previews (./shared.ts)
 //   /pub/<name>      the same through a short link; /api/pub/… claims and looks them up (./pubLinks.ts)
 //   /drive/open      Drive's "Open with Kurviq": to /s/<fileId>
+//   /drive/new       Drive's "New → Kurviq": the state on to the app, nothing kept (./driveNew.ts)
 //   everything else  the app (static assets, built by `npm run build:online`);
 //                    /assets/* and /fonts/* don't reach the Worker at all
 //                    (wrangler.jsonc run_worker_first)
@@ -51,6 +52,8 @@ import type { StatsEnv } from "./stats";
 import { handleContact } from "./contact";
 import type { ContactEnv } from "./contact";
 import { runRetention } from "./retention";
+import { DRIVE_NEW_PATH, handleDriveNew } from "./driveNew";
+import type { DriveNewEnv } from "./driveNew";
 
 import type { AuthEnv } from "./auth";
 import type { SharedEnv } from "./shared";
@@ -74,7 +77,7 @@ declare const __KURVIQ_DEV__: boolean;
  */
 export const FakeGoogle = __KURVIQ_DEV__ ? FakeGoogleStore : class extends DurableObject {};
 
-type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & PubEnv & {
+type Env = AuthEnv & SharedEnv & FeedbackEnv & SceneRoutesEnv & StatsEnv & ContactEnv & PubEnv & DriveNewEnv & {
   ASSETS: Fetcher;
   PAIRING: DurableObjectNamespace;
   /** canonical host (www and workers.dev redirect there), e.g. kurviq.com */
@@ -420,6 +423,10 @@ const handlePageRoutes = async (request: Request, env: Env, ctx: ExecutionContex
   // Drive's "Open with Kurviq" (Drive UI integration): state={"ids":[…],"action":"open"}
   if (url.pathname === "/drive/open") {
     return driveOpenRedirect(url);
+  }
+  // Drive's "New → Kurviq" (Drive UI integration, DRIVE_NEW = "on"): state={"action":"create","folderId":…,"userId":…}
+  if (url.pathname === DRIVE_NEW_PATH) {
+    return handleDriveNew(url, env);
   }
   const page = await handleSharedPage(request, env, env.ASSETS, () => publicReadStats(request, env, ctx));
   if (page) {

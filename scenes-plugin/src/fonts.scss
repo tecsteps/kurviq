@@ -1,0 +1,45 @@
+// "Add font…" in Excalidraw's font picker, and its dialog (fontsUI.tsx; the dialog's frame is .kq-dialog in online/online.scss)
+.excalidraw .kq-add-font {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-top: 1px solid var(--default-border-color);
+  background: none;
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--button-hover-bg, var(--color-surface-low));
+  }
+}
+
+.excalidraw .kq-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--default-border-color);
+}
+
+.excalidraw .kq-tab {
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-gray-50);
+  font: inherit;
+  cursor: pointer;
+
+  &.kq-tab--active {
+    border-bottom-color: var(--color-primary);
+    color: var(--text-primary-color);
+  }
+}
+
+.excalidraw .kq-added {
+  margin: 0;
+  color: #2f9e44;
+}

@@ -1,6 +1,13 @@
 # Access with an end date
 
-Status: proposal (Should), 2026-11-13
+Status: implemented 2026-11-13 (with the fake Google; the open question below is still open). Rows of
+viewers and commenters (people and groups) in the share panel: "Access until…" (a date field, today to a
+year ahead; the access ends at the end of that day in the user's time zone), "until 30 Nov · Change · No end
+date"; `drive.ts` `setAccessEnd` PATCHes `expirationTime` (or `removeExpiration=true`) with the role. Editors'
+rows show an end date Drive has, without the control. The fake Google takes `expirationTime` on user
+permissions (future, at most a year ahead; `/admin/share` also takes a past one) and an expired permission
+gives no access and is no longer listed. Tests: `scenes-plugin/test/shareAccess.test.ts`, e2e
+`scenes-plugin/test/e2e/share-panel.mjs`.
 
 ## Why
 

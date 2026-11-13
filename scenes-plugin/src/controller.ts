@@ -1251,6 +1251,9 @@ class ScenesController {
       } else {
         await this.setBaselineFromCanvas();
       }
+      // the canvas survives a reload by itself, its comments only in the stored copy (else a reload
+      // brings back the old comments and the next save writes them over the new ones)
+      await this.stashCurrent();
     } else {
       await setSnapshot(name, { json, baseline: dirty ? null : hashJson(json), dirty });
     }
@@ -1359,6 +1362,7 @@ class ScenesController {
         delete meta.legacy;
         this.persistMeta();
         await this.setBaselineFromCanvas();
+        await this.stashCurrent(); // its comments for a reload (see writeLocal)
         this.log("pull", `Updated "${name}" from Drive`);
         this.refresh();
       })
@@ -1458,6 +1462,9 @@ class ScenesController {
       } else {
         await nextFrame();
         this.recomputeDirty();
+      }
+      if (loadedMd5) {
+        await this.stashCurrent(); // its comments for a reload (see writeLocal)
       }
       const api = this.requireApi();
       const elements = api.getSceneElements();
@@ -2142,6 +2149,7 @@ class ScenesController {
       await nextFrame();
       this.recomputeDirty();
       meta.dirty = this.state.dirty;
+      await this.stashCurrent(); // its comments for a reload (see writeLocal)
     } else {
       await setSnapshot(name, { json: mergedJson, baseline: hashJson(theirs.json), dirty: true });
       meta.dirty = true;

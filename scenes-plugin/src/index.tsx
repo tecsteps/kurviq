@@ -36,9 +36,13 @@ import { loadFontLibrary, registerSceneFonts } from "./fonts";
 import { AddFontOverlay } from "./fontsUI";
 import { PublicSceneOverlay } from "./publicScene";
 import { installWheelZoom } from "./wheelZoom";
-import { CommentsButton, CommentsLayer } from "./comments/ui";
+import { CommentsButton, CommentsLayer, SceneCommentCount } from "./comments/ui";
+import { useOpenThreadCounts } from "./comments/sceneCounts";
 import { pen } from "./online/pen";
 import { PenBar } from "./online/penUI";
+import { otherFolderScenes } from "./online/driveNew";
+import type { OtherScene } from "./online/driveNewState";
+import { DriveNewHost } from "./online/driveNewUI";
 import { SLIDES_SIDEBAR_NAME, SlidesSidebar, setPresentation, usePresentation } from "./slidesUI";
 import {
   connectGoogle,
@@ -524,7 +528,7 @@ const useCloseOnOutsidePointer = (onClose: () => void) => {
  * or the shared folder it shows), then each folder shared with the user. A
  * click folds or unfolds the group (folded: how many scenes it holds).
  */
-const GroupHeading = ({ folder, open, total, onToggle }: { folder?: SharedFolder; open: boolean; total: number; onToggle: () => void }) => (
+const GroupHeading = ({ folder, title, open, total, onToggle }: { folder?: SharedFolder; title?: string; open: boolean; total: number; onToggle: () => void }) => (
   <button type="button" className="scenes-switcher__group" aria-expanded={open} onClick={onToggle}>
     <svg
       className={clsx("scenes-switcher__group-chevron", { "scenes-switcher__group-chevron--open": open })}
@@ -540,7 +544,7 @@ const GroupHeading = ({ folder, open, total, onToggle }: { folder?: SharedFolder
     >
       <path d="M8 5l5 5-5 5" />
     </svg>
-    <span className="scenes-switcher__group-name">{groupName(folder)}</span>
+    <span className="scenes-switcher__group-name">{title ?? groupName(folder)}</span>
     {folder && ownerDomain(folder.ownerEmail) && <span className="scenes-switcher__group-owner">· {ownerDomain(folder.ownerEmail)}</span>}
     {!open && <span className="scenes-switcher__group-count">{total}</span>}
   </button>
@@ -553,6 +557,9 @@ const groupName = (folder: SharedFolder | undefined) => {
   // a folder picked: its owner; only scenes of it picked: "<owner>'s folder"
   return folder.picked ? folder.owner : folder.name;
 };
+
+/** the scene list's group of the user's scenes in other Drive folders (open unless folded) */
+const OTHER_FOLDERS_GROUP = "other-folders";
 
 const loadGroups = () => {
   try {
@@ -580,6 +587,8 @@ const SceneSwitcher = ({
 }) => {
   const { current, list } = useScenes();
   const query = useSceneFilter();
+  // open comment threads per scene this browser has (./comments/sceneCounts.ts)
+  const commentCounts = useOpenThreadCounts(list.flatMap((item) => (item.name === null ? [] : [item.name])), current);
   /** null: the default (first match, or create) */
   const [picked, setActive] = useState<number | null>(null);
   const signedIn = useSyncExternalStore(connection.subscribe, connection.isActive);
@@ -589,6 +598,8 @@ const SceneSwitcher = ({
   const [allFolders, setFolders] = useState<SharedFolder[]>([]);
   const folders = allFolders.filter((folder) => folder.folderId !== sharedFolderId);
   const here = allFolders.find((folder) => folder.folderId === sharedFolderId);
+  // scenes the user made from Google Drive's "New" outside the Kurviq folder (./online/driveNew.ts): "Other folders"
+  const [otherScenes, setOtherScenes] = useState<OtherScene[]>([]);
   // in a shared folder's tab: the user's own scenes (their names), listed first like everywhere else
   const [home] = useState<HomeScene[]>(() => (sharedFolderId ? ownSceneList() : []));
   // folded / unfolded groups, remembered in this browser
@@ -600,6 +611,10 @@ const SceneSwitcher = ({
         () => setOthers([]),
       );
       sharedFolders().then(setFolders, () => setFolders([]));
+      otherFolderScenes().then(
+        (found) => setOtherScenes(found.filter((entry) => entry.fileId !== sharedFileId)),
+        () => setOtherScenes([]),
+      );
     }
   }, [signedIn]);
   // a scene of a shared folder is listed in its folder's group, not again on its own
@@ -619,6 +634,9 @@ const SceneSwitcher = ({
   const sharedOnes: Entry[] = others
     .filter((shared) => matchesFilter(shared.name, query, null))
     .map((shared) => ({ owner: shared.owner, name: shared.name, fileId: shared.fileId }));
+  const otherOnes: Entry[] = otherScenes
+    .filter((scene) => matchesFilter(scene.name, query, null))
+    .map((scene) => ({ owner: "", name: scene.name, fileId: scene.fileId }));
   const homeScenes: Entry[] = home.filter((scene) => matchesFilter(scene.name, query, null)).map((scene) => ({ owner: null, name: scene.name, home: scene }));
   // "My scenes": this tab's own list, or (in a shared folder) the user's own scenes, and scenes shared one by one
   const own: Entry[] = sharedFolderId ? [...homeScenes, ...sharedOnes] : [...tabScenes, ...sharedOnes];
@@ -628,7 +646,8 @@ const SceneSwitcher = ({
     tabList.length - tabScenes.length +
     home.length - homeScenes.length +
     others.length - others.filter((shared) => matchesFilter(shared.name, query, null)).length +
-    folderScenes.length - folderScenes.filter(({ scene }) => matchesFilter(scene.name, query, null)).length;
+    folderScenes.length - folderScenes.filter(({ scene }) => matchesFilter(scene.name, query, null)).length +
+    otherScenes.length - otherOnes.length;
   const nameOf = (entry: Entry) => (entry.item ? entry.item.name : entry.name);
   // by name (Untitled first), each scene with its space when there are several
   const byName = (a: Entry, b: Entry) => {
@@ -643,9 +662,9 @@ const SceneSwitcher = ({
   // this tab's scenes first, then one group per shared folder; folded groups list nothing (a filter searches them all)
   own.sort(byName);
   tabScenes.sort(byName);
-  const grouped = folders.length > 0 || !!sharedFolderId;
+  const grouped = folders.length > 0 || !!sharedFolderId || otherScenes.length > 0;
   const shows = (key: string) => !grouped || !!needle || isOpen(groups, key);
-  const sections: { key: string; folder?: SharedFolder; total: number; entries: Entry[] }[] = [
+  const sections: { key: string; folder?: SharedFolder; title?: string; total: number; entries: Entry[] }[] = [
     { key: ownGroup(null), total: (sharedFolderId ? home.length : list.length) + others.length, entries: own },
     // the shared folder this tab shows: its scenes, under its owner like the other folders (open unless folded)
     ...(sharedFolderId
@@ -659,6 +678,8 @@ const SceneSwitcher = ({
         .filter((scene) => matchesFilter(scene.name, query, null))
         .map((scene): Entry => ({ owner: folder.owner, name: scene.name, fileId: scene.fileId, folder })),
     })),
+    // the user's own scenes in other Drive folders: each opens in a space of its own, like a scene shared with them
+    ...(otherScenes.length > 0 ? [{ key: OTHER_FOLDERS_GROUP, title: "Other folders", total: otherScenes.length, entries: otherOnes.sort(byName) }] : []),
   ];
   const items: Entry[] = sections.flatMap((section) => (shows(section.key) ? section.entries : []));
   const toggleGroup = (key: string) => {
@@ -759,6 +780,7 @@ const SceneSwitcher = ({
           onClick={() => choose(index)}
         >
           <span className="scenes-switcher__name">{nameOf(entry) ?? UNTITLED_LABEL}</span>
+          {typeof item?.name === "string" && <SceneCommentCount count={commentCounts.get(item.name) ?? 0} />}
           {showOwner && entry.owner && !entry.folder && (
             <QuickTip
               tip={`Shared with you by ${entry.owner}: opening it switches this tab to it`}
@@ -844,7 +866,7 @@ const SceneSwitcher = ({
           return (
             <Fragment key={section.key}>
               {grouped && (
-                <GroupHeading folder={section.folder} open={open} total={section.total} onToggle={() => toggleGroup(section.key)} />
+                <GroupHeading folder={section.folder} title={section.title} open={open} total={section.total} onToggle={() => toggleGroup(section.key)} />
               )}
               {open && <FolderUnseen folder={section.folder} onPicked={() => sharedFolders().then(setFolders, () => setFolders([]))} />}
               {open && section.entries.map((entry, offset) => renderRow(entry, first + offset))}
@@ -1593,7 +1615,7 @@ const SceneFlyover = ({ onClose }: { onClose: () => void }) => {
               {DuplicateIcon}
             </button>
           </QuickTip>
-          <SceneSharing item={currentItem} disabled={isBusy} iconOnly />
+          <SceneSharing item={currentItem} iconOnly />
           <span className="scenes-actions__spacer" />
           <QuickTip tip={currentItem.inDrive ? "Delete (also in Drive: goes to its trash)" : "Delete"} label={false}>
             <button
@@ -1707,6 +1729,7 @@ export const ScenesSidebar = () => {
       <PublicSceneOverlay />
       <AddFontOverlay />
       <DriveDialogs />
+      {IS_ONLINE && <DriveNewHost />}
       <ReadOnlyGuard />
       {!IS_RENDERER && <PenBar />}
       {IS_ONLINE && <UpdateBanner />}

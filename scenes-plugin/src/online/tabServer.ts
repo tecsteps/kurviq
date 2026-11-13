@@ -60,25 +60,45 @@ const refuseWithoutPen = async (name: string) => {
 /** ?md5= (?sha=: pre-rename MCP servers; remove after 2027-02) */
 const versionParam = (url: URL) => url.searchParams.get("md5") ?? url.searchParams.get("sha");
 
+const badRequest = (message: string) => Object.assign(new Error(message), { status: 400 });
+
 const parseRequestBody = (body: string) => {
   try {
     return JSON.parse(body);
   } catch {
-    throw Object.assign(new Error("Request body must be valid JSON"), { status: 400 });
+    throw badRequest("Request body must be valid JSON");
   }
 };
 
+/** the scene name in a request's path (a malformed escape is the caller's mistake: 400) */
+const sceneNameOf = (match: RegExpExecArray) => {
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    throw badRequest("Malformed scene name in the path");
+  }
+};
+
+/** the new name of a rename request ({"to": "<name>"}), trimmed */
+const renameTarget = (body: string) => {
+  const parsed = parseRequestBody(body || "{}");
+  if (!parsed || typeof parsed !== "object") {
+    throw badRequest('Request body must be a JSON object like {"to": "<new name>"}');
+  }
+  return String(parsed.to ?? "").trim();
+};
+
 const renameScene = async (renameMatch: RegExpExecArray, body: string, source: () => string | undefined) => {
-  const from = decodeURIComponent(renameMatch[1]);
-  const { to } = parseRequestBody(body || "{}");
+  const from = sceneNameOf(renameMatch);
+  const to = renameTarget(body);
   await refuseWithoutPen(from);
-  const result = await driveScenes.rename(from, String(to ?? "").trim());
+  const result = await driveScenes.rename(from, to);
   afterAgentWrite(source());
   return json(200, withOldNames({ from, to, ...result }));
 };
 
 const routeScene = async (match: RegExpExecArray, method: string, body: string, url: URL, header: (name: string) => string | undefined, baseHeader: () => string | undefined): Promise<TabResponse> => {
-  const name = decodeURIComponent(match[1]);
+  const name = sceneNameOf(match);
   if (method === "PUT") {
     parseRequestBody(body);
   }
@@ -133,7 +153,7 @@ const route = async ({ method, path, headers = {}, body = "" }: TabRequest): Pro
   }
   const agentMatch = /^\/api\/scenes\/(.+)\/agent-version$/.exec(url.pathname);
   if (agentMatch && method === "GET") {
-    const name = decodeURIComponent(agentMatch[1]);
+    const name = sceneNameOf(agentMatch);
     const version = await driveScenes.agentVersion(name);
     return json(200, { name, version: version && withOldNames(version) });
   }

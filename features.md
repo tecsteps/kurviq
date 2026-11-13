@@ -23,18 +23,18 @@ anonymous statistics counters, and messages people send to Kurviq on purpose
 | # | Feature | Why | Spec | Status |
 |---|---|---|---|---|
 | 1 | ~~Live sync for everyone~~ | Superseded: on Drive, one editor at a time with a memory-only relay (live view for everyone else; implemented, `docs/relay/CONCEPT.md`); real-time co-editing with your own database | `2026-11-13-drive-collaboration-without-server-data.md`, `2026-11-13-own-database.md` | superseded (Drive part implemented) |
-| 2 | Thumbnails in Google Drive | Drive and the picker show scenes as an empty checkerboard | `2026-11-13-drive-thumbnails.md` | proposal |
-| 3 | Scene text searchable in Google Drive | Drive's search finds a scene by its words, not only its name | `2026-11-13-drive-search-text.md` | proposal |
+| 2 | Thumbnails in Google Drive | Drive and the picker show scenes as an empty checkerboard | `2026-11-13-drive-thumbnails.md` | implemented (real Drive not yet checked) |
+| 3 | Scene text searchable in Google Drive | Drive's search finds a scene by its words, not only its name | `2026-11-13-drive-search-text.md` | implemented (real Drive search not yet checked) |
 | 4 | Email notifications for comments | Without them comments go unnoticed; redesigned without any storage on our side (no digests) | `2026-11-13-comment-notifications.md` | proposal |
 
 ## Should have
 
 | # | Feature | Why | Spec | Status |
 |---|---|---|---|---|
-| 5 | Share with your organization | "Anyone at tecsteps.com with the link" is the usual company setting | `2026-11-13-share-with-organization.md` | proposal |
-| 6 | "New → Kurviq scene" inside Google Drive | Start a scene in a project folder, from Drive | `2026-11-13-new-scene-from-drive.md` | proposal |
-| 7 | Access with an end date | Reviewers' access ends by itself | `2026-11-13-access-end-date.md` | proposal |
-| 8 | Comment polish | Shortcut, filters, unread, counts; the review's comment findings | `2026-11-13-comment-polish.md` | proposal |
+| 5 | Share with your organization | "Anyone at tecsteps.com with the link" is the usual company setting | `2026-11-13-share-with-organization.md` | implemented (real Google Workspace not yet checked) |
+| 6 | "New → Kurviq scene" inside Google Drive | Start a scene in a project folder, from Drive | `2026-11-13-new-scene-from-drive.md` | implemented, off until the Google Cloud console setup (spec) and `DRIVE_NEW` = "on" |
+| 7 | Access with an end date | Reviewers' access ends by itself | `2026-11-13-access-end-date.md` | implemented (whether Drive takes end dates on drive.file files for every account type is not yet checked) |
+| 8 | Comment polish | Shortcut, filters, unread, counts; the review's comment findings | `2026-11-13-comment-polish.md` | implemented |
 | 9 | The local install on https | Web Crypto for the relay's end-to-end encryption; "Move browser scenes…" takes local scenes to the new address | `2026-11-13-local-install-https.md` | implemented |
 
 ---

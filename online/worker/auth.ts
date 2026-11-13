@@ -299,7 +299,8 @@ const refresh = async (env: AuthEnv, session: Session): Promise<Session | "expir
 const tokenAnswer = (session: Session) => ({
   token: session.a,
   expiresAt: new Date(session.ae).toISOString(),
-  user: session.user,
+  // with the account id: Drive's "New → Kurviq" names the account it is for (../../scenes-plugin/src/online/driveNew.ts)
+  user: session.sub ? { ...session.user, sub: session.sub } : session.user,
   drive: session.drive,
 });
 

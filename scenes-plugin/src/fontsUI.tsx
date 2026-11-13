@@ -9,7 +9,8 @@ import { IS_ONLINE } from "./api";
 import { createStore } from "./externalStore";
 import { addFont, customFonts, fontFromFile, fontFromGoogle } from "./fonts";
 
-// the dialog's look (shared with the online UI; also needed in the local install)
+// the font dialog's own styles, and the dialog's look (shared with the online UI; also needed in the local install)
+import "./fonts.scss";
 import "./online/online.scss";
 
 const openStore = createStore(false);

@@ -25,6 +25,16 @@ afterEach(() => {
 
 const md5 = "a".repeat(32);
 
+/** the scene in an upload: the whole body (media), or its content part (multipart, with Drive's content hints) */
+const uploadedContent = async (body: unknown) => {
+  if (typeof body === "string") {
+    return body;
+  }
+  const text = await (body as Blob).text();
+  const start = text.indexOf("\r\n\r\n", text.indexOf("application/vnd.excalidraw+json")) + 4;
+  return text.slice(start, text.lastIndexOf("\r\n--"));
+};
+
 const driveWith = () => {
   const uploads: string[] = [];
   vi.stubGlobal("navigator", {});
@@ -33,8 +43,8 @@ const driveWith = () => {
     if (url === "/auth/token") {
       return new Response(JSON.stringify({ token: "t", expiresAt: new Date(Date.now() + 3600000).toISOString(), user: { email: "a@example.test" }, drive: true }));
     }
-    if (init?.method === "PATCH" && url.includes("uploadType=media")) {
-      uploads.push(String(init.body));
+    if (init?.method === "PATCH" && url.includes("/upload/")) {
+      uploads.push(await uploadedContent(init.body));
       return new Response(JSON.stringify({ id: "sharedfile12345", name: "plan.excalidraw", md5Checksum: "b".repeat(32) }));
     }
     return new Response(JSON.stringify({ id: "sharedfile12345", name: "plan.excalidraw", md5Checksum: md5, ownedByMe: true, capabilities: { canEdit: true } }));

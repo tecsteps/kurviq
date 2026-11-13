@@ -19,14 +19,19 @@
 // short-lived access token (1 h) on request (see online/worker/auth.ts). The
 // local install signs in through kurviq.com and keeps the sealed session.
 
-import { createStore, del, get, set } from "idb-keyval";
+import { createStore, del, get, keys, set } from "idb-keyval";
 
 import { isSceneName } from "../../../scenes-mcp/sceneName.mjs";
+import { createStore as createValueStore } from "../externalStore";
 import { accountKey, spaceAccountOf } from "../spaces";
 import { currentSpace, ownSceneList, SPACE_KEY } from "../storage";
 import { FOLDER_COUNT_PROPERTY, folderCountOf, groupSharedFolders } from "./folderAccess";
 import type { FolderGroup } from "./folderAccess";
+import { BYLINE_MAX_BYTES, BYLINE_PROPERTY, SCENE_MIME, cleanByline, cutBytes } from "./driveNames";
 import { linkTargetOf } from "./linkTarget";
+import { slugify } from "./pubName";
+import { endDatePatch, generalAccessChanges, organizationDomain } from "./shareAccess";
+import type { GeneralAccess } from "./shareAccess";
 
 import google from "../../../online/google.json";
 
@@ -38,18 +43,18 @@ import type { ApiError, RemoteInfo, RemoteScene, SceneVersion } from "../api";
 const GOOGLE_BASE = (import.meta.env.VITE_APP_GOOGLE_API_BASE || "").replace(/\/$/, "");
 export const API = GOOGLE_BASE ? `${GOOGLE_BASE}/drive/v3` : "https://www.googleapis.com/drive/v3";
 const UPLOAD = GOOGLE_BASE ? `${GOOGLE_BASE}/upload/drive/v3` : "https://www.googleapis.com/upload/drive/v3";
-export const SCENE_MIME = "application/vnd.excalidraw+json";
+export { SCENE_MIME } from "./driveNames";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const EXTENSION = ".excalidraw";
 export const FOLDER_NAME = "Kurviq";
-const FILE_FIELDS = "id,name,md5Checksum,modifiedTime,headRevisionId,permissionIds,capabilities(canEdit,canShare,canComment),appProperties,owners(displayName,emailAddress),ownedByMe";
+const FILE_FIELDS = "id,name,md5Checksum,modifiedTime,headRevisionId,permissionIds,capabilities(canEdit,canShare,canComment),appProperties,owners(displayName,emailAddress)";
 
 /** where sign-in lives: this site (online), or kurviq.com (the local install) */
 const AUTH_BASE = (import.meta.env.VITE_APP_KURVIQ_AUTH_URL || "").replace(/\/$/, "");
 const IS_LOCAL_INSTALL = AUTH_BASE !== "";
 
 /** the space of a scene someone shared: "f:<fileId>" (see ../storage.ts) */
-export const fileSpace = (fileId: string) => `f:${fileId}`;
+const fileSpace = (fileId: string) => `f:${fileId}`;
 export const sharedFileId = currentSpace.startsWith("f:") ? currentSpace.slice(2) : null;
 /**
  * The space of a folder someone shared ("d:<folderId>"): its scenes, with
@@ -57,7 +62,7 @@ export const sharedFileId = currentSpace.startsWith("f:") ? currentSpace.slice(2
  * in Google's Picker (drive.file), or all of them if picking the folder
  * grants its files (see sharedFolders). Nothing goes through Kurviq's server.
  */
-export const folderSpace = (folderId: string) => `d:${folderId}`;
+const folderSpace = (folderId: string) => `d:${folderId}`;
 export const sharedFolderId = currentSpace.startsWith("d:") ? currentSpace.slice(2) : null;
 
 /** the shared folder a scene's file is in, as far as this browser knows (the share panel names it) */
@@ -98,7 +103,7 @@ const rememberFolderFiles = (folderId: string, fileIds: string[]) => {
 /** sub: Google's stable account id (live sync keys its queues by it; older Workers don't send it) */
 export type GoogleUser = { email: string; name: string | null; avatarUrl: string | null; sub?: string };
 
-export type ConnectionState = {
+type ConnectionState = {
   /** null = not signed in, undefined = not checked yet */
   user: GoogleUser | null | undefined;
   /** the user allowed Kurviq's Drive access (Google lets them untick it) */
@@ -111,12 +116,12 @@ export type ConnectionState = {
   needsAccess?: boolean;
 };
 
-let state: ConnectionState = { user: undefined, drive: false, error: null };
-const listeners = new Set<() => void>();
+const connectionStore = createValueStore<ConnectionState>({ user: undefined, drive: false, error: null });
+let state = connectionStore.get();
 
 const setConnection = (patch: Partial<ConnectionState>) => {
   state = { ...state, ...patch };
-  listeners.forEach((listener) => listener());
+  connectionStore.set(state);
 };
 
 /** the account this tab's own scenes belong to (null: the scenes made signed out, or a shared scene's space) */
@@ -131,13 +136,8 @@ export const spaceAccount = spaceAccountOf(currentSpace);
 export const otherAccount = () => !sharedFileId && !sharedFolderId && !!state.user && accountKey(state.user.email) !== spaceAccount;
 
 export const connection = {
-  subscribe: (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  },
-  getState: () => state,
+  subscribe: connectionStore.subscribe,
+  getState: connectionStore.get,
   /** signed in with Drive access: scenes sync */
   isActive: () => !!state.user && state.drive && !state.lost && !state.needsAccess && !otherAccount(),
 };
@@ -194,41 +194,63 @@ const clearLocalSession = () => {
   }
 };
 
-const requestToken = async (): Promise<string | null> => {
+/**
+ * A POST to Kurviq's Worker with this browser's sign-in: the cookie, or the
+ * local install's sealed session in the JSON body (never in a URL). null:
+ * the local install has no session. Throws (offline) when the Worker can't
+ * be reached.
+ */
+const authFetch = async (path: string, body?: Record<string, unknown>): Promise<Response | null> => {
   const session = IS_LOCAL_INSTALL ? localSession() : null;
   if (IS_LOCAL_INSTALL && !session) {
-    token = null;
-    setConnection({ user: null, drive: false });
     return null;
   }
-  let res: Response;
+  const payload = session ? { ...body, session } : body;
   try {
-    res = await fetch(`${AUTH_BASE}/auth/token`, {
+    return await fetch(`${AUTH_BASE}${path}`, {
       method: "POST",
       credentials: IS_LOCAL_INSTALL ? "omit" : "same-origin",
-      ...(session ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session }) } : {}),
+      ...(payload ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) } : {}),
     });
   } catch {
     throw offlineError("Kurviq server not reachable");
+  }
+};
+
+/** the local install's sealed session, renewed by the Worker on use */
+const keepLocalSession = (session: unknown) => {
+  if (IS_LOCAL_INSTALL && typeof session === "string") {
+    try {
+      localStorage.setItem(LOCAL_SESSION_KEY, session);
+    } catch {}
+  }
+};
+
+const signedOut = () => {
+  token = null;
+  setConnection({ user: null, drive: false, error: null });
+  return null;
+};
+
+const requestToken = async (): Promise<string | null> => {
+  const res = await authFetch("/auth/token");
+  if (!res) {
+    return signedOut();
   }
   if (!res.ok) {
     throw offlineError(res.status === 503 ? "Google not reachable" : `Kurviq server error (${res.status})`);
   }
   const body = await res.json();
   if (body.connected === false) {
-    token = null;
     clearLocalSession();
-    setConnection({ user: null, drive: false });
-    return null;
+    return signedOut();
   }
-  if (body.session) {
-    try {
-      localStorage.setItem(LOCAL_SESSION_KEY, body.session);
-    } catch {}
-  }
+  keepLocalSession(body.session);
   token = { value: body.token, expiresAt: Date.parse(body.expiresAt) };
   if (state.user?.email !== body.user?.email || state.drive !== !!body.drive) {
     setConnection({ user: body.user, drive: !!body.drive, error: null });
+  } else if (state.error) {
+    setConnection({ error: null });
   }
   return token.value;
 };
@@ -293,6 +315,7 @@ export const signOutListeners = new Set<() => void>();
 const forgetConnection = () => {
   token = null;
   forgetListing();
+  folderRequest = null;
   setConnection({ user: null, drive: false });
   signOutListeners.forEach((listener) => listener()); // NOSONAR S4158: exported set populated by live-sync subscribers
 };
@@ -314,19 +337,9 @@ export const recheckConnection = () => {
 export const announceSignIn = () => tabsChannel?.postMessage("signed-in");
 
 export const disconnectGoogle = async () => {
-  const session = IS_LOCAL_INSTALL ? localSession() : null;
-  const logout = () =>
-    fetch(`${AUTH_BASE}/auth/logout`, {
-      method: "POST",
-      credentials: IS_LOCAL_INSTALL ? "omit" : "same-origin",
-      ...(session ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session }) } : {}),
-    }).catch(() => {});
+  const logout = () => authFetch("/auth/logout").catch(() => null);
   await (navigator.locks ? navigator.locks.request("kurviq-google-token", logout) : logout());
-  if (IS_LOCAL_INSTALL) {
-    try {
-      localStorage.removeItem(LOCAL_SESSION_KEY);
-    } catch {}
-  }
+  clearLocalSession();
   forgetConnection();
   tabsChannel?.postMessage("disconnected");
 };
@@ -337,28 +350,12 @@ export const disconnectGoogle = async () => {
  * tickets, access-proof renewals and reconcile tokens use it.
  */
 export const authPost = async (path: string, body: Record<string, unknown> = {}) => {
-  const session = IS_LOCAL_INSTALL ? localSession() : null;
-  if (IS_LOCAL_INSTALL && !session) {
+  const res = await authFetch(path, body);
+  if (!res) {
     throw notConnectedError();
   }
-  let res: Response;
-  try {
-    res = await fetch(`${AUTH_BASE}${path}`, {
-      method: "POST",
-      credentials: IS_LOCAL_INSTALL ? "omit" : "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(session ? { ...body, session } : body),
-    });
-  } catch {
-    throw offlineError("Kurviq server not reachable");
-  }
   const answer = await res.json().catch(() => ({}));
-  if (IS_LOCAL_INSTALL && typeof answer.session === "string") {
-    // the local install's sealed session, renewed on use
-    try {
-      localStorage.setItem(LOCAL_SESSION_KEY, answer.session);
-    } catch {}
-  }
+  keepLocalSession(answer.session);
   if (!res.ok) {
     const error = Object.assign(new Error(answer.error || `Kurviq server error (${res.status})`), {
       status: res.status,
@@ -436,41 +433,23 @@ const drive = async (
     raw = false,
   }: { method?: string; body?: BodyInit | object; contentType?: string; raw?: boolean } = {},
 ): Promise<DriveResponse> => {
-  const requestContentType = (isJson: boolean): Record<string, string> => {
-    if (isJson) {
-      return { "Content-Type": "application/json" };
-    }
-    if (contentType) {
-      return { "Content-Type": contentType };
-    }
-    return {};
-  };
-  const requestBody = (isJson: boolean) => {
-    if (body === undefined) {
-      return undefined;
-    }
-    if (isJson) {
-      return JSON.stringify(body);
-    }
-    return body as BodyInit;
-  };
+  // an object goes as JSON; text and bytes as they are, with their content type
+  const isJson = body !== undefined && !(typeof body === "string" || body instanceof Blob || body instanceof Uint8Array);
+  const type = isJson ? "application/json" : contentType;
+  const payload = isJson ? JSON.stringify(body) : (body as BodyInit | undefined);
 
   for (let attempt = 0; ; attempt++) {
     const value = await getToken();
     if (!value || otherAccount()) {
       throw notConnectedError();
     }
-    const isJson = body !== undefined && !(typeof body === "string" || body instanceof Blob || body instanceof Uint8Array);
     let res: Response;
     try {
       res = await fetch(url.startsWith("https://") || url.startsWith(UPLOAD) ? url : `${API}${url}`, {
         method,
         cache: "no-store",
-        headers: {
-          Authorization: `Bearer ${value}`,
-          ...requestContentType(isJson),
-        },
-        body: requestBody(isJson),
+        headers: { Authorization: `Bearer ${value}`, ...(type ? { "Content-Type": type } : {}) },
+        body: payload,
       });
     } catch {
       throw offlineError("Google Drive not reachable");
@@ -517,17 +496,66 @@ const encodeBytes = (json: string) => new TextEncoder().encode(json);
 // -----------------------------------------------------------------------------
 
 const versionStore = createStore("kurviq-drive-versions", "versions");
-/** per file: the versions kept, newest first (a small index, so the scenes themselves are never read to prune) */
+/**
+ * per file: the versions kept, newest first, and when the file was last read
+ * or written here (a small index, so the scenes themselves are never read to
+ * prune); older entries are a plain list
+ */
 const versionIndex = createStore("kurviq-drive-version-index", "index");
+type VersionEntry = { kept: string[]; at: number };
 /** versions kept per file (the newest; the base of a merge is among them) */
 const KEEP_VERSIONS = 4;
+/** a file not read or written here for this long loses its kept versions (deleted, or nobody opens it any more) */
+const UNUSED_VERSIONS_MS = 90 * 24 * 3600 * 1000;
+
+const versionEntry = (value: string[] | VersionEntry | undefined): VersionEntry => {
+  if (Array.isArray(value)) {
+    return { kept: value, at: 0 };
+  }
+  return value ?? { kept: [], at: 0 };
+};
 
 const keepVersion = async (fileId: string, checksum: string, json: string) => {
   try {
     await set(`${fileId}:${checksum}`, json, versionStore);
-    const kept = [checksum, ...((await get<string[]>(fileId, versionIndex)) ?? []).filter((other) => other !== checksum)];
-    await set(fileId, kept.slice(0, KEEP_VERSIONS), versionIndex);
+    const { kept: before } = versionEntry(await get(fileId, versionIndex));
+    const kept = [checksum, ...before.filter((other) => other !== checksum)];
+    await set(fileId, { kept: kept.slice(0, KEEP_VERSIONS), at: Date.now() } satisfies VersionEntry, versionIndex);
     await Promise.all(kept.slice(KEEP_VERSIONS).map((other) => del(`${fileId}:${other}`, versionStore)));
+  } catch {}
+};
+
+/** a file's kept versions go (the scene was deleted) */
+const forgetVersions = async (fileId: string) => {
+  try {
+    const { kept } = versionEntry(await get(fileId, versionIndex));
+    await Promise.all(kept.map((checksum) => del(`${fileId}:${checksum}`, versionStore)));
+    await del(fileId, versionIndex);
+  } catch {}
+};
+
+let versionsPruned = false;
+
+/**
+ * Once per tab: the kept versions of files not read or written in this
+ * browser for 90 days go (scenes deleted elsewhere, shared scenes nobody
+ * opens any more; any account's, as the stores are the browser's).
+ */
+const pruneVersions = async (now = Date.now()) => {
+  if (versionsPruned) {
+    return;
+  }
+  versionsPruned = true;
+  try {
+    for (const fileId of await keys<string>(versionIndex)) {
+      const raw = await get<string[] | VersionEntry>(fileId, versionIndex); // NOSONAR S9382: one entry at a time, in the background
+      if (Array.isArray(raw)) {
+        // kept before entries had a time: from now on
+        await set(fileId, { kept: raw, at: now } satisfies VersionEntry, versionIndex); // NOSONAR S9382: one entry at a time, in the background
+      } else if (now - versionEntry(raw).at > UNUSED_VERSIONS_MS) {
+        await forgetVersions(fileId); // NOSONAR S9382: one entry at a time, in the background
+      }
+    }
   } catch {}
 };
 
@@ -553,7 +581,6 @@ type DriveFile = {
   capabilities?: { canEdit?: boolean; canShare?: boolean; canComment?: boolean };
   appProperties?: Record<string, string>;
   owners?: { displayName?: string; emailAddress?: string }[];
-  ownedByMe?: boolean;
 };
 
 type Listing = { files: Map<string, DriveFile>; fetchedAt: number };
@@ -563,9 +590,9 @@ const remote: RemoteInfo = { online: null, lastFetchAt: null, lastError: null };
 /** a shared scene's space: Drive lets this user read it, not change it */
 let readOnly: string | null = null;
 
+/** the listing is stale (a scene was saved, renamed, deleted or shared): the next one asks Drive */
 const forgetListing = () => {
   listing = null;
-  folderRequest = null;
 };
 
 const sceneNameOf = (file: DriveFile) =>
@@ -720,6 +747,7 @@ const fetchFolderSpace = async (files: Map<string, DriveFile>) => {
     readOnly = await sharedFolderReadOnly(sharedFolderId, files);
   } else {
     noteFolderScenes(files.size).catch(() => {});
+    pruneVersions().catch(() => {});
   }
 };
 
@@ -751,7 +779,24 @@ const fetchScenes = async (force = false): Promise<Listing> => {
 
 const ownerName = (file: DriveFile) => file.owners?.[0]?.displayName || file.owners?.[0]?.emailAddress || "Someone";
 
-const locate = async (name: string, force = true) => (await fetchScenes(force)).files.get(name) ?? null;
+/** a scene's file as Drive has it now: a known file is asked for alone, else the folder is listed */
+const locate = async (name: string, force = true) => {
+  const known = listing?.files.get(name);
+  if (force && known && !sharedFileId) {
+    const res = await drive(`/files/${known.id}?fields=${FILE_FIELDS},trashed&supportsAllDrives=true`);
+    if (res.status === 200 && !res.data.trashed && sceneNameOf(res.data) === name) {
+      listing?.files.set(name, res.data);
+      return res.data as DriveFile;
+    }
+  }
+  return (await fetchScenes(force)).files.get(name) ?? null;
+};
+
+/** Drive refused a write to a shared scene because the user's access changed (not, e.g., because the owner's Drive is full) */
+const lostAccess = (res: DriveResponse) => {
+  const reason = res.data?.error?.errors?.[0]?.reason;
+  return res.status === 404 || (res.status === 403 && (reason === "insufficientFilePermissions" || reason === "forbidden"));
+};
 
 const checkBase = (name: string, current: string | undefined, baseMd5: string | undefined) => {
   if (baseMd5 !== undefined && (current || "none") !== baseMd5) {
@@ -791,13 +836,8 @@ const withAgentFonts = async (json: string, data: any, source?: string) => {
   return JSON.stringify({ ...data, kurviqFonts: fonts }, null, 2);
 };
 
-const download = async (fileId: string, revision?: string) => {
-  const res = await drive(
-    revision ? `/files/${fileId}/revisions/${revision}?alt=media` : `/files/${fileId}?alt=media&supportsAllDrives=true`,
-    { raw: true },
-  );
-  return res;
-};
+const download = (fileId: string, revision?: string) =>
+  drive(revision ? `/files/${fileId}/revisions/${revision}?alt=media` : `/files/${fileId}?alt=media&supportsAllDrives=true`, { raw: true });
 
 /** an older version of a file, by its MD5: kept in this browser, else from Drive's revisions */
 const loadVersion = async (file: DriveFile, name: string, checksum: string) => {
@@ -896,6 +936,26 @@ export const writePenMark = async (fileId: string, mark: string | null) => {
   }
 };
 
+
+/** a scene's content to Drive: a new version of `file`, or a new file in the Kurviq folder (with Drive's preview and search words, if any) */
+const uploadScene = async (file: DriveFile | null | undefined, name: string, json: string, hints: object | null): Promise<DriveResponse> => {
+  if (file) {
+    // (Drive has no conditional write: the check before leaves a moment in
+    // which someone else's save is overwritten; their app merges it back)
+    const upload = hints ? multipart({ contentHints: hints }, json) : { body: json, contentType: SCENE_MIME };
+    return drive(`${UPLOAD}/files/${file.id}?uploadType=${hints ? "multipart" : "media"}&fields=${FILE_FIELDS}&supportsAllDrives=true`, {
+      method: "PATCH",
+      body: upload.body,
+      contentType: upload.contentType,
+    });
+  }
+  const upload = multipart(
+    { name: `${name}${EXTENSION}`, mimeType: SCENE_MIME, parents: [await folderId()], appProperties: { kurviq: "scene", fmt: "1" }, ...(hints ? { contentHints: hints } : {}) },
+    json,
+  );
+  return drive(`${UPLOAD}/files?uploadType=multipart&fields=${FILE_FIELDS}`, { method: "POST", body: upload.body, contentType: upload.contentType });
+};
+
 export const driveScenes = {
   remoteInfo: (): RemoteInfo => ({ ...remote, readOnly }),
 
@@ -962,42 +1022,30 @@ export const driveScenes = {
     if (file?.md5Checksum === checksum) {
       return { md5: checksum, driveRevision: null, changed: false };
     }
-    let res: DriveResponse;
-    if (file) {
-      // (Drive has no conditional write: the check above leaves a moment in
-      // which someone else's save is overwritten; their app merges it back)
-      res = await drive(`${UPLOAD}/files/${file.id}?uploadType=media&fields=${FILE_FIELDS}&supportsAllDrives=true`, {
-        method: "PATCH",
-        body: json,
-        contentType: SCENE_MIME,
-      });
-    } else {
-      if (sharedFileId) {
-        throw httpError(403, "This is someone's shared scene: new scenes are made in your own scenes");
-      }
-      const upload = multipart(
-        { name: `${name}${EXTENSION}`, mimeType: SCENE_MIME, parents: [await folderId()], appProperties: { kurviq: "scene", fmt: "1" } },
-        json,
-      );
-      res = await drive(`${UPLOAD}/files?uploadType=multipart&fields=${FILE_FIELDS}`, {
-        method: "POST",
-        body: upload.body,
-        contentType: upload.contentType,
-      });
+    // Drive's preview and search words (contentHints.ts), in the same upload
+    const { contentHints } = await import("./contentHints");
+    const hints = await contentHints.forSave(name, json, checksum);
+    if (!file && sharedFileId) {
+      throw httpError(403, "This is someone's shared scene: new scenes are made in your own scenes");
     }
-    if (res.status === 403 || res.status === 404) {
-      if (sharedFileId) {
-        readOnly = "you can't change this scene any more (its owner changed the sharing)";
-        throw readOnlyError(readOnly);
-      }
-      fail(res, `Saving "${name}" to Google Drive failed`);
+    let res = await uploadScene(file, name, json, hints);
+    if (res.status === 400 && hints) {
+      // Drive refused the preview or the search words: the scene is saved without them
+      console.warn(`[drive] "${name}": Drive refused the preview / search text, saved without them`, res.data);
+      res = await uploadScene(file, name, json, null);
+    }
+    if (sharedFileId && lostAccess(res)) {
+      readOnly = "you can't change this scene any more (its owner changed the sharing)";
+      throw readOnlyError(readOnly);
     }
     if (res.status !== 200) {
       fail(res, `Saving "${name}" to Google Drive failed`);
     }
     const saved = res.data as DriveFile;
-    forgetListing();
+    // the listing knows the saved file (no new listing for the next save)
+    listing?.files.set(name, saved);
     await keepVersion(saved.id, checksum, json);
+    contentHints.afterSave(name, checksum, (late) => drive(`/files/${saved.id}?fields=id&supportsAllDrives=true`, { method: "PATCH", body: { contentHints: late } }));
     if (isAgent(source) && saved.headRevisionId) {
       await markAgentVersion({ ...saved, appProperties: file?.appProperties ?? saved.appProperties }, saved.headRevisionId);
     }
@@ -1020,7 +1068,8 @@ export const driveScenes = {
     if (res.status !== 200) {
       fail(res, `Deleting "${name}" failed`);
     }
-    forgetListing();
+    listing?.files.delete(name);
+    await forgetVersions(file.id);
     return { md5: null };
   },
 
@@ -1047,7 +1096,8 @@ export const driveScenes = {
     if (res.status !== 200) {
       fail(res, "Rename failed");
     }
-    forgetListing();
+    listing?.files.delete(from);
+    listing?.files.set(to, { ...file, name: `${to}${EXTENSION}` });
     return { md5: file.md5Checksum ?? "", driveRevision: null };
   },
 
@@ -1122,12 +1172,13 @@ export const driveScenes = {
       fail(res, "Moving the scene to Drive's trash failed");
     }
     forgetListing();
+    await forgetVersions(fileId);
   },
 
-  /** the Drive file of a scene of this space (for sharing) */
+  /** the Drive file of a scene of this space, for the share panel: may this user change who has access? */
   fileOf: async (name: string) => {
     const file = await locate(name, false);
-    return file ? { id: file.id, canShare: file.capabilities?.canShare !== false, ownedByMe: file.ownedByMe !== false, owner: ownerName(file) } : null;
+    return file ? { id: file.id, canShare: file.capabilities?.canShare !== false, owner: ownerName(file) } : null;
   },
 };
 
@@ -1135,7 +1186,7 @@ export const driveScenes = {
 // sharing (Drive permissions)
 // -----------------------------------------------------------------------------
 
-export type Role = "reader" | "commenter" | "writer" | "owner" | "fileOrganizer" | "organizer";
+type Role = "reader" | "commenter" | "writer" | "owner" | "fileOrganizer" | "organizer";
 
 export type Permission = {
   id: string;
@@ -1145,33 +1196,18 @@ export type Permission = {
   domain?: string;
   displayName?: string;
   photoLink?: string;
+  /** the access ends then (Drive removes the permission) */
+  expirationTime?: string;
 };
-
-export type LinkAccess = "restricted" | "reader" | "commenter" | "writer";
 
 export const listPermissions = async (fileId: string): Promise<Permission[]> => {
   const res = await drive(
-    `/files/${fileId}/permissions?fields=permissions(id,type,role,emailAddress,domain,displayName,photoLink,deleted)&supportsAllDrives=true`,
+    `/files/${fileId}/permissions?fields=permissions(id,type,role,emailAddress,domain,displayName,photoLink,expirationTime,deleted)&supportsAllDrives=true`,
   );
   if (res.status !== 200) {
     fail(res, "Who has access could not be read");
   }
   return (res.data.permissions as (Permission & { deleted?: boolean })[]).filter((permission) => !permission.deleted);
-};
-
-export const linkAccessOf = (permissions: Permission[]): LinkAccess => {
-  const permissionAccess = () => {
-    if (anyone) {
-      if (anyone.role === "writer" || anyone.role === "commenter") {
-        return anyone.role;
-      }
-      return "reader";
-    }
-    return "restricted";
-  };
-
-  const anyone = permissions.find((permission) => permission.type === "anyone");
-  return permissionAccess();
 };
 
 export const changeRole = async (fileId: string, permissionId: string, role: "reader" | "commenter" | "writer") => {
@@ -1191,49 +1227,44 @@ export const removeAccess = async (fileId: string, permissionId: string) => {
   }
 };
 
-/** "anyone with the link": off, can view, or can edit */
-export const setLinkAccess = async (fileId: string, access: LinkAccess) => {
-  const anyone = (await listPermissions(fileId)).find((permission) => permission.type === "anyone");
-  if (access === "restricted") {
-    if (anyone) {
-      await removeAccess(fileId, anyone.id);
-    }
-  } else if (anyone) {
-    if (anyone.role !== access) {
-      await changeRole(fileId, anyone.id, access);
-    }
-  } else {
-    const res = await drive(`/files/${fileId}/permissions?supportsAllDrives=true&fields=id`, {
-      method: "POST",
-      body: { type: "anyone", role: access, allowFileDiscovery: false },
-    });
-    if (res.status !== 200) {
-      fail(res, "Could not change who can open the link");
+/** the organization the signed-in user can share with (Google Workspace), or null (a personal Gmail account) */
+export const userOrganization = () => organizationDomain(state.user?.email);
+
+/**
+ * General access: only the people added, anyone with the link (can view,
+ * comment or edit), or anyone at the user's organization with the link
+ * (Drive's "domain" permission, not findable in Drive's search)
+ */
+export const setLinkAccess = async (fileId: string, access: GeneralAccess) => {
+  const changes = generalAccessChanges(await listPermissions(fileId), access, userOrganization());
+  for (const change of changes) {
+    if ("remove" in change) {
+      await removeAccess(fileId, change.remove); // NOSONAR S9382: one permission at a time, in order
+    } else if ("patch" in change) {
+      await changeRole(fileId, change.patch, change.role); // NOSONAR S9382: one permission at a time, in order
+    } else {
+      const res = await drive(`/files/${fileId}/permissions?supportsAllDrives=true&fields=id`, { method: "POST", body: change.create }); // NOSONAR S9382: one permission at a time, in order
+      if (res.status !== 200) {
+        fail(res, "Could not change who can open the link");
+      }
     }
   }
   forgetListing();
 };
 
-const trimHyphens = (value: string) => {
-  let start = 0;
-  let end = value.length;
-  while (value[start] === "-") start++;
-  while (end > start && value[end - 1] === "-") end--;
-  return value.slice(start, end);
+/** the end of a person's access to view or comment (a day, "2026-11-30"; null: no end date) */
+export const setAccessEnd = async (fileId: string, permission: Pick<Permission, "id" | "role">, date: string | null) => {
+  const { query, body } = endDatePatch(permission.role, date);
+  const res = await drive(`/files/${fileId}/permissions/${permission.id}?supportsAllDrives=true&fields=id,expirationTime${query}`, { method: "PATCH", body });
+  if (res.status !== 200) {
+    fail(res, "Could not change when the access ends");
+  }
 };
-
-const slug = (name: string) =>
-  trimHyphens(name
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-"))
-    .slice(0, 60);
 
 /** the link to a scene for anyone: kurviq.com/s/<fileId>/<readable name> */
 export const shareLink = (fileId: string, name: string) => {
   const base = IS_LOCAL_INSTALL ? AUTH_BASE : window.location.origin;
-  const readable = slug(name);
+  const readable = slugify(name, 60);
   const suffix = readable ? `/${readable}` : "";
   return `${base}/s/${fileId}${suffix}`;
 };
@@ -1241,8 +1272,6 @@ export const shareLink = (fileId: string, name: string) => {
 // -----------------------------------------------------------------------------
 // the author on the public page: only when they choose (Share…), a public property of the file
 // -----------------------------------------------------------------------------
-
-const BYLINE_PROPERTY = "kurviqBy";
 
 /** the name shown as the scene's author on its public page, or null */
 export const getByline = async (fileId: string): Promise<string | null> => {
@@ -1257,7 +1286,7 @@ export const getByline = async (fileId: string): Promise<string | null> => {
 export const setByline = async (fileId: string, name: string | null) => {
   const res = await drive(`/files/${fileId}?fields=id&supportsAllDrives=true`, {
     method: "PATCH",
-    body: { properties: { [BYLINE_PROPERTY]: name ? name.slice(0, 80) : null } },
+    body: { properties: { [BYLINE_PROPERTY]: name ? cutBytes(name, BYLINE_MAX_BYTES) : null } },
   });
   if (res.status !== 200) {
     fail(res, "Could not change who is named on the public page");
@@ -1272,22 +1301,13 @@ export const setByline = async (fileId: string, name: string | null) => {
 export const pubLink = (name: string) => `${IS_LOCAL_INSTALL ? AUTH_BASE : window.location.origin}/pub/${name}`;
 
 /** the short names known in this tab, by file (null: none); kept fresh by the calls below */
-const pubNames = new Map<string, string | null>();
-const pubListeners = new Set<() => void>();
-const setPubName = (fileId: string, name: string | null) => {
-  pubNames.set(fileId, name);
-  pubListeners.forEach((listener) => listener());
-};
+const pubNames = createValueStore(new Map<string, string | null>());
+const setPubName = (fileId: string, name: string | null) => pubNames.set(new Map(pubNames.get()).set(fileId, name));
 
 export const pubNameStore = {
-  subscribe: (listener: () => void) => {
-    pubListeners.add(listener);
-    return () => {
-      pubListeners.delete(listener);
-    };
-  },
+  subscribe: pubNames.subscribe,
   /** undefined: not asked yet */
-  get: (fileId: string) => pubNames.get(fileId),
+  get: (fileId: string) => pubNames.get().get(fileId),
 };
 
 const pubCall = async (path: string, init: RequestInit = {}) => {
@@ -1370,13 +1390,13 @@ export const sharedWithMe = (): Promise<SharedWithMe[]> => {
   }
   const value = (async () => {
     const query = `sharedWithMe and trashed=false and mimeType=${q(SCENE_MIME)}`;
-    const res = await drive(
-      `/files?q=${encodeURIComponent(query)}&fields=files(${FILE_FIELDS})&pageSize=200&includeItemsFromAllDrives=true&supportsAllDrives=true`,
-    );
-    if (res.status !== 200) {
-      return [];
-    }
-    return (res.data.files as DriveFile[])
+    const files = await listAll(query, FILE_FIELDS, "The scenes shared with you could not be listed").catch((error) => {
+      if (error.offline) {
+        throw error;
+      }
+      return [] as DriveFile[];
+    });
+    return files
       .map((file) => ({ file, name: sceneNameOf(file) }))
       .filter((entry): entry is { file: DriveFile; name: string } => !!entry.name && isSceneName(entry.name))
       .map(({ file, name }) => ({ fileId: file.id, name, owner: ownerName(file), canEdit: file.capabilities?.canEdit !== false }));
@@ -1430,13 +1450,12 @@ const noteFolderScenes = async (count: number) => {
   } catch {}
 };
 
-export type SharedFolderScene = FolderGroup["scenes"][number];
 export type SharedFolder = FolderGroup;
 
 let folderList: { at: number; value: Promise<SharedFolder[]> } | null = null;
 
 /** every page of a files.list query, with the given fields per file */
-const listAll = async (query: string, fields: string): Promise<DriveFile[]> => {
+const listAll = async (query: string, fields: string, what = "The shared folders could not be listed"): Promise<DriveFile[]> => {
   const all: DriveFile[] = [];
   let pageToken = "";
   do {
@@ -1446,7 +1465,7 @@ const listAll = async (query: string, fields: string): Promise<DriveFile[]> => {
       }`,
     );
     if (res.status !== 200) {
-      fail(res, "The shared folders could not be listed");
+      fail(res, what);
     }
     all.push(...(res.data.files as DriveFile[]));
     pageToken = res.data.nextPageToken || "";
@@ -1545,12 +1564,30 @@ export const folderSharingOf = async (fileId: string): Promise<FolderSharing | n
   return { kind: "mine", folderId: own, name: FOLDER_NAME, permissions: await listPermissions(own) };
 };
 
-/** Drive's own page of a file or folder, opened as the account signed in to Kurviq (not the browser's first Google account) */
-export const driveWebLink = (id: string, folder = false) => {
-  const page = folder ? `https://drive.google.com/drive/folders/${id}` : `https://drive.google.com/file/d/${id}/view`;
+/** a page of Google Drive as the account signed in to Kurviq */
+const asUser = (page: string) => {
   const email = state.user?.email;
   return email ? `${page}?authuser=${encodeURIComponent(email)}` : page;
 };
+
+/**
+ * The Kurviq folder this tab's scenes are in, in Google Drive: a shared
+ * folder's tab links that folder, else the user's own (My Drive while it
+ * isn't known yet)
+ */
+export const ownFolderLink = () => {
+  let id: string | null = sharedFolderId;
+  if (!id) {
+    try {
+      id = localStorage.getItem(folderKey());
+    } catch {}
+  }
+  return id ? driveWebLink(id, true) : asUser("https://drive.google.com/drive/my-drive");
+};
+
+/** Drive's own page of a file or folder, opened as the account signed in to Kurviq (not the browser's first Google account) */
+export const driveWebLink = (id: string, folder = false) =>
+  asUser(folder ? `https://drive.google.com/drive/folders/${id}` : `https://drive.google.com/file/d/${id}/view`);
 
 /** open a scene of a shared folder in the folder's space (the page reloads into it) */
 export const enterFolder = (folderId: string, name: string | null) => {
@@ -1610,7 +1647,7 @@ export const sceneElsewhere = async (name: string): Promise<(() => void) | null>
 /** Kurviq's browser API key (Picker, and public files without sign-in); set at build time */
 const BROWSER_KEY: string = import.meta.env.VITE_APP_GOOGLE_BROWSER_KEY || "";
 
-export type SharedScene = {
+type SharedScene = {
   json: string;
   name: string;
   /** the version of exactly this content (the MD5 of its bytes, as Drive names it) */
@@ -1668,13 +1705,6 @@ const publicContent = async (fileId: string): Promise<{ json: string; version: s
     return null;
   }
 };
-
-/** the author's name as the owner chose to show it (a public property: anyone may write anything there) */
-const cleanByline = (value: unknown) =>
-  (typeof value === "string" ? value : "")
-    .replaceAll(/[\u0000-\u001f\u007f]/g, "")
-    .trim()
-    .slice(0, 80);
 
 /** a shared scene's current version (Drive's MD5 of it): public ones without sign-in, else with it; null: unknown */
 export const sharedSceneVersion = async (fileId: string): Promise<string | null> => {
@@ -1767,37 +1797,23 @@ export const readSharedScene = async (fileId: string): Promise<SharedSceneAnswer
 // (drive.file); with a file id it shows just that one file
 // -----------------------------------------------------------------------------
 
-let gapiScript: Promise<void> | null = null;
-const gapiModules = new Map<string, Promise<void>>();
+let picker: Promise<void> | null = null;
 
-/** a module of Google's api.js (e.g. "picker"), loaded once */
-const loadGapi = (module: string, what: string) => {
-  gapiScript ??= new Promise<void>((resolve, reject) => {
+/** Google's api.js and its Picker, loaded once (again after a failure) */
+const loadPicker = () => {
+  picker ??= new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
     script.src = "https://apis.google.com/js/api.js";
     script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      gapiScript = null;
-      reject(offlineError(`${what} could not be loaded`));
-    };
+    script.onload = () => (window as any).gapi.load("picker", { callback: () => resolve(), onerror: () => reject(new Error("Google Picker could not be loaded")) });
+    script.onerror = () => reject(offlineError("Google Picker could not be loaded"));
     document.head.appendChild(script);
+  }).catch((error) => {
+    picker = null;
+    throw error;
   });
-  let loaded = gapiModules.get(module);
-  if (!loaded) {
-    loaded = gapiScript.then(
-      () =>
-        new Promise<void>((resolve, reject) =>
-          (window as any).gapi.load(module, { callback: () => resolve(), onerror: () => reject(new Error(`${what} could not be loaded`)) }),
-        ),
-    );
-    loaded.catch(() => gapiModules.delete(module));
-    gapiModules.set(module, loaded);
-  }
-  return loaded;
+  return picker;
 };
-
-const loadPicker = () => loadGapi("picker", "Google Picker");
 
 /** a dev build against the fake Google: its Picker answers with what a test queued (online/worker/fakeGoogle.ts) */
 const IS_FAKE_GOOGLE = GOOGLE_BASE !== "";
@@ -1810,7 +1826,7 @@ const fakePick = async (token: string): Promise<string[]> => {
   return Array.isArray(answer.ids) ? answer.ids.map(String) : [];
 };
 
-export type PickOptions = {
+type PickOptions = {
   /** just this file ("Allow Kurviq to open it") */
   fileId?: string;
   /** Drive's "Shared with me", several at once */
@@ -1819,6 +1835,8 @@ export type PickOptions = {
   query?: string;
   /** shared folders can be picked too (a folder someone shared: Kurviq then lists its scenes) */
   folders?: boolean;
+  /** one file only (default: several where it makes sense, see pickFiles) */
+  single?: boolean;
   /** the scenes in this folder, several at once ("open the new scenes in this folder") */
   parent?: string;
 };
@@ -1882,7 +1900,7 @@ export const pickFiles = async (options: PickOptions = {}): Promise<string[]> =>
   const pickerApi = (window as any).google.picker;
   return new Promise<string[]>((resolve) => {
     const builder = new pickerApi.PickerBuilder();
-    if (options.shared || options.folders || options.parent) {
+    if ((options.shared || options.folders || options.parent) && !options.single) {
       builder.enableFeature(pickerApi.Feature.MULTISELECT_ENABLED);
     }
     const picker = builder

@@ -6,7 +6,8 @@
 // live session; the user's changes go to the slot's writer (the controller:
 // live sync or its own save; the viewer: a commenter's way to the editor,
 // ./mailbox.ts). A commenter's comments that wait in Drive's comments for an
-// editor are marked pending ("waiting for an editor").
+// editor are marked pending ("waiting for an editor") until a load of the
+// file has them.
 
 import { commentsKey, commentsOf } from "../../../scenes-mcp/sceneComments.mjs";
 
@@ -43,6 +44,40 @@ const replace = (slot: CommentSlot, next: SceneComment[]) => {
   return true;
 };
 
+/**
+ * Comments loaded from the file (or a live session): those of this person's
+ * that waited for an editor and are in it now (that version or a newer one)
+ * wait no more. True if any stopped waiting.
+ */
+const settle = (loaded: SceneComment[]) => {
+  if (!pending.size) {
+    return false;
+  }
+  const stored = new Map(loaded.map((comment) => [comment.id, comment.u]));
+  const next = new Set(
+    [...pending].filter((key) => {
+      const at = key.lastIndexOf(":");
+      return (stored.get(key.slice(0, at)) ?? -1) < Number(key.slice(at + 1));
+    }),
+  );
+  if (next.size === pending.size) {
+    return false;
+  }
+  pending = next;
+  return true;
+};
+
+/** a slot's comments from its file or live session */
+const loaded = (slot: CommentSlot, value: unknown) => {
+  const next = commentsOf(value);
+  const settled = settle(next);
+  const changed = replace(slot, next);
+  if (settled && !changed) {
+    notify();
+  }
+  return changed;
+};
+
 const shown = (): CommentSlot => (viewerActive ? "viewer" : "editor");
 
 export const commentStore = {
@@ -61,10 +96,10 @@ export const commentStore = {
   },
   /** a scene was loaded: its comments (its file's kurviqComments) */
   load: (value: unknown, slot: CommentSlot = "editor") => {
-    replace(slot, commentsOf(value));
+    loaded(slot, value);
   },
   /** a live session's view of its scene's comments (in force while live) */
-  fromLive: (value: unknown, slot: CommentSlot = "editor") => replace(slot, commentsOf(value)),
+  fromLive: (value: unknown, slot: CommentSlot = "editor") => loaded(slot, value),
   /** where the user's changes in a slot are saved */
   setWriter: (next: Writer | null, slot: CommentSlot = "editor") => {
     slots[slot] = { ...slots[slot], writer: next };

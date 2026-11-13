@@ -103,6 +103,10 @@ install:
   asks invitees to create one for their address (no Gmail needed).
 - **Open with Kurviq** in Google Drive (on an `.excalidraw` file) opens it
   in Kurviq (`/drive/open` → `/s/<fileId>`).
+- **New → More → Kurviq** in Google Drive (once switched on: `DRIVE_NEW` in
+  `online/wrangler.jsonc`) asks for a name and creates the scene in that
+  folder (`/drive/new`); scenes outside the Kurviq folder are listed under
+  "Other folders".
 - **Share a presentation:** **Copy presentation link** (Share…) gives the
   scene's link with `?present`:
   it opens presenting (`&slide=3` starts at slide 3; skipped slides are
@@ -141,7 +145,9 @@ the Worker (`worker/`), `wrangler.jsonc` and `llms.txt`.
   `http://localhost:8787`, redirect URIs `https://<your domain>/auth/callback`
   and `http://localhost:8787/auth/callback`. Drive UI integration ("Open
   with"): Open URL `https://<your domain>/drive/open`, MIME type
-  `application/vnd.excalidraw+json`, extension `excalidraw`. An API key
+  `application/vnd.excalidraw+json`, extension `excalidraw`; for Drive's
+  "New" menu also "Creating files" with New URL `https://<your domain>/drive/new`
+  (icons: `online/drive-icons/`). An API key
   restricted to the Drive API (server side, public scenes) and a browser API
   key for the Picker. The public values (client id, browser API key, project
   number = the Picker's app id) go into `online/google.json`.
@@ -428,6 +434,14 @@ the people the scene is shared with), resolve / reopen, a link that opens the
 scene with the thread open (`#comment=<id>`), and per comment Copy link, Edit
 and Remove (your own; editors may remove any). Pins never show in
 presentations or exports; the shared viewer shows them to people signed in.
+
+**Shift+C** starts a new comment (not while typing), **Esc** cancels placing
+and closes the popover or the list. The list filters **Open / Resolved / Mine /
+@Me** (each with its count; pins follow the filter) and can **hide resolved
+after 7 days**. A dot marks threads with comments by others since you last
+opened them, and the scene list shows each scene's open threads (for scenes
+this browser has). Filter, the 7-day option and the dots are kept per browser
+(localStorage), never on a server.
 
 Comments are stored in the scene file (a top-level `kurviqComments` array, see
 `scenes-mcp/sceneComments.mjs`), so they stay with copies, versions and
