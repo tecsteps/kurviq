@@ -2,7 +2,7 @@
 <p class="muted">Last updated / Stand: 13 November 2026 · <a href="#de">Deutsche Fassung unten</a></p>
 
 <p><strong>In short:</strong> Kurviq has no user accounts and no tracking. Your drawings are stored in your browser and, if you
-sign in with Google, in your own Google Drive. <strong>Our servers keep no drawings, no comments and no Google sign-ins</strong>, not
+sign in with Google, in your own Google Drive, or in a database of your own that you connect. <strong>Our servers keep no drawings, no comments and no Google sign-ins</strong>, not
 even for a moment in a database; when you work on a scene together with others, your changes pass through our server's memory,
 encrypted, without being written anywhere. We count usage only as totals. Details below.</p>
 
@@ -38,12 +38,14 @@ privacy policies apply.</p>
 <h2>Google sign-in and Google Drive (optional)</h2>
 <p>When you sign in with Google (Google Ireland Limited; Google is responsible for your account itself), Kurviq gets your name,
 email address, profile picture and account id, and access only to Drive files it creates or that you open with it
-(<code>drive.file</code>; <code>drive.install</code> adds "Open with Kurviq" in Drive). Two cookies are set, both strictly
+(<code>drive.file</code>; <code>drive.install</code> adds "Open with Kurviq" in Drive; where offered, <code>drive.appdata</code>
+lets Kurviq keep your database connections in a hidden app folder of your Drive, see below). Two cookies are set, both strictly
 necessary (§25(2) No. 2 TDDDG): <code>kq_google</code>, encrypted, holds Google's sign-in so you stay signed in (400 days, renewed
 on use; the local install keeps it in its browser storage for 90 days instead), and <code>kq_oauth_state</code> protects the
 sign-in (1 hour). Our server only issues one-hour access tokens and stores none. Legal basis: Art.
 6(1)(b) GDPR. "Sign out" ends it in this browser; <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>
-removes Kurviq's access altogether.</p>
+removes Kurviq's access altogether. "Sign out everywhere" also asks Google to end Kurviq's access; if Google can't be reached at
+that moment, you are told so and remove it there yourself: Kurviq doesn't keep your sign-in to try again later.</p>
 
 <h2>Working on a scene together</h2>
 <p>Only your browser saves a scene to your Google Drive, with your own sign-in. When several people have a scene stored in Drive
@@ -73,6 +75,20 @@ it) so that link previews show its title, and keeps nothing of it. A short link 
 Picker; their Kurviq then opens the scenes with their own sign-in. Nothing about the folder, its owner or the people it is shared
 with is stored on our server. While the folder is shared, your Kurviq notes its number of scenes on the folder in Google Drive, so
 their Kurviq can tell them when there are new scenes to pick.</p>
+
+<h2>Your own database (optional)</h2>
+<p>You can connect a Supabase project of your own (Supabase, Inc., USA) and keep scenes there, edit them together in real time and
+share them by email, also with people without a Google account. The database is yours: you decide about it under your contract
+with Supabase. Your browser talks to your Supabase project directly; scenes, comments, members, the email sign-in codes (sent by
+your database) and the sessions never reach our server. Our server has two small parts, both in memory only, storing nothing:
+for "Connect with Supabase" it exchanges Supabase's one-time sign-in code for a management token (with Kurviq's app secret, which
+Supabase requires) and hands it to your browser, and during the setup it passes the few Management API calls the setup needs
+through to Supabase (Supabase doesn't accept them from browsers directly). The management token is used for the setup and then
+dropped; a database password Kurviq creates for a new project goes to Supabase with the setup's call, is shown to you once and is
+not kept. The connection (project address, its public key and a name) is kept in your browser and, if you are signed in with Google
+and allowed Kurviq its app folder (<code>drive.appdata</code>), in your Google Drive's hidden app data folder, so it follows you to
+your other browsers. Invitation links carry the public key after the <code>#</code>,
+which browsers don't send to our server. Legal basis: Art. 6(1)(b) GDPR.</p>
 
 <h2>Fonts from Google Fonts (optional)</h2>
 <p>When you add a Google font, our server fetches it from Google (cached by Cloudflare for a day), so Google doesn't see you.</p>
@@ -113,7 +129,7 @@ the Drive features are unavailable. There is no automated decision-making.</p>
 <h1>Datenschutz</h1>
 
 <p><strong>Kurz gesagt:</strong> Kurviq hat keine Benutzerkonten und kein Tracking. Deine Zeichnungen liegen in deinem Browser und,
-wenn du dich mit Google anmeldest, in deinem eigenen Google Drive. <strong>Unsere Server speichern keine Zeichnungen, keine Kommentare
+wenn du dich mit Google anmeldest, in deinem eigenen Google Drive, oder in einer eigenen Datenbank, die du verbindest. <strong>Unsere Server speichern keine Zeichnungen, keine Kommentare
 und keine Google-Anmeldungen</strong>, auch nicht kurz in einer Datenbank; arbeitest du mit anderen an einer Szene, laufen deine
 Änderungen verschlüsselt durch den Arbeitsspeicher unseres Servers, ohne irgendwo gespeichert zu werden. Nutzung zählen wir nur als
 Summen. Einzelheiten unten.</p>
@@ -151,13 +167,16 @@ und Ersatzschriften lädt dein Browser direkt von deren Anbietern; dort gelten d
 <h2>Anmeldung mit Google und Google Drive (optional)</h2>
 <p>Wenn du dich mit Google anmeldest (Google Ireland Limited; für dein Konto selbst ist Google verantwortlich), erhält Kurviq deinen
 Namen, deine E-Mail-Adresse, dein Profilbild und deine Konto-ID sowie Zugriff nur auf Drive-Dateien, die es selbst anlegt oder die
-du damit öffnest (<code>drive.file</code>; <code>drive.install</code> ergänzt „Öffnen mit Kurviq" in Drive). Zwei Cookies werden
+du damit öffnest (<code>drive.file</code>; <code>drive.install</code> ergänzt „Öffnen mit Kurviq" in Drive; wo angeboten, erlaubt
+<code>drive.appdata</code> Kurviq, deine Datenbankverbindungen in einem versteckten App-Ordner deines Drive abzulegen, siehe unten). Zwei Cookies werden
 gesetzt, beide unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG): <code>kq_google</code>, verschlüsselt, enthält die Anmeldung bei
 Google, damit du angemeldet bleibst (400 Tage, bei Nutzung verlängert; die lokale Installation bewahrt sie stattdessen 90 Tage im
 Browserspeicher auf), und <code>kq_oauth_state</code> sichert die Anmeldung ab (1 Stunde). Unser Server stellt nur einstündige
 Zugangstokens aus und speichert keine. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.
 „Sign out" beendet die Anmeldung in diesem Browser; unter
-<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> entfernst du Kurviqs Zugriff ganz.</p>
+<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> entfernst du Kurviqs Zugriff ganz.
+„Sign out everywhere" bittet außerdem Google, Kurviqs Zugriff zu beenden; ist Google in dem Moment nicht erreichbar, sagt Kurviq dir
+das, und du entfernst den Zugriff dort selbst: Kurviq bewahrt deine Anmeldung nicht auf, um es später noch einmal zu versuchen.</p>
 
 <h2>Gemeinsam an einer Szene arbeiten</h2>
 <p>Nur dein Browser speichert eine Szene in dein Google Drive, mit deiner eigenen Anmeldung. Haben mehrere Personen eine Szene aus
@@ -188,6 +207,21 @@ nichts. Ein Kurzlink (oben) ordnet nur seinen Namen der Datei zu.</p>
 einmal in Googles Picker aus; ihr Kurviq öffnet die Szenen dann mit ihrer eigenen Anmeldung. Über den Ordner, seinen Eigentümer oder
 die Personen, mit denen er geteilt ist, wird auf unserem Server nichts gespeichert. Solange der Ordner geteilt ist, vermerkt dein
 Kurviq die Zahl seiner Szenen am Ordner in Google Drive, damit ihr Kurviq ihnen neue Szenen zum Auswählen anzeigen kann.</p>
+
+<h2>Deine eigene Datenbank (optional)</h2>
+<p>Du kannst ein eigenes Supabase-Projekt (Supabase, Inc., USA) verbinden und Szenen dort ablegen, gemeinsam in Echtzeit bearbeiten
+und per E-Mail teilen, auch mit Personen ohne Google-Konto. Die Datenbank gehört dir: Du entscheidest über sie im Rahmen deines
+Vertrags mit Supabase. Dein Browser spricht direkt mit deinem Supabase-Projekt; Szenen, Kommentare, Mitglieder, die Anmeldecodes per
+E-Mail (von deiner Datenbank verschickt) und die Sitzungen erreichen unseren Server nie. Unser Server hat zwei kleine Aufgaben, beide
+nur im Arbeitsspeicher, ohne etwas zu speichern: Bei „Connect with Supabase" tauscht er Supabases einmaligen Anmeldecode gegen ein
+Verwaltungstoken (mit Kurviqs App-Geheimnis, das Supabase verlangt) und gibt es an deinen Browser, und während der Einrichtung reicht
+er die wenigen Aufrufe der Management API, die sie braucht, an Supabase weiter (Supabase nimmt sie von Browsern nicht direkt an). Das
+Verwaltungstoken wird für die Einrichtung benutzt und dann verworfen; ein Datenbankpasswort, das Kurviq für ein neues Projekt
+erzeugt, geht mit dem Aufruf der Einrichtung an Supabase, wird dir einmal gezeigt und nicht aufbewahrt. Die Verbindung (Adresse des
+Projekts, sein öffentlicher Schlüssel und ein Name) liegt in deinem Browser und, wenn du mit Google angemeldet bist und Kurviq seinen
+App-Ordner erlaubt hast (<code>drive.appdata</code>), im versteckten App-Datenordner deines Google Drive, damit sie dir in deine
+anderen Browser folgt. Einladungslinks tragen den öffentlichen Schlüssel hinter dem
+<code>#</code>, den Browser nicht an unseren Server senden. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.</p>
 
 <h2>Schriften von Google Fonts (optional)</h2>
 <p>Fügst du eine Google-Schrift hinzu, holt unser Server sie bei Google (Cloudflare hält sie einen Tag im Cache); Google sieht dich

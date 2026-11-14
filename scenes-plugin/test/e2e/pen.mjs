@@ -228,16 +228,28 @@ const blocked = await open(EDITOR, "blocked", { space: `f:${fileId}`, block: tru
 const byMark = await until(blocked, (v) => v.me === "viewer" && v.byMark, 30_000);
 ok(byMark?.byMark && byMark.me === "viewer" && (await viewMode(blocked)), "13: a fresh mark of someone else makes the scene read only for a tab without the relay", byMark);
 ok(typeof markedMeta.appProperties?.kurviqPen === "string", "13: the holder's mark is on the Drive file", markedMeta.appProperties);
-// the holder stops editing: its mark goes; the tab without relay may edit (and sets its own mark)
+// the holder stops editing: it saves what it has first, then its mark goes; the tab without relay may edit
+// (and sets its own mark). The file once the holder's mark is gone is what the next mark must leave alone
 await click(holderPage, "Stop editing");
+const holderMark = JSON.parse(markedMeta.appProperties?.kurviqPen ?? "{}").i;
+let settledMeta = null;
+for (let i = 0; i < 80; i++) {
+  const now = await admin(`file?fileId=${fileId}`); // NOSONAR S9382: polling in order on purpose
+  const nowMeta = now.file ?? now;
+  if (JSON.parse(nowMeta.appProperties?.kurviqPen ?? "{}").i !== holderMark) {
+    settledMeta = nowMeta;
+    break;
+  }
+  await sleep(250); // NOSONAR S9382: polling in order on purpose
+}
 const free = await until(blocked, (v) => v.me === "holder", 45_000);
 ok(free?.me === "holder" && !(await viewMode(blocked)), "13: no (or a stale) mark: the tab without the relay may edit", free);
 await sleep(1500);
 const fileAfter = await admin(`file?fileId=${fileId}`);
 const meta = fileAfter.file ?? fileAfter;
-log("mark", meta.appProperties?.kurviqPen, "modifiedTime", markedMeta.modifiedTime, "→", meta.modifiedTime, "md5", markedMeta.md5Checksum, "→", meta.md5Checksum);
-ok(/"n":/.test(meta.appProperties?.kurviqPen ?? "") && meta.md5Checksum === markedMeta.md5Checksum, "13: the mark is metadata only (the content's md5 stays)", meta.appProperties);
-ok(meta.modifiedTime === markedMeta.modifiedTime, "13: a mark update leaves modifiedTime alone (fake Google; to check with the real one)", { before: markedMeta.modifiedTime, after: meta.modifiedTime });
+log("mark", meta.appProperties?.kurviqPen, "modifiedTime", settledMeta?.modifiedTime, "→", meta.modifiedTime, "md5", settledMeta?.md5Checksum, "→", meta.md5Checksum);
+ok(/"n":/.test(meta.appProperties?.kurviqPen ?? "") && meta.md5Checksum === settledMeta?.md5Checksum, "13: the mark is metadata only (the content's md5 stays)", meta.appProperties);
+ok(meta.modifiedTime === settledMeta?.modifiedTime, "13: a mark update leaves modifiedTime alone (fake Google; to check with the real one)", { before: settledMeta?.modifiedTime, after: meta.modifiedTime });
 await blocked.close();
 
 // --- 15: edits made offline merge into Drive when back -----------------------
@@ -246,12 +258,12 @@ await until(otherPage, (v) => v.holder === null, 10_000);
 await click(otherPage, "Edit");
 const otherHolds = await until(otherPage, (v) => v.me === "holder");
 const offlinePage = holderPage;
-// offline: no Drive, no relay (Chrome's offline mode leaves an open WebSocket alone: closed here, and blocked)
+// offline: no Drive, no relay. Chrome's offline mode leaves an open WebSocket alone (and may hold its close
+// handshake): the tab drops it on the browser's "offline" event without waiting; new tickets are blocked
 const offlineCdp = await offlinePage.target().createCDPSession();
 await offlineCdp.send("Network.enable");
 await offlineCdp.send("Network.setBlockedURLs", { urls: ["*/relay/*"] });
 await offlinePage.setOfflineMode(true);
-await offlinePage.evaluate(() => window.__pen.session?.ws?.close());
 const offlineView = await until(offlinePage, (v) => v.relay === "offline" && v.me === "holder", 30_000);
 ok(otherHolds?.me === "holder" && offlineView?.me === "holder", "15: offline (no relay, no Drive): the tab keeps editing", { other: otherHolds?.me, offline: offlineView });
 const offlineBefore = new Set(await ids(offlinePage));

@@ -33,11 +33,13 @@ import {
   Assembler,
   MARK_RENEW_MS,
   connectionDead,
+  dropSocket,
   editingRefusal,
   markHolder,
   markText,
   parseMark,
   rememberSent,
+  socketGone,
   splitBody,
   unsentElements,
   withIncoming,
@@ -117,6 +119,8 @@ class Session {
   claimOnState = true;
   asked = false;
   failures = 0;
+  /** a ticket or socket is on its way (./pen.ts connect) */
+  connecting = false;
   closed = false;
   /** no ticket for this file (no access, signed out): nothing to do until this time */
   dormantUntil = 0;
@@ -216,6 +220,8 @@ class Pen {
         pulled: (name) => this.onPulled(name),
       };
       window.addEventListener("pointermove", this.onPointerMove, { passive: true });
+      window.addEventListener("offline", this.onOffline);
+      window.addEventListener("online", this.onOnline);
       for (const type of ["pointerdown", "keydown"]) {
         window.addEventListener(type, this.onActivity, { capture: true, passive: true });
       }
@@ -318,7 +324,20 @@ class Pen {
   // the relay connection
   // ---------------------------------------------------------------------------
 
+  /** one connection attempt at a time (a retry and the network coming back may meet) */
   private async connect(s: Session) {
+    if (s.connecting) {
+      return;
+    }
+    s.connecting = true;
+    try {
+      await this.openSocket(s);
+    } finally {
+      s.connecting = false;
+    }
+  }
+
+  private async openSocket(s: Session) {
     let ticket: any;
     try {
       ticket = await authPost(`/relay/${encodeURIComponent(s.fileId)}/ticket`, {});
@@ -346,8 +365,36 @@ class Pen {
       s.inbox = s.inbox.then(() => this.receive(s, event.data)).catch((error) => console.error("[pen] message failed", error));
     };
     ws.onclose = () => this.socketClosed(s, ws);
-    ws.onerror = () => ws.close();
+    ws.onerror = () => this.drop(s, ws);
   }
+
+  /** this tab gives up on the socket: offline at once, not when (or if) the close handshake ends */
+  private drop(s: Session, ws: WebSocket) {
+    if (s.ws === ws) {
+      dropSocket(ws, () => this.socketClosed(s, ws));
+    }
+  }
+
+  /** the browser lost the network: the relay socket is dead, the mark decides (and the next try waits for the network) */
+  private readonly onOffline = () => {
+    const s = this.session;
+    if (s?.ws && !s.closed) {
+      this.drop(s, s.ws);
+    }
+  };
+
+  /** the network is back: the relay is tried again now, not after the retry's wait */
+  private readonly onOnline = () => {
+    const s = this.session;
+    if (s && !s.ws && !s.closed && s.relay === "offline") {
+      clearTimeout(s.retryTimer);
+      s.retryTimer = window.setTimeout(() => {
+        if (this.session === s && !s.closed && !s.ws) {
+          void this.connect(s);
+        }
+      }, 0);
+    }
+  };
 
   private async takeTicket(s: Session, ticket: any) {
     s.role = ticket.role;
@@ -643,8 +690,8 @@ class Pen {
     }
     const now = Date.now();
     s.assembler.sweep(now);
-    if (s.ws && s.relay !== "connected" && now > s.welcomeBy) {
-      s.ws.close(); // no welcome: the handshake is over
+    if (s.ws && (socketGone(s.ws.readyState) || (s.relay !== "connected" && now > s.welcomeBy))) {
+      this.drop(s, s.ws); // closing (its handshake may hang), or no welcome: the socket is over
     }
     if (s.ws && s.relay === "connected") {
       this.keepAlive(s, now);
@@ -661,7 +708,7 @@ class Pen {
   private keepAlive(s: Session, now: number) {
     const ws = s.ws!;
     if (connectionDead(now, s.lastMessageAt, ws.bufferedAmount, s.bufferedBefore)) {
-      ws.close();
+      this.drop(s, ws);
       return;
     }
     s.bufferedBefore = ws.bufferedAmount;

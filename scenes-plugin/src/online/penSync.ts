@@ -146,3 +146,30 @@ export const editingRefusal = (holder: string) =>
  */
 export const connectionDead = (now: number, lastMessageAt: number, buffered: number, bufferedBefore: number, silentMs = 60_000) =>
   now - lastMessageAt > silentMs && (buffered === 0 || buffered >= bufferedBefore);
+
+/**
+ * A socket that is closing or closed counts as gone at once: its close
+ * handshake can hang for minutes when the network is down (the close event
+ * comes only when the other side answers), and the tab must not stay
+ * "connected" and read only meanwhile.
+ */
+export const socketGone = (readyState: number) => readyState === 2 || readyState === 3; // WebSocket.CLOSING, WebSocket.CLOSED
+
+/**
+ * A socket this tab gives up on: no more events from it, closed without
+ * waiting for the handshake, and `gone` runs right away.
+ */
+export const dropSocket = (
+  ws: { onmessage: unknown; onclose: unknown; onerror: unknown; close: () => void },
+  gone: () => void,
+) => {
+  ws.onmessage = null;
+  ws.onclose = null;
+  ws.onerror = null;
+  try {
+    ws.close();
+  } catch {
+    // closed already
+  }
+  gone();
+};

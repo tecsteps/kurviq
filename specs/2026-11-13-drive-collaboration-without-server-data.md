@@ -186,8 +186,8 @@ Once that is confirmed in production:
 - [ ] Then `TOKEN_KEY` (and `TOKEN_KEY_PREVIOUS`) is no longer read: remove it
       from the Worker, `online/secrets.mjs`, `dev-vars.mjs` and the Cloudflare
       secrets (`wrangler secret delete TOKEN_KEY`); `PSEUDONYM_KEY` is already
-      unread (delete the secret). The sign-out-everywhere retry of a Google
-      revocation then needs another seal (`COOKIE_KEY`) or goes (criterion 3).
+      unread (delete the secret). (The sign-out-everywhere retry of a Google
+      revocation is gone already: it is tried within the request only.)
 - [ ] The account guard drops its `scenes` / `connected` tables (only the
       epoch stays) and `AccountGuard` no longer needs `SCENE`.
 
@@ -223,6 +223,12 @@ Once that is confirmed in production:
    code path writes scene content, comments or Google tokens to Durable Object storage, D1 or KV (code review of
    `online/worker`: only short links, sign-out-everywhere records, statistics counters, feedback and contact
    messages are written).
+   Status (2026-11-13): sign out everywhere keeps no token any more, not even sealed: Kurviq is revoked at
+   Google within the request (three tries, about 17 s at most); if Google can't be reached, the epoch still ends
+   every Kurviq session and the answer tells the person to remove Kurviq at
+   https://myaccount.google.com/permissions. Account objects delete a token an earlier version kept for a later
+   try (meta key `revoke`) when they next start; nothing seals tokens any more (only the drain still reads those
+   the retired live sync sealed, until the follow-up release).
 2. The relay Durable Object makes no storage calls and doesn't use WebSocket hibernation attachments (grep and a
    test of its class).
 3. `TOKEN_KEY` and `PSEUDONYM_KEY` are no longer read by the Worker; the shared-folder tables hold no tokens (the

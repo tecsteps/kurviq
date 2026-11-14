@@ -23,10 +23,9 @@ import {
   freshSession,
   isLocalInstall,
   localSession,
-  revokeAtGoogle,
+  revokeAtGoogleNow,
   seal,
   sealLocalSession,
-  sealSceneToken,
   sessionCookie,
   unseal,
 } from "./auth";
@@ -298,7 +297,28 @@ const drain = async (ctx: Ctx) => {
   return answer(ctx, 200, { results, ...(who.sealedLocal ? { session: who.sealedLocal } : {}) });
 };
 
-/** sign out everywhere: epoch raised, Kurviq revoked at Google, the old scene objects told to drop this account's tokens */
+/** where a person removes Kurviq's access at Google themselves */
+export const GOOGLE_PERMISSIONS_URL = "https://myaccount.google.com/permissions";
+
+/** what sign out everywhere answers: whether Google confirmed, and if not, what the person can do */
+export const logoutAllAnswer = (revoked: boolean, scenes: number) => ({
+  ok: revoked,
+  revokedAtGoogle: revoked,
+  scenes,
+  ...(revoked
+    ? {}
+    : {
+        message:
+          "You are signed out of Kurviq everywhere, but Google couldn't be reached to end Kurviq's access to your Google account. " +
+          `Remove Kurviq there yourself: ${GOOGLE_PERMISSIONS_URL} (choose Kurviq, then delete its connection).`,
+        removeAccess: GOOGLE_PERMISSIONS_URL,
+      }),
+});
+
+/**
+ * Sign out everywhere: epoch raised, Kurviq revoked at Google (tried a few times within this request; the token
+ * is never kept for a later try), the old scene objects told to drop this account's tokens
+ */
 const logoutAll = async (ctx: Ctx) => {
   const session = ctx.local ? await localSession(ctx.env, ctx.body.session, ctx.origin) : await cookieSession(ctx.request, ctx.env);
   if (!session) {
@@ -312,19 +332,17 @@ const logoutAll = async (ctx: Ctx) => {
   if (!ctx.local) {
     ctx.cookies.push(clearSessionCookie(ctx.request));
   }
-  const revoked = await revokeAtGoogle(ctx.env, session.r);
+  const revoked = await revokeAtGoogleNow(ctx.env, session.r);
   if (!sub) {
-    return answer(ctx, 200, { ok: revoked, scenes: 0 });
+    return answer(ctx, 200, logoutAllAnswer(revoked, 0));
   }
-  // the account guard tells every old scene object it knows (tokens they still hold go) and retries until each
-  // confirmed; a revocation Google didn't confirm is retried there too (the refresh token sealed, for 30 days at most)
-  const retryRevoke = revoked || !ctx.env.TOKEN_KEY ? null : await sealSceneToken(ctx.env, "revoke-at-google", sub, session.r, session.iat ?? 0, Date.now() + 30 * 24 * 3_600_000);
-  const res = await accountStub(ctx.env, sub).fetch("https://account/logout-all", { method: "POST", body: JSON.stringify({ sub, retryRevoke }) });
+  // the account guard tells every old scene object it knows (tokens they still hold go) and retries until each confirmed
+  const res = await accountStub(ctx.env, sub).fetch("https://account/logout-all", { method: "POST", body: JSON.stringify({ sub }) });
   const { scenes = [], epoch } = (await res.json().catch(() => ({}))) as { scenes?: string[]; epoch?: number };
   await Promise.all(
     scenes.map((fileId) => sceneStub(ctx.env, fileId).fetch("https://scene/forget", { method: "POST", body: JSON.stringify({ fileId, sub, epoch }) }).catch(() => null)),
   );
-  return answer(ctx, 200, { ok: revoked, scenes: scenes.length });
+  return answer(ctx, 200, logoutAllAnswer(revoked, scenes.length));
 };
 
 const dispatch = async (ctx: Ctx, action: string, fileId: string | null) => {

@@ -17,11 +17,13 @@ import {
   Assembler,
   MARK_STALE_MS,
   connectionDead,
+  dropSocket,
   editingRefusal,
   markHolder,
   markText,
   parseMark,
   rememberSent,
+  socketGone,
   splitBody,
   unsentElements,
   withIncoming,
@@ -110,6 +112,28 @@ describe("the relay connection", () => {
     // a big upload still moving keeps the connection
     expect(connectionDead(61_000, 0, 500, 900)).toBe(false);
     expect(connectionDead(61_000, 0, 900, 900)).toBe(true);
+  });
+
+  it("a closing socket counts as gone: its close handshake may never end while the network is down", () => {
+    expect(socketGone(0)).toBe(false); // connecting
+    expect(socketGone(1)).toBe(false); // open
+    expect(socketGone(2)).toBe(true); // closing (the pen e2e's offline case hung here, "connected" and read only)
+    expect(socketGone(3)).toBe(true);
+  });
+
+  it("a dropped socket is gone at once, without waiting for its close event, and sends no more events", () => {
+    const gone = vi.fn();
+    // a socket whose close handshake never ends: close() only starts it, onclose never comes
+    const ws = { readyState: 1, onmessage: vi.fn() as unknown, onclose: vi.fn() as unknown, onerror: vi.fn() as unknown, close: vi.fn(() => (ws.readyState = 2)) };
+    dropSocket(ws, gone);
+    expect(ws.close).toHaveBeenCalledTimes(1);
+    expect(gone).toHaveBeenCalledTimes(1);
+    expect(ws.onmessage).toBeNull();
+    expect(ws.onclose).toBeNull();
+    expect(ws.onerror).toBeNull();
+    const broken = { onmessage: null, onclose: null, onerror: null, close: () => { throw new Error("closed already"); } };
+    dropSocket(broken, gone);
+    expect(gone).toHaveBeenCalledTimes(2);
   });
 });
 

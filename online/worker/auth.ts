@@ -342,26 +342,13 @@ const tokenKey = async (raw64: string | undefined) => {
 const tokenAad = (fileId: string, sub: string, exp: number, keyId: string) =>
   new TextEncoder().encode(`kurviq-scene-token:${fileId}:${sub}:${exp}:${keyId}`);
 
-export type SceneToken = { r: string; iat: number; exp: number };
-
 /**
- * An author's refresh token for one scene's Durable Object:
- * "<keyId>.<exp>.<iv>.<ciphertext>", bound to the file, the account and the
- * expiry (the lease): the DO can't use it for another scene or person, or
- * after it ran out. `iat`: when the session was signed in (sign out everywhere).
+ * An author's refresh token, sealed by the retired live sync for one scene's
+ * Durable Object: "<keyId>.<exp>.<iv>.<ciphertext>", bound to the file, the
+ * account and the expiry (the lease). Only read now (the drain); nothing seals
+ * new ones. `iat`: when the session was signed in (sign out everywhere).
  */
-export const sealSceneToken = async (env: AuthEnv, fileId: string, sub: string, refreshToken: string, iat: number, exp: number) => {
-  const current = await tokenKey(env.TOKEN_KEY);
-  if (!current) {
-    throw new Error("TOKEN_KEY is not set");
-  }
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = new TextEncoder().encode(JSON.stringify({ r: refreshToken, iat }));
-  const sealed = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: tokenAad(fileId, sub, exp, current.id) }, current.key, data),
-  );
-  return `${current.id}.${exp}.${b64url(iv)}.${b64url(sealed)}`;
-};
+export type SceneToken = { r: string; iat: number; exp: number };
 
 /** a sealed scene token's content, or null (another file or account, run out, or not sealed with our keys) */
 export const unsealSceneToken = async (env: AuthEnv, sealed: string, fileId: string, sub: string): Promise<SceneToken | null> => {
@@ -388,18 +375,38 @@ export const unsealSceneToken = async (env: AuthEnv, sealed: string, fileId: str
 };
 
 /** Kurviq's grant at Google ends (sign out everywhere) */
-export const revokeAtGoogle = async (env: AuthEnv, refreshToken: string) => {
+export const revokeAtGoogle = async (env: AuthEnv, refreshToken: string, timeoutMs = 15_000) => {
   try {
     const res = await fetch(googleUrls(env).revoke, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token: refreshToken }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     return res.ok || res.status === 400; // 400: already revoked
   } catch {
     return false;
   }
+};
+
+/** waits between the tries of a revocation within one request (sign out everywhere) */
+export const REVOKE_RETRY_WAITS_MS = [500, 1_500];
+
+/**
+ * The revocation at Google, tried again a few times within the request
+ * (5 s each, about 17 s at most). The token is never kept for a later try:
+ * if Google can't be reached, the person removes Kurviq's access themselves.
+ */
+export const revokeAtGoogleNow = async (env: AuthEnv, refreshToken: string, waits = REVOKE_RETRY_WAITS_MS) => {
+  for (let attempt = 0; attempt <= waits.length; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waits[attempt - 1])); // NOSONAR S9382: tries in order on purpose
+    }
+    if (await revokeAtGoogle(env, refreshToken, 5_000)) { // NOSONAR S9382: tries in order on purpose (each after the one before)
+      return true;
+    }
+  }
+  return false;
 };
 
 // -----------------------------------------------------------------------------

@@ -15,12 +15,12 @@
 //   old scene entries     until drained, at most 5 hours after they were last added (the old token lease)
 //   the epoch, the account id 400 days (the longest a session from before could be presented), then all is gone
 //   revocations           until delivered (retried every minute)
-//   a refresh token to revoke at Google (sealed with TOKEN_KEY), when sign out everywhere couldn't:
-//                         until Google confirmed, at most 30 days (retried every minute)
+// Never a Google token: a revocation at Google is tried within the sign-out
+// request only (./sceneRoutes.ts). Objects that kept one for a later try (the
+// meta key `revoke`, before 2026-11-13) drop it when they next start.
 
 import { DurableObject } from "cloudflare:workers";
 
-import { revokeAtGoogle, unsealSceneToken } from "./auth";
 import type { AuthEnv } from "./auth";
 
 const FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
@@ -44,6 +44,8 @@ export class AccountGuard extends DurableObject<AccountEnv> {
       CREATE TABLE IF NOT EXISTS connected (id TEXT PRIMARY KEY, at INTEGER) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS revocations (id TEXT PRIMARY KEY, epoch INTEGER) WITHOUT ROWID;
     `);
+    // migration: a sealed refresh token kept for a later revocation at Google goes (no tokens on our servers)
+    this.sql.exec("DELETE FROM meta WHERE k = 'revoke'");
   }
 
   private metaValue(k: string) {
@@ -63,7 +65,7 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     if (this.epoch()) {
       add(this.epoch(), EPOCH_KEPT_MS);
     }
-    if (this.sql.exec("SELECT 1 FROM revocations LIMIT 1").toArray().length || this.metaValue("revoke")) {
+    if (this.sql.exec("SELECT 1 FROM revocations LIMIT 1").toArray().length) {
       times.push(Date.now() + 60_000);
     }
     const current = await this.ctx.storage.getAlarm();
@@ -100,9 +102,6 @@ export class AccountGuard extends DurableObject<AccountEnv> {
     this.ctx.storage.transactionSync(() => {
       this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('epoch', ?)", String(epoch));
       this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('sub', ?)", body.sub);
-      if (typeof body.retryRevoke === "string") {
-        this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('revoke', ?)", body.retryRevoke);
-      }
       for (const id of scenes) {
         this.sql.exec("INSERT OR REPLACE INTO revocations (id, epoch) VALUES (?, ?)", id, epoch);
       }
@@ -152,14 +151,6 @@ export class AccountGuard extends DurableObject<AccountEnv> {
           this.sql.exec("DELETE FROM revocations WHERE id = ?", row.id);
         }
       } catch {}
-    }
-    // a revocation at Google that didn't go through: tried again until it does (or the sealed copy ran out)
-    const revoke = this.metaValue("revoke");
-    if (revoke && sub) {
-      const sealed = await unsealSceneToken(this.env, revoke, "revoke-at-google", sub);
-      if (!sealed || (await revokeAtGoogle(this.env, sealed.r))) {
-        this.sql.exec("DELETE FROM meta WHERE k = 'revoke'");
-      }
     }
     this.prune();
     await this.planPrune();
