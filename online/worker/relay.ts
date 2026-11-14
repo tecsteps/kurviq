@@ -76,7 +76,8 @@ export class SceneRelay extends DurableObject {
 
   /** connections the room let go (a page leaving, or the old page of a reloaded one): closed */
   private closeGone() {
-    for (const id of [...this.sockets.keys()]) {
+    // (deleting from a Map while iterating it is safe)
+    for (const id of this.sockets.keys()) {
       if (!this.room.has(id)) {
         this.onClose(id);
       }
