@@ -22,6 +22,7 @@ import {
   markHolder,
   markText,
   parseMark,
+  reclaimsPen,
   rememberSent,
   socketGone,
   splitBody,
@@ -102,6 +103,9 @@ describe("the mark on the Drive file", () => {
     expect(markHolder(mark, "tab-a", now)).toBeNull();
     expect(markHolder({ ...mark, t: now - MARK_STALE_MS }, "tab-b", now)).toBeNull();
     expect(markHolder(null, "tab-b", now)).toBeNull();
+    // the mark of the page this tab showed before a reload is this tab's own
+    expect(markHolder(mark, "tab-b", now, "tab-a")).toBeNull();
+    expect(markHolder(mark, "tab-b", now, "tab-c")).toBe("Anna");
   });
 });
 
@@ -134,6 +138,21 @@ describe("the relay connection", () => {
     const broken = { onmessage: null, onclose: null, onerror: null, close: () => { throw new Error("closed already"); } };
     dropSocket(broken, gone);
     expect(gone).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("joining while the same account's other page holds the pen", () => {
+  const holder = { id: "old-page", who: "a1" };
+
+  it("the pen is taken when that page lets go, within a short time after joining", () => {
+    expect(reclaimsPen(holder, "new-page", "a1", 1_000, 10_000)).toBe(true);
+    expect(reclaimsPen(holder, "new-page", "a1", 10_000, 10_000)).toBe(false);
+  });
+
+  it("not from someone else, not when this page holds it, not when nobody does", () => {
+    expect(reclaimsPen({ ...holder, who: "b1" }, "new-page", "a1", 1_000, 10_000)).toBe(false);
+    expect(reclaimsPen({ ...holder, id: "new-page" }, "new-page", "a1", 1_000, 10_000)).toBe(false);
+    expect(reclaimsPen(null, "new-page", "a1", 1_000, 10_000)).toBe(false);
   });
 });
 

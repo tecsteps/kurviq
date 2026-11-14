@@ -30,9 +30,12 @@ export const parseMark = (text: string | null | undefined): PenMark | null => {
   return null;
 };
 
-/** someone else's fresh mark: their name (this tab may not edit); null: no mark, a stale one, or this tab's own */
-export const markHolder = (mark: PenMark | null, tab: string, now: number) =>
-  mark && mark.i !== tab && now - mark.t < MARK_STALE_MS ? mark.n : null;
+/**
+ * someone else's fresh mark: their name (this tab may not edit); null: no mark, a stale one, or this
+ * tab's own (also the one of the page this tab showed before a reload, `previous`)
+ */
+export const markHolder = (mark: PenMark | null, tab: string, now: number, previous: string | null = null) =>
+  mark && mark.i !== tab && mark.i !== previous && now - mark.t < MARK_STALE_MS ? mark.n : null;
 
 const stamp = (el: El) => `${el.version}:${el.versionNonce}`;
 
@@ -173,3 +176,12 @@ export const dropSocket = (
   }
   gone();
 };
+
+/**
+ * Right after this page joined, the same account's other page holds the pen
+ * (most likely the page this one replaces: closed or reloaded, its close not
+ * noticed yet): the wish to take the pen lasts until `until`, so it is taken
+ * as soon as that page lets go.
+ */
+export const reclaimsPen = (holder: { id: string; who: string } | null, myId: string | null, myWho: string | undefined, now: number, until: number) =>
+  !!holder && holder.id !== myId && holder.who === myWho && now < until;

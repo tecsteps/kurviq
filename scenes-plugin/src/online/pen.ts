@@ -38,6 +38,7 @@ import {
   markHolder,
   markText,
   parseMark,
+  reclaimsPen,
   rememberSent,
   socketGone,
   splitBody,
@@ -97,6 +98,17 @@ const POINTER_MS = 50;
 const ACTIVE_MS = 30_000;
 const OPS_ANSWER_MS = 15_000;
 const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
+/** joined while this account's other page held the pen (e.g. the one just closed): taken when it lets go within this time */
+const RECLAIM_MS = 10_000;
+/** sessionStorage: the page of this browser tab that left the relay last (a reload takes its place) */
+const PAGE_KEY = "kurviq-pen-page";
+const previousPage = (() => {
+  try {
+    return sessionStorage.getItem(PAGE_KEY);
+  } catch {
+    return null;
+  }
+})();
 const SETTINGS_KEYS = ["viewBackgroundColor", "gridSize", "gridStep", "gridModeEnabled", "kurviqPresentation", "kurviqPresentationAt"] as const;
 
 class Session {
@@ -117,6 +129,8 @@ class Session {
   markWrittenAt = 0;
   /** the first state after joining (or after a reconnect of the holder): take the pen if it is free */
   claimOnState = true;
+  /** until then the wish to take the pen lasts while this account's other page holds it */
+  reclaimUntil = 0;
   asked = false;
   failures = 0;
   /** a ticket or socket is on its way (./pen.ts connect) */
@@ -222,6 +236,7 @@ class Pen {
       window.addEventListener("pointermove", this.onPointerMove, { passive: true });
       window.addEventListener("offline", this.onOffline);
       window.addEventListener("online", this.onOnline);
+      window.addEventListener("pagehide", this.onPageHide);
       for (const type of ["pointerdown", "keydown"]) {
         window.addEventListener(type, this.onActivity, { capture: true, passive: true });
       }
@@ -361,6 +376,9 @@ class Pen {
     s.ws = ws;
     s.lastMessageAt = Date.now();
     s.welcomeBy = Date.now() + WELCOME_WITHIN_MS;
+    s.reclaimUntil = Date.now() + RECLAIM_MS;
+    // this page's id, and the page of this browser tab it replaces (a reload): that one's pen comes here
+    ws.onopen = () => this.sendRaw(s, { t: "hello", page: TAB, ...(previousPage ? { resume: previousPage } : {}) });
     ws.onmessage = (event) => {
       s.inbox = s.inbox.then(() => this.receive(s, event.data)).catch((error) => console.error("[pen] message failed", error));
     };
@@ -379,6 +397,25 @@ class Pen {
   private readonly onOffline = () => {
     const s = this.session;
     if (s?.ws && !s.closed) {
+      this.drop(s, s.ws);
+    }
+  };
+
+  /**
+   * The page goes (reload, navigation, closed tab): the relay hears it at once
+   * and frees the pen, without waiting for the socket's close; the next page
+   * of this tab names this one to take its place. A page kept in the
+   * back/forward cache joins again when it is shown.
+   */
+  private readonly onPageHide = (event: PageTransitionEvent) => {
+    const s = this.session;
+    if (!s?.ws || !this.sendRaw(s, { t: "leaving" })) {
+      return;
+    }
+    try {
+      sessionStorage.setItem(PAGE_KEY, TAB);
+    } catch {}
+    if (event.persisted) {
       this.drop(s, s.ws);
     }
   };
@@ -552,6 +589,7 @@ class Pen {
         this.sendRaw(s, { t: "claim" }); // whoever opens the scene first edits it
         return;
       }
+      s.claimOnState = reclaimsPen(s.holder, s.id, s.self?.who, Date.now(), s.reclaimUntil);
     }
     const holderId = s.holder?.id ?? null;
     if (holderId !== before) {
@@ -651,7 +689,7 @@ class Pen {
     s.markCheckedAt = Date.now();
     try {
       const { mark } = await readPenMark(s.fileId);
-      s.markHolder = markHolder(parseMark(mark), TAB, Date.now());
+      s.markHolder = markHolder(parseMark(mark), TAB, Date.now(), previousPage);
     } catch {
       // Drive not reachable either: as it was (a tab that edits goes on, its edits are merged later)
     }
@@ -1099,7 +1137,7 @@ class Pen {
       return null;
     }
     try {
-      const holder = markHolder(parseMark((await readPenMark(fileId)).mark), TAB, Date.now());
+      const holder = markHolder(parseMark((await readPenMark(fileId)).mark), TAB, Date.now(), previousPage);
       return holder ? editingRefusal(holder) : null;
     } catch {
       return null; // Drive not reachable: the save itself will say so

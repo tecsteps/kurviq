@@ -55,7 +55,7 @@ import {
 } from "./storage";
 
 import type { HomeError, HomeHistoryEntry, ListedScene, LiveHost, SceneHome } from "./homes/types";
-import type { SceneMeta, ScenesMeta } from "./storage";
+import type { SceneMeta, ScenesMeta, Snapshot } from "./storage";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type {
   AppState,
@@ -1523,6 +1523,32 @@ class ScenesController implements LiveHost {
     }
   }
 
+  /**
+   * The open scene lives on the canvas, which the browser keeps for every
+   * space alike: a page of another space (a shared scene, the own scenes)
+   * replaces it, and the scene's stored copy is only what was stashed last.
+   * When this browser pushed after that (its baseline moved on), the copy is
+   * older than the scene's base in Drive and must not be shown as up to date
+   * (the scene opened empty, or old, and the next edit would have saved that
+   * over Drive's version).
+   */
+  private staleCopyOfCurrent(name: string, snapshot: Snapshot) {
+    return name === this.meta.current && !snapshot.dirty && snapshot.baseline !== this.meta.baseline;
+  }
+
+  /** Drive's version of a scene; not reachable: the stale stored copy, checked against Drive later */
+  private async loadLatest(name: string, meta: SceneMeta | undefined, stale: Snapshot | undefined) {
+    try {
+      const latest = await this.loadFromHomeOrEmpty(name, meta);
+      return { json: latest.json, loadedMd5: latest.version, checkDrive: false };
+    } catch (error) {
+      if (!stale) {
+        throw error;
+      }
+      return { json: stale.json, loadedMd5: null, checkDrive: true };
+    }
+  }
+
   private async loadOpeningScene(name: string | null) {
       const snapshot = await getSnapshot(name);
       let json: string | null = null;
@@ -1541,16 +1567,14 @@ class ScenesController implements LiveHost {
         } else if (!this.onlyInThisBrowser(name, meta)) {
           throw await this.notHereError(name);
         } // else: an empty scene that was never in Drive, nothing to download
-      } else if (snapshot) {
+      } else if (snapshot && !this.staleCopyOfCurrent(name, snapshot)) {
         // show the local copy (no local changes) right away, check Drive in
         // the background; it is its own base
         json = snapshot.json;
         checkDrive = true;
       } else {
-        // never opened here: Drive's version is all there is
-        const latest = await this.loadFromHomeOrEmpty(name, meta);
-        json = latest.json;
-        loadedMd5 = latest.version;
+        // never opened here, or its stored copy is older than what was last on the canvas: Drive's version
+        ({ json, loadedMd5, checkDrive } = await this.loadLatest(name, meta, snapshot));
       }
 
     return { json, baseline, loadedMd5, checkDrive };

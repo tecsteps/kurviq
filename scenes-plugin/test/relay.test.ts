@@ -127,6 +127,45 @@ describe("the pen", () => {
     expect(r.holderId()).toBeNull();
   });
 
+  it("a page leaving (reload, navigation, closed tab) frees its pen before its socket closes", () => {
+    const r = room();
+    const out = r.receive("A", { t: "leaving" }, 1);
+    expect(r.holderId()).toBeNull();
+    expect(r.has("A")).toBe(false);
+    expect(last(out, "B", "state")).toMatchObject({ holder: null });
+    expect(last(out, "B", "state").people.map((person: any) => person.id)).not.toContain("A");
+  });
+
+  it("a reloaded page takes its old page's place and pen, even before that page's close is noticed", () => {
+    const r = room();
+    r.receive("A", { t: "hello", page: "page-1" }, 0);
+    r.join("A2", anna, 1);
+    const out = r.receive("A2", { t: "hello", page: "page-2", resume: "page-1" }, 2);
+    expect(r.holderId()).toBe("A2");
+    expect(r.has("A")).toBe(false);
+    expect(last(out, "B", "state")).toMatchObject({ holder: { id: "A2", name: "Anna" } });
+    // its old page's late close changes nothing
+    expect(r.leave("A", 3)).toEqual([]);
+    expect(r.holderId()).toBe("A2");
+  });
+
+  it("only the same account's page is taken over by naming it; a page that didn't hold the pen just goes", () => {
+    const r = room();
+    r.receive("A", { t: "hello", page: "page-1" }, 0);
+    r.receive("B", { t: "hello", page: "page-b" }, 0);
+    r.join("B2", ben, 1);
+    expect(r.receive("B2", { t: "hello", page: "page-b2", resume: "page-1" }, 2)).toEqual([]);
+    expect(r.holderId()).toBe("A");
+    expect(r.has("A")).toBe(true);
+    const out = r.receive("B2", { t: "hello", page: "page-b3", resume: "page-b" }, 3);
+    expect(r.has("B")).toBe(false);
+    expect(r.holderId()).toBe("A");
+    expect(last(out, "A", "state").people.map((person: any) => person.id)).not.toContain("B");
+    // a page id that is not one: ignored
+    expect(r.receive("B2", { t: "hello", page: "no spaces allowed", resume: "page-1" }, 4)).toEqual([]);
+    expect(r.has("A")).toBe(true);
+  });
+
   it("a participant silent for 2 minutes is reported (and dropped by the object)", () => {
     const r = room(0);
     r.receive("B", { t: "ping" }, SILENT_DROP_MS - 10);
@@ -260,6 +299,23 @@ describe("the relay object", () => {
     const states = b.server.sent.map((text) => JSON.parse(text)).filter((msg) => msg.t === "state");
     expect(states.at(-1).holder).toBeNull();
     b.server.emit("close");
+  });
+
+  it("closes the socket of a page that left, and of a reloaded page's old one", () => {
+    const object = relay();
+    const a = connect(object, anna);
+    const b = connect(object, ben);
+    a.server.emit("message", { data: JSON.stringify({ t: "hello", page: "page-1" }) });
+    a.server.emit("message", { data: JSON.stringify({ t: "claim" }) });
+    const a2 = connect(object, anna);
+    a2.server.emit("message", { data: JSON.stringify({ t: "hello", page: "page-2", resume: "page-1" }) });
+    expect(a.server.closed).toBe(true);
+    const state = a2.server.sent.map((text) => JSON.parse(text)).filter((msg) => msg.t === "state").at(-1);
+    expect(state.people).toHaveLength(2);
+    expect(state.holder).toMatchObject({ name: "Anna" });
+    b.server.emit("message", { data: JSON.stringify({ t: "leaving" }) });
+    expect(b.server.closed).toBe(true);
+    a2.server.emit("close");
   });
 
   it("refuses a request without the Worker's checked claims", () => {

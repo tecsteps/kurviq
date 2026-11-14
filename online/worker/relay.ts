@@ -71,6 +71,16 @@ export class SceneRelay extends DurableObject {
       return;
     }
     this.deliver(this.room.receive(id, msg, Date.now()));
+    this.closeGone();
+  }
+
+  /** connections the room let go (a page leaving, or the old page of a reloaded one): closed */
+  private closeGone() {
+    for (const id of [...this.sockets.keys()]) {
+      if (!this.room.has(id)) {
+        this.onClose(id);
+      }
+    }
   }
 
   private onClose(id: string) {

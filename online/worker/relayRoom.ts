@@ -24,7 +24,12 @@ export type RelayClaims = {
   email?: string;
 };
 
-type Person = RelayClaims & { id: string; seenAt: number };
+type Person = RelayClaims & {
+  id: string;
+  seenAt: number;
+  /** the page's own id ("hello"): a reload of that page names it to take its place */
+  page?: string;
+};
 
 export type Out = { to: string; msg: Record<string, unknown> };
 
@@ -61,6 +66,11 @@ export class RelayRoom {
 
   holderId() {
     return this.holder;
+  }
+
+  /** still in the room (else the object closes the connection) */
+  has(id: string) {
+    return this.people.has(id);
   }
 
   /** a new connection; null: refused (too many) */
@@ -103,6 +113,10 @@ export class RelayRoom {
     switch (msg.t) {
       case "ping":
         return [{ to: id, msg: { t: "pong" } }];
+      case "hello":
+        return this.hello(person, msg, now);
+      case "leaving":
+        return this.leave(id, now);
       case "claim":
         return this.claim(person, now);
       case "ask":
@@ -147,6 +161,36 @@ export class RelayRoom {
 
   private refuse(person: Person, action: string, why: string): Out[] {
     return [{ to: person.id, msg: { t: "refused", action, why } }];
+  }
+
+  /**
+   * A page names itself; after a reload it also names the page it replaces
+   * (`resume`, the same browser tab). That page's connection may still be
+   * here (its close not noticed yet): it goes, and its pen comes along.
+   * Only the same account's page counts.
+   */
+  private hello(person: Person, msg: any, now: number): Out[] {
+    if (typeof msg.page !== "string" || !REQ_RE.test(msg.page)) {
+      return [];
+    }
+    person.page = msg.page;
+    const ghost = typeof msg.resume === "string" ? this.pageOf(msg.resume, person) : undefined;
+    if (!ghost) {
+      return [];
+    }
+    this.people.delete(ghost.id);
+    this.asking.delete(ghost.id);
+    if (this.holder === ghost.id) {
+      this.holder = null;
+      if (person.role === "edit") {
+        return this.give(person, now);
+      }
+    }
+    return this.stateToAll(now);
+  }
+
+  private pageOf(page: string, of: Person) {
+    return [...this.people.values()].find((other) => other.page === page && other.who === of.who && other.id !== of.id);
   }
 
   private claim(person: Person, now: number): Out[] {

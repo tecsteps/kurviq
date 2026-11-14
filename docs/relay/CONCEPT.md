@@ -59,9 +59,13 @@ a fresh ticket, which carries the key now.
 | the holder | `release` ("Stop editing", after saving) | the pen is free |
 | the holder | `active` (on its user's input, at most every 30 s) | resets the idle clock |
 | anyone | `ping` | `pong` |
+| anyone | `hello {page, resume?}` (on connecting) | names the page (a random id per page load); `resume`: the page of the same browser tab before a reload (sessionStorage), whose connection of the same account goes, its pen to the new page |
+| anyone | `leaving` (on `pagehide`: reload, navigation, closed tab) | leaves at once, the holder's pen with it, without waiting for the socket's close |
 
 The relay drops a participant silent for 2 minutes (a sweep every 20 s); a
-closed socket goes at once, and the holder's pen with it. The holder idle
+closed socket goes at once, and the holder's pen with it. A tab that joins
+while the same account's other page holds the pen (its close not noticed yet)
+takes the pen when that page lets go, within 10 s of joining. The holder idle
 for 5 minutes is announced (`idle`), so others see "Take over".
 
 ## Payloads (end to end encrypted)
