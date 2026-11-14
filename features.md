@@ -10,8 +10,7 @@ found while building sharing and comments.
 
 **Data rule:** Kurviq's servers keep no customer data and no tokens, not even
 temporarily (`specs/2026-11-13-drive-collaboration-without-server-data.md`).
-Scenes live in the user's Google Drive, their browser, or their own database
-(`specs/2026-11-13-own-database.md`). The accepted exceptions: short links
+Scenes live in the user's Google Drive or their browser. The accepted exceptions: short links
 (name → file id), the sign-out-everywhere record (account id + time),
 anonymous statistics counters, and messages people send to Kurviq on purpose
 (feedback, contact).
@@ -22,7 +21,7 @@ anonymous statistics counters, and messages people send to Kurviq on purpose
 
 | # | Feature | Why | Spec | Status |
 |---|---|---|---|---|
-| 1 | ~~Live sync for everyone~~ | Superseded: on Drive, one editor at a time with a memory-only relay (live view for everyone else; implemented, `docs/relay/CONCEPT.md`); real-time co-editing with your own database | `2026-11-13-drive-collaboration-without-server-data.md`, `2026-11-13-own-database.md` | superseded (Drive part implemented; own database: steps 1 to 5 implemented, Supabase: `docs/homes/CONCEPT.md`; real "Connect with Supabase" and real emails not yet checked) |
+| 1 | ~~Live sync for everyone~~ | Superseded: on Drive, one editor at a time with a memory-only relay (live view for everyone else; implemented, `docs/relay/CONCEPT.md`); real-time co-editing is not offered (the own-database variant, `2026-11-13-own-database.md`, was dropped on 2026-11-14) | `2026-11-13-drive-collaboration-without-server-data.md` | superseded (Drive part implemented) |
 | 2 | Thumbnails in Google Drive | Drive and the picker show scenes as an empty checkerboard | `2026-11-13-drive-thumbnails.md` | implemented (real Drive not yet checked) |
 | 3 | Scene text searchable in Google Drive | Drive's search finds a scene by its words, not only its name | `2026-11-13-drive-search-text.md` | implemented (real Drive search not yet checked) |
 | 4 | Email notifications for comments | Without them comments go unnoticed; redesigned without any storage on our side (no digests) | `2026-11-13-comment-notifications.md` | postponed (2026-11-13) |

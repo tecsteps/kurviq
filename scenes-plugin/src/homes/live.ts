@@ -4,16 +4,15 @@
 
 import { pen } from "../online/pen";
 
-import { databaseLive } from "./database/live";
 import { driveHome } from "./drive";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 driveHome.live = pen;
 
-/** every home with a live session follows the editor's open scene (the databases' one session: the open database scene) */
+/** every home with a live session follows the editor's open scene */
 export const attachLiveSessions = (api: ExcalidrawImperativeAPI) => {
-  for (const live of [driveHome.live, databaseLive]) {
-    live?.attach(api);
+  for (const home of [driveHome]) {
+    home.live?.attach(api);
   }
 };

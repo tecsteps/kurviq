@@ -1,13 +1,10 @@
 # Your own database: real-time collaboration and guests without Google
 
-Status: proposal, 2026-11-13; decisions of 2026-11-13 included (OAuth from
-the start, one space per database, SMTP optional, public scenes as the
-owner's choice). Step 1 (the adapter interface, with "browser" and "Google
-Drive" behind it) done 2026-11-13: `scenes-plugin/src/homes/`, contract in
-`docs/homes/CONCEPT.md`. Steps 2 to 5 done 2026-11-13 (Supabase: connect, the database
-home with real time, sharing, settings and "Move to…": `scenes-plugin/src/homes/database/`,
-e2e `scenes-plugin/test/e2e/own-database.mjs`); the real "Connect with Supabase" and real
-emails wait for UAT. Step 6 open.
+Status: **dropped** (Fabian, 2026-11-14: "Supabase integration was a mistake"). Built on 2026-11-13
+(commits 07be3fb, fc21a8c) and removed completely on 2026-11-14 (reverted); kept here only as a record.
+What stays from it: the scene homes interface (`scenes-plugin/src/homes/`, `docs/homes/CONCEPT.md`) with this
+browser and Google Drive behind it, which also carries the controller fixes. Kurviq has no database home,
+no Supabase code, no `drive.appdata` scope.
 
 ## Idea
 

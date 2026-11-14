@@ -38,12 +38,9 @@ export const browserHomeOf = (store: LocalSceneStore): SceneHome => {
     capabilities: {
       sync: "none",
       history: false,
-      filesInline: true,
-      commentsInline: true,
       presence: "none",
       sharing: "none",
       publicLinks: false,
-      guests: false,
       moveMarker: false,
       needsSignIn: false,
     },

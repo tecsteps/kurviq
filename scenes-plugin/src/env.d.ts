@@ -16,8 +16,3 @@ declare module "*.woff2" {
   const url: string;
   export default url;
 }
-
-declare module "*.sql?raw" {
-  const text: string;
-  export default text;
-}

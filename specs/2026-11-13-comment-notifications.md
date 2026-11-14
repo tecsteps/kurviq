@@ -47,12 +47,6 @@ side. That rules out digests kept by Kurviq; mails go out at once or not at all.
   verify: whether those mails are acceptable as the owner's notification
   (their text is Kurviq's JSON; a readable first line would help).
 
-## How (database scenes)
-
-The user's own database sends (`2026-11-13-own-database.md`): a database
-function or Supabase Edge Function on new comment rows, with the database's
-own SMTP. Digests and settings are possible there (it is their data).
-
 ## Checks
 
 - Worker: refuses without access, with forged permission ids, and never stores
@@ -76,4 +70,3 @@ own SMTP. Digests and settings are possible there (it is their data).
    aren't the file's (they are ignored), and it never writes D1 or Durable Object storage (code review + a test).
 5. An unsubscribe link stops further mails to that address (the mail service's suppression), nothing stored by
    Kurviq.
-6. For a scene in the user's own database, the database sends the mail (no call to Kurviq's server).

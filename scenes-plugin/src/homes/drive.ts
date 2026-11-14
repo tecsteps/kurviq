@@ -33,12 +33,9 @@ export const driveHomeOf = (scenes: Pick<typeof driveScenes, "list" | "load" | "
   capabilities: {
     sync: "merge",
     history: true,
-    filesInline: true,
-    commentsInline: true,
     presence: "pen",
     sharing: "drive",
     publicLinks: true,
-    guests: false,
     moveMarker: true,
     needsSignIn: true,
   },

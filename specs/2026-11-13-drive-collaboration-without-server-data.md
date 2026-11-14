@@ -18,8 +18,7 @@ may do is serve the app and pass messages through memory without writing them
 anywhere (and even that only where a feature needs it, see "Together, live").
 
 Accepted consequence: on Drive scenes, collaboration is not as instant as in
-Excalidraw+ or Figma. The second spec (`2026-11-13-own-database.md`) unlocks
-full real-time collaboration for those who connect a database of their own.
+Excalidraw+ or Figma.
 
 ## What breaks the rule today (inventory)
 
@@ -39,7 +38,7 @@ full real-time collaboration for those who connect a database of their own.
 **Decision: one editor at a time.** Whoever opens a scene first may edit it;
 everyone who opens it while that person is there sees it read-only and live,
 and can ask for the edit right. Real-time co-editing (several people drawing
-at once) is what the own database is for (`2026-11-13-own-database.md`).
+at once) is not offered (an own-database variant for it was dropped on 2026-11-14).
 
 This removes most of the hard parts: no merging of parallel edits, no conflict
 copies, no deciding which of two changes to one element wins.

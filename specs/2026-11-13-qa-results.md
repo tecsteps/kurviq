@@ -1,5 +1,9 @@
 # QA results: the November 2026 project
 
+> **2026-11-14: the own database (Supabase) was dropped and removed** (Fabian: "Supabase integration was a mistake").
+> Its results below (section "Own database", criteria with `own-database.mjs`, the `GOOGLE_APPDATA` switch, UAT items
+> 6, 7, 8) no longer apply; the code, the `drive.appdata` scope switch and the e2e script are gone.
+
 Run: 2026-11-13, QA agent (did not write the code). HEAD `fc21a8c` (working tree clean except an unrelated edit of
 `specs/2026-11-13-own-database.md` that is not mine). Logs: `/private/tmp/claude-501/-Users-fabianwesner-Workspace-excalidrawlocal/c6a587f6-9521-46c1-9a5f-6da49c9692f3/scratchpad/qa/`
 (called `qa/` below). Environments used: fake Google (`wrangler dev --port 8790` with `--var DRIVE_NEW:on --var GOOGLE_APPDATA:on`, and once without),
@@ -153,16 +157,16 @@ Updated 2026-11-14 after the fixes of the QA findings: pen.mjs case 15 fixed (ro
 3. **Picker and shared folders.** Share a Kurviq folder with a second account; as that account choose "Shared with you…", pick the folder in Google's picker: its scenes should open without another pick; add a scene as the owner: the guest sees "1 new scene in this folder: open them".
 4. **Domain sharing and expiry.** With the Tecsteps account: General access shows "Anyone at tecsteps.com ..."; a colleague opens the link with that role; a gmail account cannot. "Access until…" a viewer: Drive's "Share" dialog shows the expiry; at the date the person loses access.
 5. **New → More → Kurviq (after the console setup for `DRIVE_NEW` and the Workspace Marketplace SDK "New" action).** Click it in a Drive folder: the name dialog names the folder, the scene is created there and opens signed in as that account; with another account signed in, Kurviq asks to switch.
-6. **Real Connect with Supabase** (the client secret is set on Cloudflare since 2026-11-13): Settings, Databases…, Connect, approve at Supabase, create a project, note the password dialog, the scene works; the browser storage has no management token (DevTools, Application).
-7. **Second browser:** sign in with the same Google account on another browser: the database connection is listed (needs `GOOGLE_APPDATA` on and the consent screen with `drive.appdata`).
-8. **Real invitation:** invite an email address as viewer, open the mail's link (the default mailer sends a link; a code only with custom SMTP): viewer cannot edit. (The default Supabase mailer sends only a few mails per hour.)
+6. ~~Real Connect with Supabase~~ (dropped 2026-11-14) (the client secret is set on Cloudflare since 2026-11-13): Settings, Databases…, Connect, approve at Supabase, create a project, note the password dialog, the scene works; the browser storage has no management token (DevTools, Application).
+7. ~~Second browser~~ (dropped 2026-11-14): sign in with the same Google account on another browser: the database connection is listed (needs `GOOGLE_APPDATA` on and the consent screen with `drive.appdata`).
+8. ~~Real invitation~~ (dropped 2026-11-14): invite an email address as viewer, open the mail's link (the default mailer sends a link; a code only with custom SMTP): viewer cannot edit. (The default Supabase mailer sends only a few mails per hour.)
 9. **Production drain:** signed in on kurviq.com, in the console run `fetch("/live/drain",{method:"POST"})`: it should answer that nothing is left to drain; afterwards the follow-up release (delete the `SceneRoom` class, remove `TOKEN_KEY`) can go out, which closes failures 2 and 3.
 10. **Shared viewer:** open a `/s/...` link of a public scene, add a comment placement, press Esc: the popover/placing closes first, the viewer stays.
-11. **Console setups:** `DRIVE_NEW` (Workspace Marketplace SDK "Drive UI integration" with the new-file URL `https://kurviq.com/drive/new`) and `GOOGLE_APPDATA` (add the scope on the consent screen, then set the var). Then re-run steps 5 and 7.
+11. **Console setups:** `DRIVE_NEW` (Workspace Marketplace SDK "Drive UI integration" with the new-file URL `https://kurviq.com/drive/new`). Then re-run step 5. (`GOOGLE_APPDATA` was dropped with the own database.)
 12. **Look at the share panel and the pen bar on your phone** (390 px width): readable, buttons reachable, no horizontal scroll.
 13. **Local install on https:** `npm run setup:domain` (Herd), open `https://draw.test`: `crypto.subtle` exists (`!!crypto.subtle` in the console), sign in with Google works; on `http://draw.test` main menu "Move browser scenes…" saves a file; on `https://draw.test` import it: the same scenes; open a Drive scene in two tabs: the pen bar appears (relay works over https).
 14. **Local agent checks** (I did not touch your open tab): in your tab ask the local MCP to `export_pdf` of a deck (B2), and to `edit_scene` while you draw (B41).
-15. **Privacy page:** read `https://kurviq.com/privacy` (EN and DE): the own database and the Supabase pass-through are described; no token is kept any more when "sign out everywhere" can't reach Google (fixed 2026-11-14).
+15. **Privacy page:** read `https://kurviq.com/privacy` (EN and DE): no token is kept any more when "sign out everywhere" can't reach Google (fixed 2026-11-14); the own-database section is gone again with the feature.
 
 ## Environment restored
 

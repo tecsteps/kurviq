@@ -1,7 +1,8 @@
 # Kurviq: where a scene lives (scene homes)
 
-Nov 13, 2026 · implements step 1 of `specs/2026-11-13-own-database.md` ("Adapter
-interface"). The next step is a third home: the user's own database (Supabase).
+Nov 13, 2026 · one interface for the places a scene lives: this browser and
+Google Drive. (A database home was built and dropped on 2026-11-14, see
+`specs/2026-11-13-own-database.md`.)
 
 ## The rule
 
@@ -16,14 +17,12 @@ Each scene has exactly one home. The scenes controller
 | `drive` (Google Drive) | `homes/drive.ts` (`driveHome`, over `online/drive.ts` `driveScenes`) | every other scene |
 
 `controller.homeOf(name)` answers which; every list item carries `home`. A
-scene's home is derived from its metadata today (`localOnly`); a database home
-adds `SceneMeta.home` (absent = derived as now, so stored metadata stays valid).
+scene's home is derived from its metadata (`localOnly`).
 
 ## The interface (contract)
 
 All calls are by scene name, all versions are opaque strings (`string`,
-compared for equality only: Drive's MD5, the browser's MD5 of the content, a
-database's revision counter or similar).
+compared for equality only: Drive's MD5, the browser's MD5 of the content).
 
 | Call | Must |
 |---|---|
@@ -75,26 +74,4 @@ against every home (`contract(...)`): a new home is added there first.
   scene is open.
 - **The browser home** is the controller's own store (`LocalSceneStore`):
   `controller.browserHome` reads and writes local-only scenes through the
-  queue, so "Move to…" can treat it like any other home.
-
-## The database home (Supabase)
-
-Implemented 2026-11-13 (steps 2 to 5 of the spec), in `scenes-plugin/src/homes/database/`:
-
-| Module | What |
-|---|---|
-| `schema.sql` (`schema.ts`, `schemaVersion.ts`) | Kurviq's tables in the user's project (`kurviq_space`, `kurviq_members`, `kurviq_scenes`, `kurviq_scene_access`, `kurviq_elements`, `kurviq_scene_meta`, `kurviq_comments`, `kurviq_versions`), row-level security by the signed-in email, the storage bucket `kurviq-files`, realtime authorization on `realtime.messages`; idempotent, version 1 (`kurviq_schema_version()`) |
-| `rows.ts`, `client.ts` | `SceneRows`: the calls on the database (supabase-js, loaded only when a database home is used), errors as `HomeError` (offline, `paused`, 403 read only, 409 with the revision) |
-| `home.ts` | `databaseHomeOf(rows)`: the `SceneHome` (contract cases in `homes.test.ts`); `version` = the scene's revision; `load` assembles the file (pictures from the bucket, comments from rows), `save` is a whole save on a base revision (`kurviq_save_scene`) |
-| `live.ts`, `changes.ts` | the open database scene's live session: changed elements written every 150 ms (`kurviq_put_elements`, the newer version wins in the database too) and broadcast by editors; the database announces every write on `kurviq:<scene id>`, the others fetch rows since their revision; pointers, selections, names by broadcast / presence; offline: the canvas keeps the changes, written when back; the role checked every 30 s |
-| `write.ts` | a database scene changed outside the canvas (an agent's edit of a scene that isn't open): only what changed, element by element |
-| `connections.ts` | the connected databases (this browser + Drive's app data), their clients and sign-in (email link; a code where the template shows one), members, per-scene access, invites |
-| `oauth.ts` | "Connect with Supabase" (PKCE; the code exchange and the setup's Management API calls through `online/worker/supabase.ts`, which keeps nothing) |
-| `ui.tsx`, `shareUI.tsx` | connect, sign in, "New scenes are kept", "Move to…", the share panel, the bar over a database scene (role, paused) |
-
-In the controller a database scene is `SceneMeta.db = { ref, id, rev }` and
-also `localOnly` (never pushed to or pulled from Drive): its live session keeps
-it in step; agents read and edit it through the tab like a local-only scene
-(`flush` answers `localOnly: true, home: "database"`). `controller.moveTo`
-moves a scene between any two homes; `refreshDatabases` adds the databases'
-scenes to the list and drops those gone from them.
+  queue like any other home.

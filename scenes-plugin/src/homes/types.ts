@@ -1,45 +1,34 @@
-// Where a scene lives (its "home", specs/2026-11-13-own-database.md): this
-// browser only, Google Drive, or later the user's own database. The scenes
-// controller (../controller.ts) talks to a home only through this interface;
-// the contract is written down in docs/homes/CONCEPT.md.
+// Where a scene lives (its "home"): this browser only, or Google Drive. The
+// scenes controller (../controller.ts) talks to a home only through this
+// interface; the contract is written down in docs/homes/CONCEPT.md.
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
-export type HomeKind = "browser" | "drive" | "database";
+export type HomeKind = "browser" | "drive";
 
 // Versions: every `version` / `base` / `remoteVersion` string below names one
 // state of a scene in its home, opaque to the controller: compared for
-// equality only. Drive: the file's MD5. A database: whatever names one state
-// of the scene's rows (e.g. a revision counter).
+// equality only. Drive: the file's MD5; this browser: the MD5 of the content.
 
 export type HomeCapabilities = {
   /**
    * How copies are kept in step:
    * - "none": the home is the only copy (this browser), nothing to sync;
    * - "merge": whole-scene versions; the controller pushes, pulls and merges
-   *   element by element against the base version (Drive);
-   * - "realtime": the home streams element changes itself through its live
-   *   session (a database); the controller only loads and stores.
+   *   element by element against the base version (Drive).
    */
-  sync: "none" | "merge" | "realtime";
+  sync: "none" | "merge";
   /** older versions can be listed and loaded (history, loadVersion) */
   history: boolean;
-  /** pictures are part of the scene JSON (`files`); else the home's `files` store keeps them */
-  filesInline: boolean;
-  /** comments are part of the scene JSON (`kurviqComments`); else the home's `comments` keep them */
-  commentsInline: boolean;
   /**
-   * Others on the same scene: "none", "pen" (one editor at a time, the others
-   * follow live: Drive's relay) or "realtime" (everyone edits, pointers and
-   * selections shown: a database)
+   * Others on the same scene: "none", or "pen" (one editor at a time, the
+   * others follow live: Drive's relay)
    */
-  presence: "none" | "pen" | "realtime";
-  /** who can be given access: nobody, Drive's permissions, the home's members (invited by email) */
-  sharing: "none" | "drive" | "members";
+  presence: "none" | "pen";
+  /** who can be given access: nobody, or Drive's permissions */
+  sharing: "none" | "drive";
   /** a scene can be opened by anyone with its link */
   publicLinks: boolean;
-  /** people without a Google account can be invited (email codes) */
-  guests: boolean;
   /** an old copy can carry a "moved to …" note (markMoved / movedTo) */
   moveMarker: boolean;
   /** needs the user's sign-in before anything can be read or written */
@@ -53,7 +42,7 @@ export type ListedScene = {
   updatedAt: string | null;
   /** anyone with the link can open it */
   public?: boolean;
-  /** the home's own id of the scene (Drive: the file id; a database: the row id) */
+  /** the home's own id of the scene (Drive: the file id) */
   id?: string;
 };
 
@@ -98,30 +87,15 @@ export type HomeError = Error & {
   notConnected?: boolean;
   /** this user may only read: nothing can be saved */
   readOnly?: boolean;
-  /** the home's server is asleep (a free database pauses when unused): offline, with a way to wake it */
-  paused?: boolean;
 };
 
 /** where a scene went ("Move to…"): shown at its old place */
 export type MovedMark = { home: HomeKind; link: string; at: string };
 
-/** pictures kept outside the scene JSON (homes with filesInline: false) */
-export interface HomeFiles {
-  put(sceneId: string, fileId: string, dataURL: string, mimeType: string): Promise<void>;
-  get(sceneId: string, fileId: string): Promise<{ dataURL: string; mimeType: string } | null>;
-}
-
-/** comments kept outside the scene JSON (homes with commentsInline: false), in kurviqComments' shape */
-export interface HomeComments {
-  list(sceneId: string): Promise<unknown[]>;
-  /** one comment added or changed (the home applies the commenter rules) */
-  write(sceneId: string, comment: unknown): Promise<void>;
-}
-
 /**
  * The tab's side of a live session (the controller implements it): what the
- * home's live session (Drive: the pen, ../online/pen.ts; a database: its
- * realtime channel) may ask of and tell the controller about the open scene.
+ * home's live session (Drive: the pen, ../online/pen.ts) may ask of and tell
+ * the controller about the open scene.
  */
 export interface LiveHost {
   /** someone else may write the open scene now (their name): it is read only here; null: this tab may write */
@@ -151,7 +125,7 @@ export interface HomeSharing {
 
 export interface SceneHome {
   readonly kind: HomeKind;
-  /** shown to the user: "This browser", "Google Drive", the database's name */
+  /** shown to the user: "This browser", "Google Drive" */
   readonly label: string;
   readonly capabilities: HomeCapabilities;
 
@@ -173,10 +147,6 @@ export interface SceneHome {
   /** older versions (capabilities.history) */
   history?(name: string): Promise<HomeHistoryEntry[]>;
   loadVersion?(name: string, entry: HomeHistoryEntry): Promise<HomeContent>;
-  /** pictures (capabilities.filesInline false) */
-  files?: HomeFiles;
-  /** comments (capabilities.commentsInline false) */
-  comments?: HomeComments;
   /** live session of the open scene (capabilities.presence not "none"); wired once by the app (see ./live.ts) */
   live?: HomeLive;
   /** sharing (capabilities.sharing not "none") */
