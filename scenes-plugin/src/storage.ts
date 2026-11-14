@@ -11,7 +11,8 @@ import { clear, createStore, del, get, keys, set } from "idb-keyval";
 
 import { boundedStore } from "./boundedStore";
 
-import { mergeSpaceMeta, OWN_SPACE_KEY, pickSpace, SPACE_KEY, spaceSuffix, UNTITLED } from "./spaces";
+import { canvasBelongsTo, mergeSpaceMeta, parseCanvasOwner, OWN_SPACE_KEY, pickSpace, SPACE_KEY, spaceSuffix, UNTITLED } from "./spaces";
+import type { CanvasOwner } from "./spaces";
 
 // Kurviq: each space keeps its own scenes in the browser (see ./spaces.ts):
 // "" the scenes made signed out, "a:<email>" an account's own scenes,
@@ -37,6 +38,42 @@ const snapshotStoreOf = (space: string) => createStore(`excalidraw-scenes-db${sp
 const agentStoreOf = (space: string) => createStore(`excalidraw-scenes-agent${spaceSuffix(space)}`, "data");
 
 export const META_KEY = metaKeyOf(currentSpace);
+
+/** which space's scene the editor's stored canvas belongs to (see spaces.ts CanvasOwner) */
+export const CANVAS_OWNER_KEY = "kurviq-canvas-owner";
+
+/** the record of the stored canvas' owner; null: none (versions before it wrote none) */
+export const readCanvasOwner = () => {
+  try {
+    return parseCanvasOwner(localStorage.getItem(CANVAS_OWNER_KEY));
+  } catch {
+    return null;
+  }
+};
+
+/** the stored canvas is this space's scene `scene` (null: untitled); null: no record */
+export const canvasIsOwnedHere = (scene: string | null) => canvasBelongsTo(readCanvasOwner(), currentSpace, scene);
+
+/** the canvas shows this space's scene `scene` (null: untitled), or nobody's (undefined: it was cleared) */
+export const writeCanvasOwner = (scene: string | null | undefined) => {
+  const owner: CanvasOwner = scene === undefined ? { space: null, scene: null } : { space: currentSpace, scene };
+  try {
+    localStorage.setItem(CANVAS_OWNER_KEY, JSON.stringify(owner));
+  } catch {}
+};
+
+/**
+ * The untitled draft of another space, found on the canvas (its newest
+ * content: it was never stored there): stored as that space's draft, which
+ * it shows when it opens next
+ */
+export const storeDraftIn = async (space: string, json: string) => {
+  await set(UNTITLED, { json, baseline: null, dirty: true } satisfies Snapshot, snapshotStoreOf(space));
+  const key = metaKeyOf(space);
+  const meta = loadMeta(key);
+  meta.scenes[UNTITLED] = { ...meta.scenes[UNTITLED], baseMd5: null, dirty: true };
+  saveMeta(meta, key);
+};
 
 /** the named scenes of a stored scene list (raw localStorage value), for listing them from another space */
 export type HomeScene = { name: string; localOnly: boolean; inDrive: boolean };

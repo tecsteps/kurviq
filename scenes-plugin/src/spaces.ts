@@ -168,3 +168,42 @@ const mergeBase = (target: ScenesMeta | null, source: ScenesMeta, keepSync: bool
   }
   return { ...source, scenes: {}, pendingDeletes: keepSync ? { ...source.pendingDeletes } : {}, current: null, baseline: null };
 };
+
+/**
+ * The record of which space's scene the editor's stored canvas belongs to
+ * (the editor keeps one canvas for every space in the browser). scene null:
+ * the untitled draft; space null: nobody's (the canvas was cleared).
+ */
+export type CanvasOwner = { space: string | null; scene: string | null };
+
+/** the record from its stored form; null: none or not valid (versions before it wrote none) */
+export const parseCanvasOwner = (raw: string | null): CanvasOwner | null => {
+  let owner: Partial<CanvasOwner> | null = null;
+  try {
+    owner = raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+  const valid = (value: unknown) => value === null || typeof value === "string";
+  if (!owner || typeof owner !== "object" || !valid(owner.space) || !valid(owner.scene)) {
+    return null;
+  }
+  return { space: owner.space ?? null, scene: owner.scene ?? null };
+};
+
+/** the stored canvas is the scene `scene` (null: the untitled draft) of `space`; null: no record, nobody can tell */
+export const canvasBelongsTo = (owner: CanvasOwner | null, space: string, scene: string | null): boolean | null =>
+  owner === null ? null : owner.space === space && owner.scene === scene;
+
+/**
+ * The space whose untitled draft the stored canvas is, when that is not the
+ * open scene `scene` of `space` (another space's draft, or this space's
+ * while a named scene is open); else null
+ */
+export const otherDraftSpace = (owner: CanvasOwner | null, space: string, scene: string | null) => {
+  const draftSpace = owner?.scene === null ? owner.space : null;
+  if (draftSpace === null || (draftSpace === space && scene === null)) {
+    return null;
+  }
+  return draftSpace;
+};

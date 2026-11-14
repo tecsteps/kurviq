@@ -14,11 +14,11 @@ const compiled = ts.transpileModule(`class Controller { ${methods} }; exports.Co
 const loaded = { exports: {} as Record<string, any> };
 let saved: any;
 const UNTITLED = "\u0000untitled";
-new Function("exports", "restorePresentation", "loadMeta", "saveMeta", "UNTITLED", "CaptureUpdateAction", "editorYield", "LIVE_CAPABLE", "hashElementsVersion", "sceneHash", "getNonDeletedElements", "presentationSave", "presentationOf", "restoreAppState", "commentStore", "getSnapshot", compiled)(
+new Function("exports", "restorePresentation", "loadMeta", "saveMeta", "UNTITLED", "CaptureUpdateAction", "editorYield", "LIVE_CAPABLE", "hashElementsVersion", "sceneHash", "getNonDeletedElements", "presentationSave", "presentationOf", "restoreAppState", "commentStore", "getSnapshot", "readCanvasOwner", "canvasBelongsTo", "currentSpace", "otherDraftSpace", compiled)(
   loaded.exports, restorePresentation,
   () => structuredClone(saved), (meta: any) => { saved = structuredClone(meta); },
   UNTITLED, { NEVER: "never" }, async () => {}, false, () => 1, () => 2, (elements: any[]) => elements, presentationSave, presentationOf, (app: any) => app,
-  { load: () => {}, editorKey: () => "", editorList: () => [] }, async () => undefined,
+  { load: () => {}, editorKey: () => "", editorList: () => [] }, async () => undefined, () => null, () => null, "", () => null,
 );
 
 const fixture = (current: string | null = "local", remembered?: any) => {
@@ -35,7 +35,7 @@ const fixture = (current: string | null = "local", remembered?: any) => {
   const instance = new loaded.exports.Controller();
   Object.assign(instance, {
     meta, api, state: { busy: null, dirty: false }, claimsCurrent: true, persistedCurrent: current,
-    requireApi: () => api, recomputeDirty: vi.fn(), setState: vi.fn(),
+    requireApi: () => api, recomputeDirty: vi.fn(), setState: vi.fn(), recordCanvasOwner: vi.fn(),
   });
   return { instance, api, key, setElements: (next: any[]) => { elements = next; } };
 };

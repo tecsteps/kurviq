@@ -42,7 +42,7 @@ export type MoveFile = {
 export type OpenScene = { metaKey: string; name: string | null; snapshot: Snapshot };
 
 /** settings that never move: sign-ins, the tab's open shared scene, live and pairing state */
-const PRIVATE = /session|token|secret|pairing|refresh|^kurviq-live|^kurviq-space$/i;
+const PRIVATE = /session|token|secret|pairing|refresh|^kurviq-live|^kurviq-space$|^kurviq-canvas-owner$/i;
 
 const isMetaKey = (key: string) => key === META_PREFIX || key.startsWith(`${META_PREFIX}@`);
 const isSetting = (key: string) => key.startsWith("kurviq-") && !PRIVATE.test(key);

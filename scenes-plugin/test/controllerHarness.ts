@@ -10,7 +10,7 @@ import * as elementContent from "../../scenes-mcp/elementContent.mjs";
 import { randomNonce } from "../src/editDiff";
 import { browserHomeOf } from "../src/homes/browser";
 import { OpQueue } from "../src/opQueue";
-import { freeName, UNTITLED } from "../src/spaces";
+import { canvasBelongsTo, freeName, otherDraftSpace, parseCanvasOwner, UNTITLED } from "../src/spaces";
 
 import { runModule } from "./runModule";
 
@@ -183,8 +183,23 @@ export class FakeEditor {
 export class FakeStorage {
   saved: any = null;
   readonly snapshots = new Map<string, { json: string; baseline: number | null; dirty: boolean }>();
-  readonly module = {
+  /** this tab's space, and the raw record of whose scene the editor's stored canvas is (null: none, as before it existed) */
+  space = "";
+  canvasOwner: string | null = null;
+  /** drafts stored in other spaces: space -> content */
+  readonly otherSpaces = new Map<string, string>();
+  readonly module = Object.defineProperty({
     META_KEY: "excalidraw-scenes",
+    CANVAS_OWNER_KEY: "kurviq-canvas-owner",
+    readCanvasOwner: () => parseCanvasOwner(this.canvasOwner),
+    canvasIsOwnedHere: (scene: string | null) => canvasBelongsTo(parseCanvasOwner(this.canvasOwner), this.space, scene),
+    writeCanvasOwner: (scene: string | null | undefined) => {
+      this.canvasOwner = JSON.stringify(scene === undefined ? { space: null, scene: null } : { space: this.space, scene });
+    },
+    storeDraftIn: (space: string, json: string) => {
+      this.otherSpaces.set(space, json);
+      return Promise.resolve();
+    },
     loadMeta: () => {
       const meta = this.saved ? structuredClone(this.saved) : { current: null, baseline: null, autoSync: true, scenes: {}, pendingDeletes: {} };
       meta.scenes = Object.assign(Object.create(null), meta.scenes);
@@ -205,7 +220,7 @@ export class FakeStorage {
     },
     deleteAgentBaseline: async () => {},
     moveAgentBaseline: async () => {},
-  };
+  }, "currentSpace", { get: () => this.space, enumerable: true });
 }
 
 /** a window with listeners the test can fire */
@@ -236,7 +251,12 @@ const mergeModule = runModule(new URL("../src/merge.ts", import.meta.url), {
 export type Harness = Awaited<ReturnType<typeof controllerHarness>>;
 
 /** a controller on a fresh editor, storage and Drive; `setup` fills them before it starts */
-export const controllerHarness = async ({ online = false, setup }: { online?: boolean; setup?: (parts: { drive: FakeDrive; storage: FakeStorage; editor: FakeEditor }) => void } = {}) => {
+export const controllerHarness = async ({ online = false, setup, attached }: {
+  online?: boolean;
+  setup?: (parts: { drive: FakeDrive; storage: FakeStorage; editor: FakeEditor }) => void;
+  /** right after the controller attached the editor, before its initial scene is ready */
+  attached?: (controller: any, editor: FakeEditor, storage: FakeStorage) => void;
+} = {}) => {
   const drive = new FakeDrive();
   const storage = new FakeStorage();
   const editor = new FakeEditor();
@@ -277,14 +297,15 @@ export const controllerHarness = async ({ online = false, setup }: { online?: bo
     "./homes/drive": { driveHome: drive.home },
     "./merge": mergeModule,
     "./opQueue": { OpQueue },
-    "./spaces": { freeName, UNTITLED },
+    "./spaces": { canvasBelongsTo, freeName, otherDraftSpace, UNTITLED },
     "./storage": storage.module,
   }, { window, document, sessionStorage: { getItem: () => null, removeItem: () => {} } });
 
   const controller = new (loaded.scenesController.constructor as any)();
   controller.attach(editor);
+  attached?.(controller, editor, storage);
   await controller.ready;
-  return { controller, drive, storage, editor, window, exports: loaded };
+  return { controller, drive, storage, editor, window, document, exports: loaded };
 };
 
 /** a synced scene: in Drive and stored here with Drive's version as its base */

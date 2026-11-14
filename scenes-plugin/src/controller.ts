@@ -42,16 +42,22 @@ import { driveHome } from "./homes/drive";
 import { changedFields, live, mergeElements, mergeSceneSettings, MERGE_VERSION, newestWins } from "./merge";
 import type { ClashChoice } from "./merge";
 import { OpQueue } from "./opQueue";
-import { freeName, UNTITLED } from "./spaces";
+import { canvasBelongsTo, freeName, otherDraftSpace, UNTITLED } from "./spaces";
 import {
+  CANVAS_OWNER_KEY,
   META_KEY,
+  canvasIsOwnedHere,
+  currentSpace,
   deleteAgentBaseline,
   deleteSnapshot,
   getSnapshot,
   loadMeta,
   moveAgentBaseline,
+  readCanvasOwner,
   saveMeta,
   setSnapshot,
+  storeDraftIn,
+  writeCanvasOwner,
 } from "./storage";
 
 import type { HomeError, HomeHistoryEntry, ListedScene, LiveHost, SceneHome } from "./homes/types";
@@ -472,6 +478,9 @@ class ScenesController implements LiveHost {
     return this.api;
   }
 
+  /** the adoption of the restored canvas running (see attach) */
+  private adopting: Promise<unknown> = Promise.resolve();
+
   /** how many mounted components hold the editor (attach / release); none left a tick later: it is gone */
   private holds = 0;
 
@@ -510,15 +519,20 @@ class ScenesController implements LiveHost {
         void editorYield(100).then(waitForLoad).catch((error) => console.error("[scenes] initialization wait failed", error));
         return;
       }
-      this.adoptInitialCanvas()
+      // one after the other (the editor hands out more than one API object at start): at once, both
+      // would load the untitled draft from its stored copy, the second after the first removed it
+      const adopted = this.adopting.then(() => this.adoptInitialCanvas());
+      this.adopting = adopted.catch(() => undefined);
+      adopted
         .finally(() => this.readyDeferred.resolve())
         .catch((error) => console.error("[scenes] could not initialize scene", error));
     };
     this.unsubscribeChange?.();
     this.api = api;
-    this.unsubscribeChange = api.onChange((elements, appState) =>
-      this.onSceneChange(elements, appState),
-    );
+    this.unsubscribeChange = api.onChange((elements, appState) => {
+      this.writeCanvasOwner();
+      this.onSceneChange(elements, appState);
+    });
     window.addEventListener("focus", this.onFocus);
     window.addEventListener("online", this.onOnline);
     window.addEventListener("storage", this.onStorage);
@@ -532,18 +546,23 @@ class ScenesController implements LiveHost {
 
   /**
    * The app restores the canvas the browser saved last, possibly by another
-   * tab showing another scene. The canvas says which scene it is
-   * (appState.name); if that isn't this tab's scene, load the right one.
+   * tab showing another scene, or by another space (the editor keeps one
+   * canvas for all of them). The record of its owner (space and scene) and
+   * the canvas' own name say which scene it is; if that isn't this tab's
+   * scene, load the right one from its stored copy. Without a record (saved
+   * by a version before it) the name alone decides, as it did then.
    */
   private async adoptInitialCanvas() {
     const current = this.meta.current;
     const shown = this.api?.getAppState().name;
+    const owner = readCanvasOwner();
+    const owned = canvasBelongsTo(owner, currentSpace, current);
     if (current === null && (await this.untitledWasStashed())) {
       // the canvas was cleared on leaving (another space, e.g. after signing in): the untitled scene comes back
-      await this.openInner(null, { stash: false, force: true });
+      await this.openUntitledFromStore();
       return;
     }
-    if (current === null || shown === current) {
+    if (owned !== false && (current === null || shown === current)) {
       const api = this.requireApi();
       // the restored canvas has no comments: they come from the scene's stored copy (else the next
       // save would write the scene without them)
@@ -554,16 +573,89 @@ class ScenesController implements LiveHost {
         appState: api.getAppState(),
       }, current);
       api.updateScene({ appState: presentation as any, captureUpdate: CaptureUpdateAction.NEVER });
+      this.recordCanvasOwner(current);
       await editorYield();
       this.recomputeDirty();
       return;
     }
     try {
-      await this.openInner(current, { stash: false, force: true });
-      this.log("info", `Loaded "${current}" (the restored canvas belonged to "${shown}")`);
+      const draftOf = otherDraftSpace(owner, currentSpace, current);
+      if (draftOf !== null) {
+        await this.keepOtherDraft(draftOf);
+      }
+      if (current === null) {
+        await this.openUntitledFromStore();
+        this.log("info", "Loaded the untitled scene (the restored canvas belonged to another scene)");
+      } else {
+        await this.openInner(current, { stash: false, force: true });
+        this.log("info", `Loaded "${current}" (the restored canvas belonged to "${shown}")`);
+      }
     } catch (error) {
       console.error("[scenes] could not load the current scene", error);
     }
+  }
+
+  /**
+   * The restored canvas is the untitled draft of another space (or of this
+   * one, while another scene is open here): its newest content, nowhere else
+   * (a draft is stored only on leaving). It goes to that space's stored draft.
+   */
+  private async keepOtherDraft(space: string) {
+    const { json, isEmpty } = this.serializeCurrent();
+    if (isEmpty) {
+      return;
+    }
+    if (space !== currentSpace) {
+      await storeDraftIn(space, json);
+      return;
+    }
+    await setSnapshot(null, { json, baseline: null, dirty: true });
+    this.meta.scenes[UNTITLED] = { ...this.meta.scenes[UNTITLED], baseMd5: null, dirty: true };
+    this.persistMeta();
+  }
+
+  /** the untitled scene from its stored copy (else empty), never what the restored canvas shows */
+  private async openUntitledFromStore() {
+    await this.openInner(null, { stash: false, force: true });
+    // its stored copy is gone, it lives on the canvas now: stored again while the record can't say so
+    // (the page is hidden: the editor doesn't save the canvas yet)
+    if (!this.canvasOwnerWritten) {
+      await this.stashCurrent();
+    }
+  }
+
+  /** the scene this tab's canvas shows, for the canvas owner record (undefined: none yet, or cleared) */
+  private canvasScene: string | null | undefined = undefined;
+  /** the record names this tab's canvas scene (another tab's record clears it) */
+  private canvasOwnerWritten = false;
+
+  /** the canvas shows `scene` (null: untitled) of this space from now on */
+  private recordCanvasOwner(scene: string | null) {
+    const previous = this.canvasScene;
+    this.canvasScene = scene;
+    this.canvasOwnerWritten = false;
+    if (document.visibilityState === "hidden") {
+      // the editor saves nothing now: a record naming this tab's canvas would vouch for an older one
+      // (the scene's stored copy is the newer one)
+      if (previous !== undefined && canvasIsOwnedHere(previous)) {
+        writeCanvasOwner(undefined);
+      }
+      return;
+    }
+    this.writeCanvasOwner();
+  }
+
+  /**
+   * Record the canvas' owner when the editor saves the canvas: on a change
+   * while the page is visible (the editor saves nothing while it is hidden),
+   * so the record and the stored canvas come from the same tab.
+   */
+  private writeCanvasOwner() {
+    if (this.canvasScene === undefined || this.canvasOwnerWritten || document.visibilityState === "hidden") {
+      return;
+    }
+    writeCanvasOwner(this.canvasScene);
+    this.canvasOwnerWritten = true;
   }
 
   /** the untitled scene was stored on leaving (its content) and the canvas shows nothing */
@@ -634,6 +726,10 @@ class ScenesController implements LiveHost {
    * this tab shows stays (it is reloaded on focus, like the canvas).
    */
   private readonly onStorage = (event: StorageEvent) => {
+    if (event.key === CANVAS_OWNER_KEY) {
+      this.canvasOwnerWritten = false; // another tab's canvas: this one's is recorded at its next change
+      return;
+    }
     if (event.key !== META_KEY) {
       return;
     }
@@ -1340,6 +1436,7 @@ class ScenesController implements LiveHost {
     if (fileList.length) {
       api.addFiles(fileList);
     }
+    this.recordCanvasOwner(name);
   }
 
   /** after loading a base version of the open scene `name` into the canvas: it is the new baseline */
@@ -1674,6 +1771,9 @@ class ScenesController implements LiveHost {
       const api = this.api;
       this.detach();
       api?.updateScene({ elements: [], appState: { name: "", kurviqPresentation: false } as any, captureUpdate: CaptureUpdateAction.NEVER });
+      // nobody's canvas now: the next space never takes it for one of its scenes
+      this.canvasScene = undefined;
+      writeCanvasOwner(undefined);
     });
 
   /** create a new, empty named scene and switch to it */
@@ -1800,6 +1900,7 @@ class ScenesController implements LiveHost {
       ? { baseMd5: null, dirty: true, localOnly: true, ...(localOnly === undefined ? this.madeSignedOut() : {}) }
       : this.claimName(targetName, true);
     api.updateScene({ appState: { name: targetName }, captureUpdate: CaptureUpdateAction.NEVER });
+    this.recordCanvasOwner(targetName);
     this.persistMeta();
     this.setState({ dirty: true });
   }
@@ -2660,6 +2761,7 @@ class ScenesController implements LiveHost {
       this.meta.current = to;
       this.urlMode = "replace";
       this.requireApi().updateScene({ appState: { name: to }, captureUpdate: CaptureUpdateAction.NEVER });
+      this.recordCanvasOwner(to);
     }
     this.persistMeta();
     this.refresh();
