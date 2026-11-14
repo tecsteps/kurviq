@@ -146,21 +146,23 @@ Dialogs/panels: scene switcher, Databases flyover, Google Drive flyover, scene m
 
 ## UAT for Fabian
 
+Updated 2026-11-14 after the fixes of the QA findings: pen.mjs case 15 fixed (root cause: a WebSocket close that never completed; 10 of 10 in a row), no Google token kept on "sign out everywhere", privacy page updated, a scene link while signed out creates the scene again (a regression found by hand after QA), S7 (no animation loop in idle decks).
+
 1. **Thumbnails on real Drive.** Sign in on kurviq.com, make a scene with a shape, wait for the save, open Drive (grid view): the file shows a preview of the drawing; edit, save again: the preview updates; a deck shows slide 1; an empty scene has the generic icon.
 2. **Search.** In Drive's search box type a word that is only inside a scene's text: that scene is found (indexing can take minutes); a word you deleted stops finding it.
 3. **Picker and shared folders.** Share a Kurviq folder with a second account; as that account choose "Shared with you…", pick the folder in Google's picker: its scenes should open without another pick; add a scene as the owner: the guest sees "1 new scene in this folder: open them".
 4. **Domain sharing and expiry.** With the Tecsteps account: General access shows "Anyone at tecsteps.com ..."; a colleague opens the link with that role; a gmail account cannot. "Access until…" a viewer: Drive's "Share" dialog shows the expiry; at the date the person loses access.
 5. **New → More → Kurviq (after the console setup for `DRIVE_NEW` and the Workspace Marketplace SDK "New" action).** Click it in a Drive folder: the name dialog names the folder, the scene is created there and opens signed in as that account; with another account signed in, Kurviq asks to switch.
-6. **Real Connect with Supabase** (after `npm run secrets -- SUPABASE_CLIENT_SECRET`): Settings, Databases…, Connect, approve at Supabase, create a project, note the password dialog, the scene works; the browser storage has no management token (DevTools, Application).
+6. **Real Connect with Supabase** (the client secret is set on Cloudflare since 2026-11-13): Settings, Databases…, Connect, approve at Supabase, create a project, note the password dialog, the scene works; the browser storage has no management token (DevTools, Application).
 7. **Second browser:** sign in with the same Google account on another browser: the database connection is listed (needs `GOOGLE_APPDATA` on and the consent screen with `drive.appdata`).
-8. **Real invitation:** invite an email address as viewer, open the mail's link, enter the 6-digit code: viewer cannot edit. (The default Supabase mailer sends only a few mails per hour.)
+8. **Real invitation:** invite an email address as viewer, open the mail's link (the default mailer sends a link; a code only with custom SMTP): viewer cannot edit. (The default Supabase mailer sends only a few mails per hour.)
 9. **Production drain:** signed in on kurviq.com, in the console run `fetch("/live/drain",{method:"POST"})`: it should answer that nothing is left to drain; afterwards the follow-up release (delete the `SceneRoom` class, remove `TOKEN_KEY`) can go out, which closes failures 2 and 3.
 10. **Shared viewer:** open a `/s/...` link of a public scene, add a comment placement, press Esc: the popover/placing closes first, the viewer stays.
 11. **Console setups:** `DRIVE_NEW` (Workspace Marketplace SDK "Drive UI integration" with the new-file URL `https://kurviq.com/drive/new`) and `GOOGLE_APPDATA` (add the scope on the consent screen, then set the var). Then re-run steps 5 and 7.
 12. **Look at the share panel and the pen bar on your phone** (390 px width): readable, buttons reachable, no horizontal scroll.
 13. **Local install on https:** `npm run setup:domain` (Herd), open `https://draw.test`: `crypto.subtle` exists (`!!crypto.subtle` in the console), sign in with Google works; on `http://draw.test` main menu "Move browser scenes…" saves a file; on `https://draw.test` import it: the same scenes; open a Drive scene in two tabs: the pen bar appears (relay works over https).
 14. **Local agent checks** (I did not touch your open tab): in your tab ask the local MCP to `export_pdf` of a deck (B2), and to `edit_scene` while you draw (B41).
-15. **Privacy wording:** decide whether `online/pages/privacy.html` should name the own database / Supabase pass-through and the sealed refresh token that is kept up to 30 days when "sign out everywhere" cannot reach Google.
+15. **Privacy page:** read `https://kurviq.com/privacy` (EN and DE): the own database and the Supabase pass-through are described; no token is kept any more when "sign out everywhere" can't reach Google (fixed 2026-11-14).
 
 ## Environment restored
 
