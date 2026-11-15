@@ -12,6 +12,7 @@ import { createScenesMcp } from "../../../scenes-mcp/tools.mjs";
 import { agentTabState, runAgentCommand } from "../live";
 
 import { localServerFetch, registerReadMeOnly, webTool } from "./adapter";
+import { addAgentNote } from "./agentNote";
 import type { McpTool, ModelContext } from "./adapter";
 
 /** a tool call may take long (a picture of a big scene, a merge): the tab's own limits apply */
@@ -43,6 +44,8 @@ export const registerSceneTools = async (context: ModelContext): Promise<() => v
     await context.registerTool(webTool(tool, call), { signal: stop.signal }); // NOSONAR S9382: one after the other on purpose (the browser's tool list keeps their order)
   }
   console.info(`[kurviq] ${tools.length} scene tools offered to browser agents (WebMCP)`);
+  // agents that don't ask the browser for tools: the page's text tells them
+  addAgentNote(document);
   return () => {
     stop.abort();
     client.close().catch(() => {});

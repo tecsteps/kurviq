@@ -11,6 +11,7 @@ import { connectInProcess } from "../../scenes-mcp/inProcess.mjs";
 import { createScenesMcp } from "../../scenes-mcp/tools.mjs";
 import { localServerFetch, modelContextOf, registerReadMeOnly, webResult, webTool } from "../src/webmcp/adapter";
 import type { CommandAnswer, WebTool } from "../src/webmcp/adapter";
+import { AGENT_NOTE, addAgentNote } from "../src/webmcp/agentNote";
 import { createHash, sha1 } from "../src/webmcp/shims/crypto";
 
 const okRun = (result: unknown) => vi.fn(async (): Promise<CommandAnswer> => ({ ok: true, result }));
@@ -238,5 +239,36 @@ describe("the whole loop: scenes tools in the page, against a fake tab", () => {
     expect(listed).toContain("Plan");
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ type: "http", request: expect.objectContaining({ method: "GET" }) }));
     await client.close();
+  });
+});
+
+describe("the note for agents that don't look for WebMCP tools", () => {
+  const fakeDocument = () => {
+    const added: Array<{ id: string; style: string; textContent: string }> = [];
+    return {
+      added,
+      getElementById: (id: string) => added.find((element) => element.id === id) ?? null,
+      createElement: () => {
+        const element = { id: "", style: "", textContent: "", setAttribute: (_name: string, value: string) => (element.style = value) };
+        return element;
+      },
+      body: { appendChild: (element: any) => added.push(element) },
+    };
+  };
+
+  it("says how to call the tools (getTools, executeTool, read_me first)", () => {
+    expect(AGENT_NOTE).toContain("document.modelContext.getTools()");
+    expect(AGENT_NOTE).toContain("document.modelContext.executeTool(");
+    expect(AGENT_NOTE).toMatch(/read_me first/);
+  });
+
+  it("is added once, off screen but not hidden from the page's text", () => {
+    const doc = fakeDocument();
+    addAgentNote(doc as any);
+    addAgentNote(doc as any);
+    expect(doc.added).toHaveLength(1);
+    expect(doc.added[0]).toMatchObject({ id: "kurviq-agent-note", textContent: AGENT_NOTE });
+    expect(doc.added[0].style).toContain("clip:rect(0,0,0,0)");
+    expect(doc.added[0].style).not.toContain("display:none");
   });
 });

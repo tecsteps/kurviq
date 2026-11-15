@@ -1,5 +1,5 @@
 // Browser agents use Kurviq's scene tools through WebMCP (document.modelContext, scenes-plugin/src/webmcp):
-//   1 the page offers the MCP's scene tools (no create_view, no send_feedback), read_me tells about the page
+//   1 the page offers the MCP's scene tools (no create_view, no send_feedback) and a note for agents, read_me tells about the page
 //   2 save_scene makes a scene in Drive, list_scenes and read_scene see it
 //   3 edit_scene adds an element, saved to Drive; its picture is named, not inlined; view_scene the same
 //   3b images from inline SVG and data URLs are made in the page; web addresses are refused with an error text
@@ -70,6 +70,8 @@ for (let i = 0; i < 60 && !names.includes("edit_scene"); i++) {
 // 1. the tools
 ok(["read_me", "app_status", "list_scenes", "read_scene", "edit_scene", "save_scene", "view_scene", "delete_scene"].every((n) => names.includes(n)), "1: the scene tools are offered", names);
 ok(!names.includes("create_view") && !names.includes("send_feedback"), "1: no create_view, no send_feedback");
+const note = await page.evaluate(() => document.getElementById("kurviq-agent-note")?.textContent ?? null);
+ok(!!note?.includes("document.modelContext.getTools()"), "1: the page's text tells agents about the tools", note);
 const readMe = await call("read_me");
 ok(typeof readMe === "string" && readMe.includes("the Kurviq page's own tools") && !readMe.includes("curl "), "1: read_me: the page reference, no upload address");
 const status = await call("app_status");
