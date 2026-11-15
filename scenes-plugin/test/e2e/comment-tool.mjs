@@ -30,7 +30,7 @@ for (let i = 0; i < 3 && page.url().includes("/fake-google/oauth/authorize"); i+
   await page.goto(page.url().replace("/authorize", "/approve") + `&email=${encodeURIComponent(OWNER)}`, { waitUntil: "domcontentloaded" }); // NOSONAR S9382: in order on purpose
   await sleep(500); // NOSONAR S9382: in order on purpose
 }
-for (let i = 0; i < 120 && !(await page.evaluate(() => !!window.__scenes?.getApi() && !window.__scenes.getState().busy).catch(() => false)); i++) {
+for (let i = 0; i < 120 && !(await page.evaluate(() => !!window.__scenes?.getApi() && !window.__scenes.getState().busy).catch(() => false)); i++) { // NOSONAR S9382: polling in order on purpose
   await sleep(250); // NOSONAR S9382: polling in order on purpose
 }
 // a scene in Drive (comments live in the scene file)
@@ -42,7 +42,7 @@ await page.evaluate(async (name) => {
     captureUpdate: "IMMEDIATELY",
   });
 }, NAME);
-for (let i = 0; i < 80 && !(await page.evaluate((name) => window.__scenes.fileIdOf(name) ?? null, NAME)); i++) {
+for (let i = 0; i < 80 && !(await page.evaluate((name) => window.__scenes.fileIdOf(name) ?? null, NAME)); i++) { // NOSONAR S9382: polling in order on purpose
   await page.evaluate(() => window.__scenes.syncNow({ refresh: true })).catch(() => {}); // NOSONAR S9382: polling in order on purpose
   await sleep(500); // NOSONAR S9382: polling in order on purpose
 }
@@ -50,7 +50,7 @@ for (let i = 0; i < 80 && !(await page.evaluate((name) => window.__scenes.fileId
 const button = () =>
   page.evaluate(() => {
     const el = document.querySelector('[data-testid="toolbar-kurviq-comment"]');
-    const buttons = [...document.querySelectorAll(".App-toolbar [data-testid^='toolbar-']")].map((b) => b.getAttribute("data-testid"));
+    const buttons = [...document.querySelectorAll(".App-toolbar [data-testid^='toolbar-']")].map((b) => b.dataset.testid);
     const input = el?.querySelector("input") ?? el;
     return el ? { after: buttons[buttons.indexOf("toolbar-kurviq-comment") - 1], label: el.getAttribute("aria-label") ?? el.querySelector("[aria-label]")?.getAttribute("aria-label"), pressed: !!(input?.checked ?? el.getAttribute("aria-pressed") === "true") } : null;
   });
