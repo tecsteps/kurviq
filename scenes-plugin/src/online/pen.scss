@@ -61,9 +61,69 @@
   }
 }
 
+// someone else is editing: the editor is in view mode (no shape toolbar), so
+// the card sits in the top row, as high as the buttons there (wide screens;
+// narrower ones keep it below, where it can't run into the top corners)
+@media (min-width: 900px) {
+  .excalidraw .kq-pen--top {
+    top: 1rem;
+
+    > .kq-pen__card:first-child {
+      box-sizing: border-box;
+      min-height: 2.25rem;
+      padding: 0 0.2rem 0 0.75rem;
+    }
+
+    > .kq-pen__card:first-child .scenes-btn {
+      height: 1.75rem;
+    }
+  }
+}
+
 @media (max-width: 600px) {
   .excalidraw .kq-pen {
     top: auto;
     bottom: 4.5rem;
+  }
+}
+
+// "Editing · 1 watching · Stop": next to the scene's name in the top row (index.tsx
+// ScenesTopLeftUI), as high as the pill; narrower windows show it in the pen bar instead
+.excalidraw .kq-pen-chip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.4rem;
+  box-sizing: border-box;
+  height: var(--lg-button-size, 2.25rem);
+  padding: 0 0.2rem 0 0.75rem;
+  border-radius: var(--border-radius-lg);
+  background: var(--island-bg-color);
+  box-shadow: var(--shadow-island);
+  color: var(--text-primary-color);
+  font-size: 0.8rem;
+  white-space: nowrap;
+
+  .kq-pen__muted {
+    color: var(--color-gray-60, #6b6b75);
+  }
+
+  .scenes-btn.kq-pen__ghost {
+    height: 1.75rem;
+    border-color: transparent;
+    background: transparent;
+  }
+}
+
+// (narrower windows: the shape toolbar would be pushed out of the top row)
+@media (max-width: 1279px) {
+  .excalidraw .kq-pen-chip {
+    display: none;
+  }
+}
+
+@media (min-width: 1280px) {
+  .excalidraw .kq-pen__editing {
+    display: none;
   }
 }

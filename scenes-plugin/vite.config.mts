@@ -767,6 +767,21 @@ const webMcpTrial = (token: string) => ({
   },
 });
 
+const COMMENTS_UI_ENTRY = path.resolve(HERE, "src/comments/ui.tsx");
+
+/** "Add comment" in Excalidraw's toolbar, after the sticky note (src/comments/ui.tsx CommentToolButton) */
+const commentTool = () => ({
+  name: "excalidraw-scenes-comment-tool",
+  enforce: "pre" as const,
+  transform(code: string, id: string) {
+    if (!id.replaceAll("\\", "/").split("?")[0].endsWith("/packages/excalidraw/components/Toolbar.tsx")) {
+      return null;
+    }
+    const head = `import { CommentToolButton as __KurviqCommentTool } from ${JSON.stringify(COMMENTS_UI_ENTRY)};\n`;
+    return patchSource(code, "comment tool: Toolbar.tsx", [["<StickyNoteToolButton {...toolProps} />", "<StickyNoteToolButton {...toolProps} />\n<__KurviqCommentTool />"]], head);
+  },
+});
+
 /**
  * Content-Security-Policy for kurviq.com. Scripts only from this site (the
  * page's few inline scripts by their hash, Google's Picker), Google's APIs
@@ -936,6 +951,7 @@ export default async function kurviqConfig(configEnv: { mode: string; command: s
       richText(),
       customFonts(),
       moveScenesMenu(),
+      commentTool(),
       scenesMcpInPage(),
       sceneUrls(),
       ...(online ? [kurviqOnline(), kurviqPwa()] : []),

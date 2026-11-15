@@ -41,7 +41,7 @@ import { installWheelZoom } from "./wheelZoom";
 import { CommentsButton, CommentsLayer, SceneCommentCount } from "./comments/ui";
 import { useOpenThreadCounts } from "./comments/sceneCounts";
 import { attachLiveSessions } from "./homes/live";
-import { PenBar } from "./online/penUI";
+import { PenBar, PenEditingChip } from "./online/penUI";
 import { otherFolderScenes } from "./online/driveNew";
 import type { OtherScene } from "./online/driveNewState";
 import { DriveNewHost } from "./online/driveNewUI";
@@ -430,6 +430,8 @@ export const ScenesTopLeftUI = ({ isMobile }: { isMobile: boolean }) => {
           ▾
         </button>
       </div>
+      {/* "Editing · 1 watching · Stop" while others watch this tab's pen (wide windows) */}
+      <PenEditingChip />
       {panel === "switch" && (
         <SceneSwitcher onClose={() => setPanel(null)} onManageScene={() => setPanel("scene")} onDrive={() => setPanel("drive")} />
       )}

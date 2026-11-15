@@ -16,6 +16,11 @@ vi.mock("cloudflare:workers", () => ({
 import {
   Assembler,
   MARK_STALE_MS,
+  NOTICE_MS,
+  PenNotice,
+  pointerCollaborators,
+  presentPointers,
+  withPointer,
   connectionDead,
   dropSocket,
   editingRefusal,
@@ -233,5 +238,81 @@ describe("statistics of relay tickets", () => {
     ticket("https://kurviq.com", 403);
     await Promise.resolve();
     expect(batches).toEqual([{ c: [["live_sessions", "all", 1]], s: ["file-aaaaaaaaaa"] }]);
+  });
+});
+
+describe("the pen bar's notice", () => {
+  it("one that only informs goes away by itself after NOTICE_MS", () => {
+    vi.useFakeTimers();
+    try {
+      const changed = vi.fn();
+      const notice = new PenNotice(changed);
+      notice.show("Ada handed the pen to you: you can edit now", true);
+      expect(notice.text).toMatch(/handed the pen/);
+      vi.advanceTimersByTime(NOTICE_MS - 1);
+      expect(notice.text).not.toBeNull();
+      vi.advanceTimersByTime(1);
+      expect(notice.text).toBeNull();
+      expect(changed).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a problem stays until dismissed; a newer notice replaces the older one and its timer", () => {
+    vi.useFakeTimers();
+    try {
+      const notice = new PenNotice(() => {});
+      notice.show("Ada keeps editing for now", true);
+      vi.advanceTimersByTime(NOTICE_MS - 1000);
+      notice.show("Not saved to Drive, so you keep the pen: offline", false);
+      vi.advanceTimersByTime(NOTICE_MS * 3);
+      expect(notice.text).toMatch(/Not saved/);
+      notice.dismiss();
+      expect(notice.text).toBeNull();
+      notice.show("Ada took over editing", true);
+      vi.advanceTimersByTime(NOTICE_MS - 1000);
+      notice.show("Bob took over editing", true);
+      vi.advanceTimersByTime(1000);
+      expect(notice.text).toBe("Bob took over editing");
+      vi.advanceTimersByTime(NOTICE_MS);
+      expect(notice.text).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("everyone's pointer (the editor's and the watchers')", () => {
+  const ada = { id: "p1", name: "Ada", color: "#e03131", role: "read" };
+  const bob = { id: "p2", name: "Bob", color: "#1971c2", role: "edit" };
+
+  it("a pointer from someone is kept with their name and color; a bad one changes nothing", () => {
+    const one = withPointer(new Map(), ada, { x: 10.5, y: -3 });
+    expect(one.get("p1")).toEqual({ id: "p1", name: "Ada", color: "#e03131", x: 10.5, y: -3 });
+    const two = withPointer(one, bob, { x: 1, y: 2 });
+    expect([...two.keys()]).toEqual(["p1", "p2"]);
+    expect(withPointer(two, ada, { x: 20, y: 30 }).get("p1")).toMatchObject({ x: 20, y: 30 });
+    expect(withPointer(two, ada, { x: "a", y: 1 })).toBe(two);
+    expect(withPointer(two, {}, { x: 1, y: 1 })).toBe(two);
+    expect(withPointer(two, ada, null)).toBe(two);
+  });
+
+  it("only people still on the scene, never this tab's own", () => {
+    const pointers = withPointer(withPointer(new Map(), ada, { x: 1, y: 1 }), bob, { x: 2, y: 2 });
+    expect([...presentPointers(pointers, [bob], null).keys()]).toEqual(["p2"]);
+    expect([...presentPointers(pointers, [ada, bob], "p2").keys()]).toEqual(["p1"]);
+    expect(presentPointers(pointers, [], null).size).toBe(0);
+  });
+
+  it("as Excalidraw's collaborators", () => {
+    const collaborators = pointerCollaborators(withPointer(new Map(), bob, { x: 5, y: 6 }));
+    expect(collaborators.get("p2")).toEqual({
+      id: "p2",
+      socketId: "p2",
+      username: "Bob",
+      color: { background: "#1971c2", stroke: "#1971c2" },
+      pointer: { x: 5, y: 6, tool: "pointer" },
+    });
   });
 });

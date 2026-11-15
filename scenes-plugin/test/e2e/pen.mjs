@@ -11,6 +11,7 @@
 //   13 the relay unreachable: the mark on the Drive file decides (and doesn't change md5 / modifiedTime)
 //   14 an agent of a viewer is told who is editing
 //   15 edits made without the pen (offline) are merged into Drive when back, nothing lost
+//   16 everyone's pointer shows for the others (the holder's and the watchers')
 // Real Worker + fake Google: KURVIQ_URL (default http://localhost:8790), CHROME. Usage: node pen.mjs
 import { createRequire } from "node:module";
 const puppeteer = createRequire(import.meta.url)(new URL("../../../excalidraw/node_modules/puppeteer-core/cjs-entry-core.js", import.meta.url).pathname);
@@ -170,6 +171,31 @@ ok(unsaved && caught, "11: a newcomer sees the holder's unsaved changes (catch-u
 
 // --- 14: an agent of a viewer is told who is editing --------------------------
 const refusal = await editor.evaluate((scene) => window.__pen.refusal(scene), SCENE);
+// 16 everyone's pointer: the holder sees the viewer's, the viewer sees the holder's
+const moveOn = async (page, x, y) => {
+  await page.bringToFront();
+  for (let i = 0; i < 4; i++) {
+    await page.mouse.move(x + i * 10, y + i * 5); // NOSONAR S9382: in order on purpose
+    await sleep(150); // NOSONAR S9382: in order on purpose
+  }
+};
+await moveOn(viewer, 500, 400);
+let viewerPointer = null;
+for (let i = 0; i < 30 && !viewerPointer; i++) {
+  viewerPointer = await owner.evaluate(() => [...(window.__scenes?.getApi()?.getAppState().collaborators.values() ?? [])].map((c) => ({ name: c.username, pointer: c.pointer }))); // NOSONAR S9382: polling in order on purpose
+  viewerPointer = viewerPointer.length > 0 ? viewerPointer : null;
+  if (!viewerPointer) await sleep(200); // NOSONAR S9382: polling in order on purpose
+}
+ok(!!viewerPointer?.length, "16: the holder sees a viewer's pointer", viewerPointer);
+await moveOn(owner, 600, 300);
+await moveOn(editor, 700, 350);
+let holderPointer = null;
+for (let i = 0; i < 30 && !holderPointer; i++) {
+  const all = await viewer.evaluate(() => [...(window.__scenes?.getApi()?.getAppState().collaborators.values() ?? [])].map((c) => c.username)); // NOSONAR S9382: polling in order on purpose
+  holderPointer = all.length >= 2 ? all : null;
+  if (!holderPointer) await sleep(200); // NOSONAR S9382: polling in order on purpose
+}
+ok(!!holderPointer, "16: a viewer sees the holder's and the other watcher's pointers", holderPointer);
 ok(/is editing this scene/.test(refusal ?? ""), "14: an agent of a viewer is told who is editing", refusal);
 ok((await owner.evaluate((scene) => window.__pen.refusal(scene), SCENE)) === null, "14: the holder's tab accepts agent edits");
 
@@ -230,7 +256,22 @@ ok(byMark?.byMark && byMark.me === "viewer" && (await viewMode(blocked)), "13: a
 ok(typeof markedMeta.appProperties?.kurviqPen === "string", "13: the holder's mark is on the Drive file", markedMeta.appProperties);
 // the holder stops editing: it saves what it has first, then its mark goes; the tab without relay may edit
 // (and sets its own mark). The file once the holder's mark is gone is what the next mark must leave alone
-await click(holderPage, "Stop editing");
+// (wider screens: "Editing · N watching · Stop" sits next to the scene's name, in line with it)
+const chip = await holderPage.evaluate(() => {
+  const el = document.querySelector(".kq-pen-chip");
+  const pill = document.querySelector(".scenes-pill--split");
+  if (!el || !pill) return null;
+  const [a, b] = [el.getBoundingClientRect(), pill.getBoundingClientRect()];
+  return { text: el.textContent.replaceAll(/\s+/g, " ").trim(), sameRow: Math.abs(a.top - b.top) < 1 && Math.abs(a.height - b.height) < 1, rightOfPill: a.left > b.right };
+});
+ok(/^Editing · \d+ watching ?Stop$/.test(chip?.text ?? "") && chip.sameRow && chip.rightOfPill, "13: the holder's chip is next to the scene's name, as high as it", chip);
+if (process.env.SHOTS) await holderPage.screenshot({ path: `${process.env.SHOTS}/holder-top.png`, clip: { x: 0, y: 0, width: 1300, height: 120 } });
+const stopped = await holderPage.evaluate(() => {
+  const button = document.querySelector(".kq-pen-chip button");
+  button?.click();
+  return !!button;
+});
+ok(stopped, "13: Stop in the chip");
 const holderMark = JSON.parse(markedMeta.appProperties?.kurviqPen ?? "{}").i;
 let settledMeta = null;
 for (let i = 0; i < 80; i++) {

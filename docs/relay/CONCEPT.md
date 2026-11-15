@@ -78,7 +78,7 @@ the ticket:
 | kind | from → to | content |
 |---|---|---|
 | `change` | holder → everyone | elements whose stamp changed, new images, settings, comments (every 60 ms while drawing) |
-| `pointer` | holder → everyone | the holder's pointer (scene coordinates); shown with name and color (Excalidraw collaborators) |
+| `pointer` | anyone → everyone else | each person's pointer (scene coordinates; the holder's and the watchers'), shown with name and color (Excalidraw collaborators); a person's pointer goes when they leave |
 | `catchup-req` | anyone → holder | asks for what isn't saved yet |
 | `catchup` | holder → one tab | the whole canvas (incl. deleted elements), its images, settings, comments, and the Drive version it is based on |
 | `saved` | holder → everyone | after each save: the Drive version (md5) and the canvas hash, the others' new base |

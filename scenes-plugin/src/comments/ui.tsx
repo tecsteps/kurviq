@@ -13,6 +13,7 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { sceneCoordsToViewportCoords, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
+import { IconButton as ToolIconButton } from "@excalidraw/excalidraw/components/IconButton";
 import clsx from "clsx";
 
 import { authorKey, changeStamp, commentId, pinFor, pinPosition, threadsOf, withoutDone } from "../../../scenes-mcp/sceneComments.mjs";
@@ -970,6 +971,42 @@ const ThreadEntry = ({ thread, isNew }: { thread: CommentThread; isNew: boolean 
     </button>
   </li>
 );
+
+/** a speech bubble with a plus, drawn like Excalidraw's tool icons */
+const AddCommentIcon = (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M4 18.5V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H8.5z" />
+    <path d="M12 7.5v5M9.5 10h5" />
+  </svg>
+);
+
+/**
+ * "Add comment" in Excalidraw's toolbar, after the sticky note (put there by
+ * scenes-plugin/vite.config.mts commentTool): the same as Shift+C, pressed
+ * again it cancels. Only where this person may comment, not in presentations.
+ */
+export const CommentToolButton = () => {
+  const { placing } = useUi();
+  const me = useMe();
+  const { canComment } = usePermissions();
+  const presenter = usePresenter();
+  if (!canComment || !me || presenter.active) {
+    return null;
+  }
+  const label = "Add comment";
+  return (
+    <ToolIconButton
+      type="toggle"
+      icon={AddCommentIcon}
+      checked={placing}
+      title={`${label} — ${NEW_COMMENT_KEY}`}
+      aria-label={label}
+      aria-keyshortcuts={NEW_COMMENT_KEY}
+      data-testid="toolbar-kurviq-comment"
+      onSelect={() => (placing ? setUi({ placing: false }) : startPlacing())}
+    />
+  );
+};
 
 export const CommentsButton = () => {
   const state = useUi();

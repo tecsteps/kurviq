@@ -245,7 +245,7 @@ Once that is confirmed in production:
 9. Closing the holder's tab frees the pen within 2 minutes (or at once when the relay notices the close).
 10. Only the holder's browser saves to Drive; the saved file contains the holder's changes; viewers never write.
 11. A newcomer while the holder has unsaved changes sees them (catch-up through the relay).
-12. Pointers: the holder's pointer is visible to viewers (name, color).
+12. Pointers: the holder's pointer is visible to viewers (name, color), and since 2026-11-15 every viewer's pointer to the holder and the other viewers (e2e `pen.mjs` 16).
 13. Relay unreachable: the Drive mark (`appProperties.kurviqPen`) decides; a fresh mark makes the scene read-only
     for others, a stale one (2 minutes) lets the next person edit.
 14. Agents edit only through the pen holder's tab; an agent of a viewer is told who is editing.

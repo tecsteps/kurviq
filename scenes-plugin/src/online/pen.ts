@@ -44,7 +44,12 @@ import {
   splitBody,
   unsentElements,
   withIncoming,
+  PenNotice,
+  pointerCollaborators,
+  presentPointers,
+  withPointer,
 } from "./penSync";
+import type { PersonPointer } from "./penSync";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
@@ -203,11 +208,13 @@ class Pen {
   private commenterHandler: CommenterOpsHandler | null = null;
   /** the view mode was switched on by the pen (and is switched off again by it) */
   private lockedView = false;
-  private notice: string | null = null;
+  private readonly notices = new PenNotice(() => this.publish());
   private busy = false;
   private started = false;
   private apiUnsubscribe: (() => void) | null = null;
   private lastPointerAt = 0;
+  /** everyone else's pointer on the open scene, by their relay id */
+  private pointers = new Map<string, PersonPointer>();
   private lastActiveAt = 0;
   private reqCounter = 0;
   /** the account whose old live sync scenes were asked to drain in this page */
@@ -330,7 +337,7 @@ class Pen {
     });
     s.ws?.close(1000, "left");
     this.session = null;
-    this.setPointer(null);
+    this.clearPointers();
     this.unlockView();
     scenesController.setPenLock(null);
   }
@@ -463,7 +470,7 @@ class Pen {
     s.people = [];
     s.asking = [];
     s.asked = false;
-    this.setPointer(null);
+    this.clearPointers();
     if (s.closed) {
       return;
     }
@@ -591,9 +598,10 @@ class Pen {
       }
       s.claimOnState = reclaimsPen(s.holder, s.id, s.self?.who, Date.now(), s.reclaimUntil);
     }
+    // people who left: their pointers go (the others stay, also when the pen changes hands)
+    this.showPointers(s, this.pointers);
     const holderId = s.holder?.id ?? null;
     if (holderId !== before) {
-      this.setPointer(null);
       if (s.holder && !s.holderIsMe()) {
         this.askCatchUp(s);
       }
@@ -635,7 +643,7 @@ class Pen {
     // those are the holder's to save, never this tab's
     const own = before === "none" || (before === "holder" && s.ownEdits);
     if (own && s.role !== "read" && s.role !== "comment" && scenesController.getState().dirty) {
-      await scenesController.penFlushOwn().catch((error) => this.note(`Your changes could not be saved yet: ${error.message}`));
+      await scenesController.penFlushOwn().catch((error) => this.note(`Your changes could not be saved yet: ${error.message}`, true));
     }
     s.ownEdits = false;
     if (s.markWrittenAt && s.markHolder === null) {
@@ -886,7 +894,9 @@ class Pen {
   }
 
   private async onPayload(s: Session, kind: string, value: any, from: any, req: string | undefined) {
-    if (s.holder && from.id === s.holder.id && !s.holderIsMe()) {
+    if (kind === "pointer") {
+      this.showPointers(s, withPointer(this.pointers, from, value));
+    } else if (s.holder && from.id === s.holder.id && !s.holderIsMe()) {
       this.onHolderPayload(s, kind, value);
     } else if (kind === "catchup-req" && s.holderIsMe()) {
       this.sendCatchUp(s, from.id);
@@ -897,7 +907,7 @@ class Pen {
     }
   }
 
-  /** what the holder sends this read-only tab: its changes, its saves, its pointer */
+  /** what the holder sends this read-only tab: its changes and its saves */
   private onHolderPayload(s: Session, kind: string, value: any) {
     if (kind === "change" || kind === "catchup") {
       this.applyChange(value);
@@ -905,8 +915,6 @@ class Pen {
     const saved = kind === "catchup" ? value?.saved : value;
     if ((kind === "catchup" || kind === "saved") && typeof saved?.md5 === "string") {
       scenesController.penAdoptSaved(saved.md5, typeof saved.hash === "number" ? saved.hash : null);
-    } else if (kind === "pointer") {
-      this.setPointer(value, s.holder);
     }
   }
 
@@ -936,7 +944,8 @@ class Pen {
   private readonly onPointerMove = (event: PointerEvent) => {
     const s = this.session;
     const api = this.api;
-    if (!s || !api || !s.holderIsMe() || s.people.length < 2 || !s.key) {
+    // everyone's pointer (the editor's and the watchers'), once someone else is there
+    if (!s || !api || s.people.length < 2 || !s.key) {
       return;
     }
     const now = Date.now();
@@ -948,25 +957,21 @@ class Pen {
     void this.sendPayload(s, "pointer", { x: Math.round(x), y: Math.round(y) });
   };
 
-  /** the holder's pointer on this canvas, with name and color (null: none) */
-  private setPointer(value: { x: number; y: number } | null, holder?: Holder | null) {
+  /** everyone else's pointer on this canvas, with name and color (people who left: gone) */
+  private showPointers(s: Session | null, pointers: Map<string, PersonPointer>) {
+    const next = s ? presentPointers(pointers, s.people, s.id) : new Map<string, PersonPointer>();
     const api = this.api;
-    if (!api) {
+    const had = this.pointers.size;
+    this.pointers = next;
+    if (!api || (!next.size && !had && !api.getAppState().collaborators.size)) {
       return;
     }
-    const collaborators = new Map<any, any>();
-    if (value && holder && Number.isFinite(value.x) && Number.isFinite(value.y)) {
-      collaborators.set(holder.id, {
-        id: holder.who,
-        socketId: holder.id,
-        username: holder.name,
-        color: { background: holder.color, stroke: holder.color },
-        pointer: { x: value.x, y: value.y, tool: "pointer" },
-      });
-    } else if (!api.getAppState().collaborators.size) {
-      return;
-    }
-    api.updateScene({ collaborators, captureUpdate: CaptureUpdateAction.NEVER });
+    api.updateScene({ collaborators: pointerCollaborators(next) as any, captureUpdate: CaptureUpdateAction.NEVER });
+  }
+
+  /** no pointers (left the scene, lost the relay) */
+  private clearPointers() {
+    this.showPointers(null, new Map());
   }
 
   private readonly onActivity = () => {
@@ -1109,7 +1114,7 @@ class Pen {
         then(s);
       }
     } catch (error: any) {
-      this.note(`Not saved to Drive, so you keep the pen: ${error?.message ?? error}`);
+      this.note(`Not saved to Drive, so you keep the pen: ${error?.message ?? error}`, true);
     } finally {
       this.busy = false;
       this.publish();
@@ -1117,13 +1122,12 @@ class Pen {
   }
 
   dismissNotice() {
-    this.notice = null;
-    this.publish();
+    this.notices.dismiss();
   }
 
-  private note(text: string) {
-    this.notice = text;
-    this.publish();
+  /** a notice in the pen bar: one that only informs goes away by itself, a problem stays until OK */
+  private note(text: string, problem = false) {
+    this.notices.show(text, !problem);
   }
 
   /** an agent's edit of `name` through this tab: null if allowed, else who is editing */
@@ -1188,7 +1192,7 @@ class Pen {
       canTakeOver: !!s && s.relay === "connected" && s.role === "edit" && !!s.holder && !s.holderIsMe() && (s.idle || s.holder.who === s.self?.who),
       others: s ? Math.max(0, s.people.length - 1) : 0,
       byMark,
-      notice: this.notice,
+      notice: this.notices.text,
       busy: this.busy,
     };
     if (sameJson(next, this.view)) {

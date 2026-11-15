@@ -49,6 +49,7 @@ since 2026-11-13 (`scenes-plugin/src/comments`).
 6. A commenter's comment that waits for an editor shows "waiting for an editor" until the file has it.
 7. S38: a failed thread delete keeps the popover open with the error; S39: mentions in the shared viewer offer the
    thread's people, not the editor's scene's; U21: one copy-to-clipboard helper (code review).
+8. (2026-11-15) "Add comment" in Excalidraw's toolbar, right after the sticky note, where the person may comment: a click starts placing (pressed), a second click cancels, Shift+C shows it pressed (e2e `comment-tool.mjs`).
 
 ## Decisions (implementation)
 

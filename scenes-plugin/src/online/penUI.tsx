@@ -5,7 +5,8 @@
 //                        when Anna is idle 5 minutes or it is your other tab)
 //   nobody edits         "Nobody is editing · Edit"
 //   you edit             "Ben asks to edit · Hand over / Keep", and
-//                        "You're editing · Stop editing" while others watch
+//                        "Editing · 1 watching · Stop" next to the scene's
+//                        name while others watch (narrower windows: in the bar)
 //   relay not reachable  "Anna is editing" from the mark on the Drive file
 
 import { useSyncExternalStore } from "react";
@@ -32,6 +33,29 @@ const ignore = (promise: Promise<unknown>) => {
   promise.catch((error) => console.error("[pen]", error));
 };
 
+/** this tab holds the pen and others watch: "Editing · 1 watching · Stop" */
+const showsEditing = (view: PenView) => view.me === "holder" && view.others > 0 && view.relay === "connected";
+
+const watching = (others: number) => (others === 1 ? "1 watching" : `${others} watching`);
+
+/** next to the scene's name in the top row (wide windows; narrower ones show it in the pen bar) */
+export const PenEditingChip = () => {
+  const view = useSyncExternalStore(pen.subscribe, pen.getView);
+  if (!showsEditing(view)) {
+    return null;
+  }
+  return (
+    <output className="kq-pen-chip">
+      <span>
+        Editing <span className="kq-pen__muted">· {watching(view.others)}</span>
+      </span>
+      <button type="button" className="scenes-btn kq-pen__ghost" title="Stop editing: others can edit" disabled={view.busy} onClick={() => ignore(pen.stopEditing())}>
+        {view.busy ? "Saving…" : "Stop"}
+      </button>
+    </output>
+  );
+};
+
 /** this tab holds the pen: who asks for it, and stopping */
 const HolderCard = ({ view }: { view: PenView }) => (
   <>
@@ -47,8 +71,9 @@ const HolderCard = ({ view }: { view: PenView }) => (
         </span>
       </div>
     ))}
-    {view.others > 0 && view.relay === "connected" && (
-      <div className="kq-pen__card">
+    {showsEditing(view) && (
+      // narrower windows: here; wide ones: next to the scene's name (PenEditingChip)
+      <div className="kq-pen__card kq-pen__editing">
         <span className="kq-pen__who">
           You're editing{" "}
           <span className="kq-pen__muted">· {view.others === 1 ? "1 person watching" : `${view.others} people watching`}</span>
@@ -95,7 +120,8 @@ export const PenBar = () => {
     return null;
   }
   return (
-    <div className="kq-pen">
+    // someone else holds the pen: view mode, the top row is free (pen.scss)
+    <div className={view.me !== "holder" && view.holder ? "kq-pen kq-pen--top" : "kq-pen"}>
       {view.me === "holder" ? <HolderCard view={view} /> : <ViewerCard view={view} />}
       {view.notice && (
         <output className="kq-pen__card kq-pen__notice">

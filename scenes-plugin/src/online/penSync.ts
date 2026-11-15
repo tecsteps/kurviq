@@ -185,3 +185,80 @@ export const dropSocket = (
  */
 export const reclaimsPen = (holder: { id: string; who: string } | null, myId: string | null, myWho: string | undefined, now: number, until: number) =>
   !!holder && holder.id !== myId && holder.who === myWho && now < until;
+
+/** how long a pen notice that only informs stays on screen (one about a problem stays until OK) */
+export const NOTICE_MS = 6000;
+
+/** the pen bar's notice: "handed the pen to you" goes away by itself, a problem stays until dismissed */
+export class PenNotice {
+  text: string | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(private readonly changed: () => void) {}
+
+  /** fades: gone after NOTICE_MS (a newer notice replaces it and its timer) */
+  show(text: string, fades: boolean) {
+    this.stopTimer();
+    this.text = text;
+    if (fades) {
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        this.text = null;
+        this.changed();
+      }, NOTICE_MS);
+    }
+    this.changed();
+  }
+
+  dismiss() {
+    this.stopTimer();
+    this.text = null;
+    this.changed();
+  }
+
+  private stopTimer() {
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+}
+
+/** someone's pointer on the scene (scene coordinates), as the relay names them */
+export type PersonPointer = { id: string; name: string; color: string; x: number; y: number };
+
+/**
+ * A pointer that arrived from someone (`from`: the relay's checked identity):
+ * the pointers with it, or the same map when it is not one (bad numbers, no id).
+ */
+export const withPointer = (pointers: Map<string, PersonPointer>, from: any, value: any): Map<string, PersonPointer> => {
+  const x = Number(value?.x);
+  const y = Number(value?.y);
+  if (typeof from?.id !== "string" || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return pointers;
+  }
+  const next = new Map(pointers);
+  next.set(from.id, { id: from.id, name: String(from.name ?? ""), color: String(from.color ?? "#868e96"), x, y });
+  return next;
+};
+
+/** only the pointers of people still on the scene (not this tab's own) */
+export const presentPointers = (pointers: Map<string, PersonPointer>, people: Array<{ id: string }>, me: string | null): Map<string, PersonPointer> => {
+  const here = new Set(people.map((person) => person.id));
+  return new Map([...pointers].filter(([id]) => here.has(id) && id !== me));
+};
+
+/** Excalidraw's collaborators: everyone's pointer with name and color */
+export const pointerCollaborators = (pointers: Map<string, PersonPointer>) =>
+  new Map(
+    [...pointers.values()].map((pointer) => [
+      pointer.id,
+      {
+        id: pointer.id,
+        socketId: pointer.id,
+        username: pointer.name,
+        color: { background: pointer.color, stroke: pointer.color },
+        pointer: { x: pointer.x, y: pointer.y, tool: "pointer" as const },
+      },
+    ]),
+  );
