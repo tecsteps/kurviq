@@ -19,6 +19,7 @@ import { IS_ONLINE } from "./api";
 import { isSceneName } from "../../scenes-mcp/sceneName.mjs";
 import { IDLE_PUSH_MS, scenesController } from "./controller";
 import { IS_RENDERER, connectLive } from "./live";
+import { startWebMcp } from "./webmcp";
 import { connectRouter } from "./router";
 import { deck, isDeck } from "./deck";
 import { PresentationOverlay, presenter } from "./present";
@@ -165,6 +166,8 @@ const useAttachController = () => {
         deck.attach(api);
         connectRouter().catch((error) => console.error("[scenes] Routing could not be connected", error));
         scenesController.startSync();
+        // the scenes tools for browser agents (only where the browser has WebMCP)
+        startWebMcp();
       }
       // unmounted (e.g. a crash while rendering; the editor then hands out
       // null or a destroyed API): nothing may be synced from it any more

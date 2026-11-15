@@ -16,3 +16,9 @@ declare module "*.woff2" {
   const url: string;
   export default url;
 }
+
+/** the agent instructions (scenes-mcp/skill/…), read as text (vite.config.mts scenesMcpInPage) */
+declare module "*.md" {
+  const text: string;
+  export default text;
+}

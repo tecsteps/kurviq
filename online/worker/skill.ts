@@ -156,3 +156,15 @@ export const kurviqSkill = (app: string) => {
 /** what read_me returns: the element reference, with the upload address for images and big edits */
 export const kurviqReference = (uploadUrl = "<the upload address>") =>
   `${onlineReference(String(localReference)).trimEnd()}\n\n${UPLOADS(uploadUrl)}`;
+
+/** the page's own tools (WebMCP, scenes-plugin/src/webmcp): no upload address, nothing fetched from the web */
+const IN_PAGE = `## Images and big edits (the Kurviq page's own tools)
+
+You call these tools in the user's Kurviq page (WebMCP): there is no upload
+address and no payloadId. Give images as a data URL or as inline \`"svg"\`
+markup; web addresses and icons (\`"lucide:…"\`) can't be fetched from the page.
+Send big edits in parts, several \`edit_scene\` calls one after the other.`;
+
+/** what read_me returns to a browser agent using the page's tools */
+export const kurviqPageReference = () => `${onlineReference(String(localReference)).trimEnd()}\n\n${IN_PAGE}`;
+

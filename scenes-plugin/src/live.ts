@@ -1067,6 +1067,17 @@ const handleCommand = async (event: { id: string; command: Command }, reply: (pa
   }
 };
 
+/** an agent's command, run here (the page's own tools, ./webmcp: no server in between) */
+export const runAgentCommand = (command: Record<string, unknown>) =>
+  new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+    handleCommand({ id: `page-${Date.now()}`, command: command as Command }, resolve).catch((error) =>
+      resolve({ ok: false, error: error?.message || String(error) }),
+    );
+  });
+
+/** what this tab reports to agents (its open scene, unsaved changes, Drive) */
+export const agentTabState = () => ({ activeTab: TAB_ID, ...tabState() });
+
 if (import.meta.env.DEV || import.meta.env.VITE_APP_GOOGLE_API_BASE) {
   // end-to-end tests (dev, and builds for the fake Google): run an agent's command as the MCP would
   (window as any).__agentCommand = (command: Command) =>

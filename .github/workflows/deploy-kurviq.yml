@@ -60,6 +60,8 @@ jobs:
         run: npm run build:online
         env:
           KURVIQ_GOOGLE_BROWSER_KEY: ${{ secrets.KURVIQ_GOOGLE_BROWSER_KEY }}
+          # WebMCP's origin trial for kurviq.com (optional; empty: browser agents need Chrome's flag)
+          KURVIQ_WEBMCP_TRIAL_TOKEN: ${{ secrets.KURVIQ_WEBMCP_TRIAL_TOKEN }}
 
       - name: Build and deploy the Worker
         run: npm run deploy

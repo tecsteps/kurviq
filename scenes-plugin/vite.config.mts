@@ -720,6 +720,54 @@ const kurviqOnline = () => ({
 });
 
 /**
+ * The MCP's scenes tools (scenes-mcp/*.mjs) in the page, for browser agents
+ * (src/webmcp): the Node built-ins they import become small browser shims
+ * (src/webmcp/shims), and the agent reference (scenes-mcp/skill/…/*.md) is
+ * read as text, like the Worker build does.
+ */
+const NODE_SHIMS: Record<string, string> = {
+  "node:buffer": "buffer.ts",
+  "node:crypto": "crypto.ts",
+  "node:dns/promises": "dns.ts",
+  "node:fs/promises": "fs.ts",
+  "node:path": "path.ts",
+};
+const scenesMcpInPage = () => ({
+  name: "excalidraw-scenes-mcp-in-page",
+  enforce: "pre" as const,
+  resolveId(source: string, importer?: string) {
+    const shim = NODE_SHIMS[source];
+    if (!shim || !importer?.replaceAll("\\", "/").includes("/scenes-mcp/")) {
+      return null;
+    }
+    return path.join(HERE, "src/webmcp/shims", shim);
+  },
+  transform(code: string, id: string) {
+    const file = id.replaceAll("\\", "/").split("?")[0];
+    return file.includes("/scenes-mcp/skill/") && file.endsWith(".md") ? `export default ${JSON.stringify(code)};` : undefined;
+  },
+});
+
+/**
+ * WebMCP's origin trial (Chrome): with KURVIQ_WEBMCP_TRIAL_TOKEN (.env or a
+ * GitHub secret, never in the repository) the app page carries the token, so
+ * Chrome offers document.modelContext without a flag and src/webmcp
+ * registers the scene tools. Without it nothing changes.
+ */
+const webMcpTrial = (token: string) => ({
+  name: "excalidraw-scenes-webmcp-trial",
+  transformIndexHtml: {
+    order: "post" as const,
+    handler: (html: string) => {
+      if (!/^[\w+/=]+$/.test(token)) {
+        throw new Error("[excalidraw-scenes] KURVIQ_WEBMCP_TRIAL_TOKEN is not an origin trial token");
+      }
+      return html.replace("</head>", `  <meta http-equiv="origin-trial" content="${token}" />\n</head>`);
+    },
+  },
+});
+
+/**
  * Content-Security-Policy for kurviq.com. Scripts only from this site (the
  * page's few inline scripts by their hash, Google's Picker), Google's APIs
  * (sign-in tokens come from this site) as the other place to talk to, no
@@ -788,7 +836,7 @@ const kurviqPwa = () =>
       // the precache must not answer page loads itself ("/" is not index.html; the plain pages are not
       // precached at all, they always come from the network); index.html stays precached as the offline shell
       directoryIndex: null,
-      globIgnores: ["fonts.css", "**/locales/**", "service-worker.js", "**/*.chunk-*.js", "**/CodeMirrorEditor-*.js", "about.html", "imprint.html", "privacy.html", "terms.html", "contact.html"],
+      globIgnores: ["fonts.css", "**/locales/**", "service-worker.js", "**/*.chunk-*.js", "**/CodeMirrorEditor-*.js", "**/bridge-*.js", "about.html", "imprint.html", "privacy.html", "terms.html", "contact.html"],
       // only this site's own files, matched by path (a pattern on the whole URL
       // would also catch API requests that happen to contain "woff2");
       // new cache names, so entries of the old, too broad rules are never served
@@ -888,8 +936,10 @@ export default async function kurviqConfig(configEnv: { mode: string; command: s
       richText(),
       customFonts(),
       moveScenesMenu(),
+      scenesMcpInPage(),
       sceneUrls(),
       ...(online ? [kurviqOnline(), kurviqPwa()] : []),
+      ...(online && env.KURVIQ_WEBMCP_TRIAL_TOKEN ? [webMcpTrial(env.KURVIQ_WEBMCP_TRIAL_TOKEN)] : []),
       ...upstreamPlugins,
       ...(online ? [kurviqSelfHosted()] : []),
     ],

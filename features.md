@@ -52,6 +52,10 @@ anonymous statistics counters, and messages people send to Kurviq on purpose
 - **What changed since my last visit**: highlight others' changes when you
   come back, from Kurviq's own history (Google's Activity API would need an
   extra permission).
+- **Scene tools for browser agents (WebMCP)**: the app page offers the MCP's
+  tools to the browser's own agent (`document.modelContext`). Implemented
+  2026-11-15 (`specs/2026-11-15-webmcp.md`); for everyone once the Chrome
+  origin trial token is set.
 - **Approval flow** on top of comments: "Ready for review" → reviewers resolve
   → "Approved", with the date and names in the file.
 

@@ -2,6 +2,7 @@
 // a real Excalidraw image element plus its file (data URL), so agents can put
 // logos, screenshots and icons into scenes without writing scene JSON.
 
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -21,14 +22,15 @@ export const insideRoot = (base, target) => {
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 };
 
-// Local inputs stay inside the directory the MCP server was launched in.
-const LOCAL_ROOT = process.cwd();
+// Local inputs stay inside the directory the MCP server was launched in
+// (asked when a file is read: in the browser, scenes-plugin/src/webmcp, there is no process)
+const localRoot = () => process.cwd();
 const readLocalFile = async (file, encoding) => {
-  const base = await realpath(LOCAL_ROOT);
+  const base = await realpath(localRoot());
   const target = path.resolve(base, file);
   const resolved = insideRoot(base, target) ? path.resolve(base, await realpath(target)) : null;
   if (!resolved || !insideRoot(base, resolved)) {
-    throw new Error(`file "${file}": must be inside ${LOCAL_ROOT}`);
+    throw new Error(`file "${file}": must be inside ${localRoot()}`);
   }
   return readFile(resolved, encoding);
 };
