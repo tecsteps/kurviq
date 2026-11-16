@@ -1643,6 +1643,9 @@ export const enterSpace = (fileId: string | null, path = "/") => {
  * is none, it is a new scene.
  */
 export const sceneElsewhere = async (name: string): Promise<(() => void) | null> => {
+  if (state.user === undefined && !sharedFileId) {
+    await checkConnection(); // right at the start: find out whether this browser is signed in
+  }
   if (sharedFileId || !state.user || !state.drive) {
     return null;
   }

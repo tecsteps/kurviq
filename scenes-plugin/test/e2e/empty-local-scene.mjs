@@ -1,5 +1,5 @@
-// e2e: a scene that exists only in this browser and was empty when it was left (no stored copy,
-// not in Drive) opens empty when it is clicked, instead of failing with "not found".
+// e2e: a scene that exists only in this browser whose stored copy is gone (not in Drive) opens empty
+// when it is clicked, instead of failing with "not found". An empty new scene is forgotten when left.
 // Works against any build, signed out: KURVIQ_URL (default http://localhost:8790), CHROME.
 // Usage: node empty-local-scene.mjs
 import { createRequire } from "node:module";
@@ -23,9 +23,20 @@ for (let i = 0; i < 80 && !(await page.evaluate(() => !!window.__scenes?.getApi(
 await page.evaluate(() => window.__scenes.ready);
 await sleep(1500);
 const name = `empty-${Date.now() % 100000}`;
+// an empty new scene doesn't stick: left for another, it is gone
+await page.evaluate(() => window.__scenes.create("only-a-name"));
 await page.evaluate((n) => window.__scenes.create(n), name);
+const listed = await page.evaluate(() => window.__scenes.getState().list.map((item) => item.name));
+ok(!listed.includes("only-a-name"), "an empty new scene is forgotten when left", listed);
+await page.evaluate(() =>
+  window.__scenes.getApi().updateScene({
+    elements: [{ id: "els000000001", type: "rectangle", x: 100, y: 100, width: 120, height: 80, angle: 0, strokeColor: "#1e1e1e", backgroundColor: "transparent", fillStyle: "solid", strokeWidth: 2, strokeStyle: "solid", roughness: 1, opacity: 100, groupIds: [], frameId: null, index: "a0", roundness: null, seed: 1, version: 1, versionNonce: 1, isDeleted: false, boundElements: null, updated: 1, link: null, locked: false }],
+    captureUpdate: "IMMEDIATELY",
+  }),
+);
+await sleep(300);
 await page.evaluate(() => window.__scenes.create("other-scene"));
-// the stored copy of the empty scene is gone (as when it was empty and cleaned up)
+// its stored copy is gone (as with an empty scene left by an older version)
 await page.evaluate(
   (n) =>
     new Promise((resolve) => {

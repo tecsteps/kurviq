@@ -17,6 +17,8 @@ const fixture = (openError: unknown, notConnected = false) => {
   Object.assign(instance, {
     state: { sync: { notConnected } },
     exists: () => false,
+    onlyAName: () => Promise.resolve(false),
+    forgetName: vi.fn(() => Promise.resolve()),
     open: vi.fn(() => (openError ? Promise.reject(openError) : Promise.resolve())),
     create: vi.fn(() => Promise.resolve()),
   });
@@ -37,6 +39,16 @@ describe("a scene link opens the scene, or creates it", () => {
     expect(await instance.openOrCreateInner("Plan", elsewhere)).toBe("created");
     expect(elsewhere).not.toHaveBeenCalled();
     expect(instance.create).toHaveBeenCalledWith("Plan");
+  });
+
+  it("a scene of that name made here once and left empty doesn't count: forgotten, then looked for again", async () => {
+    const instance = fixture(Object.assign(new Error("missing"), { status: 404 }));
+    instance.onlyAName = () => Promise.resolve(true);
+    const elsewhere = vi.fn(() => Promise.resolve(null));
+    expect(await instance.openOrCreateInner("Plan", elsewhere)).toBe("created");
+    expect(instance.forgetName).toHaveBeenCalledWith("Plan");
+    expect(instance.open).toHaveBeenCalled();
+    expect(elsewhere).toHaveBeenCalledWith("Plan");
   });
 
   it("other errors stay errors (nothing is created over a scene that couldn't be read)", async () => {

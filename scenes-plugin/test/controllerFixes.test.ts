@@ -178,8 +178,9 @@ describe("keep only here (B104)", () => {
 
 describe("scene names (B37)", () => {
   it("names like constructor or toString are scenes like any other", async () => {
-    const { controller } = await controllerHarness();
+    const { controller, editor } = await controllerHarness();
     await controller.create("constructor", { localOnly: true });
+    editor.draw(el("c1")); // (an empty scene is forgotten when left)
     await controller.create("toString", { localOnly: true });
     expect(controller.getState().list.map((item: any) => item.name)).toEqual(expect.arrayContaining(["constructor", "toString"]));
   });

@@ -521,7 +521,7 @@ class ScenesController implements LiveHost {
       }
       // one after the other (the editor hands out more than one API object at start): at once, both
       // would load the untitled draft from its stored copy, the second after the first removed it
-      const adopted = this.adopting.then(() => this.adoptInitialCanvas());
+      const adopted = this.adopting.then(() => this.adoptInitialCanvas()).then(() => this.forgetEmptyNames());
       this.adopting = adopted.catch(() => undefined);
       adopted
         .finally(() => this.readyDeferred.resolve())
@@ -1693,7 +1693,7 @@ class ScenesController implements LiveHost {
       ++this.openToken; // a pending check of the previous scene must not apply
       if (stash) {
         this.recomputeDirty(); // edits made while the new scene loaded (changes aren't tracked while loading)
-        await this.stashCurrent();
+        await this.leaveCurrent();
       }
       this.applyScene(json, name);
       this.meta.current = name;
@@ -1766,7 +1766,14 @@ class ScenesController implements LiveHost {
   leaveForReload = () =>
     this.exclusive(async () => {
       await this.ready;
-      await this.stashCurrent();
+      if (await this.onlyAName(this.meta.current)) {
+        // nothing to keep: back in this space, the untitled scene opens
+        await this.forgetName(this.meta.current!);
+        this.meta.current = null;
+        this.meta.baseline = null;
+      } else {
+        await this.stashCurrent();
+      }
       this.persistMeta();
       const api = this.api;
       this.detach();
@@ -1784,7 +1791,7 @@ class ScenesController implements LiveHost {
       if (this.exists(name)) {
         throw new Error(`A scene named "${name}" already exists`);
       }
-      await this.stashCurrent();
+      await this.leaveCurrent();
       await deleteSnapshot(name);
       this.applyScene(null, name);
       this.meta.current = name;
@@ -1806,7 +1813,7 @@ class ScenesController implements LiveHost {
    */
   openOrCreate = async (name: string, { elsewhere }: { elsewhere?: (name: string) => Promise<(() => void) | null> } = {}) => {
     if (name === this.meta.current) {
-      return false;
+      return elsewhere && (await this.onlyAName(name)) ? this.lookAgain(name, elsewhere) : false;
     }
     // its name from the start (the link names it), not "Untitled" while it loads
     this.setState({ opening: name });
@@ -1826,6 +1833,10 @@ class ScenesController implements LiveHost {
   };
 
   private readonly openOrCreateInner = async (name: string, elsewhere?: (name: string) => Promise<(() => void) | null>) => {
+    // made here once and left empty (e.g. the link was opened while signed out): it doesn't count, look for it again
+    if (await this.onlyAName(name)) {
+      await this.forgetName(name);
+    }
     // online without Drive: there is nowhere else to look, a new scene right away
     if (!this.exists(name) && this.state.sync.notConnected) {
       await this.create(name);
@@ -1847,6 +1858,73 @@ class ScenesController implements LiveHost {
     }
     return null;
   };
+
+  /**
+   * The open scene was only a name here (e.g. its link was opened while
+   * signed out): where else it is now (shared with the user, or in a shared
+   * folder), the tab goes there; else it stays, as if just made (true: the
+   * router offers to look among the scenes shared with the user).
+   */
+  private async lookAgain(name: string, elsewhere: (name: string) => Promise<(() => void) | null>) {
+    const go = await elsewhere(name).catch(() => null);
+    if (!go || name !== this.meta.current) {
+      return !go;
+    }
+    await this.leaveForReload();
+    go();
+    return false;
+  }
+
+  /**
+   * A scene that is only a name: made here (a scene link to a name that
+   * wasn't there, or a new scene), never in Drive, and nothing drawn or
+   * commented in it. Nothing of it is kept: leaving it forgets it, and a link
+   * to its name looks for the scene again instead of opening the empty one.
+   */
+  private async onlyAName(name: string | null) {
+    if (name === null || name === UNTITLED) {
+      return false;
+    }
+    const meta = this.meta.scenes[name];
+    if (!meta || meta.baseMd5 || meta.remoteMd5 || meta.renamedFrom || meta.conflict || meta.adopt) {
+      return false;
+    }
+    if (this.state.remote?.some((scene) => scene.name === name)) {
+      return false;
+    }
+    if (name === this.meta.current && this.api) {
+      return this.api.getSceneElements().length === 0 && commentStore.editorList().length === 0;
+    }
+    const json = (await getSnapshot(name))?.json;
+    return !json || (isEmptyJson(json) && !JSON.parse(json).kurviqComments?.length);
+  }
+
+  /** a scene that is only a name is forgotten here (it was never anywhere else) */
+  private async forgetName(name: string) {
+    delete this.meta.scenes[name];
+    this.persistMeta(); // (before the await: the metadata may be taken over meanwhile)
+    await deleteSnapshot(name);
+  }
+
+  /** the open scene is left for another: stored, or forgotten if it is only a name */
+  private async leaveCurrent() {
+    const name = this.meta.current;
+    if (name !== null && (await this.onlyAName(name))) {
+      await this.forgetName(name);
+      this.refresh();
+      return;
+    }
+    await this.stashCurrent();
+  }
+
+  /** at start: the scenes that are only a name (not the open one) are forgotten */
+  private async forgetEmptyNames() {
+    for (const name of Object.keys(this.meta.scenes)) {
+      if (name !== this.meta.current && (await this.onlyAName(name))) { // NOSONAR S9382: in order on purpose (scene reads and writes observe prior scene operations)
+        await this.forgetName(name); // NOSONAR S9382: in order on purpose
+      }
+    }
+  }
 
   private exists(name: string) {
     return (
